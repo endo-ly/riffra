@@ -51,14 +51,16 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const sequenceRef = useRef(0);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
-  const activeProjectIdRef = useRef<string | null>(null);
+  const lastActivationRef = useRef<{ projectId: string; sequence: number } | null>(null);
+  const projectTransitionEpochRef = useRef<number | null>(null);
   currentHostGeneration.current = hostGeneration;
   sessionRef.current = session;
 
   useEffect(() => {
     sequenceRef.current = 0;
     canonicalStateRef.current = null;
-    activeProjectIdRef.current = null;
+    lastActivationRef.current = null;
+    projectTransitionEpochRef.current = null;
     sessionRef.current = null;
     setSession(null);
     setHistoryState({ canUndo: false, canRedo: false });
@@ -70,7 +72,12 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   }, [hostGeneration, setBoot]);
 
   useEffect(() => {
-    if (boot) activeProjectIdRef.current = boot.projectState.activeProjectId;
+    if (boot) {
+      lastActivationRef.current = {
+        projectId: boot.projectState.activeProjectId,
+        sequence: boot.canonical.sequence,
+      };
+    }
   }, [boot]);
 
   const applyCanonicalState = useCallback(
@@ -91,15 +98,20 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const applyProjectActivation = useCallback(
     (activation: ProjectActivationResult): boolean => {
       if (getHostGeneration() !== hostGeneration) return false;
+      const identity = {
+        projectId: activation.projectState.activeProjectId,
+        sequence: activation.canonical.sequence,
+      };
+      const lastActivation = lastActivationRef.current;
       if (
-        activation.canonical.sequence < sequenceRef.current ||
-        (activation.canonical.sequence === sequenceRef.current &&
-          activation.projectState.activeProjectId === activeProjectIdRef.current)
+        lastActivation?.projectId === identity.projectId &&
+        lastActivation.sequence === identity.sequence
       )
         return false;
-      advanceProjectEpoch();
+      if (activation.canonical.sequence < sequenceRef.current) return false;
+      if (projectTransitionEpochRef.current !== getProjectEpoch()) advanceProjectEpoch();
+      lastActivationRef.current = identity;
       sequenceRef.current = activation.canonical.sequence;
-      activeProjectIdRef.current = activation.projectState.activeProjectId;
       canonicalStateRef.current = activation.canonical;
       sessionRef.current = activation.canonical.session;
       setSession(activation.canonical.session);
@@ -212,8 +224,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       label: string,
     ): Promise<ProjectActivationResult | null> => {
       const generationAtRequest = hostGeneration;
-      const projectEpochAtRequest = getProjectEpoch();
-      let applied = false;
+      const projectEpochAtRequest = advanceProjectEpoch();
+      projectTransitionEpochRef.current = projectEpochAtRequest;
       setProjectSwitching(true);
       setProjectError(null);
       try {
@@ -223,8 +235,14 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
           getProjectEpoch() !== projectEpochAtRequest
         )
           return null;
-        if (!applyProjectActivation(next)) return null;
-        applied = true;
+        if (!applyProjectActivation(next)) {
+          const currentActivation = lastActivationRef.current;
+          if (
+            currentActivation?.projectId !== next.projectState.activeProjectId ||
+            currentActivation.sequence !== next.canonical.sequence
+          )
+            return null;
+        }
         return next;
       } catch (error) {
         if (
@@ -236,11 +254,11 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         setProjectError(message);
         return null;
       } finally {
-        if (
-          currentHostGeneration.current === generationAtRequest &&
-          (applied || getProjectEpoch() === projectEpochAtRequest)
-        ) {
-          setProjectSwitching(false);
+        if (projectTransitionEpochRef.current === projectEpochAtRequest) {
+          projectTransitionEpochRef.current = null;
+          if (currentHostGeneration.current === generationAtRequest) {
+            setProjectSwitching(false);
+          }
         }
       }
     },

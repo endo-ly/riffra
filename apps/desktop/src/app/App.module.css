@@ -32,11 +32,21 @@
 }
 
 .projectBoundRegion {
+  position: relative;
   min-width: 0;
   min-height: 0;
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.projectBoundRegion[data-project-switching='true']::after {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-menu);
+  content: '';
+  cursor: wait;
+  pointer-events: auto;
 }
 
 .runtimeBanner {

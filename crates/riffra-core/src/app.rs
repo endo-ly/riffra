@@ -160,12 +160,12 @@ impl<A> AppCore<A> {
     /// already completed the Project-scoped save before activation.
     ///
     /// # Errors
-    /// Returns an error when the supplied session is invalid or Core state is
-    /// unavailable.
+    /// Returns the committed canonical state, or an error when the supplied
+    /// session is invalid or Core state is unavailable.
     pub fn activate_session(
         &self,
         session: CreativeSession,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<CanonicalState, ApplicationError> {
         let _operation = self
             .operation_gate
             .lock()
@@ -185,7 +185,11 @@ impl<A> AppCore<A> {
         *canonical = session.clone();
         history.clear();
         self.end_exchange();
-        Ok(session)
+        Ok(CanonicalState {
+            session,
+            sequence: self.projection_version.load(Ordering::Acquire) / 2,
+            history: HistoryState::default(),
+        })
     }
 
     /// Captures the canonical session and projection sequence as one pair.
@@ -1277,7 +1281,10 @@ mod tests {
         next.project_name = Some("Next project".into());
         let activated = core.activate_session(next).unwrap();
 
-        assert_eq!(activated.project_name.as_deref(), Some("Next project"));
+        assert_eq!(
+            activated.session.project_name.as_deref(),
+            Some("Next project")
+        );
         assert_eq!(core.canonical_state().unwrap().sequence, 2);
         assert_eq!(
             core.canonical_state().unwrap().session.session_id,

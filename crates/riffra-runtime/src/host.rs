@@ -1388,43 +1388,39 @@ impl HostState {
             .project_store
             .active_project_id()
             .map_err(|error| command_error(error.to_string()))?;
+        let prepared = projects::prepare(&self.project_store, project_id).map_err(command_error)?;
+        library::index::refresh(&self.data_root, &prepared.storage, &prepared.loaded.session);
         self.event_hub.set_plugin_project_id(None);
-        let loaded = match projects::activate(&self.project_store, project_id, |session| {
-            self.core.activate_session(session).map(|_| ())
+        let activated = match projects::activate(&self.project_store, prepared, |session| {
+            self.core.activate_session(session)
         }) {
-            Ok(loaded) => loaded,
+            Ok(activated) => activated,
             Err(error) => {
                 self.event_hub.set_plugin_project_id(Some(previous));
                 return Err(command_error(error));
             }
         };
         self.core
-            .set_recovered_from_generation(loaded.recovered_from_generation);
+            .set_recovered_from_generation(activated.loaded.recovered_from_generation);
         self.keep_plugin_persistence_project(project_id);
         self.event_hub
             .set_plugin_project_id(Some(project_id.to_owned()));
-        let mutation = self.after_canonical_commit_with_event(
+        if let Err(error) = commit::finalize_arrangement_mutation(
+            activated.canonical.clone(),
+            self.runtime.as_ref(),
+            &self.data_root,
+            self.core.safe_mode(),
             CanonicalMutationEffect::ProjectArrangement,
-            false,
-        )?;
-        let project_state = self.project_state_for_command()?;
-        let storage = self
-            .project_store
-            .session_store(project_id)
-            .map_err(|error| command_error(error.to_string()))?;
-        let activation = projects::activation_result(
-            project_state,
-            mutation.canonical.clone(),
-            &storage,
-            loaded.recovered_from_generation,
-        )
-        .map_err(command_error)?;
+        ) {
+            tracing::warn!(error, "Project runtime projection could not be queued");
+        }
+        let activation = projects::result(activated);
         self.events
             .emit(HostEvent::ProjectActivated(activation.clone()));
-        let sequence = mutation.canonical.sequence;
+        let sequence = activation.canonical.sequence;
         Ok((
             "projectActivation",
-            serde_json::to_value(activation).map_err(serialize_error)?,
+            serde_json::to_value(activation).expect("Project activation result must serialize"),
             sequence,
         ))
     }

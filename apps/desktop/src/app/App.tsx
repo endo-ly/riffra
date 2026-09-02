@@ -478,6 +478,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           properties={
             <fieldset
               className={styles.projectBoundRegion}
+              data-project-switching={projectSwitching ? 'true' : undefined}
+              aria-busy={projectSwitching}
+              inert={projectSwitching}
               disabled={!hostConnected || projectSwitching}
             >
               <PropertiesPanel
@@ -511,6 +514,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         <section className={shellStyles.workspace}>
           <fieldset
             className={styles.projectBoundRegion}
+            data-project-switching={projectSwitching ? 'true' : undefined}
+            aria-busy={projectSwitching}
+            inert={projectSwitching}
             disabled={!hostConnected || projectSwitching}
           >
             <WorkspaceArrange

@@ -121,15 +121,14 @@ impl StorageRef<'_> {
         }
     }
 
-    fn replace_owned(&self, storage: SessionStore) -> Result<(), String> {
+    fn replace_owned(&self, storage: SessionStore) {
         match self {
             Self::Owned(current) => {
                 *current
                     .lock()
-                    .map_err(|_| "session storage lock was poisoned")? = storage;
-                Ok(())
+                    .expect("standalone session storage lock must not be poisoned") = storage;
             }
-            Self::Borrowed(_) => Ok(()),
+            Self::Borrowed(_) => {}
         }
     }
 }
@@ -1093,33 +1092,22 @@ impl<'a, A> HostDispatcher<'a, A> {
     }
 
     fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
-        let loaded = projects::activate(self.project_store.as_ref(), project_id, |session| {
+        let prepared = projects::prepare(self.project_store.as_ref(), project_id)
+            .map_err(DispatchError::CommandFailed)?;
+        crate::library::index::refresh(
+            &self.data_root,
+            &prepared.storage,
+            &prepared.loaded.session,
+        );
+        let activated = projects::activate(self.project_store.as_ref(), prepared, |session| {
             self.activate_core_session(session)
         })
         .map_err(DispatchError::CommandFailed)?;
-        self.set_core_recovery(loaded.recovered_from_generation);
-        let storage = self
-            .project_store
-            .as_ref()
-            .session_store(project_id)
-            .map_err(|error| error.to_string())?;
-        self.storage
-            .replace_owned(storage.clone())
-            .map_err(DispatchError::from)?;
-        crate::library::index::refresh(&self.data_root, &storage, &loaded.session);
-        let canonical = self
-            .core
-            .canonical_state()
-            .map_err(|error| error.to_string())?;
-        let project_state = self.project_state()?;
-        let activation = projects::activation_result(
-            project_state,
-            canonical,
-            &storage,
-            loaded.recovered_from_generation,
-        )
-        .map_err(DispatchError::CommandFailed)?;
-        self.value_with_sequence("projectActivation", activation)
+        self.set_core_recovery(activated.loaded.recovered_from_generation);
+        self.storage.replace_owned(activated.storage.clone());
+        let sequence = activated.canonical.sequence;
+        let activation = projects::result(activated);
+        self.value_with_known_sequence("projectActivation", activation, sequence)
     }
 
     fn set_core_recovery(&self, recovered: bool) {
@@ -1129,23 +1117,22 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
     }
 
-    fn activate_core_session(&self, session: CreativeSession) -> Result<(), ApplicationError> {
+    fn activate_core_session(
+        &self,
+        session: CreativeSession,
+    ) -> Result<riffra_core::CanonicalState, ApplicationError> {
         match &self.core {
-            CoreRef::Owned(core) => core.activate_session(session).map(|_| ()),
-            CoreRef::Borrowed(core) => (*core).activate_session(session).map(|_| ()),
+            CoreRef::Owned(core) => core.activate_session(session),
+            CoreRef::Borrowed(core) => (*core).activate_session(session),
         }
     }
 
-    fn value_with_sequence<T: serde::Serialize>(
+    fn value_with_known_sequence<T: serde::Serialize>(
         &self,
         result_type: &'static str,
         value: T,
+        sequence: u64,
     ) -> Result<DispatchResult, DispatchError> {
-        let sequence = self
-            .core
-            .snapshot()
-            .map_err(|error| error.to_string())?
-            .sequence;
         Ok(DispatchResult {
             result_type,
             value: serde_json::to_value(value).expect("project values must serialize"),

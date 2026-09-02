@@ -2,7 +2,7 @@ use crate::model::{
     ProjectActivationResult, ProjectRecoveryState, ProjectState, ProjectSummary, RecoveryCandidate,
 };
 use riffra_core::{CanonicalState, CreativeSession};
-use riffra_host::{ProjectStore, SessionStore};
+use riffra_host::{LoadedSession, ProjectStore, SessionStore};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use ts_rs::TS;
@@ -21,30 +21,80 @@ pub(crate) fn state(project_store: &ProjectStore) -> Result<ProjectState, String
     })
 }
 
-pub(crate) fn activate<A>(
+pub(crate) struct PreparedActivation {
+    pub loaded: LoadedSession,
+    pub storage: SessionStore,
+    pub project_state: ProjectState,
+    pub recovery: ProjectRecoveryState,
+}
+
+pub(crate) struct ActivatedProject {
+    pub loaded: LoadedSession,
+    pub storage: SessionStore,
+    pub project_state: ProjectState,
+    pub recovery: ProjectRecoveryState,
+    pub canonical: CanonicalState,
+}
+
+pub(crate) fn prepare(
     project_store: &ProjectStore,
     project_id: &str,
-    activate_core: impl FnOnce(CreativeSession) -> Result<(), A>,
-) -> Result<riffra_host::LoadedSession, String>
-where
-    A: std::fmt::Display,
-{
+) -> Result<PreparedActivation, String> {
     let loaded = project_store
         .load(project_id)
         .map_err(|error| error.to_string())?;
-    let previous_project_id = project_store
-        .set_active(project_id)
+    let storage = project_store
+        .session_store(project_id)
         .map_err(|error| error.to_string())?;
-    if let Err(error) = activate_core(loaded.session.clone()) {
-        let rollback = project_store.set_active(&previous_project_id);
-        return Err(match rollback {
-            Ok(_) => error.to_string(),
-            Err(rollback_error) => format!(
-                "Project activation failed: {error}; active Project rollback failed: {rollback_error}"
-            ),
-        });
-    }
-    Ok(loaded)
+    let project_state = ProjectState {
+        active_project_id: project_id.to_owned(),
+        projects: project_store
+            .list()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(ProjectSummary::from)
+            .collect(),
+    };
+    let recovery = recovery(&storage, loaded.recovered_from_generation)?;
+    Ok(PreparedActivation {
+        loaded,
+        storage,
+        project_state,
+        recovery,
+    })
+}
+
+pub(crate) fn activate<A>(
+    project_store: &ProjectStore,
+    prepared: PreparedActivation,
+    activate_core: impl FnOnce(CreativeSession) -> Result<CanonicalState, A>,
+) -> Result<ActivatedProject, String>
+where
+    A: std::fmt::Display,
+{
+    let project_id = prepared.project_state.active_project_id.clone();
+    let previous_project_id = project_store
+        .set_active(&project_id)
+        .map_err(|error| error.to_string())?;
+    let canonical = match activate_core(prepared.loaded.session.clone()) {
+        Ok(canonical) => canonical,
+        Err(error) => {
+            let rollback = project_store.set_active(&previous_project_id);
+            return Err(match rollback {
+                Ok(_) => error.to_string(),
+                Err(rollback_error) => format!(
+                    "Project activation failed: {error}; active Project rollback failed: {rollback_error}"
+                ),
+            });
+        }
+    };
+    Ok(ActivatedProject {
+        loaded: prepared.loaded,
+        storage: prepared.storage,
+        project_state: prepared.project_state,
+        recovery: prepared.recovery,
+        canonical,
+    })
 }
 
 pub(crate) fn recovery(
@@ -66,17 +116,12 @@ pub(crate) fn recovery(
     })
 }
 
-pub(crate) fn activation_result(
-    project_state: ProjectState,
-    canonical: CanonicalState,
-    storage: &SessionStore,
-    recovered_from_generation: bool,
-) -> Result<ProjectActivationResult, String> {
-    Ok(ProjectActivationResult {
-        project_state,
-        canonical,
-        recovery: recovery(storage, recovered_from_generation)?,
-    })
+pub(crate) fn result(activated: ActivatedProject) -> ProjectActivationResult {
+    ProjectActivationResult {
+        project_state: activated.project_state,
+        canonical: activated.canonical,
+        recovery: activated.recovery,
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
