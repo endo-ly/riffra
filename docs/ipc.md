@@ -111,6 +111,12 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | 素材入出力         | `import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                                                                                 |
 | 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                                       |
 
+Project一覧の項目を選ぶ `open_project` は、同じDataRoot内のProject containerを切り替える命令であり、
+ファイルダイアログを開かない。外部packageを扱うのは `import_project` と `export_project` だけである。
+DesktopのImport dialogは `.riffra` packageだけを選択でき、Importは現在のProjectを上書きせず新しい
+Project containerをActiveにする。ExportはDesktopのSave dialogで指定された `.riffra` pathへ一度だけ
+portable packageを書き出し、DataRoot内にExport専用ディレクトリを作らない。
+
 **プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタからのstate / parameter変更はHost内のpersistence coordinatorがイベントをcoalesceしてCanonical stateへ保存する。
 
 **録音（recording/commands.rs）**
@@ -219,7 +225,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
 - 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
-- レンダー計画（開始・終了ティック、レンジ解決、出力パス `export/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
+- レンダー計画（開始・終了ティック、レンジ解決、出力パス `renders/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
 
 ---
 

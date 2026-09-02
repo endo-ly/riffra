@@ -169,7 +169,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                   setOpen(false);
                 }}
               >
-                Open Project…
+                Import Project…
               </button>
               <span className={styles.heading}>Project</span>
               <input

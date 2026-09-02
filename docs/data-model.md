@@ -61,6 +61,13 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 `ProjectState` はActive ProjectのIDとProjectSummaryの一覧をまとめたUI・CLI向けの状態である。`ProjectSummary` はProject ID、表示名、更新時刻、読込エラーを持つ。読めないProjectも一覧から除外せず、エラーを表示できる。
 
+`.riffra` はProjectのportable packageである。Importではpackageを検証して新しいProjectIdの
+`projects/<project-id>/`へ取り込み、Exportではユーザーが指定した保存先へ書き出す。packageは
+DataRoot内のcanonical Projectではなく、通常のProject切替にも使わない。
+
+Render結果は音声書き出しの成果物であり、DataRootの `renders/` に保存する。Projectの正準状態や
+`.riffra` packageを `renders/` に保存しない。
+
 ### 4.2 セッションと設定
 
 | エンティティ      | 役割                                                                                             |

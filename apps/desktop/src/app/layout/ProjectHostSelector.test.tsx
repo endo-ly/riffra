@@ -58,9 +58,22 @@ describe('ProjectHostSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
     expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Import Project…' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Open Project…' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Export Project…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
+  });
+
+  it('routes the external package action through Import Project', async () => {
+    const onImportProject = vi.fn();
+    const user = userEvent.setup();
+    renderSelector(embedded, { onImportProject });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Import Project…' }));
+
+    expect(onImportProject).toHaveBeenCalledOnce();
   });
 
   it('commits an inline Project rename on Enter', async () => {

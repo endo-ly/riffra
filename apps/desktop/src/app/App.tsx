@@ -267,13 +267,13 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
   const commandItems = [
     {
       section: 'PROJECT',
-      label: 'Open Project…',
-      description: 'Open a .riffra project package',
+      label: 'Import Project…',
+      description: 'Import a .riffra project package',
       run: () => void importProject(),
     },
     {
       section: 'PROJECT',
-      label: 'Export Project',
+      label: 'Export Project…',
       description: 'Save a .riffra project package',
       run: () => void exportProject(),
     },

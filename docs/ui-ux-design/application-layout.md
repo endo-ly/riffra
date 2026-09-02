@@ -29,7 +29,7 @@ Global Control Bar は、現在のセッション、Host、履歴、Transport、
 
 Project / Host Selector はGlobal Control Barの左端に置き、現在のProjectとHost接続を常時表示する。1行目にProject名と自動保存状態、2行目にHost名と接続状態を示す。Project名はActive Projectの `CreativeSession.project_name` から取得し、未命名の場合は `Untitled Project` と表示する。Host名はHost bootstrapの情報、DataRootのbasename、PIDまたはinstance IDの補助情報から構成し、Registryに表示名を別管理しない。
 
-選択するとpopoverが開き、PROJECTとHOSTのセクションを提供する。PROJECTではProject一覧、新規作成、Active Projectの改名、Export ProjectとOpen Projectを実行する。Open Projectはファイルダイアログで `.riffra` package を選択し、その内容を新しいProjectとしてDataRootへ取り込んでActive Projectにする。
+選択するとpopoverが開き、PROJECTとHOSTのセクションを提供する。PROJECTではProject一覧、新規作成、Active Projectの改名、Import ProjectとExport Projectを実行する。Project一覧の項目はDataRoot内のProjectを切り替えるため、ファイルダイアログを開かない。Import Projectだけがファイルダイアログで `.riffra` packageを選択し、その内容を新しいProjectとしてDataRootへ取り込んでActive Projectにする。Export ProjectはユーザーがSave dialogで指定した場所へportable `.riffra` packageを書き出し、成功後に保存先の絶対パスを通知する。
 
 - Embeddedは `Local Desktop` と表示する
 - Attachedは接続先Hostのproject nameまたはDataRoot basenameと、PID・Runtime状態・DataRootを表示する

@@ -345,7 +345,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         return;
       setExportMessage(
         result
-          ? `Exported Project package with ${result.assetCount} collected assets: ${result.path}`
+          ? `Project exported: ${result.path}`
           : 'Export failed; the current session remains safe.',
       );
     } catch (error) {

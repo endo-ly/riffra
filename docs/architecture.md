@@ -184,6 +184,12 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 
 ## 6. 永続化と回復
 
+ProjectはRiffraがDataRoot内で管理する制作単位であり、正準状態を
+`projects/<project-id>/session.json` に保持する。通常のProject切替はProject一覧から行い、
+ファイルダイアログを使わない。`.riffra` はProjectのportable packageで、ユーザーが扱うのは
+Import / Exportのときだけである。DataRoot内のcanonical Projectや作業中のSessionそのものではない。
+音声Renderの結果はProject packageとは別に `renders/` へ保存する。
+
 ### 6.1 ディスクレイアウト
 
 ```text
@@ -201,7 +207,7 @@ Core ApplicationがPlay / Stop要求の順序と、再生に必要な投影が�
 │  └─ library/              # ライブラリへ昇格済みテイク
 ├─ assets/
 │  └─ imports/              # 外部ファイルのインポート先（register で登録）
-└─ exports/
+└─ renders/
    └─ render-{ms}/          # レンダリング出力（timeline.wav + render.json）
 ```
 

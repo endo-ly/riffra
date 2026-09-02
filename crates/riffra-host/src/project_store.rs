@@ -274,7 +274,7 @@ fn ensure_shared_directories(data_root: &Path) -> io::Result<()> {
         "recordings/archive",
         "recordings/library",
         "assets/imports",
-        "exports",
+        "renders",
     ] {
         fs::create_dir_all(data_root.join(directory))?;
     }
@@ -301,6 +301,8 @@ mod tests {
         let initialized = first.initialize().unwrap();
         let first_id = first.active_project_id().unwrap();
         assert_eq!(initialized.loaded.session.project_name, None);
+        assert!(root.join("renders").is_dir());
+        assert!(!root.join("exports").exists());
 
         let second = first.create(Some("Second".into())).unwrap();
         first.set_active(&second.project_id).unwrap();
