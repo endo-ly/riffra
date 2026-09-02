@@ -34,6 +34,10 @@ pub enum DispatchError {
         expected_sequence: u64,
         current_sequence: u64,
     },
+    ProjectConflict {
+        expected_project_id: String,
+        current_project_id: String,
+    },
 }
 
 impl fmt::Display for DispatchError {
@@ -48,6 +52,13 @@ impl fmt::Display for DispatchError {
             } => write!(
                 formatter,
                 "canonical state changed: expected sequence {expected_sequence}, current sequence {current_sequence}"
+            ),
+            Self::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => write!(
+                formatter,
+                "active project changed: expected {expected_project_id}, current {current_project_id}"
             ),
         }
     }
@@ -65,6 +76,10 @@ impl DispatchError {
                 expected_sequence,
                 current_sequence,
             } => ProtocolError::conflict(*expected_sequence, *current_sequence),
+            Self::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => ProtocolError::project_conflict(expected_project_id, current_project_id),
         }
     }
 
@@ -274,6 +289,35 @@ impl<'a, A> HostDispatcher<'a, A> {
             ));
         }
         let canonical = self.core.canonical_state()?;
+        let request = if command_requires_project_id(&request.command)
+            && request.expected_project_id.is_none()
+        {
+            let project_id = self
+                .project_store
+                .as_ref()
+                .active_project_id()
+                .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+            request.with_expected_project_id(project_id)
+        } else {
+            request
+        };
+        let current_project_id = self
+            .project_store
+            .as_ref()
+            .active_project_id()
+            .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+        validate_project_precondition(
+            &request.command,
+            request.expected_project_id.as_deref(),
+            &current_project_id,
+        )
+        .map_err(|error| match error.code {
+            ErrorCode::Conflict => DispatchError::ProjectConflict {
+                expected_project_id: request.expected_project_id.clone().unwrap_or_default(),
+                current_project_id,
+            },
+            _ => DispatchError::InvalidRequest(error.message),
+        })?;
         if let Some(expected_sequence) = request.expected_sequence
             && expected_sequence != canonical.sequence
         {
@@ -1240,6 +1284,34 @@ impl<'a, A> HostDispatcher<'a, A> {
     }
 }
 
+/// Returns whether a control command requires an active Project precondition.
+pub fn command_requires_project_id(command: &str) -> bool {
+    !is_non_project_command(command)
+}
+
+pub(crate) fn validate_project_precondition(
+    command: &str,
+    expected_project_id: Option<&str>,
+    current_project_id: &str,
+) -> Result<(), ProtocolError> {
+    if !command_requires_project_id(command) {
+        return Ok(());
+    }
+    let Some(expected_project_id) = expected_project_id else {
+        return Err(ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "expectedProjectId is required for Project-bound commands",
+        ));
+    };
+    if expected_project_id != current_project_id {
+        return Err(ProtocolError::project_conflict(
+            expected_project_id,
+            current_project_id,
+        ));
+    }
+    Ok(())
+}
+
 fn is_read_command(command: &str) -> bool {
     matches!(
         command,
@@ -1255,6 +1327,28 @@ fn is_read_command(command: &str) -> bool {
             | "project.list"
             | "project.export"
     )
+}
+
+fn is_non_project_command(command: &str) -> bool {
+    is_read_command(command)
+        || is_runtime_host_only(command)
+        || matches!(
+            command,
+            "host.status"
+                | "host.info"
+                | "host.bootstrap"
+                | "host.shutdown"
+                | "audio.master-gain.preview"
+                | "audio.emergency-mute"
+                | "midi.listening.enable"
+                | "midi.listening.disable"
+                | "audio.driver.get"
+                | "audio.driver.set"
+                | "plugin.editor.open"
+                | "take.comparison.start"
+                | "take.comparison.switch"
+                | "take.comparison.stop"
+        )
 }
 
 fn is_arrangement_mutation_command(command: &str) -> bool {

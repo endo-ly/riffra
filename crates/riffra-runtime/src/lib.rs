@@ -39,7 +39,7 @@ pub use audio::{
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;
-pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
+pub use dispatcher::{DispatchError, DispatchResult, Dispatcher, command_requires_project_id};
 pub use host::{DawHost, HostBootstrap, HostConfig, HostError};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,

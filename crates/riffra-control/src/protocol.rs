@@ -64,6 +64,18 @@ impl ProtocolError {
             })),
         }
     }
+
+    /// Creates a conflict for a request created against another active Project.
+    pub fn project_conflict(expected_project_id: &str, current_project_id: &str) -> Self {
+        Self {
+            code: ErrorCode::Conflict,
+            message: "active project changed".into(),
+            details: Some(serde_json::json!({
+                "expectedProjectId": expected_project_id,
+                "currentProjectId": current_project_id,
+            })),
+        }
+    }
 }
 
 /// One command request sent over JSON Lines or a framed local transport.
@@ -74,6 +86,8 @@ pub struct ControlRequest {
     pub command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_project_id: Option<String>,
     pub params: Value,
 }
 
@@ -88,8 +102,15 @@ impl ControlRequest {
             request_id: request_id.into(),
             command: command.name,
             expected_sequence,
+            expected_project_id: None,
             params: command.params,
         }
+    }
+
+    /// Adds the active Project precondition for a Project-bound command.
+    pub fn with_expected_project_id(mut self, project_id: impl Into<String>) -> Self {
+        self.expected_project_id = Some(project_id.into());
+        self
     }
 
     /// Validates envelope fields before a backend is allowed to execute it.
@@ -104,6 +125,16 @@ impl ControlRequest {
             return Err(ProtocolError::new(
                 ErrorCode::InvalidRequest,
                 "command must not be empty",
+            ));
+        }
+        if self
+            .expected_project_id
+            .as_deref()
+            .is_some_and(|project_id| project_id.trim().is_empty())
+        {
+            return Err(ProtocolError::new(
+                ErrorCode::InvalidRequest,
+                "expectedProjectId must not be empty",
             ));
         }
         Ok(())
@@ -264,7 +295,8 @@ mod tests {
             "42",
             ControlCommand::new("track.add", serde_json::json!({"name": "Bass"})),
             Some(18),
-        );
+        )
+        .with_expected_project_id("project:a");
 
         let encoded = serde_json::to_string(&request).unwrap();
         let decoded: ControlRequest = serde_json::from_str(&encoded).unwrap();
@@ -293,6 +325,7 @@ mod tests {
             request_id: String::new(),
             command: String::new(),
             expected_sequence: None,
+            expected_project_id: None,
             params: Value::Null,
         };
 
@@ -307,5 +340,12 @@ mod tests {
         let error = ProtocolError::conflict(18, 20);
         assert_eq!(error.code, ErrorCode::Conflict);
         assert_eq!(error.details.unwrap()["currentSequence"], 20);
+    }
+
+    #[test]
+    fn project_conflict_contains_machine_readable_project_ids() {
+        let error = ProtocolError::project_conflict("project:a", "project:b");
+        assert_eq!(error.code, ErrorCode::Conflict);
+        assert_eq!(error.details.unwrap()["currentProjectId"], "project:b");
     }
 }

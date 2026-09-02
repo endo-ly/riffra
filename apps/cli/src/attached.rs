@@ -1,8 +1,9 @@
 use crate::output::compact_agent_response;
 use riffra_control::{
-    ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
-    ProtocolError,
+    ControlCommand, ControlRequest, ControlResponse, ErrorCode, LocalHostClient,
+    LocalHostClientError, ProtocolError, new_instance_id,
 };
+use riffra_runtime::command_requires_project_id;
 use serde_json::Value;
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -22,12 +23,43 @@ impl AttachedBackend {
 
     /// Sends one request and waits for its ordered response.
     pub fn request(&self, request: &ControlRequest) -> Result<ControlResponse, String> {
-        self.client.request(request).map_err(|error| match error {
+        let request = if command_requires_project_id(&request.command)
+            && request.expected_project_id.is_none()
+        {
+            request
+                .clone()
+                .with_expected_project_id(self.active_project_id()?)
+        } else {
+            request.clone()
+        };
+        self.client.request(&request).map_err(|error| match error {
             LocalHostClientError::InvalidRequest(message) => {
                 format!("{}: {message}", ErrorCode::InvalidRequest)
             }
             error => format!("{}: {error}", ErrorCode::HostUnavailable),
         })
+    }
+
+    fn active_project_id(&self) -> Result<String, String> {
+        let response = self
+            .client
+            .request(&ControlRequest::new(
+                format!("cli-project-state-{}", new_instance_id()),
+                ControlCommand::new("project.list", serde_json::json!({})),
+                None,
+            ))
+            .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))?;
+        if !response.ok {
+            let error = response
+                .error
+                .map(|error| format!("{}: {}", error.code, error.message))
+                .unwrap_or_else(|| "Host project state request failed".into());
+            return Err(error);
+        }
+        response
+            .result
+            .and_then(|result| result.value["activeProjectId"].as_str().map(str::to_owned))
+            .ok_or_else(|| "Host project state did not contain activeProjectId".into())
     }
 
     /// Forwards JSON Lines from stdin as framed control requests.

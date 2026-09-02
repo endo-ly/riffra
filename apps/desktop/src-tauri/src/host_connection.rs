@@ -7,7 +7,7 @@ use riffra_control::{
 };
 use riffra_runtime::{
     AudioStatus, DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink,
-    RuntimeBinaries,
+    RuntimeBinaries, command_requires_project_id,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -373,6 +373,7 @@ impl HostEventSink for EmbeddedEventSink {
 pub struct HostConnectionManager {
     active: RwLock<ActiveHost>,
     bootstrap: RwLock<Option<HostBootstrap>>,
+    active_project_id: RwLock<Option<String>>,
     operation_barrier: RwLock<()>,
     switch_mutex: Mutex<()>,
     next_generation: AtomicU64,
@@ -415,6 +416,7 @@ impl HostConnectionManager {
                 reason: "Host is starting".into(),
             }),
             bootstrap: RwLock::new(None),
+            active_project_id: RwLock::new(None),
             operation_barrier: RwLock::new(()),
             switch_mutex: Mutex::new(()),
             next_generation: AtomicU64::new(1),
@@ -464,6 +466,16 @@ impl HostConnectionManager {
     fn handle_message(&self, message: ConnectionMessage) {
         match message {
             ConnectionMessage::Event { generation, frame } => {
+                if frame.event == "project-activated"
+                    && self.active_state().generation == generation
+                    && let Some(project_id) =
+                        frame.payload["projectState"]["activeProjectId"].as_str()
+                {
+                    *self
+                        .active_project_id
+                        .write()
+                        .expect("active Project lock was poisoned") = Some(project_id.to_owned());
+                }
                 self.router.receive(generation, frame);
             }
             ConnectionMessage::Disconnected { generation, reason } => {
@@ -563,6 +575,11 @@ impl HostConnectionManager {
             .bootstrap
             .write()
             .expect("Host bootstrap lock was poisoned") = Some(prepared.bootstrap.clone());
+        *self
+            .active_project_id
+            .write()
+            .expect("active Project lock was poisoned") =
+            Some(prepared.bootstrap.project_state.active_project_id.clone());
         let connection = HostConnectionBootstrap {
             state: state.clone(),
             bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
@@ -866,6 +883,11 @@ impl HostConnectionManager {
             .write()
             .map_err(|_| "Host bootstrap lock was poisoned".to_string())? =
             Some(prepared.bootstrap.clone());
+        *self
+            .active_project_id
+            .write()
+            .map_err(|_| "active Project lock was poisoned".to_string())? =
+            Some(prepared.bootstrap.project_state.active_project_id.clone());
         let result = HostConnectionBootstrap {
             state: state.clone(),
             bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
@@ -897,6 +919,17 @@ impl HostConnectionManager {
             ControlCommand::new(command, params),
             None,
         );
+        let request = if command_requires_project_id(command) {
+            let project_id = self
+                .active_project_id
+                .read()
+                .map_err(|_| "active Project lock was poisoned".to_string())?
+                .clone()
+                .ok_or_else(|| "active Project is not available".to_string())?;
+            request.with_expected_project_id(project_id)
+        } else {
+            request
+        };
         let (response, attached_generation) = {
             let active = self
                 .active
@@ -927,6 +960,19 @@ impl HostConnectionManager {
                 return Err(error);
             }
         };
+        if response.ok {
+            if let Some(project_id) = response
+                .result
+                .as_ref()
+                .and_then(|result| result.value["projectState"]["activeProjectId"].as_str())
+            {
+                *self
+                    .active_project_id
+                    .write()
+                    .map_err(|_| "active Project lock was poisoned".to_string())? =
+                    Some(project_id.to_owned());
+            }
+        }
         response_value(response)
     }
 
