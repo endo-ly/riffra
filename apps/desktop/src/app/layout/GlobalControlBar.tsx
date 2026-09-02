@@ -140,7 +140,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         className={clsx(styles.audioControls, styles.hostBoundControls)}
         disabled={!props.hostConnected}
       >
-        <div aria-disabled={props.projectSwitching}>
+        <div className={styles.audioControlGroup} aria-disabled={props.projectSwitching}>
           <AudioMonitor
             session={props.session}
             applyCanonicalState={props.applyCanonicalState}
