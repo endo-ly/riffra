@@ -1,6 +1,6 @@
 //! Desktop-side ownership and routing for the currently connected Host.
 
-use crate::model::{BootstrapState, RecoveryCandidate};
+use crate::model::{BootstrapState, ProjectRecoveryState, RecoveryCandidate};
 use riffra_control::{
     ControlCommand, ControlRequest, ControlResponse, HostEventFrame, LocalHostClient,
     LocalHostDiscovery, LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
@@ -1030,10 +1030,14 @@ impl HostConnectionManager {
             plugin_catalog: bootstrap.plugin_catalog.clone(),
             runtime_started: bootstrap.runtime_started,
             runtime_startup_finished: bootstrap.runtime_startup_finished,
-            recovered_from_generation: bootstrap.recovered_from_generation,
+            recovery: ProjectRecoveryState {
+                recovered_from_generation: bootstrap.recovery.recovered_from_generation,
+                recovery_candidates: map_runtime_recovery_candidates(
+                    bootstrap.recovery.recovery_candidates.clone(),
+                ),
+            },
             safe_mode: bootstrap.safe_mode,
             native_available: true,
-            recovery_candidates: map_recovery_candidates(bootstrap.recovery_candidates.clone()),
             data_root: bootstrap.data_root.to_string_lossy().into_owned(),
             vst3_root: default_vst3_root(),
             host_connection: state.clone(),
@@ -1142,6 +1146,9 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
         HostEvent::ProjectStateChanged(value) => {
             HostEventFrame::new("project-state-changed", json!(value))
         }
+        HostEvent::ProjectActivated(value) => {
+            HostEventFrame::new("project-activated", json!(value))
+        }
         HostEvent::RuntimeStartupFinished { succeeded } => {
             HostEventFrame::new("runtime-startup-finished", json!({"succeeded": succeeded}))
         }
@@ -1163,8 +1170,24 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn map_recovery_candidates(
     candidates: Vec<riffra_host::RecoveryCandidate>,
+) -> Vec<RecoveryCandidate> {
+    candidates
+        .into_iter()
+        .map(|candidate| RecoveryCandidate {
+            file_name: candidate.file_name,
+            updated_at_ms: candidate.updated_at_ms,
+            session_id: candidate.session_id,
+            project_name: candidate.project_name,
+            note: candidate.note,
+        })
+        .collect()
+}
+
+fn map_runtime_recovery_candidates(
+    candidates: Vec<riffra_runtime::RecoveryCandidate>,
 ) -> Vec<RecoveryCandidate> {
     candidates
         .into_iter()

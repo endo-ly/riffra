@@ -54,6 +54,8 @@ export type {
   MonitoringState,
   PluginEntry,
   ProjectExport,
+  ProjectActivationResult,
+  ProjectRecoveryState,
   ProjectState,
   ProjectSummary,
   ProjectTimebase,

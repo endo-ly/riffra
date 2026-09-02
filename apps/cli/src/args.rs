@@ -961,7 +961,7 @@ pub enum ProjectCommand {
     Create(ProjectCreateArgs),
     Open(ProjectOpenArgs),
     Rename(ProjectRenameArgs),
-    Export,
+    Export(ProjectExportArgs),
     Import(ProjectImportArgs),
 }
 
@@ -987,6 +987,13 @@ pub struct ProjectRenameArgs {
 #[derive(Debug, Args, Serialize)]
 pub struct ProjectImportArgs {
     pub path: PathBuf,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectExportArgs {
+    #[arg(long)]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1550,7 +1557,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 value("project.open", json!({"projectId": args.project_id}))
             }
             ProjectCommand::Rename(args) => value("project.rename", args),
-            ProjectCommand::Export => simple("project.export"),
+            ProjectCommand::Export(args) => value("project.export", args),
             ProjectCommand::Import(args) => value("project.import", json!({"path":args.path})),
         },
         CliCommand::Instrument { command } => match command {

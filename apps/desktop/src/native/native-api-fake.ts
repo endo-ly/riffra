@@ -14,6 +14,7 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
+  ProjectActivationResult,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
 import { toAssetId, type TransportStatus } from './contracts';
@@ -123,6 +124,7 @@ export class FakeNativeApi implements NativeApi {
   private readonly projectStateListeners = new Set<
     (state: BootstrapState['projectState']) => void
   >();
+  private readonly projectActivatedListeners = new Set<(result: ProjectActivationResult) => void>();
   private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
   private readonly hostConnectionListeners = new Set<(event: HostConnectionChangedEvent) => void>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
@@ -552,6 +554,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onProjectStateChanged');
     return this.subscribe(this.projectStateListeners, callback);
   }
+  onProjectActivated(callback: Parameters<NativeApi['onProjectActivated']>[0]) {
+    this.recordCall('onProjectActivated');
+    return this.subscribe(this.projectActivatedListeners, callback);
+  }
   onAudioMeters(callback: Parameters<NativeApi['onAudioMeters']>[0]) {
     this.recordCall('onAudioMeters');
     return this.subscribe(this.audioMetersListeners, callback);
@@ -648,6 +654,16 @@ export class FakeNativeApi implements NativeApi {
     this.projectStateListeners.forEach((listener) => listener(state));
   }
 
+  emitProjectActivated(result: ProjectActivationResult): void {
+    this.bootstrapState = {
+      ...this.bootstrapState,
+      canonical: result.canonical,
+      projectState: result.projectState,
+      recovery: result.recovery,
+    };
+    this.projectActivatedListeners.forEach((listener) => listener(result));
+  }
+
   emitHostConnectionChanged(
     state: Partial<HostConnectionState> & Pick<HostConnectionState, 'generation'>,
     bootstrap: BootstrapState | null = this.bootstrapState,
@@ -724,11 +740,16 @@ export class FakeNativeApi implements NativeApi {
       case 'getHistoryState':
         return Promise.resolve({ canUndo: false, canRedo: false });
       case 'listProjects':
+      case 'renameProject':
+        return Promise.resolve(this.bootstrapState.projectState);
       case 'createProject':
       case 'openProject':
-      case 'renameProject':
       case 'importProject':
-        return Promise.resolve(this.bootstrapState.projectState);
+        return Promise.resolve({
+          projectState: this.bootstrapState.projectState,
+          canonical: this.bootstrapState.canonical,
+          recovery: this.bootstrapState.recovery,
+        });
       case 'listRecordings':
         return Promise.resolve(this.recordings);
       case 'searchLibrary':
@@ -946,10 +967,9 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     },
     runtimeStarted: true,
     runtimeStartupFinished: true,
-    recoveredFromGeneration: false,
+    recovery: { recoveredFromGeneration: false, recoveryCandidates: [] },
     safeMode: false,
     nativeAvailable: true,
-    recoveryCandidates: [],
     dataRoot: 'C:\\Riffra',
     vst3Root: 'C:\\Program Files\\Common Files\\VST3',
     hostConnection: {

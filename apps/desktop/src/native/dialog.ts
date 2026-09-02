@@ -1,4 +1,4 @@
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 export async function openMidiFile(): Promise<string | null> {
   const result = await open({
@@ -13,10 +13,18 @@ export async function openHostDataRoot(): Promise<string | null> {
   return typeof result === 'string' ? result : null;
 }
 
-export async function openProjectManifest(): Promise<string | null> {
+export async function openProjectPackage(): Promise<string | null> {
   const result = await open({
     multiple: false,
-    filters: [{ name: 'Riffra Project', extensions: ['json'] }],
+    filters: [{ name: 'Riffra Project', extensions: ['riffra'] }],
+  });
+  return typeof result === 'string' ? result : null;
+}
+
+export async function saveProjectPackage(defaultName: string): Promise<string | null> {
+  const result = await save({
+    defaultPath: `${defaultName}.riffra`,
+    filters: [{ name: 'Riffra Project', extensions: ['riffra'] }],
   });
   return typeof result === 'string' ? result : null;
 }

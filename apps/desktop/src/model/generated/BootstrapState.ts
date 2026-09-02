@@ -2,7 +2,7 @@
 import type { CanonicalState } from "./CanonicalState";
 import type { HostConnectionState } from "./HostConnectionState";
 import type { PluginEntry } from "./PluginEntry";
+import type { ProjectRecoveryState } from "./ProjectRecoveryState";
 import type { ProjectState } from "./ProjectState";
-import type { RecoveryCandidate } from "./RecoveryCandidate";
 
-export type BootstrapState = { canonical: CanonicalState, projectState: ProjectState, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, recoveredFromGeneration: boolean, safeMode: boolean, nativeAvailable: boolean, recoveryCandidates: Array<RecoveryCandidate>, dataRoot: string, vst3Root: string, hostConnection: HostConnectionState, };
+export type BootstrapState = { canonical: CanonicalState, projectState: ProjectState, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, recovery: ProjectRecoveryState, safeMode: boolean, nativeAvailable: boolean, dataRoot: string, vst3Root: string, hostConnection: HostConnectionState, };

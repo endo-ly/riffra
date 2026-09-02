@@ -2,6 +2,7 @@ import type {
   ArrangementMutationResult,
   AssetId,
   HistoryState,
+  ProjectActivationResult,
   ProjectState,
   ProjectExport,
 } from '@/model/domain';
@@ -61,32 +62,48 @@ export async function restoreRecoveryGeneration(
   );
 }
 
-export async function exportProject(): Promise<ProjectExport | null> {
-  return invokeHostOrFallback<ProjectExport | null>('export_project', {}, null);
+export async function exportProject(path: string): Promise<ProjectExport | null> {
+  return invokeHostOrFallback<ProjectExport | null>('export_project', { path }, null);
 }
 
 export async function listProjects(): Promise<ProjectState> {
   return invokeHostOrFallback<ProjectState>('list_projects', {}, defaultProjectState());
 }
 
-export async function createProject(name?: string): Promise<ProjectState> {
-  return invokeHostOrFallback<ProjectState>(
+export async function createProject(name?: string): Promise<ProjectActivationResult> {
+  return invokeHostOrFallback<ProjectActivationResult>(
     'create_project',
     { name: name ?? null },
-    defaultProjectState(),
+    defaultProjectActivationResult(),
   );
 }
 
-export async function openProject(projectId: string): Promise<ProjectState> {
-  return invokeHostOrFallback<ProjectState>('open_project', { projectId }, defaultProjectState());
+export async function openProject(projectId: string): Promise<ProjectActivationResult> {
+  return invokeHostOrFallback<ProjectActivationResult>(
+    'open_project',
+    { projectId },
+    defaultProjectActivationResult(),
+  );
 }
 
 export async function renameProject(name: string): Promise<ProjectState> {
   return invokeHostOrFallback<ProjectState>('rename_project', { name }, defaultProjectState());
 }
 
-export async function importProject(path: string): Promise<ProjectState | null> {
-  return invokeHostOrFallback<ProjectState | null>('import_project', { path }, null);
+export async function importProject(path: string): Promise<ProjectActivationResult | null> {
+  return invokeHostOrFallback<ProjectActivationResult | null>('import_project', { path }, null);
+}
+
+function defaultProjectActivationResult(): ProjectActivationResult {
+  return {
+    projectState: defaultProjectState(),
+    canonical: {
+      session: defaultSession(),
+      sequence: 0,
+      history: { canUndo: false, canRedo: false },
+    },
+    recovery: { recoveredFromGeneration: false, recoveryCandidates: [] },
+  };
 }
 
 export async function importMidiFile(path: string, name?: string): Promise<AssetId | null> {

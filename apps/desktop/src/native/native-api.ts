@@ -16,6 +16,7 @@ import type {
   LibraryAsset,
   MissingDependency,
   ProjectExport,
+  ProjectActivationResult,
   ProjectState,
   RecordingAsset,
   RenderOptions,
@@ -96,12 +97,12 @@ export interface ProjectApi {
   redoSession(): Promise<ArrangementMutationResult>;
   getHistoryState(): Promise<HistoryState>;
   listProjects(): Promise<ProjectState>;
-  createProject(name?: string): Promise<ProjectState>;
-  openProject(projectId: string): Promise<ProjectState>;
+  createProject(name?: string): Promise<ProjectActivationResult>;
+  openProject(projectId: string): Promise<ProjectActivationResult>;
   renameProject(name: string): Promise<ProjectState>;
   restoreRecoveryGeneration(fileName: string): Promise<ArrangementMutationResult | null>;
-  exportProject(): Promise<ProjectExport | null>;
-  importProject(path: string): Promise<ProjectState | null>;
+  exportProject(path: string): Promise<ProjectExport | null>;
+  importProject(path: string): Promise<ProjectActivationResult | null>;
   /**
    * Imports an external Standard MIDI File as a canonical MIDI Asset. Rust owns
    * SMF validation, copies the file under the application data root, and
@@ -416,6 +417,7 @@ export interface NativeEventApi {
   onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
   onCanonicalStateChanged(callback: (state: CanonicalState) => void): () => void;
   onProjectStateChanged(callback: (state: ProjectState) => void): () => void;
+  onProjectActivated(callback: (result: ProjectActivationResult) => void): () => void;
   onTransportStatus(callback: (status: TransportStatus) => void): () => void;
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;

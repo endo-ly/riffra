@@ -26,10 +26,9 @@ export async function bootstrap(): Promise<BootstrapState> {
       pluginCatalog: [],
       runtimeStarted: false,
       runtimeStartupFinished: false,
-      recoveredFromGeneration: false,
+      recovery: { recoveredFromGeneration: false, recoveryCandidates: [] as RecoveryCandidate[] },
       safeMode: false,
       nativeAvailable: false,
-      recoveryCandidates: [] as RecoveryCandidate[],
       dataRoot: 'Browser preview \u2014 native persistence is unavailable',
       vst3Root: defaultVst3Root,
       hostConnection: {
