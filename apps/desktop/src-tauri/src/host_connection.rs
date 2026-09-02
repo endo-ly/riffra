@@ -960,18 +960,17 @@ impl HostConnectionManager {
                 return Err(error);
             }
         };
-        if response.ok {
-            if let Some(project_id) = response
+        if response.ok
+            && let Some(project_id) = response
                 .result
                 .as_ref()
                 .and_then(|result| result.value["projectState"]["activeProjectId"].as_str())
-            {
-                *self
-                    .active_project_id
-                    .write()
-                    .map_err(|_| "active Project lock was poisoned".to_string())? =
-                    Some(project_id.to_owned());
-            }
+        {
+            *self
+                .active_project_id
+                .write()
+                .map_err(|_| "active Project lock was poisoned".to_string())? =
+                Some(project_id.to_owned());
         }
         response_value(response)
     }
@@ -1607,11 +1606,14 @@ mod tests {
         let (command, params) = add_track("Expected sequence 0");
         let response = LocalHostClient::connect_data_root(host.data_root())
             .unwrap()
-            .request(&ControlRequest::new(
-                "lower-sequence-mutation",
-                ControlCommand::new(command, params),
-                Some(switched.bootstrap.canonical.sequence),
-            ))
+            .request(
+                &ControlRequest::new(
+                    "lower-sequence-mutation",
+                    ControlCommand::new(command, params),
+                    Some(switched.bootstrap.canonical.sequence),
+                )
+                .with_expected_project_id(switched.bootstrap.project_state.active_project_id),
+            )
             .unwrap();
         assert!(response.ok);
         assert_eq!(
