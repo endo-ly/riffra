@@ -183,6 +183,7 @@ mod tests {
             data_root: root,
             safe_mode: false,
             events: &crate::NoopHostEventSink,
+            project_commit: None,
         }
     }
 

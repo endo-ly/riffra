@@ -1125,12 +1125,26 @@ fn ensure_no_active_recording(recording_active: bool) -> Result<(), String> {
 
 /// Queries one attached Host for its native recording state.
 fn attached_recording_active(client: &LocalHostClient) -> bool {
-    client
+    let project_id = client
         .request(&ControlRequest::new(
-            format!("desktop-recording-status-{}", new_instance_id()),
-            ControlCommand::new("record.status", json!({})),
+            format!("desktop-recording-project-{}", new_instance_id()),
+            ControlCommand::new("project.list", json!({})),
             None,
         ))
+        .ok()
+        .and_then(|response| response_value::<Value>(response).ok())
+        .and_then(|value| value["activeProjectId"].as_str().map(str::to_owned));
+    let request = ControlRequest::new(
+        format!("desktop-recording-status-{}", new_instance_id()),
+        ControlCommand::new("record.status", json!({})),
+        None,
+    );
+    let request = match project_id {
+        Some(project_id) => request.with_expected_project_id(project_id),
+        None => request,
+    };
+    client
+        .request(&request)
         .ok()
         .and_then(|response| response_value::<AudioStatus>(response).ok())
         .map(|status| status.recording.active)

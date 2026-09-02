@@ -137,9 +137,35 @@ mod tests {
             ControlCommand::new("session.get", serde_json::json!({})),
             Some(7),
         );
-        let expected_request = request.clone();
+        let expected_request = request.clone().with_expected_project_id("project:a");
         let instance_id = descriptor.instance_id.clone();
         let server = thread::spawn(move || {
+            let mut stream = listener.accept().unwrap();
+            let hello: HelloRequest = riffra_control::transport::read_frame(&mut stream).unwrap();
+            assert_eq!(hello, HelloRequest::new());
+            riffra_control::transport::write_frame(
+                &mut stream,
+                &HelloResponse::new(instance_id.clone(), std::process::id()),
+            )
+            .unwrap();
+
+            let project_state_request: ControlRequest =
+                riffra_control::transport::read_frame(&mut stream).unwrap();
+            assert_eq!(project_state_request.command, "project.list");
+            riffra_control::transport::write_frame(
+                &mut stream,
+                &ControlResponse::success(
+                    project_state_request.request_id,
+                    7,
+                    CommandResult {
+                        result_type: "projectState".into(),
+                        value: serde_json::json!({"activeProjectId": "project:a"}),
+                    },
+                ),
+            )
+            .unwrap();
+            drop(stream);
+
             let mut stream = listener.accept().unwrap();
             let hello: HelloRequest = riffra_control::transport::read_frame(&mut stream).unwrap();
             assert_eq!(hello, HelloRequest::new());
@@ -148,7 +174,6 @@ mod tests {
                 &HelloResponse::new(instance_id, std::process::id()),
             )
             .unwrap();
-
             let received: ControlRequest =
                 riffra_control::transport::read_frame(&mut stream).unwrap();
             assert_eq!(received, expected_request);

@@ -1286,7 +1286,7 @@ impl<'a, A> HostDispatcher<'a, A> {
 
 /// Returns whether a control command requires an active Project precondition.
 pub fn command_requires_project_id(command: &str) -> bool {
-    !is_non_project_command(command)
+    !is_host_scoped_command(command)
 }
 
 pub(crate) fn validate_project_precondition(
@@ -1329,26 +1329,37 @@ fn is_read_command(command: &str) -> bool {
     )
 }
 
-fn is_non_project_command(command: &str) -> bool {
-    is_read_command(command)
-        || is_runtime_host_only(command)
-        || matches!(
-            command,
-            "host.status"
-                | "host.info"
-                | "host.bootstrap"
-                | "host.shutdown"
-                | "audio.master-gain.preview"
-                | "audio.emergency-mute"
-                | "midi.listening.enable"
-                | "midi.listening.disable"
-                | "audio.driver.get"
-                | "audio.driver.set"
-                | "plugin.editor.open"
-                | "take.comparison.start"
-                | "take.comparison.switch"
-                | "take.comparison.stop"
-        )
+fn is_host_scoped_command(command: &str) -> bool {
+    matches!(
+        command,
+        "host.status"
+            | "host.info"
+            | "host.bootstrap"
+            | "host.shutdown"
+            | "project.list"
+            | "audio.master-gain.preview"
+            | "audio.emergency-mute"
+            | "midi.listening.enable"
+            | "midi.listening.disable"
+            | "audio.status"
+            | "audio.probe"
+            | "audio.channels.probe"
+            | "audio.recover"
+            | "audio.startup.retry"
+            | "audio.driver.get"
+            | "audio.driver.set"
+            | "asset.preview"
+            | "asset.preview.stop"
+            | "plugin.catalog.list"
+            | "plugin.scan"
+            | "plugin.scan.start"
+            | "job.get"
+            | "job.cancel"
+            | "library.search"
+            | "library.asset.update"
+            | "library.related"
+            | "analysis.start"
+    )
 }
 
 fn is_arrangement_mutation_command(command: &str) -> bool {
@@ -1932,6 +1943,45 @@ mod tests {
         ControlCommand {
             name: command.into(),
             params,
+        }
+    }
+
+    #[test]
+    fn project_precondition_classification_follows_active_project_dependency() {
+        for command in [
+            "host.status",
+            "host.info",
+            "host.bootstrap",
+            "host.shutdown",
+            "project.list",
+            "audio.emergency-mute",
+            "audio.probe",
+            "audio.driver.get",
+            "plugin.catalog.list",
+            "plugin.scan",
+        ] {
+            assert!(!super::command_requires_project_id(command), "{command}");
+        }
+
+        for command in [
+            "session.get",
+            "track.add",
+            "project.export",
+            "transport.play",
+            "transport.stop",
+            "transport.go-to-start",
+            "transport.seek",
+            "record.start",
+            "record.stop",
+            "render.start",
+            "plugin.editor.open",
+            "take.comparison.start",
+            "instrument.set",
+            "missing.disable-plugin",
+            "undo",
+            "redo",
+        ] {
+            assert!(super::command_requires_project_id(command), "{command}");
         }
     }
 

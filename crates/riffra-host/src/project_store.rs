@@ -60,7 +60,6 @@ impl ProjectStore {
 
     /// Creates the new layout or opens the last active Project.
     pub fn initialize(&self) -> Result<ProjectInitialization, SessionLoadError> {
-        reject_legacy_data_root(&self.data_root)?;
         fs::create_dir_all(&self.projects_dir)?;
         for entry in fs::read_dir(&self.projects_dir)? {
             let entry = entry?;
@@ -286,24 +285,6 @@ fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
-fn reject_legacy_data_root(data_root: &Path) -> io::Result<()> {
-    let legacy = data_root.join("scratch").join("current.json");
-    let projects = data_root.join(PROJECTS_DIRECTORY);
-    let initialized = projects.is_dir()
-        && fs::read_dir(&projects)?.any(|entry| {
-            entry
-                .ok()
-                .is_some_and(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        });
-    if legacy.is_file() && !initialized {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "legacy Riffra data root detected; manual export and import is required",
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,23 +310,6 @@ mod tests {
         reopened.initialize().unwrap();
         assert_eq!(reopened.active_project_id().unwrap(), second.project_id);
         assert_ne!(first_id, second.project_id);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn rejects_a_legacy_data_root_before_creating_the_new_layout() {
-        let root = root("legacy");
-        let legacy = root.join("scratch").join("current.json");
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(&legacy, b"legacy session").unwrap();
-
-        let error = ProjectStore::new(&root).initialize().unwrap_err();
-
-        assert_eq!(error.0.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("manual export and import"));
-        assert!(!root.join(PROJECTS_DIRECTORY).exists());
-        assert!(!root.join(WORKSPACE_FILE).exists());
-        assert_eq!(fs::read(&legacy).unwrap(), b"legacy session");
         let _ = fs::remove_dir_all(root);
     }
 

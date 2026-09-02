@@ -5,7 +5,7 @@ use crate::control::ControlServer;
 use crate::dispatcher::{
     AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceParameterParams,
     EffectRemoveParams, EffectReorderParams, HostDispatcher, MidiInputParams,
-    MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+    MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams, command_requires_project_id,
     validate_project_precondition,
 };
 use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
@@ -17,7 +17,7 @@ use crate::runtime::{RuntimeError, RuntimeReconciler};
 use crate::session::{
     adapter as session_adapter,
     commit::{self, CanonicalMutationEffect},
-    context::SessionContext,
+    context::{ProjectCommitContext, SessionContext},
 };
 use crate::startup;
 use crate::{
@@ -221,6 +221,13 @@ impl HostState {
     }
 
     fn session_context(&self) -> Result<SessionContext<'_>, ProtocolError> {
+        self.session_context_with_project_commit(None)
+    }
+
+    fn session_context_with_project_commit(
+        &self,
+        expected_project_id: Option<String>,
+    ) -> Result<SessionContext<'_>, ProtocolError> {
         let storage = self
             .project_store
             .active_session_store()
@@ -233,6 +240,11 @@ impl HostState {
             data_root: &self.data_root,
             safe_mode: self.core.safe_mode(),
             events: self.events.as_ref(),
+            project_commit: expected_project_id.map(|expected_project_id| ProjectCommitContext {
+                project_store: &self.project_store,
+                command_gate: &self._command_gate,
+                expected_project_id,
+            }),
         })
     }
 
@@ -305,7 +317,12 @@ impl HostState {
         ) {
             return Self::failure(request_id, error);
         }
-        match self.dispatch(request.command.as_str(), request.params, current) {
+        match self.dispatch(
+            request.command.as_str(),
+            request.params,
+            current,
+            request.expected_project_id.clone(),
+        ) {
             Ok((result_type, value, sequence)) => {
                 self.response(request_id, result_type, value, sequence)
             }
@@ -318,6 +335,7 @@ impl HostState {
         command: &str,
         params: Value,
         current: CanonicalState,
+        expected_project_id: Option<String>,
     ) -> Result<(&'static str, Value, u64), ProtocolError> {
         if matches!(
             command,
@@ -342,9 +360,15 @@ impl HostState {
             ));
         }
         if !is_host_runtime_command(command) {
-            if let Some(result) =
-                self.dispatch_shared_session(command, params.clone(), current.sequence)?
-            {
+            let project_commit = is_long_project_operation(command)
+                .then_some(expected_project_id)
+                .flatten();
+            if let Some(result) = self.dispatch_shared_session(
+                command,
+                params.clone(),
+                current.sequence,
+                project_commit,
+            )? {
                 return Ok(result);
             }
             let current_sequence = current.sequence;
@@ -1056,8 +1080,9 @@ impl HostState {
         command: &str,
         params: Value,
         current_sequence: u64,
+        project_commit: Option<String>,
     ) -> Result<Option<(&'static str, Value, u64)>, ProtocolError> {
-        let context = self.session_context()?;
+        let context = self.session_context_with_project_commit(project_commit)?;
         let result = match command {
             "track.audio-input.set" => {
                 let params: AudioInputParams = decode(params)?;
@@ -2590,16 +2615,14 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
 }
 
 fn requires_command_gate(command: &str) -> bool {
-    !is_host_runtime_command(command)
-        && !matches!(
-            command,
-            // These operations validate and prepare an external VST candidate
-            // before attempting the canonical commit. Their expected
-            // sequence is checked by the adapter at commit time, so holding
-            // the short canonical-operation gate across process work would
-            // only block unrelated reads and transport controls.
-            "instrument.set" | "effect.add" | "missing.replace-plugin"
-        )
+    command_requires_project_id(command) && !is_long_project_operation(command)
+}
+
+fn is_long_project_operation(command: &str) -> bool {
+    matches!(
+        command,
+        "instrument.set" | "effect.add" | "missing.replace-plugin"
+    )
 }
 
 fn is_host_runtime_command(command: &str) -> bool {
@@ -3102,6 +3125,9 @@ mod tests {
                     "session-get",
                     ControlCommand::new("session.get", serde_json::json!({})),
                     Some(0),
+                )
+                .with_expected_project_id(
+                    host.bootstrap().unwrap().project_state.active_project_id,
                 ),
             )
             .unwrap();
@@ -3438,11 +3464,14 @@ mod tests {
         );
 
         let project_b_session = client_b
-            .request(&ControlRequest::new(
-                "project-b-session",
-                ControlCommand::new("session.get", serde_json::json!({})),
-                None,
-            ))
+            .request(
+                &ControlRequest::new(
+                    "project-b-session",
+                    ControlCommand::new("session.get", serde_json::json!({})),
+                    None,
+                )
+                .with_expected_project_id(project_b.clone()),
+            )
             .unwrap();
         assert!(project_b_session.ok);
         assert_eq!(
@@ -3452,6 +3481,41 @@ mod tests {
                 .len(),
             0
         );
+
+        let stale_export = client_b
+            .request(
+                &ControlRequest::new(
+                    "stale-project-export",
+                    ControlCommand::new(
+                        "project.export",
+                        serde_json::json!({
+                            "output": data_root.join("stale-project.riffra")
+                        }),
+                    ),
+                    None,
+                )
+                .with_expected_project_id(initial.clone()),
+            )
+            .unwrap();
+        assert!(!stale_export.ok);
+        assert_eq!(stale_export.error.unwrap().code, ErrorCode::Conflict);
+        assert!(!data_root.join("stale-project.riffra").exists());
+
+        let stale_transport = client_b
+            .request(
+                &ControlRequest::new(
+                    "stale-transport-play",
+                    ControlCommand::new(
+                        "transport.play",
+                        serde_json::json!({"transportSequence": 1}),
+                    ),
+                    None,
+                )
+                .with_expected_project_id(initial.clone()),
+            )
+            .unwrap();
+        assert!(!stale_transport.ok);
+        assert_eq!(stale_transport.error.unwrap().code, ErrorCode::Conflict);
 
         let back_to_a = client_a
             .request(
@@ -3465,11 +3529,14 @@ mod tests {
             .unwrap();
         assert!(back_to_a.ok);
         let project_a_session = client_a
-            .request(&ControlRequest::new(
-                "project-a-session",
-                ControlCommand::new("session.get", serde_json::json!({})),
-                None,
-            ))
+            .request(
+                &ControlRequest::new(
+                    "project-a-session",
+                    ControlCommand::new("session.get", serde_json::json!({})),
+                    None,
+                )
+                .with_expected_project_id(initial.clone()),
+            )
             .unwrap();
         assert!(project_a_session.ok);
         assert_eq!(

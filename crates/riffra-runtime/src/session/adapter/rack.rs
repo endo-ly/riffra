@@ -39,6 +39,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 expected_sequence,
                 current_sequence,
             },
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
@@ -46,6 +53,28 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 AdapterError::command(repair_previous_arrangement(context, message))
             }
         });
+    }
+    let _project_commit_guard = context
+        .project_commit
+        .as_ref()
+        .map(|project_commit| {
+            project_commit
+                .command_gate
+                .lock()
+                .map_err(|_| AdapterError::command("Host command gate was poisoned"))
+        })
+        .transpose()?;
+    if let Some(project_commit) = context.project_commit.as_ref() {
+        let current_project_id = project_commit
+            .project_store
+            .active_project_id()
+            .map_err(|error| AdapterError::command(error.to_string()))?;
+        if current_project_id != project_commit.expected_project_id {
+            return Err(AdapterError::ProjectConflict {
+                expected_project_id: project_commit.expected_project_id.clone(),
+                current_project_id,
+            });
+        }
     }
     if let Err(error) = commit_core_application(context, |core, store| {
         core.application(store).commit_prepared(prepared)
@@ -61,6 +90,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                     current_sequence,
                 }
             }
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }

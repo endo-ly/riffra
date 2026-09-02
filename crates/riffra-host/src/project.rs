@@ -48,11 +48,11 @@ struct ProjectManifest<'a> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProjectManifestOwned {
     manifest_version: u32,
+    exported_at_ms: u64,
     session: CreativeSession,
-    #[serde(default)]
     assets: Vec<PackagedAsset>,
 }
 
@@ -254,6 +254,7 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
             manifest.manifest_version
         ));
     }
+    let _exported_at_ms = manifest.exported_at_ms;
     let session = manifest.session.validate_and_normalize()?;
     let staging_dir = data_root
         .join("assets")
@@ -615,6 +616,38 @@ mod tests {
     }
 
     #[test]
+    fn import_requires_the_current_manifest_fields() {
+        let root = std::env::temp_dir().join(format!("riffra-project-manifest-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let session = CreativeSession::new(now_ms());
+        let package = package_path(&root, "manifest.riffra");
+        write_manifest_package(
+            &package,
+            &serde_json::json!({
+                "manifestVersion": MANIFEST_VERSION,
+                "exportedAtMs": 42,
+                "session": session
+            }),
+        );
+        let error = import(&root, &package).unwrap_err();
+        assert!(error.contains("missing field `assets`"));
+
+        let package = package_path(&root, "unknown-field.riffra");
+        let mut manifest = serde_json::json!({
+            "manifestVersion": MANIFEST_VERSION,
+            "exportedAtMs": 42,
+            "session": CreativeSession::new(now_ms()),
+            "assets": []
+        });
+        manifest["unexpected"] = serde_json::json!(true);
+        write_manifest_package(&package, &manifest);
+        let error = import(&root, &package).unwrap_err();
+        assert!(error.contains("unknown field `unexpected`"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn export_import_preserves_clip_asset_reference_and_content() {
         let root = std::env::temp_dir().join(format!("riffra-project-roundtrip-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
@@ -626,10 +659,25 @@ mod tests {
         let output = package_path(&root, "roundtrip.riffra");
         let exported = export(&root, &session, 7, &output).unwrap();
         assert_eq!(exported.asset_count, 1);
-        assert!(
-            read_manifest(&output)["assets"][0]
-                .get("contentHash")
-                .is_none()
+        let asset_fields = read_manifest(&output)["assets"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            asset_fields,
+            [
+                "assetId",
+                "assetKind",
+                "name",
+                "packagePath",
+                "provenance",
+                "state"
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect()
         );
 
         let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
