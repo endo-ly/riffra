@@ -159,13 +159,53 @@ pub(crate) fn register_with_id(
     content_location: &str,
     provenance: Option<Provenance>,
 ) -> Result<(), String> {
+    register_with_id_impl(
+        data_root,
+        id,
+        kind,
+        name,
+        content_location,
+        provenance,
+        true,
+    )
+}
+
+/// Registers canonical metadata for an Asset whose source content is missing.
+pub(crate) fn register_missing_with_id(
+    data_root: &Path,
+    id: &AssetId,
+    kind: AssetKind,
+    name: &str,
+    content_location: &str,
+    provenance: Option<Provenance>,
+) -> Result<(), String> {
+    register_with_id_impl(
+        data_root,
+        id,
+        kind,
+        name,
+        content_location,
+        provenance,
+        false,
+    )
+}
+
+fn register_with_id_impl(
+    data_root: &Path,
+    id: &AssetId,
+    kind: AssetKind,
+    name: &str,
+    content_location: &str,
+    provenance: Option<Provenance>,
+    require_content_file: bool,
+) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("Asset name must not be empty.".into());
     }
     if content_location.trim().is_empty() {
         return Err("Asset content location must not be empty.".into());
     }
-    if !Path::new(content_location).is_file() {
+    if require_content_file && !Path::new(content_location).is_file() {
         return Err(format!(
             "Asset content file does not exist: {content_location}"
         ));

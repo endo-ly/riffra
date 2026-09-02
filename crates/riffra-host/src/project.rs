@@ -1,16 +1,18 @@
 use crate::asset;
 use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs,
-    hash::Hasher,
     io::{Read, Write},
     path::{Component, Path},
 };
+use uuid::Uuid;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const MANIFEST_VERSION: u32 = 2;
+const MANIFEST_VERSION: u32 = 3;
+const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Summary of a completed project export.
 #[derive(Clone, Debug, Serialize)]
@@ -34,7 +36,7 @@ struct PackagedAsset {
     asset_kind: AssetKind,
     provenance: Option<Provenance>,
     package_path: String,
-    content_hash: u64,
+    content_hash: String,
     state: String,
 }
 
@@ -94,21 +96,6 @@ pub fn export(
     let mut assets = Vec::new();
     let mut asset_sources = Vec::new();
     for (index, asset_id) in referenced_asset_ids(session).into_iter().enumerate() {
-        if assets.len() >= 256 {
-            break;
-        }
-        let Some(location) = asset::resolve_content_location(data_root, &asset_id) else {
-            assets.push(PackagedAsset {
-                asset_id: asset_id.clone(),
-                name: "missing".into(),
-                asset_kind: referenced_asset_kind(session, &asset_id),
-                provenance: None,
-                package_path: String::new(),
-                content_hash: 0,
-                state: "missing".into(),
-            });
-            continue;
-        };
         let Some(canonical) = asset::load(data_root, &asset_id) else {
             assets.push(PackagedAsset {
                 asset_id: asset_id.clone(),
@@ -116,18 +103,18 @@ pub fn export(
                 asset_kind: referenced_asset_kind(session, &asset_id),
                 provenance: None,
                 package_path: String::new(),
-                content_hash: 0,
+                content_hash: String::new(),
                 state: "missing".into(),
             });
             continue;
         };
-        let source_path = Path::new(&location);
+        let source_path = Path::new(&canonical.content_location);
         let base = source_path
             .file_stem()
             .and_then(|name| name.to_str())
             .map(safe_name)
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| format!("asset-{}", index + 1));
+            .unwrap_or_else(|| safe_name(&canonical.name));
         let extension = source_path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -139,25 +126,29 @@ pub fn export(
             })
             .map(|extension| format!(".{extension}"))
             .unwrap_or_default();
-        let package_name = format!("{}-{}{}", index + 1, base, extension);
-        let package_path = Path::new("assets").join(&package_name);
-        let (state, content_hash) = if source_path.is_file() {
+        let (state, package_path, content_hash) = if source_path.is_file() {
+            let package_name = format!("{}-{}{}", index + 1, base, extension);
+            let package_path = Path::new("assets").join(&package_name);
             match hash_file(source_path) {
                 Ok(hash) => {
                     asset_sources.push((package_path.clone(), source_path.to_path_buf()));
-                    ("collected".to_string(), hash)
+                    (
+                        "collected".to_string(),
+                        package_path.to_string_lossy().replace('\\', "/"),
+                        hash,
+                    )
                 }
-                Err(_) => ("missing".to_string(), 0),
+                Err(_) => ("missing".to_string(), String::new(), String::new()),
             }
         } else {
-            ("missing".to_string(), 0)
+            ("missing".to_string(), String::new(), String::new())
         };
         assets.push(PackagedAsset {
             asset_id,
-            name: base,
+            name: canonical.name,
             asset_kind: canonical.kind,
             provenance: canonical.provenance,
-            package_path: package_path.to_string_lossy().replace('\\', "/"),
+            package_path,
             content_hash,
             state,
         });
@@ -231,7 +222,7 @@ pub fn export(
     })
 }
 
-/// Imports a `.riffra` archive and restores its collected Assets.
+/// Imports a `.riffra` archive and restores its Assets and canonical metadata.
 ///
 /// # Errors
 /// Returns an error when the manifest, packaged paths, or Asset conflicts are
@@ -256,8 +247,15 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
     archive
         .by_name("project.json")
         .map_err(|error| format!("Project archive has no project.json manifest: {error}"))?
+        .take(MAX_MANIFEST_BYTES + 1)
         .read_to_end(&mut manifest_payload)
         .map_err(|error| format!("Project manifest could not be read: {error}"))?;
+    if manifest_payload.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "Project manifest exceeds the {} byte limit.",
+            MAX_MANIFEST_BYTES
+        ));
+    }
     let manifest = serde_json::from_slice::<ProjectManifestOwned>(&manifest_payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
     if manifest.manifest_version != MANIFEST_VERSION {
@@ -267,30 +265,75 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
         ));
     }
     let session = manifest.session.validate_and_normalize()?;
-    let mut packaged_assets = Vec::new();
-    for asset in &manifest.assets {
-        if asset.state != "collected" {
-            continue;
+    let staging_dir = data_root
+        .join("assets")
+        .join(format!(".riffra-import-{}", Uuid::now_v7()));
+    fs::create_dir_all(&staging_dir)
+        .map_err(|error| format!("Project Asset staging folder could not be created: {error}"))?;
+    let result = (|| {
+        let mut staged_assets = Vec::new();
+        let mut missing_assets = Vec::new();
+        for (index, asset) in manifest.assets.iter().enumerate() {
+            AssetId::from_normalized(asset.asset_id.as_str()).map_err(|_| {
+                format!(
+                    "Project references a non-canonical AssetId: {}.",
+                    asset.asset_id
+                )
+            })?;
+            if asset.state == "missing" {
+                missing_assets.push(asset.clone());
+                continue;
+            }
+            if asset.state != "collected" {
+                return Err(format!(
+                    "Project Asset {} has an unsupported state.",
+                    asset.asset_id
+                ));
+            }
+            resolve_packaged_path(Path::new("."), &asset.package_path)?;
+            let staging_path = staging_dir.join(format!("asset-{index}.tmp"));
+            let mut entry = archive
+                .by_name(&asset.package_path)
+                .map_err(|error| format!("Project Asset is missing from the archive: {error}"))?;
+            let mut destination = fs::File::create(&staging_path).map_err(|error| {
+                format!("Project Asset staging file could not be created: {error}")
+            })?;
+            let mut hasher = Sha256::new();
+            let mut buffer = vec![0u8; 1 << 20];
+            loop {
+                let read = entry
+                    .read(&mut buffer)
+                    .map_err(|error| format!("Project Asset could not be read: {error}"))?;
+                if read == 0 {
+                    break;
+                }
+                destination.write_all(&buffer[..read]).map_err(|error| {
+                    format!("Project Asset staging file could not be written: {error}")
+                })?;
+                hasher.update(&buffer[..read]);
+            }
+            destination.sync_all().map_err(|error| {
+                format!("Project Asset staging file could not be synchronized: {error}")
+            })?;
+            let content_hash = hex_hash(hasher.finalize());
+            if content_hash != asset.content_hash {
+                return Err(format!(
+                    "Project Asset {} failed hash validation.",
+                    asset.asset_id
+                ));
+            }
+            staged_assets.push((asset.clone(), staging_path));
         }
-        resolve_packaged_path(Path::new("."), &asset.package_path)?;
-        let mut content = Vec::new();
-        archive
-            .by_name(&asset.package_path)
-            .map_err(|error| format!("Project Asset is missing from the archive: {error}"))?
-            .read_to_end(&mut content)
-            .map_err(|error| format!("Project Asset could not be read: {error}"))?;
-        if hash_bytes(&content) != asset.content_hash {
-            return Err(format!(
-                "Project Asset {} failed hash validation.",
-                asset.asset_id
-            ));
+        for (asset, staging_path) in staged_assets {
+            import_packaged_asset(data_root, &asset, &staging_path)?;
         }
-        packaged_assets.push((asset.clone(), content));
-    }
-    for (asset, content) in packaged_assets {
-        import_packaged_asset(data_root, &asset, &content)?;
-    }
-    Ok(session)
+        for asset in missing_assets {
+            import_missing_asset(data_root, &asset)?;
+        }
+        Ok(session)
+    })();
+    let _ = fs::remove_dir_all(&staging_dir);
+    result
 }
 
 /// Imports one packaged asset, preserving its id. A same-id asset whose
@@ -299,7 +342,7 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
 fn import_packaged_asset(
     data_root: &Path,
     asset: &PackagedAsset,
-    content: &[u8],
+    staging_path: &Path,
 ) -> Result<(), String> {
     AssetId::from_normalized(asset.asset_id.as_str()).map_err(|_| {
         format!(
@@ -325,31 +368,55 @@ fn import_packaged_asset(
             &asset.name,
             Path::new(&asset.package_path),
         )?;
-        fs::write(&destination, content)
-            .map_err(|error| format!("Imported asset could not be restored: {error}"))?;
-        asset::register_with_id(
+        install_staged_asset(staging_path, &destination)?;
+        if let Err(error) = asset::register_with_id(
             data_root,
             &asset.asset_id,
             asset.asset_kind,
             &asset.name,
             &destination.to_string_lossy(),
             asset.provenance.clone(),
-        )?;
+        ) {
+            let _ = fs::remove_file(&destination);
+            return Err(error);
+        }
         return Ok(());
     }
     let destination =
         asset::unique_import_destination(data_root, &asset.name, Path::new(&asset.package_path))?;
-    fs::write(&destination, content)
-        .map_err(|error| format!("Imported asset could not be copied: {error}"))?;
-    asset::register_with_id(
+    install_staged_asset(staging_path, &destination)?;
+    if let Err(error) = asset::register_with_id(
         data_root,
         &asset.asset_id,
         asset.asset_kind,
         &asset.name,
         &destination.to_string_lossy(),
         asset.provenance.clone(),
-    )?;
+    ) {
+        let _ = fs::remove_file(&destination);
+        return Err(error);
+    }
     Ok(())
+}
+
+fn import_missing_asset(data_root: &Path, asset: &PackagedAsset) -> Result<(), String> {
+    if asset::load(data_root, &asset.asset_id).is_some() {
+        return Ok(());
+    }
+    let location = asset::unique_import_destination_with_ext(data_root, &asset.name, "missing")?;
+    asset::register_missing_with_id(
+        data_root,
+        &asset.asset_id,
+        asset.asset_kind,
+        &asset.name,
+        &location.to_string_lossy(),
+        asset.provenance.clone(),
+    )
+}
+
+fn install_staged_asset(staging_path: &Path, destination: &Path) -> Result<(), String> {
+    fs::rename(staging_path, destination)
+        .map_err(|error| format!("Imported asset could not be installed: {error}"))
 }
 
 fn resolve_packaged_path(
@@ -391,10 +458,10 @@ fn safe_name(value: &str) -> String {
     }
 }
 
-fn hash_file(path: &Path) -> Result<u64, String> {
+fn hash_file(path: &Path) -> Result<String, String> {
     let mut file =
         fs::File::open(path).map_err(|error| format!("Asset file could not be opened: {error}"))?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
     loop {
         let read = file
@@ -403,15 +470,13 @@ fn hash_file(path: &Path) -> Result<u64, String> {
         if read == 0 {
             break;
         }
-        hasher.write(&buffer[..read]);
+        hasher.update(&buffer[..read]);
     }
-    Ok(hasher.finish())
+    Ok(hex_hash(hasher.finalize()))
 }
 
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(bytes);
-    hasher.finish()
+fn hex_hash(digest: sha2::digest::Output<Sha256>) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn referenced_asset_kind(session: &CreativeSession, asset_id: &AssetId) -> AssetKind {
@@ -545,7 +610,7 @@ mod tests {
             "assetKind": "audio",
             "provenance": null,
             "packagePath": "../outside.wav",
-            "contentHash": 0,
+            "contentHash": "",
             "state": "collected"
         }]);
         write_manifest_package(&manifest_path, &manifest);
@@ -567,6 +632,13 @@ mod tests {
         let output = package_path(&root, "roundtrip.riffra");
         let exported = export(&root, &session, 7, &output).unwrap();
         assert_eq!(exported.asset_count, 1);
+        assert_eq!(
+            read_manifest(&output)["assets"][0]["contentHash"]
+                .as_str()
+                .unwrap()
+                .len(),
+            64
+        );
 
         let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
         fs::remove_file(original_location).unwrap();
@@ -648,5 +720,43 @@ mod tests {
             "conflicting content must not be overwritten"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_restores_missing_asset_metadata_without_source_content() {
+        let source_root =
+            std::env::temp_dir().join(format!("riffra-project-missing-source-{}", now_ms()));
+        let target_root =
+            std::env::temp_dir().join(format!("riffra-project-missing-target-{}", now_ms()));
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(&target_root).unwrap();
+        let source = source_root.join("take.wav");
+        fs::write(&source, b"source").unwrap();
+        let asset_id = asset::register(
+            &source_root,
+            AssetKind::Audio,
+            "Original take",
+            &source.to_string_lossy(),
+            Some(riffra_core::Provenance::imported()),
+        )
+        .unwrap();
+        let session = session_with_clip(&source_root, asset_id.clone());
+        let package = source_root.join("missing.riffra");
+        fs::remove_file(source).unwrap();
+        export(&source_root, &session, 13, &package).unwrap();
+
+        let imported = import(&target_root, &package).unwrap();
+        assert_eq!(imported.arrangement.audio_clips[0].asset_id, asset_id);
+        let restored = asset::load(&target_root, &asset_id).unwrap();
+        assert_eq!(restored.name, "Original take");
+        assert!(
+            !Path::new(&restored.content_location).exists(),
+            "unexpected missing Asset file: {}",
+            restored.content_location
+        );
+        asset::validate_session_references(&target_root, &imported).unwrap();
+
+        let _ = fs::remove_dir_all(source_root);
+        let _ = fs::remove_dir_all(target_root);
     }
 }
