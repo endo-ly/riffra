@@ -1,7 +1,6 @@
 use crate::asset;
 use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs,
@@ -11,7 +10,7 @@ use std::{
 use uuid::Uuid;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const MANIFEST_VERSION: u32 = 3;
+const MANIFEST_VERSION: u32 = 2;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Summary of a completed project export.
@@ -29,14 +28,13 @@ pub struct ProjectExport {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PackagedAsset {
     asset_id: AssetId,
     name: String,
     asset_kind: AssetKind,
     provenance: Option<Provenance>,
     package_path: String,
-    content_hash: String,
     state: String,
 }
 
@@ -103,7 +101,6 @@ pub fn export(
                 asset_kind: referenced_asset_kind(session, &asset_id),
                 provenance: None,
                 package_path: String::new(),
-                content_hash: String::new(),
                 state: "missing".into(),
             });
             continue;
@@ -126,22 +123,16 @@ pub fn export(
             })
             .map(|extension| format!(".{extension}"))
             .unwrap_or_default();
-        let (state, package_path, content_hash) = if source_path.is_file() {
+        let (state, package_path) = if source_path.is_file() {
             let package_name = format!("{}-{}{}", index + 1, base, extension);
             let package_path = Path::new("assets").join(&package_name);
-            match hash_file(source_path) {
-                Ok(hash) => {
-                    asset_sources.push((package_path.clone(), source_path.to_path_buf()));
-                    (
-                        "collected".to_string(),
-                        package_path.to_string_lossy().replace('\\', "/"),
-                        hash,
-                    )
-                }
-                Err(_) => ("missing".to_string(), String::new(), String::new()),
-            }
+            asset_sources.push((package_path.clone(), source_path.to_path_buf()));
+            (
+                "collected".to_string(),
+                package_path.to_string_lossy().replace('\\', "/"),
+            )
         } else {
-            ("missing".to_string(), String::new(), String::new())
+            ("missing".to_string(), String::new())
         };
         assets.push(PackagedAsset {
             asset_id,
@@ -149,7 +140,6 @@ pub fn export(
             asset_kind: canonical.kind,
             provenance: canonical.provenance,
             package_path,
-            content_hash,
             state,
         });
     }
@@ -298,7 +288,6 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
             let mut destination = fs::File::create(&staging_path).map_err(|error| {
                 format!("Project Asset staging file could not be created: {error}")
             })?;
-            let mut hasher = Sha256::new();
             let mut buffer = vec![0u8; 1 << 20];
             loop {
                 let read = entry
@@ -310,18 +299,10 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
                 destination.write_all(&buffer[..read]).map_err(|error| {
                     format!("Project Asset staging file could not be written: {error}")
                 })?;
-                hasher.update(&buffer[..read]);
             }
             destination.sync_all().map_err(|error| {
                 format!("Project Asset staging file could not be synchronized: {error}")
             })?;
-            let content_hash = hex_hash(hasher.finalize());
-            if content_hash != asset.content_hash {
-                return Err(format!(
-                    "Project Asset {} failed hash validation.",
-                    asset.asset_id
-                ));
-            }
             staged_assets.push((asset.clone(), staging_path));
         }
         for (asset, staging_path) in staged_assets {
@@ -352,8 +333,7 @@ fn import_packaged_asset(
     })?;
     if let Some(existing) = asset::load(data_root, &asset.asset_id) {
         if Path::new(&existing.content_location).is_file() {
-            let existing_hash = hash_file(Path::new(&existing.content_location))?;
-            if existing_hash != asset.content_hash {
+            if !files_equal(Path::new(&existing.content_location), staging_path)? {
                 return Err(format!(
                     "Asset {} already exists with different content; refusing to overwrite.",
                     asset.asset_id
@@ -458,25 +438,40 @@ fn safe_name(value: &str) -> String {
     }
 }
 
-fn hash_file(path: &Path) -> Result<String, String> {
-    let mut file =
-        fs::File::open(path).map_err(|error| format!("Asset file could not be opened: {error}"))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| format!("Asset file could not be read: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
+fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
+    let left_size = fs::metadata(left)
+        .map_err(|error| format!("Asset file could not be compared: {error}"))?
+        .len();
+    let right_size = fs::metadata(right)
+        .map_err(|error| format!("Asset file could not be compared: {error}"))?
+        .len();
+    if left_size != right_size {
+        return Ok(false);
     }
-    Ok(hex_hash(hasher.finalize()))
-}
 
-fn hex_hash(digest: sha2::digest::Output<Sha256>) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut left = fs::File::open(left)
+        .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+    let mut right = fs::File::open(right)
+        .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+    let mut left_buffer = vec![0u8; 1 << 20];
+    let mut right_buffer = vec![0u8; 1 << 20];
+    loop {
+        let left_read = left
+            .read(&mut left_buffer)
+            .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+        let right_read = right
+            .read(&mut right_buffer)
+            .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+        if left_read != right_read {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+        if left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+    }
 }
 
 fn referenced_asset_kind(session: &CreativeSession, asset_id: &AssetId) -> AssetKind {
@@ -610,7 +605,6 @@ mod tests {
             "assetKind": "audio",
             "provenance": null,
             "packagePath": "../outside.wav",
-            "contentHash": "",
             "state": "collected"
         }]);
         write_manifest_package(&manifest_path, &manifest);
@@ -632,12 +626,10 @@ mod tests {
         let output = package_path(&root, "roundtrip.riffra");
         let exported = export(&root, &session, 7, &output).unwrap();
         assert_eq!(exported.asset_count, 1);
-        assert_eq!(
-            read_manifest(&output)["assets"][0]["contentHash"]
-                .as_str()
-                .unwrap()
-                .len(),
-            64
+        assert!(
+            read_manifest(&output)["assets"][0]
+                .get("contentHash")
+                .is_none()
         );
 
         let original_location = asset::resolve_content_location(&root, &asset_id).unwrap();
@@ -649,6 +641,55 @@ mod tests {
         let location = asset::resolve_content_location(&root, &asset_id).unwrap();
         assert_eq!(fs::read(&location).unwrap(), content);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_reuses_same_id_when_existing_content_matches() {
+        let source_root =
+            std::env::temp_dir().join(format!("riffra-project-reuse-source-{}", now_ms()));
+        let target_root =
+            std::env::temp_dir().join(format!("riffra-project-reuse-target-{}", now_ms()));
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir_all(&target_root).unwrap();
+        let content = b"same production content";
+        let source = source_root.join("take.wav");
+        fs::write(&source, content).unwrap();
+        let asset_id = asset::register(
+            &source_root,
+            AssetKind::Audio,
+            "Take",
+            &source.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let package = source_root.join("reuse.riffra");
+        export(
+            &source_root,
+            &session_with_clip(&source_root, asset_id.clone()),
+            17,
+            &package,
+        )
+        .unwrap();
+
+        let existing = target_root.join("existing.wav");
+        fs::write(&existing, content).unwrap();
+        asset::register_with_id(
+            &target_root,
+            &asset_id,
+            AssetKind::Audio,
+            "Existing take",
+            &existing.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+
+        import(&target_root, &package).unwrap();
+        let restored = asset::load(&target_root, &asset_id).unwrap();
+        assert_eq!(restored.content_location, existing.to_string_lossy());
+        assert_eq!(fs::read(existing).unwrap(), content);
+
+        let _ = fs::remove_dir_all(source_root);
+        let _ = fs::remove_dir_all(target_root);
     }
 
     #[test]
