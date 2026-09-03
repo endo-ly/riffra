@@ -42,6 +42,8 @@ add_library(riffra-audio-core STATIC)
 target_sources(riffra-render-core PRIVATE
   src/processing/TimelineEngine.cpp
   src/processing/TimelineEngine.h
+  src/processing/TimelineSnapshotBuilder.cpp
+  src/processing/TimelineSnapshotBuilder.h
   src/processing/TimelineTimebase.h
   src/processing/RecordingCaptureRuntime.cpp
   src/processing/RecordingCaptureRuntime.h

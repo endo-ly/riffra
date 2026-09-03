@@ -18,6 +18,7 @@ namespace riffra {
 
 class TimelineEngineTestPeer;
 class SafetyAudioCallback;
+class TimelineSnapshotBuilder;
 
 /// Envelope multiplier for a normalized fade progress in [0, 1].
 ///
@@ -91,6 +92,7 @@ public:
 private:
     friend class TimelineEngineTestPeer;
     friend class SafetyAudioCallback;
+    friend class TimelineSnapshotBuilder;
 
     class AudioReadScope;
     class AudioPublishScope;
@@ -212,11 +214,6 @@ private:
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
-    bool prepareSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
-                         double outputSampleRate, int maximumBlockSize,
-                         std::unique_ptr<PreparedTimeline>& prepared, bool& monitorLiveInputState,
-                         std::uint32_t& monitoringInputChannelsState,
-                         bool& armedInstrumentTrackState, juce::String& error);
     void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
                   int sampleCount) noexcept;
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
