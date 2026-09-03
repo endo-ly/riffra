@@ -169,3 +169,82 @@ impl Track {
         Ok(())
     }
 }
+#[cfg(test)]
+mod tests {
+    use crate::domain::arrangement::{Arrangement, AudioClip, Track};
+    use crate::domain::asset::{AssetId, mint_asset_id};
+    use crate::domain::timeline::{ProjectTimebase, TimelineLoopRange, TimelineTick};
+
+    fn clip(track_id: &str, asset_id: AssetId) -> AudioClip {
+        AudioClip::full_source(
+            "clip:1".into(),
+            "clip".into(),
+            track_id.into(),
+            asset_id,
+            TimelineTick(0),
+            1_000,
+            1_000,
+        )
+    }
+
+    fn arrangement_with_clip(asset: AssetId) -> Arrangement {
+        let mut arrangement = Arrangement {
+            revision: 0,
+            timebase: ProjectTimebase::default(),
+            loop_range: TimelineLoopRange::default(),
+            punch_range: None,
+            tracks: vec![
+                Track::audio("main".into(), "Main".into()),
+                Track {
+                    ..Track::audio("extra".into(), "Extra".into())
+                },
+            ],
+            audio_clips: Vec::new(),
+            midi_clips: Vec::new(),
+            automation_lanes: Vec::new(),
+            markers: Vec::new(),
+            regions: Vec::new(),
+            harmony_events: Vec::new(),
+            recording_sessions: Vec::new(),
+            recording_passes: Vec::new(),
+            takes: Vec::new(),
+        };
+        let mut clip = clip("main", asset);
+        clip.id = "clip:1".into();
+        clip.start_tick = TimelineTick(1_920);
+        arrangement
+            .add_audio_clip(clip, |_| true)
+            .expect("seed clip is valid");
+        arrangement
+    }
+
+    #[test]
+    fn removing_a_track_removes_its_clips_but_keeps_other_tracks() {
+        // Arrange
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+
+        // Act
+        arrangement.remove_track("main").unwrap();
+
+        // Assert
+        assert_eq!(arrangement.tracks.len(), 1);
+        assert_eq!(arrangement.tracks[0].id, "extra");
+        assert!(arrangement.audio_clips.is_empty());
+        assert_eq!(arrangement.revision, 2);
+    }
+
+    #[test]
+    fn reordering_a_track_keeps_clip_ownership_unchanged() {
+        // Arrange
+        let mut arrangement = arrangement_with_clip(mint_asset_id());
+
+        // Act
+        arrangement.reorder_track("extra", 0).unwrap();
+
+        // Assert
+        assert_eq!(arrangement.tracks[0].id, "extra");
+        assert_eq!(arrangement.tracks[1].id, "main");
+        assert_eq!(arrangement.audio_clips[0].track_id, "main");
+        assert_eq!(arrangement.revision, 2);
+    }
+}

@@ -63,3 +63,42 @@ impl AutomationLane {
         Ok(())
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::arrangement::{Arrangement, Track};
+    use crate::domain::timeline::TimelineTick;
+
+    #[test]
+    fn automation_points_are_canonical_and_follow_track_ownership() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::audio("main".into(), "Main".into()));
+        arrangement.automation_lanes.push(AutomationLane {
+            id: "automation:main:volume".into(),
+            track_id: "main".into(),
+            parameter: AutomationParameter::Volume,
+            points: vec![
+                AutomationPoint {
+                    id: "late".into(),
+                    tick: TimelineTick(960),
+                    value: 100.0,
+                },
+                AutomationPoint {
+                    id: "early".into(),
+                    tick: TimelineTick(0),
+                    value: -100.0,
+                },
+            ],
+        });
+
+        Arrangement::validate_and_normalize(&mut arrangement).unwrap();
+
+        assert_eq!(arrangement.automation_lanes[0].points[0].id, "early");
+        assert_eq!(arrangement.automation_lanes[0].points[0].value, -90.0);
+        assert_eq!(arrangement.automation_lanes[0].points[1].value, 24.0);
+        arrangement.remove_track("main").unwrap();
+        assert!(arrangement.automation_lanes.is_empty());
+    }
+}

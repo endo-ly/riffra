@@ -342,3 +342,75 @@ struct AutomationClearParams {
     track_id: String,
     parameter: String,
 }
+#[cfg(test)]
+mod tests {
+    use crate::dispatcher::Dispatcher;
+    use riffra_control::ControlCommand;
+    use riffra_host::now_ms;
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn track_list_omits_device_parameter_values() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-track-list-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let added = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(added.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let instrument = dispatcher
+            .dispatch(request(
+                "instrument.set",
+                json!({
+                    "trackId": track_id,
+                    "pluginPath": "C:\\Plugins\\Synth.vst3"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(instrument.value["canonical"]["session"].clone()).unwrap();
+        let device_id = session.arrangement.tracks[0]
+            .instrument
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        dispatcher
+            .dispatch(request(
+                "device.parameter.set",
+                json!({
+                    "trackId": track_id,
+                    "deviceId": device_id,
+                    "parameterIndex": 0,
+                    "value": 0.5
+                }),
+            ))
+            .unwrap();
+
+        let listed = dispatcher
+            .dispatch(request("track.list", json!({})))
+            .unwrap();
+        let track = &listed.value[0];
+        assert_eq!(track["name"], "Keys");
+        assert!(track["instrument"].get("parameterValues").is_none());
+        assert!(
+            track["rack"]["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|device| device.get("parameterValues").is_none())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}

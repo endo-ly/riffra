@@ -1697,3 +1697,323 @@ impl Arrangement {
         Ok(())
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DomainError;
+    use crate::domain::asset::mint_asset_id;
+    use crate::domain::recording::{
+        RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
+        RecordingTakeRecord, TakeAudioSource,
+    };
+    use crate::domain::session::CreativeSession;
+    use crate::domain::timeline::{ProjectTimebase, TIMELINE_PPQ, TimelineTick};
+
+    fn session_with_recording_relations() -> CreativeSession {
+        let mut session = CreativeSession::new(0);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let asset_id = mint_asset_id();
+        let take = RecordingTakeRecord {
+            id: "take:1".into(),
+            session_id: "recording:1".into(),
+            pass_id: "pass:1".into(),
+            track_id: "track:audio".into(),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            source_start_sample: 0,
+            source_end_sample: 48_000,
+            raw_audio: Some(TakeAudioSource {
+                asset_id: asset_id.clone(),
+                source_start_sample: 0,
+                source_end_sample: 48_000,
+                tail_end_sample: 48_000,
+                sample_rate: 48_000,
+            }),
+            processed_audio: None,
+            midi_asset_id: None,
+        };
+        let mut clip = AudioClip::full_source(
+            "clip:1".into(),
+            "Take".into(),
+            "track:audio".into(),
+            asset_id,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        );
+        clip.recording_take_id = Some(take.id.clone());
+        session.arrangement.audio_clips.push(clip);
+        session.arrangement.takes.push(take);
+        session
+            .arrangement
+            .recording_passes
+            .push(RecordingPassRecord {
+                id: "pass:1".into(),
+                session_id: "recording:1".into(),
+                ordinal: 1,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids: vec!["take:1".into()],
+            });
+        session
+            .arrangement
+            .recording_sessions
+            .push(RecordingSessionRecord {
+                id: "recording:1".into(),
+                start_tick: TimelineTick(0),
+                track_slots: vec![RecordingSessionTrackSlot {
+                    track_id: "track:audio".into(),
+                    active_take_id: "take:1".into(),
+                    timeline_clip_id: "clip:1".into(),
+                }],
+                pass_ids: vec!["pass:1".into()],
+            });
+        session
+    }
+
+    #[test]
+    fn update_timebase_changes_the_project_clock_once() {
+        let mut arrangement = Arrangement::default();
+        let revision = arrangement.revision;
+        arrangement
+            .update_timebase(ProjectTimebase {
+                ppq: TIMELINE_PPQ,
+                bpm: 98.5,
+                time_signature_numerator: 7,
+                time_signature_denominator: 8,
+            })
+            .unwrap();
+
+        assert_eq!(arrangement.timebase.bpm, 98.5);
+        assert_eq!(arrangement.timebase.time_signature_numerator, 7);
+        assert_eq!(arrangement.revision, revision + 1);
+        assert!(
+            arrangement
+                .update_timebase(ProjectTimebase {
+                    bpm: 10.0,
+                    ..arrangement.timebase
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn timeline_regions_allow_overlap_and_nesting_but_require_valid_ranges() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:outer".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(3_840),
+            })
+            .unwrap();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:inner".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            })
+            .unwrap();
+        assert_eq!(arrangement.regions.len(), 2);
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:empty".into(),
+                    name: " ".into(),
+                    start_tick: TimelineTick(0),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:inverted".into(),
+                    name: "B".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn harmony_events_are_sorted_without_rejecting_overlap_or_gaps() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let chord = HarmonyChord::resolve("C").unwrap();
+        let mut arrangement = Arrangement {
+            harmony_events: vec![
+                HarmonyEvent {
+                    id: "harmony:late".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(3_840),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:overlap".into(),
+                    start_tick: TimelineTick(960),
+                    end_tick: TimelineTick(2_880),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:gap".into(),
+                    start_tick: TimelineTick(4_800),
+                    end_tick: TimelineTick(5_760),
+                    chord,
+                },
+            ],
+            ..Arrangement::default()
+        };
+
+        Arrangement::validate_and_normalize(&mut arrangement).unwrap();
+
+        assert_eq!(
+            arrangement
+                .harmony_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["harmony:overlap", "harmony:late", "harmony:gap"]
+        );
+    }
+
+    #[test]
+    fn harmony_event_ids_must_be_unique_during_normalization() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let event = HarmonyEvent {
+            id: "harmony:duplicate".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(960),
+            chord: HarmonyChord::resolve("C").unwrap(),
+        };
+        let mut arrangement = Arrangement {
+            harmony_events: vec![event.clone(), event],
+            ..Arrangement::default()
+        };
+
+        assert!(Arrangement::validate_and_normalize(&mut arrangement).is_err());
+    }
+
+    #[test]
+    fn recording_relation_validation_rejects_duplicates_and_cross_links() {
+        let valid = session_with_recording_relations()
+            .validate_and_normalize()
+            .unwrap();
+
+        let mut duplicate = valid.clone();
+        duplicate
+            .arrangement
+            .takes
+            .push(duplicate.arrangement.takes[0].clone());
+        assert!(duplicate.validate_and_normalize().is_err());
+
+        let mut wrong_pass = valid.clone();
+        wrong_pass.arrangement.recording_passes[0].track_take_ids = vec!["missing-take".into()];
+        assert!(wrong_pass.validate_and_normalize().is_err());
+
+        let mut wrong_slot = valid;
+        wrong_slot.arrangement.recording_sessions[0].track_slots[0].active_take_id =
+            "missing-take".into();
+        assert!(wrong_slot.validate_and_normalize().is_err());
+
+        let mut missing_from_pass = session_with_recording_relations();
+        missing_from_pass.arrangement.recording_passes[0]
+            .track_take_ids
+            .clear();
+        assert!(missing_from_pass.validate_and_normalize().is_err());
+    }
+
+    #[test]
+    fn deleting_a_recording_slot_clip_prunes_only_its_canonical_take_links() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:copy".into()], &[])
+            .unwrap();
+        assert_eq!(session.arrangement.takes.len(), 1);
+        assert_eq!(session.arrangement.recording_sessions.len(), 1);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_slot_detaches_a_remaining_copy_clip_from_the_removed_take() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        let asset_id = copy.asset_id.clone();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+
+        let copy = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == "clip:copy")
+            .unwrap();
+        assert!(copy.recording_take_id.is_none());
+        assert_eq!(copy.asset_id, asset_id);
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_recorded_track_prunes_relations_but_not_assets() {
+        let mut session = session_with_recording_relations();
+        let asset_id = session.arrangement.takes[0]
+            .raw_audio
+            .as_ref()
+            .unwrap()
+            .asset_id
+            .clone();
+        session.arrangement.remove_track("track:audio").unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        // The domain intentionally holds no asset store and therefore cannot
+        // delete this source reference from storage.
+        assert!(!asset_id.as_str().is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn moving_a_recording_slot_clip_to_another_track_is_rejected() {
+        let mut session = session_with_recording_relations();
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:other".into(), "Other".into()));
+        let error = session
+            .arrangement
+            .move_audio_clips(vec![AudioClipMove {
+                clip_id: "clip:1".into(),
+                track_id: "track:other".into(),
+                start_tick: TimelineTick(0),
+            }])
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+    }
+}

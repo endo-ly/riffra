@@ -167,3 +167,127 @@ pub struct MidiClipPatch {
     #[ts(optional)]
     pub loop_enabled: Option<bool>,
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DomainError;
+    use crate::domain::arrangement::{Arrangement, Track};
+    use crate::domain::timeline::TimelineTick;
+
+    fn midi_clip(track_id: &str) -> MidiClip {
+        MidiClip {
+            id: "midi-clip:1".into(),
+            name: "MIDI".into(),
+            track_id: track_id.into(),
+            asset_id: None,
+            start_tick: TimelineTick(960),
+            duration_ticks: 1_920,
+            notes: vec![MidiNote {
+                id: "note:1".into(),
+                note: 60,
+                start_tick: TimelineTick(240),
+                duration_ticks: 480,
+                velocity: 100,
+                channel: 1,
+            }],
+            events: vec![MidiEvent {
+                id: "event:1".into(),
+                kind: MidiEventKind::ControlChange,
+                tick: TimelineTick(720),
+                channel: 1,
+                data1: 64,
+                data2: 127,
+            }],
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        }
+    }
+
+    #[test]
+    fn midi_clip_requires_an_instrument_track_and_preserves_non_note_events() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        assert_eq!(
+            arrangement.midi_clips[0].events[0].kind,
+            MidiEventKind::ControlChange
+        );
+        assert_eq!(arrangement.revision, 1);
+        let mut audio_arrangement = Arrangement::default();
+        audio_arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        assert!(audio_arrangement.add_midi_clip(midi_clip("audio")).is_err());
+    }
+
+    #[test]
+    fn trimming_midi_clip_rebases_notes_and_events_to_the_new_start() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        arrangement
+            .trim_midi_clip("midi-clip:1", TimelineTick(1_200), 960)
+            .unwrap();
+
+        let clip = &arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, TimelineTick(1_200));
+        assert_eq!(clip.duration_ticks, 960);
+        assert_eq!(clip.notes[0].start_tick, TimelineTick(0));
+        assert_eq!(clip.events[0].tick, TimelineTick(480));
+    }
+
+    #[test]
+    fn moving_midi_clip_to_an_audio_track_is_rejected() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        let error = arrangement
+            .move_midi_clips(vec![MidiClipMove {
+                clip_id: "midi-clip:1".into(),
+                start_tick: TimelineTick(0),
+                track_id: "audio".into(),
+            }])
+            .unwrap_err();
+
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+        assert_eq!(arrangement.midi_clips[0].track_id, "instrument");
+    }
+
+    #[test]
+    fn updating_midi_clip_to_an_audio_track_is_rejected() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("instrument".into(), "Instrument".into()));
+        arrangement
+            .tracks
+            .push(Track::audio("audio".into(), "Audio".into()));
+        arrangement.add_midi_clip(midi_clip("instrument")).unwrap();
+
+        let error = arrangement
+            .update_midi_clip(
+                "midi-clip:1",
+                MidiClipPatch {
+                    track_id: Some("audio".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, DomainError::InvalidClip(_)));
+        assert_eq!(arrangement.midi_clips[0].track_id, "instrument");
+    }
+}

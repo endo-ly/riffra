@@ -108,3 +108,54 @@ pub(crate) fn validate_and_normalize_device(device: &mut RackDevice) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rack_values_are_clamped_during_normalization() {
+        let mut rack = RackInstance {
+            devices: vec![RackDevice {
+                id: "device:1".into(),
+                name: "Synth".into(),
+                kind: DeviceKind::Plugin,
+                path: None,
+                bypassed: false,
+                gain_db: 90.0,
+                parameter_values: vec![-1.0, 0.5, 2.0, f32::NAN],
+                state_data: None,
+                disabled_placeholder: false,
+            }],
+            macros: vec![RackMacro {
+                id: "macro:1".into(),
+                name: "Brightness".into(),
+                value: 2.0,
+                parameter_index: Some(0),
+            }],
+        };
+
+        validate_and_normalize(&mut rack).unwrap();
+
+        assert_eq!(rack.devices[0].gain_db, 24.0);
+        assert_eq!(rack.devices[0].parameter_values, [0.0, 0.5, 1.0, 0.0]);
+        assert_eq!(rack.macros[0].value, 1.0);
+    }
+
+    #[test]
+    fn rack_rejects_devices_without_identity() {
+        let mut device = RackDevice {
+            id: String::new(),
+            name: "Synth".into(),
+            kind: DeviceKind::Plugin,
+            path: None,
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        };
+
+        assert!(validate_and_normalize_device(&mut device).is_err());
+    }
+}

@@ -544,3 +544,82 @@ struct ClipPasteParams {
     midi_clip_ids: Vec<String>,
     start_tick: u64,
 }
+#[cfg(test)]
+mod tests {
+    use crate::dispatcher::Dispatcher;
+    use riffra_control::ControlCommand;
+    use riffra_host::now_ms;
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn clearing_midi_notes_preserves_clip_and_is_undoable() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-clear-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(request(
+                "midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "startTick": 480,
+                    "durationTicks": 1920,
+                    "name": "Lead"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let original_clip = session.arrangement.midi_clips[0].clone();
+        let clip_id = original_clip.id.clone();
+        dispatcher
+            .dispatch(request(
+                "midi-note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [{
+                        "pitch": 60,
+                        "startTick": 0,
+                        "durationTicks": 480,
+                        "velocity": 100,
+                        "channel": 1
+                    }]
+                }),
+            ))
+            .unwrap();
+
+        let cleared = dispatcher
+            .dispatch(request("midi-note.clear", json!({"clipId": clip_id})))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(cleared.value).unwrap();
+        let cleared_clip = &session.arrangement.midi_clips[0];
+        assert!(cleared_clip.notes.is_empty());
+        assert_eq!(cleared_clip.id, original_clip.id);
+        assert_eq!(cleared_clip.name, original_clip.name);
+        assert_eq!(cleared_clip.start_tick, original_clip.start_tick);
+        assert_eq!(cleared_clip.duration_ticks, original_clip.duration_ticks);
+
+        let undone = dispatcher.dispatch(request("undo", json!({}))).unwrap();
+        assert_eq!(
+            undone.value["canonical"]["session"]["arrangement"]["midiClips"][0]["notes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}

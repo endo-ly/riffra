@@ -260,3 +260,209 @@ struct MusicalRegionUpdateParams {
 struct MusicalRegionIdParams {
     region_id: String,
 }
+#[cfg(test)]
+mod tests {
+    use crate::dispatcher::Dispatcher;
+    use riffra_control::ControlCommand;
+    use riffra_host::now_ms;
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn musical_commands_create_canonical_notes_and_regions() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-music-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let created = dispatcher
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": track_id,
+                    "start": "5:1",
+                    "end": "13:1",
+                    "name": "Piano"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let clip_id = session.arrangement.midi_clips[0].id.clone();
+        let region = dispatcher
+            .dispatch(request(
+                "music.region.add",
+                json!({"name":"A'","start":"5:1","end":"13:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(region.value).unwrap();
+        assert_eq!(session.arrangement.regions[0].name, "A'");
+        let inserted = dispatcher
+            .dispatch(request(
+                "music.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [
+                        {"pitch":"C4","position":"5:1","duration":"1/8"},
+                        {"pitch":"E4","position":"5:1+1/2","duration":"1/8"},
+                        {"pitch":"G4","position":"5:2","duration":"1/2","velocity":92},
+                        {"pitch":"Bb4","position":"6:3+1/3","duration":"1/12"}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(inserted.value).unwrap();
+        let clip = &session.arrangement.midi_clips[0];
+        assert_eq!(clip.start_tick, riffra_core::TimelineTick(15_360));
+        assert_eq!(clip.duration_ticks, 30_720);
+        assert_eq!(clip.notes.len(), 4);
+        assert_eq!(clip.notes[0].note, 60);
+        assert_eq!(clip.notes[0].start_tick, riffra_core::TimelineTick(0));
+        assert_eq!(clip.notes[1].start_tick, riffra_core::TimelineTick(480));
+        assert_eq!(clip.notes[2].note, 67);
+        assert_eq!(clip.notes[3].note, 70);
+        assert_eq!(clip.notes[3].start_tick, riffra_core::TimelineTick(6_080));
+        assert_eq!(clip.notes[3].duration_ticks, 320);
+
+        let listed = dispatcher
+            .dispatch(request("music.region.list", json!({})))
+            .unwrap();
+        assert_eq!(listed.result_type, "regions");
+        assert_eq!(listed.value.as_array().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn harmony_and_phrase_commands_use_music_level_contracts() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-harmony-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let clip = dispatcher
+            .dispatch(request(
+                "music.midi-clip.create",
+                json!({
+                    "trackId": session.arrangement.tracks[0].id,
+                    "start": "1:1",
+                    "end": "3:1"
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(clip.value).unwrap();
+        let clip_id = session.arrangement.midi_clips[0].id.clone();
+
+        let resolved = dispatcher
+            .dispatch(request(
+                "music.harmony.resolve",
+                json!({"chord":"G7(b9,#11)/F"}),
+            ))
+            .unwrap();
+        assert_eq!(resolved.result_type, "harmonyChord");
+        assert_eq!(resolved.value["root"], "G");
+        assert_eq!(resolved.value["bass"], "F");
+        assert_eq!(
+            resolved.value["tones"],
+            json!(["G", "B", "D", "F", "Ab", "C#"])
+        );
+
+        let inserted = dispatcher
+            .dispatch(request(
+                "music.harmony.insert",
+                json!({
+                    "events": [
+                        {"start":"1:1","end":"2:1","chord":"C/E"},
+                        {"start":"2:1","end":"3:1","pitches":["Bb","C","E"],"bass":"F","label":"cluster"}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(inserted.value.clone()).unwrap();
+        let harmony_ids = session
+            .arrangement
+            .harmony_events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(harmony_ids.len(), 2);
+
+        let listed = dispatcher
+            .dispatch(request("music.harmony.list", json!({})))
+            .unwrap();
+        assert_eq!(listed.result_type, "harmonyEvents");
+        assert_eq!(listed.value[0]["start"], "1:1");
+        assert!(listed.value[0].get("startTick").is_none());
+
+        let realized = dispatcher
+            .dispatch(request(
+                "music.harmony.realize",
+                json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
+            ))
+            .unwrap();
+        assert_eq!(
+            realized.projection_effect(),
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
+        let updated = dispatcher
+            .dispatch(request(
+                "music.harmony.update",
+                json!({"eventId": harmony_ids[0], "chord":"Dm9"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(updated.value.clone()).unwrap();
+        assert_eq!(session.arrangement.harmony_events[0].chord.name, "Dm9");
+
+        let phrase = dispatcher
+            .dispatch(request(
+                "music.phrase.insert",
+                json!({
+                    "clipId": clip_id,
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0},
+                            {"offset":"1/8","duration":"1/8","semitones":2}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}]
+                }),
+            ))
+            .unwrap();
+        assert_eq!(
+            phrase.projection_effect(),
+            super::CanonicalMutationEffect::ProjectArrangement
+        );
+        let session: riffra_core::CreativeSession =
+            serde_json::from_value(phrase.value.clone()).unwrap();
+        assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);
+
+        dispatcher
+            .dispatch(request(
+                "music.harmony.remove",
+                json!({"eventIds":[harmony_ids[0], harmony_ids[1]]}),
+            ))
+            .unwrap();
+        let listed = dispatcher
+            .dispatch(request("music.harmony.list", json!({})))
+            .unwrap();
+        assert!(listed.value.as_array().unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+}

@@ -1,4 +1,56 @@
-use super::*;
+use super::HostError;
+use super::events::{HostEventHub, HostEventSubscription, SharedHostEventSink};
+use crate::audio::AudioSupervisor;
+use crate::binaries::RuntimeBinaries;
+use crate::jobs::JobRegistry;
+use crate::model::{AudioStatus, RuntimeProjectionStatus};
+use crate::render;
+use crate::runtime::RuntimeReconciler;
+use crate::{AudioPreferences, plugins};
+use riffra_control::HostIdentity;
+use riffra_core::{AppCore, CanonicalState};
+use riffra_host::{DataRootLease, SessionStore};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex, RwLock};
+
+/// Host-owned state required to initialize an embedded or attached Desktop.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostBootstrap {
+    pub canonical: CanonicalState,
+    pub plugin_catalog: Vec<plugins::PluginEntry>,
+    pub runtime_started: bool,
+    pub runtime_startup_finished: bool,
+    pub runtime_projection: RuntimeProjectionStatus,
+    pub audio_status: AudioStatus,
+    pub recovered_from_generation: bool,
+    pub safe_mode: bool,
+    pub recovery_candidates: Vec<riffra_host::RecoveryCandidate>,
+    pub data_root: PathBuf,
+}
+
+pub(crate) struct HostState {
+    pub(super) _lease: DataRootLease,
+    pub(super) identity: HostIdentity,
+    pub(crate) data_root: PathBuf,
+    pub(super) core: Arc<AppCore<AudioSupervisor>>,
+    pub(super) storage: SessionStore,
+    pub(super) runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
+    pub(super) events: SharedHostEventSink,
+    pub(super) event_hub: Arc<HostEventHub>,
+    pub(super) binaries: RuntimeBinaries,
+    pub(super) render_worker: render::RenderWorker,
+    pub(super) jobs: JobRegistry,
+    pub(super) audio_preferences: Mutex<AudioPreferences>,
+    pub(super) recording_gate: Mutex<()>,
+    pub(super) _command_gate: Mutex<()>,
+    pub(super) startup_gate: Mutex<()>,
+    pub(super) lifecycle_gate: RwLock<()>,
+    pub(super) shutting_down: AtomicBool,
+    pub(super) shutdown_requested: AtomicBool,
+}
 
 impl HostState {
     pub(super) fn identity(&self) -> &HostIdentity {
@@ -41,5 +93,48 @@ impl HostState {
             recovery_candidates,
             data_root: self.data_root.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::{DawHost, HostConfig};
+
+    #[test]
+    fn bootstrap_reports_canonical_and_safe_mode_state() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-bootstrap-state-{}-{}",
+            std::process::id(),
+            riffra_control::new_instance_id()
+        ));
+        let host = DawHost::open(
+            HostConfig {
+                data_root: data_root.clone(),
+                safe_mode: true,
+                binaries: RuntimeBinaries::new(
+                    data_root.join("riffra-audio"),
+                    data_root.join("riffra-plugin-scan"),
+                    data_root.join("riffra-render"),
+                ),
+            },
+            Arc::new(crate::NoopHostEventSink),
+        )
+        .unwrap();
+
+        let bootstrap = host.state.bootstrap().unwrap();
+
+        assert_eq!(bootstrap.canonical.sequence, 0);
+        assert!(bootstrap.safe_mode);
+        assert_eq!(bootstrap.audio_status.state, crate::AudioState::Offline);
+        assert_eq!(
+            bootstrap.runtime_projection.state,
+            crate::RuntimeProjectionState::Idle
+        );
+        assert!(bootstrap.recovery_candidates.is_empty());
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 }

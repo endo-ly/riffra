@@ -1,363 +1,4 @@
-use super::control::command_error;
 use super::*;
-
-impl HostState {
-    pub(super) fn scan_plugins(&self, root: PathBuf) -> Result<plugins::ScanReport, String> {
-        if self.core.safe_mode() {
-            return Err("Safe Mode blocks VST3 discovery and load validation".into());
-        }
-        let mut report = plugins::discover(&root);
-        plugins::reuse_cached_scan_results(&self.data_root, &mut report);
-        let mut report = plugins::validate_report(report, &self.binaries.plugin_scan)?;
-        report.finished_at_ms = now_ms();
-        plugins::save(&self.data_root, &report)
-            .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
-        library::sync_plugins(&self.data_root, &report.plugins)?;
-        Ok(report)
-    }
-
-    pub(super) fn start_plugin_scan(&self, root: PathBuf) -> Result<BackgroundJobStatus, String> {
-        if self.core.safe_mode() {
-            return Err("Safe Mode blocks VST3 discovery and load validation".into());
-        }
-        let (id, status) = self.jobs.start(JobKind::Scan);
-        let registry = self.jobs.clone();
-        let data_root = self.data_root.clone();
-        let scanner = self.binaries.plugin_scan.clone();
-        let Some(cancelled) = registry.cancellation_flag(&id) else {
-            return Err("plugin scan job could not be registered".into());
-        };
-        let job_id = id.clone();
-        self.jobs
-            .spawn_worker(&id, "riffra-plugin-scan-job", move || {
-                registry.set_running(
-                    &job_id,
-                    "Discovering and validating VST3 plugins in the background.",
-                );
-                let mut report =
-                    match plugins::discover_with_cancel(&root, Some(cancelled.as_ref())) {
-                        Ok(report) => report,
-                        Err(error) => {
-                            jobs::fail(&registry, &data_root, &job_id, error);
-                            return;
-                        }
-                    };
-                plugins::reuse_cached_scan_results(&data_root, &mut report);
-                let report = match plugins::validate_report_with_cancel(
-                    report,
-                    &scanner,
-                    Some(cancelled.clone()),
-                ) {
-                    Ok(mut report) => {
-                        report.finished_at_ms = now_ms();
-                        report
-                    }
-                    Err(error) => {
-                        jobs::fail(&registry, &data_root, &job_id, error);
-                        return;
-                    }
-                };
-                if registry.is_cancelled(&job_id) {
-                    registry.mark_cancelled(&job_id);
-                    return;
-                }
-                if let Err(error) = plugins::save(&data_root, &report) {
-                    jobs::fail(
-                        &registry,
-                        &data_root,
-                        &job_id,
-                        format!("plugin catalog could not be saved: {error}"),
-                    );
-                    return;
-                }
-                if let Err(error) = library::sync_plugins(&data_root, &report.plugins) {
-                    jobs::fail(&registry, &data_root, &job_id, error);
-                    return;
-                }
-                match jobs::serialize_result(&report) {
-                    Ok(value) => registry.complete(&job_id, value, "VST3 scan completed."),
-                    Err(error) => jobs::fail(&registry, &data_root, &job_id, error),
-                }
-            })
-            .map_err(|error| format!("plugin scan job could not start: {error}"))?;
-        jobs::to_background_status(status)
-    }
-
-    pub(super) fn set_audio_driver(
-        &self,
-        config: AudioDriverConfig,
-    ) -> Result<AudioStatus, ProtocolError> {
-        let requested = AudioPreferences {
-            driver: config.driver,
-            input_device: config.input_device,
-            input_channel: config.input_channel,
-            output_device: config.output_device,
-            sample_rate: config.sample_rate,
-            buffer_size: config.buffer_size,
-        }
-        .validate_and_normalize()
-        .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
-        let previous = self
-            .audio_preferences
-            .lock()
-            .map_err(|_| command_error("audio preferences lock was poisoned"))?
-            .clone();
-        let outcome = match self
-            .core
-            .audio()
-            .set_audio_driver(&requested.as_driver_config())
-        {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                let reason = error.to_string();
-                return Err(command_error(self.rollback_audio_change(&previous, reason)));
-            }
-        };
-        let restarted = matches!(&outcome, AudioDeviceReopenOutcome::SidecarRestarted(_));
-        let mut status = match outcome {
-            AudioDeviceReopenOutcome::ReopenedInPlace(status) => status,
-            AudioDeviceReopenOutcome::SidecarRestarted(status) => status,
-        };
-        if !active_device_matches_preferences(&status, &requested) {
-            let reason = format!(
-                "requested audio device was not activated: {}",
-                status.message
-            );
-            return Err(command_error(if restarted {
-                self.restore_previous_audio_preferences(&previous)
-                        .map(|()| format!("{reason}; the previous audio device and dependent Runtime were restored"))
-                        .unwrap_or_else(|error| format!("{reason}; the previous audio device and dependent Runtime could not be restored: {error}"))
-            } else {
-                self.rollback_audio_change(&previous, reason)
-            }));
-        }
-        let effective = match AudioPreferences::from_effective_status(&status) {
-            Ok(effective) => effective,
-            Err(error) => {
-                return Err(command_error(self.rollback_audio_change(&previous, error)));
-            }
-        };
-        if let Err(error) = self.core.audio().set_restart_preferences(effective.clone()) {
-            return Err(command_error(self.rollback_audio_change(
-                &previous,
-                format!("audio runtime restart preferences could not be updated: {error}"),
-            )));
-        }
-        if !restarted && let Err(error) = self.reconcile_runtime_after_audio_device_change() {
-            return Err(command_error(self.rollback_audio_change(&previous, error)));
-        }
-        if let Err(error) = AudioPreferencesStore::new(&self.data_root).save(&effective) {
-            return Err(command_error(self.rollback_audio_change(
-                &previous,
-                format!("audio preferences could not be saved: {error}"),
-            )));
-        }
-        *self
-            .audio_preferences
-            .lock()
-            .map_err(|_| command_error("audio preferences lock was poisoned"))? = effective;
-        let access_message = match crate::access_mode_for_driver(
-            status.driver.as_deref().unwrap_or(&requested.driver),
-        ) {
-            crate::AudioAccessMode::Shared => None,
-            crate::AudioAccessMode::Exclusive => Some(
-                "Exclusive audio is active; other applications using this device will be paused.",
-            ),
-            crate::AudioAccessMode::DriverManaged => Some(
-                "Audio sharing is controlled by this driver; other applications may be paused.",
-            ),
-        };
-        if let Some(access_message) = access_message {
-            status.message = if status.message.is_empty() {
-                access_message.into()
-            } else {
-                format!("{access_message} {}", status.message)
-            };
-        }
-        Ok(status)
-    }
-
-    fn reconcile_runtime_after_audio_device_change(&self) -> Result<(), String> {
-        self.core
-            .audio()
-            .mark_runtime_recovery_mute()
-            .map_err(|error| format!("runtime recovery mute could not be recorded: {error}"))?;
-        if !self.runtime.invalidate_for_audio_device_change() {
-            return Err(
-                "audio runtime graph is busy; the audio device change can be retried shortly"
-                    .into(),
-            );
-        }
-        let snapshot = self.canonical().map_err(|error| error.to_string())?;
-        self.runtime
-            .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
-                    &self.data_root,
-                    &snapshot.session,
-                ),
-                riffra_core::ProjectionKey {
-                    sequence: snapshot.sequence,
-                    session_revision: snapshot.session.arrangement.revision,
-                },
-                std::time::Duration::from_secs(60),
-            )
-            .map_err(|error| {
-                format!(
-                    "arrangement runtime restoration failed after the audio device change: {error}"
-                )
-            })?;
-        self.core
-            .audio()
-            .release_runtime_mute_if_allowed()
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    fn confirm_restored_previous_device(&self, previous: &AudioPreferences) -> Result<(), String> {
-        self.core
-            .audio()
-            .set_restart_preferences(previous.clone())
-            .map_err(|error| error.to_string())?;
-        let status = self
-            .core
-            .audio()
-            .refresh_status()
-            .map_err(|error| error.to_string())?;
-        if !active_device_matches_preferences(&status, previous) {
-            return Err(format!(
-                "the previous audio device was not confirmed: {}",
-                status.message
-            ));
-        }
-        Ok(())
-    }
-
-    fn restore_previous_audio_preferences(
-        &self,
-        previous: &AudioPreferences,
-    ) -> Result<(), String> {
-        self.core
-            .audio()
-            .set_restart_preferences(previous.clone())
-            .map_err(|error| error.to_string())?;
-        match self
-            .core
-            .audio()
-            .set_audio_driver(&previous.as_driver_config())
-        {
-            Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)) => {
-                if !active_device_matches_preferences(&status, previous) {
-                    return Err(format!(
-                        "the previous audio device was not confirmed: {}",
-                        status.message
-                    ));
-                }
-                self.reconcile_runtime_after_audio_device_change()
-            }
-            Ok(AudioDeviceReopenOutcome::SidecarRestarted(_)) => {
-                self.confirm_restored_previous_device(previous)
-            }
-            Err(error) => {
-                let error = error.to_string();
-                self.confirm_restored_previous_device(previous)
-                    .map_err(|restore_error| format!("{error}; {restore_error}"))
-            }
-        }
-    }
-
-    fn rollback_audio_change(&self, previous: &AudioPreferences, reason: String) -> String {
-        match self.restore_previous_audio_preferences(previous) {
-            Ok(()) => {
-                format!("{reason}; the previous audio device and dependent Runtime were restored")
-            }
-            Err(error) => format!(
-                "{reason}; the previous audio device and dependent Runtime could not be restored: {error}"
-            ),
-        }
-    }
-
-    pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
-        if self.core.safe_mode() {
-            return Err(HostError::State(
-                "Safe Mode keeps external audio devices isolated".into(),
-            ));
-        }
-        let outcome = self
-            .core
-            .audio()
-            .recover_audio_device()
-            .map_err(|error| HostError::State(error.to_string()))?;
-        if matches!(outcome, AudioDeviceReopenOutcome::SidecarRestarted(_)) {
-            return self
-                .core
-                .audio()
-                .refresh_status()
-                .map_err(|error| HostError::State(error.to_string()));
-        }
-        let snapshot = self.canonical()?;
-        self.runtime.invalidate_for_audio_device_change();
-        self.runtime
-            .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
-                    &self.data_root,
-                    &snapshot.session,
-                ),
-                riffra_core::ProjectionKey {
-                    sequence: snapshot.sequence,
-                    session_revision: snapshot.session.arrangement.revision,
-                },
-                std::time::Duration::from_secs(60),
-            )
-            .map_err(|error| HostError::State(error.to_string()))?;
-        self.core
-            .audio()
-            .release_runtime_mute_if_allowed()
-            .map_err(|error| HostError::State(error.to_string()))?;
-        self.core
-            .audio()
-            .refresh_status()
-            .map_err(|error| HostError::State(error.to_string()))
-    }
-
-    pub(super) fn retry_runtime_startup(&self) -> Result<AudioStatus, HostError> {
-        if self.core.safe_mode() {
-            return Err(HostError::State(
-                "Safe Mode keeps external audio devices isolated".into(),
-            ));
-        }
-        let _startup = self
-            .startup_gate
-            .lock()
-            .map_err(|_| HostError::State("Host startup gate was poisoned".into()))?;
-        if self.core.audio().startup_completed() {
-            return self
-                .core
-                .audio()
-                .refresh_status()
-                .map_err(|error| HostError::State(error.to_string()));
-        }
-        self.core.audio().mark_startup_pending();
-        let initialized = startup::initialize_runtime(
-            &self.core,
-            &self.runtime,
-            &self.data_root,
-            &self.shutting_down,
-        );
-        let succeeded = initialized
-            .as_ref()
-            .is_ok_and(|initialization| initialization.runtime_error.is_none());
-        self.events
-            .emit(HostEvent::RuntimeStartupFinished { succeeded });
-        match initialized {
-            Ok(initialization) => initialization
-                .runtime_error
-                .map_or(Ok(initialization.status), |error| {
-                    Err(HostError::State(error))
-                }),
-            Err(error) => Err(HostError::State(error)),
-        }
-    }
-}
 
 impl DawHost {
     /// Opens a live Host, acquires its Data Root lease, and publishes Host
@@ -464,7 +105,7 @@ impl DawHost {
         if let Ok(canonical) = state.canonical() {
             library::index::refresh(&state.data_root, &canonical.session);
         }
-        let plugin_persistence = PluginStatePersistenceCoordinator::start(
+        let plugin_persistence = persistence::PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),
             state.event_hub.subscribe_plugin_persistence(),
         );
@@ -585,5 +226,174 @@ pub(super) fn default_plugin_root() -> PathBuf {
     #[cfg(not(windows))]
     {
         PathBuf::from("/usr/lib/vst3")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riffra_control::{ControlCommand, new_instance_id};
+
+    #[test]
+    fn a_data_root_owned_by_another_host_is_reported_as_data_root_in_use() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-in-use-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let owner = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        let second = DawHost::open(config, Arc::new(crate::NoopHostEventSink));
+
+        assert!(matches!(second, Err(HostError::DataRootInUse)));
+        owner.shutdown();
+        drop(owner);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn shutdown_waits_for_inflight_host_operations() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-shutdown-gate-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = Arc::new(DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap());
+        let inflight = host
+            .state
+            .lifecycle_gate
+            .read()
+            .expect("Host lifecycle gate was not poisoned");
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let shutdown_host = Arc::clone(&host);
+        let shutdown_thread = std::thread::spawn(move || {
+            shutdown_host.shutdown();
+            finished_tx.send(()).unwrap();
+        });
+
+        assert!(
+            finished_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err()
+        );
+        drop(inflight);
+        assert!(
+            finished_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok()
+        );
+        shutdown_thread.join().unwrap();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn normal_host_publishes_canonical_state_before_projection_status() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-event-order-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let events = host
+            .state
+            .subscribe_events()
+            .expect("Host event subscription should be available");
+
+        let response = host.dispatch_control(ControlRequest::new(
+            "track-add",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+        assert!(response.ok);
+
+        let mut canonical_index = None;
+        let mut projection_index = None;
+        for index in 0..16 {
+            let event = events
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("Host should publish the mutation events");
+            if event.event == "canonical-state-changed"
+                && event.payload["sequence"].as_u64() == Some(1)
+            {
+                canonical_index = Some(index);
+            }
+            if event.event == "runtime-projection-status"
+                && event.payload["targetProjectionSequence"].as_u64() == Some(1)
+            {
+                projection_index = Some(index);
+                break;
+            }
+        }
+
+        assert!(
+            canonical_index.is_some_and(|canonical| {
+                projection_index.is_some_and(|projection| canonical < projection)
+            }),
+            "canonical state must be published before projection status"
+        );
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn lifecycle_operations_are_rejected_after_shutdown() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-lifecycle-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        assert_eq!(host.with_lifecycle(|| Ok::<_, String>(7)), Ok(7));
+        host.shutdown();
+        assert_eq!(
+            host.with_lifecycle(|| Ok::<_, String>(7)),
+            Err("Riffra Host has shut down".to_owned())
+        );
+
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 }
