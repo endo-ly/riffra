@@ -63,8 +63,6 @@ MidiInputService::~MidiInputService() {
 
 MidiMonitor& MidiInputService::monitor() noexcept { return midiMonitor; }
 
-const MidiMonitor& MidiInputService::monitor() const noexcept { return midiMonitor; }
-
 void MidiInputService::setListening(const bool value) noexcept {
     listening.store(value, std::memory_order_release);
 }

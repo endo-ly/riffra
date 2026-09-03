@@ -23,9 +23,6 @@ struct AudioConfiguration {
 
 class AudioDeviceService final {
 public:
-    [[nodiscard]] static juce::String accessModeForDriver(const juce::String& driver);
-    [[nodiscard]] static bool driverRequiresSameDevice(const juce::String& driver);
-    [[nodiscard]] static juce::String defaultDriver();
     [[nodiscard]] static juce::var discover();
     [[nodiscard]] static std::optional<juce::var> probeDeviceChannels(
         const juce::String& driver, const juce::String& inputDevice,
@@ -38,6 +35,11 @@ public:
                                                  const juce::String& message = {},
                                                  const TimelineEngine* timeline = nullptr);
     [[nodiscard]] static juce::var currentMeters(const SafetyAudioCallback& callback);
+
+private:
+    [[nodiscard]] static juce::String accessModeForDriver(const juce::String& driver);
+    [[nodiscard]] static bool driverRequiresSameDevice(const juce::String& driver);
+    [[nodiscard]] static juce::String defaultDriver();
 };
 
 class DeviceFaultWatcher final : public juce::ChangeListener {

@@ -44,7 +44,6 @@ public:
     MidiInputService& operator=(const MidiInputService&) = delete;
 
     [[nodiscard]] MidiMonitor& monitor() noexcept;
-    [[nodiscard]] const MidiMonitor& monitor() const noexcept;
     void setListening(bool value) noexcept;
     [[nodiscard]] bool isListening() const noexcept;
     void reopenAll();
