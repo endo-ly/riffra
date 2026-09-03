@@ -1412,3 +1412,288 @@ impl Arrangement {
         Ok(())
     }
 }
+
+impl Arrangement {
+    /// Validates and normalizes the arrangement and its owned concepts.
+    pub(crate) fn validate_and_normalize(arrangement: &mut Arrangement) -> Result<(), String> {
+        if arrangement.audio_clips.len() > 512 {
+            return Err("An arrangement cannot contain more than 512 audio clips.".into());
+        }
+        let timebase = &arrangement.timebase;
+        if timebase.ppq != TIMELINE_PPQ
+            || !timebase.bpm.is_finite()
+            || !(20.0..=400.0).contains(&timebase.bpm)
+            || timebase.time_signature_numerator == 0
+            || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
+        {
+            return Err("Arrangement timebase is invalid.".into());
+        }
+        if arrangement.loop_range.enabled
+            && arrangement.loop_range.end_tick <= arrangement.loop_range.start_tick
+        {
+            return Err("Enabled loop range must have a positive duration.".into());
+        }
+        if let Some(punch_range) = arrangement.punch_range
+            && punch_range.end_tick <= punch_range.start_tick
+        {
+            return Err("Punch range must have a positive duration.".into());
+        }
+        if arrangement.tracks.len() > 128 {
+            return Err("An arrangement cannot contain more than 128 tracks.".into());
+        }
+        let mut unique_track_ids = std::collections::HashSet::new();
+        for track in &mut arrangement.tracks {
+            if !unique_track_ids.insert(track.id.clone()) {
+                return Err("Tracks require non-empty ids and names.".into());
+            }
+            track.validate_and_normalize()?;
+        }
+        let audio_clips = std::mem::take(&mut arrangement.audio_clips);
+        let mut normalized_clips = Vec::with_capacity(audio_clips.len());
+        let mut audio_clip_ids = std::collections::HashSet::new();
+        for mut clip in audio_clips {
+            if !audio_clip_ids.insert(clip.id.clone()) {
+                return Err("Audio clips require ids, names, tracks and asset ids.".into());
+            }
+            clip.validate_and_normalize()?;
+            let mut candidate = Arrangement {
+                revision: arrangement.revision,
+                timebase: arrangement.timebase,
+                loop_range: arrangement.loop_range,
+                punch_range: arrangement.punch_range,
+                tracks: arrangement.tracks.clone(),
+                audio_clips: Vec::new(),
+                midi_clips: Vec::new(),
+                automation_lanes: Vec::new(),
+                markers: Vec::new(),
+                regions: Vec::new(),
+                harmony_events: arrangement.harmony_events.clone(),
+                recording_sessions: arrangement.recording_sessions.clone(),
+                recording_passes: arrangement.recording_passes.clone(),
+                takes: arrangement.takes.clone(),
+            };
+            candidate
+                .add_audio_clip(clip, |_| true)
+                .map_err(|error| error.to_string())?;
+            normalized_clips.push(candidate.audio_clips.pop().expect("validated clip"));
+        }
+        arrangement.audio_clips = normalized_clips;
+        if arrangement.midi_clips.len() > 256 {
+            return Err("An arrangement cannot contain more than 256 MIDI clips.".into());
+        }
+        let track_ids = arrangement
+            .tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut midi_clip_ids = std::collections::HashSet::new();
+        for clip in &mut arrangement.midi_clips {
+            if !midi_clip_ids.insert(clip.id.clone()) {
+                return Err("MIDI clips require non-empty ids and names.".into());
+            }
+            let track = arrangement
+                .tracks
+                .iter()
+                .find(|track| track.id == clip.track_id);
+            clip.validate_and_normalize(track)?;
+        }
+        if arrangement.automation_lanes.len() > arrangement.tracks.len().saturating_mul(2) {
+            return Err(
+                "An arrangement cannot contain more than two Automation Lanes per Track.".into(),
+            );
+        }
+        let mut lane_keys = std::collections::HashSet::new();
+        let mut lane_ids = std::collections::HashSet::new();
+        for lane in &mut arrangement.automation_lanes {
+            if lane.id.trim().is_empty()
+                || !lane_ids.insert(lane.id.clone())
+                || !track_ids.contains(lane.track_id.as_str())
+                || !lane_keys.insert((lane.track_id.clone(), lane.parameter))
+            {
+                return Err("Automation Lanes contain invalid or duplicate references.".into());
+            }
+            lane.validate_and_normalize()?;
+        }
+        if arrangement.markers.len() > 256 {
+            return Err("An arrangement cannot contain more than 256 markers.".into());
+        }
+        arrangement.markers.sort_by_key(|marker| marker.tick);
+        arrangement
+            .markers
+            .retain(|marker| !marker.id.trim().is_empty());
+        for marker in &mut arrangement.markers {
+            let normalized_name: String = marker.name.trim().chars().take(80).collect();
+            marker.name = if normalized_name.is_empty() {
+                "Marker".into()
+            } else {
+                normalized_name
+            };
+        }
+        if arrangement.regions.len() > 256 {
+            return Err("an arrangement cannot contain more than 256 timeline regions".into());
+        }
+        arrangement
+            .regions
+            .sort_by_key(|region| (region.start_tick, region.end_tick));
+        let mut region_ids = std::collections::HashSet::new();
+        for region in &mut arrangement.regions {
+            if region.id.trim().is_empty()
+                || !region_ids.insert(region.id.as_str())
+                || region.name.trim().is_empty()
+                || region.end_tick <= region.start_tick
+            {
+                return Err(
+                    "timeline regions require unique ids, names, and positive ranges".into(),
+                );
+            }
+            region.name = region.name.trim().chars().take(80).collect();
+        }
+        if arrangement.harmony_events.len() > 16_384 {
+            return Err("an arrangement cannot contain more than 16,384 harmony events".into());
+        }
+        arrangement
+            .harmony_events
+            .sort_by_key(|event| (event.start_tick, event.end_tick, event.id.clone()));
+        let mut harmony_event_ids = std::collections::HashSet::new();
+        for event in &arrangement.harmony_events {
+            if !harmony_event_ids.insert(event.id.as_str()) || event.validate().is_err() {
+                return Err(
+                    "harmony events require unique ids, positive ranges, and valid chords".into(),
+                );
+            }
+        }
+        if arrangement.recording_sessions.len() > 256
+            || arrangement.recording_passes.len() > 4096
+            || arrangement.takes.len() > 16_384
+        {
+            return Err(
+                "An arrangement contains too many recording sessions, passes, or takes.".into(),
+            );
+        }
+        let session_ids = arrangement
+            .recording_sessions
+            .iter()
+            .map(|recording| recording.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let pass_ids = arrangement
+            .recording_passes
+            .iter()
+            .map(|pass| pass.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let take_ids = arrangement
+            .takes
+            .iter()
+            .map(|take| take.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if session_ids.len() != arrangement.recording_sessions.len()
+            || pass_ids.len() != arrangement.recording_passes.len()
+            || take_ids.len() != arrangement.takes.len()
+        {
+            return Err("Recording Session, Pass, and Take IDs must be unique.".into());
+        }
+        for recording in &arrangement.recording_sessions {
+            let mut slot_track_ids = std::collections::HashSet::new();
+            if recording.id.trim().is_empty()
+                || recording.track_slots.iter().any(|slot| {
+                    let take = arrangement
+                        .takes
+                        .iter()
+                        .find(|take| take.id == slot.active_take_id);
+                    let audio_clip = arrangement
+                        .audio_clips
+                        .iter()
+                        .find(|clip| clip.id == slot.timeline_clip_id);
+                    let midi_clip = arrangement
+                        .midi_clips
+                        .iter()
+                        .find(|clip| clip.id == slot.timeline_clip_id);
+                    !slot_track_ids.insert(slot.track_id.as_str())
+                        || !track_ids.contains(slot.track_id.as_str())
+                        || take.is_none_or(|take| {
+                            take.session_id != recording.id || take.track_id != slot.track_id
+                        })
+                        || match (audio_clip, midi_clip) {
+                            (Some(clip), None) => {
+                                clip.track_id != slot.track_id
+                                    || clip.recording_take_id.as_deref()
+                                        != Some(slot.active_take_id.as_str())
+                            }
+                            (None, Some(clip)) => {
+                                clip.track_id != slot.track_id
+                                    || clip.recording_take_id.as_deref()
+                                        != Some(slot.active_take_id.as_str())
+                            }
+                            _ => true,
+                        }
+                })
+                || recording.pass_ids.iter().any(|id| {
+                    arrangement
+                        .recording_passes
+                        .iter()
+                        .find(|pass| pass.id == *id)
+                        .is_none_or(|pass| pass.session_id != recording.id)
+                })
+            {
+                return Err(
+                    "Recording Sessions contain invalid track, take, or range references.".into(),
+                );
+            }
+        }
+        for pass in &arrangement.recording_passes {
+            let mut pass_take_ids = std::collections::HashSet::new();
+            if pass.id.trim().is_empty()
+                || !session_ids.contains(pass.session_id.as_str())
+                || pass.ordinal == 0
+                || pass.duration_ticks == 0
+                || pass.track_take_ids.iter().any(|id| {
+                    !pass_take_ids.insert(id.as_str())
+                        || arrangement
+                            .takes
+                            .iter()
+                            .find(|take| take.id == *id)
+                            .is_none_or(|take| {
+                                take.pass_id != pass.id || take.session_id != pass.session_id
+                            })
+                })
+            {
+                return Err("Recording Passes contain invalid references or ranges.".into());
+            }
+        }
+        for take in &arrangement.takes {
+            let pass = arrangement
+                .recording_passes
+                .iter()
+                .find(|pass| pass.id == take.pass_id);
+            let audio_sources_valid = take
+                .raw_audio
+                .iter()
+                .chain(take.processed_audio.iter())
+                .all(|source| {
+                    !source.asset_id.as_str().trim().is_empty()
+                        && source.source_end_sample > source.source_start_sample
+                        && source.sample_rate > 0
+                        && (source.tail_end_sample == 0
+                            || source.tail_end_sample >= source.source_end_sample)
+                });
+            let has_audio_source = take.raw_audio.is_some() || take.processed_audio.is_some();
+            if take.id.trim().is_empty()
+                || !session_ids.contains(take.session_id.as_str())
+                || pass.is_none_or(|pass| {
+                    pass.session_id != take.session_id
+                        || !pass.track_take_ids.iter().any(|id| id == &take.id)
+                })
+                || !track_ids.contains(take.track_id.as_str())
+                || take.duration_ticks == 0
+                || take.source_end_sample <= take.source_start_sample
+                || (!has_audio_source && take.midi_asset_id.is_none())
+                || !audio_sources_valid
+            {
+                return Err(
+                    "Recording Takes contain invalid session, pass, track, or range references."
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}

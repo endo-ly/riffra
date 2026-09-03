@@ -116,6 +116,25 @@ impl AudioClip {
         self.fade_in.frames = self.fade_in.frames.min(self.timeline_duration.frames);
         self.fade_out.frames = self.fade_out.frames.min(self.timeline_duration.frames);
     }
+
+    /// Validates and normalizes the rules owned by one audio clip.
+    pub(crate) fn validate_and_normalize(&mut self) -> Result<(), String> {
+        if self.id.trim().is_empty()
+            || self.name.trim().is_empty()
+            || self.track_id.trim().is_empty()
+            || self.asset_id.as_str().trim().is_empty()
+        {
+            return Err("Audio clips require ids, names, tracks and asset ids.".into());
+        }
+        if !self.gain_db.is_finite() {
+            return Err(format!("Audio clip '{}' has an invalid gain.", self.id));
+        }
+        if !self.pan.is_finite() {
+            return Err(format!("Audio clip '{}' has an invalid pan.", self.id));
+        }
+        self.normalize_fields();
+        Ok(())
+    }
 }
 
 /// A partial update for an existing [`AudioClip`].

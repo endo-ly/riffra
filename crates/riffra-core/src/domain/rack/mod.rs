@@ -58,3 +58,53 @@ pub struct RackInstance {
     #[serde(default)]
     pub macros: Vec<RackMacro>,
 }
+
+/// Validates and normalizes one rack instance and its controls.
+pub(crate) fn validate_and_normalize(rack: &mut RackInstance) -> Result<(), String> {
+    if rack.devices.len() > 256 {
+        return Err("A rack cannot contain more than 256 devices.".into());
+    }
+    if rack.macros.len() > 64 {
+        return Err("A session cannot contain more than 64 rack macros.".into());
+    }
+    for device in &mut rack.devices {
+        validate_and_normalize_device(device)?;
+    }
+    for macro_control in &mut rack.macros {
+        if macro_control.id.trim().is_empty() || macro_control.name.trim().is_empty() {
+            return Err("Rack macros require non-empty ids and names.".into());
+        }
+        if !macro_control.value.is_finite() {
+            return Err(format!(
+                "Rack macro '{}' has an invalid value.",
+                macro_control.name
+            ));
+        }
+        macro_control.value = macro_control.value.clamp(0.0, 1.0);
+    }
+    Ok(())
+}
+
+/// Validates and normalizes one rack device.
+pub(crate) fn validate_and_normalize_device(device: &mut RackDevice) -> Result<(), String> {
+    if device.id.trim().is_empty() || device.name.trim().is_empty() {
+        return Err("Rack devices require non-empty ids and names.".into());
+    }
+    if !device.gain_db.is_finite() {
+        return Err(format!("Device '{}' has an invalid gain.", device.name));
+    }
+    device.gain_db = device.gain_db.clamp(-90.0, 24.0);
+    for value in &mut device.parameter_values {
+        *value = if value.is_finite() {
+            value.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+    }
+    if let Some(state) = device.state_data.as_ref()
+        && state.len() > 4_000_000
+    {
+        device.state_data = Some(state.chars().take(4_000_000).collect());
+    }
+    Ok(())
+}

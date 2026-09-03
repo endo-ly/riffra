@@ -1,4 +1,4 @@
-use crate::domain::rack::{RackDevice, RackInstance};
+use crate::domain::rack::{self, RackDevice, RackInstance};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -125,5 +125,47 @@ impl Track {
             kind: TrackKind::Instrument,
             ..Self::audio(id, name)
         }
+    }
+
+    /// Validates and normalizes the rules owned by one timeline track.
+    pub(crate) fn validate_and_normalize(&mut self) -> Result<(), String> {
+        if self.id.trim().is_empty() || self.name.trim().is_empty() {
+            return Err("Tracks require non-empty ids and names.".into());
+        }
+        if !self.gain_db.is_finite() || !self.pan.is_finite() {
+            return Err(format!("Track '{}' has invalid mix values.", self.name));
+        }
+        self.gain_db = self.gain_db.clamp(-90.0, 24.0);
+        self.pan = self.pan.clamp(-1.0, 1.0);
+        match self.kind {
+            TrackKind::Audio if self.instrument.is_some() => {
+                return Err(format!(
+                    "Audio Track '{}' cannot host an Instrument.",
+                    self.name
+                ));
+            }
+            TrackKind::Instrument if self.audio_input.is_some() => {
+                return Err(format!(
+                    "Instrument Track '{}' cannot route a physical Audio Input.",
+                    self.name
+                ));
+            }
+            _ => {}
+        }
+        if self
+            .midi_input
+            .channel
+            .is_some_and(|channel| !(1..=16).contains(&channel))
+        {
+            return Err(format!(
+                "Track '{}' has an invalid MIDI channel.",
+                self.name
+            ));
+        }
+        if let Some(instrument) = &mut self.instrument {
+            rack::validate_and_normalize_device(instrument)?;
+        }
+        rack::validate_and_normalize(&mut self.rack)?;
+        Ok(())
     }
 }
