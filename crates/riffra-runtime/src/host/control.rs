@@ -171,13 +171,6 @@ impl HostState {
             Ok(project_id) => project_id,
             Err(error) => return Self::failure(request_id, command_error(error.to_string())),
         };
-        let request = if crate::dispatcher::command_requires_project_id(&request.command)
-            && request.expected_project_id.is_none()
-        {
-            request.with_expected_project_id(active_project_id.clone())
-        } else {
-            request
-        };
         if let Err(error) = crate::dispatcher::validate_project_precondition(
             &request.command,
             request.expected_project_id.as_deref(),
@@ -1240,16 +1233,7 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
 }
 
 fn requires_command_gate(command: &str) -> bool {
-    !is_host_runtime_command(command)
-        && !matches!(
-            command,
-            // These operations validate and prepare an external VST candidate
-            // before attempting the canonical commit. Their expected
-            // sequence is checked by the adapter at commit time, so holding
-            // the short canonical-operation gate across process work would
-            // only block unrelated reads and transport controls.
-            "instrument.set" | "effect.add" | "missing.replace-plugin"
-        )
+    crate::dispatcher::command_requires_project_id(command) && !is_long_project_operation(command)
 }
 
 fn is_long_project_operation(command: &str) -> bool {
@@ -1529,6 +1513,70 @@ mod tests {
     };
 
     #[test]
+    fn project_bound_runtime_commands_take_the_command_gate() {
+        for command in ["transport.play", "record.start", "render.start"] {
+            assert!(super::requires_command_gate(command), "{command}");
+        }
+        for command in [
+            "host.status",
+            "project.list",
+            "instrument.set",
+            "effect.add",
+        ] {
+            assert!(!super::requires_command_gate(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn live_host_rejects_project_bound_request_without_expected_project_id() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-missing-project-id-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+
+        let response = host.dispatch_control(ControlRequest::new(
+            "missing-project-id",
+            ControlCommand::new(
+                "track.add",
+                serde_json::json!({"name": "Rejected", "kind": "instrument"}),
+            ),
+            Some(0),
+        ));
+
+        assert!(!response.ok);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "expectedProjectId is required for Project-bound commands"
+        );
+        assert_eq!(
+            host.canonical_state()
+                .unwrap()
+                .session
+                .arrangement
+                .tracks
+                .len(),
+            0
+        );
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
     fn safe_mode_host_publishes_endpoint_and_handles_attached_mutation() {
         let data_root = std::env::temp_dir().join(format!(
             "riffra-runtime-host-{}-{}",
@@ -1545,6 +1593,7 @@ mod tests {
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let descriptor = read_endpoint(&data_root).unwrap();
 
         {
@@ -1559,7 +1608,8 @@ mod tests {
                     "session-get",
                     ControlCommand::new("session.get", serde_json::json!({})),
                     Some(0),
-                ),
+                )
+                .with_expected_project_id(expected_project_id.clone()),
             )
             .unwrap();
             let session_response: ControlResponse = transport::read_frame(&mut stream).unwrap();
@@ -1580,7 +1630,8 @@ mod tests {
                     serde_json::json!({"name": "Synth", "kind": "instrument"}),
                 ),
                 Some(0),
-            );
+            )
+            .with_expected_project_id(expected_project_id);
             transport::write_frame(&mut stream, &request).unwrap();
             let response: ControlResponse = transport::read_frame(&mut stream).unwrap();
             assert!(response.ok);
@@ -1614,34 +1665,44 @@ mod tests {
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
 
-        let mutation = host.dispatch_control(ControlRequest::new(
-            "track-add",
-            ControlCommand::new(
-                "track.add",
-                serde_json::json!({"name": "Synth", "kind": "instrument"}),
-            ),
-            Some(0),
-        ));
+        let mutation = host.dispatch_control(
+            ControlRequest::new(
+                "track-add",
+                ControlCommand::new(
+                    "track.add",
+                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
+                ),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id.clone()),
+        );
         assert!(mutation.ok);
         assert_eq!(mutation.sequence, Some(1));
 
-        let undo = host.dispatch_control(ControlRequest::new(
-            "stale-undo",
-            ControlCommand::new("undo", serde_json::json!({})),
-            Some(0),
-        ));
+        let undo = host.dispatch_control(
+            ControlRequest::new(
+                "stale-undo",
+                ControlCommand::new("undo", serde_json::json!({})),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id.clone()),
+        );
         assert!(!undo.ok);
         assert_eq!(
             undo.error.as_ref().map(|error| error.code),
             Some(ErrorCode::Conflict)
         );
 
-        let render = host.dispatch_control(ControlRequest::new(
-            "stale-render",
-            ControlCommand::new("render.start", serde_json::json!({})),
-            Some(0),
-        ));
+        let render = host.dispatch_control(
+            ControlRequest::new(
+                "stale-render",
+                ControlCommand::new("render.start", serde_json::json!({})),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
         assert!(!render.ok);
         assert_eq!(
             render.error.as_ref().map(|error| error.code),
@@ -1725,16 +1786,20 @@ mod tests {
         let bootstrap: HostBootstrap =
             serde_json::from_value(bootstrap.result.unwrap().value).unwrap();
         assert_eq!(bootstrap.canonical.sequence, 0);
+        let expected_project_id = bootstrap.project_state.active_project_id;
 
         let mutation = client
-            .request(&ControlRequest::new(
-                "track-add",
-                ControlCommand::new(
-                    "track.add",
-                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                ),
-                Some(0),
-            ))
+            .request(
+                &ControlRequest::new(
+                    "track-add",
+                    ControlCommand::new(
+                        "track.add",
+                        serde_json::json!({"name": "Synth", "kind": "instrument"}),
+                    ),
+                    Some(0),
+                )
+                .with_expected_project_id(expected_project_id),
+            )
             .unwrap();
         assert!(mutation.ok);
         assert_eq!(
@@ -1847,15 +1912,19 @@ mod tests {
             ),
         };
         let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
 
-        let response = host.dispatch_control(ControlRequest::new(
-            "track-add",
-            ControlCommand::new(
-                "track.add",
-                serde_json::json!({"name": "Synth", "kind": "instrument"}),
-            ),
-            Some(0),
-        ));
+        let response = host.dispatch_control(
+            ControlRequest::new(
+                "track-add",
+                ControlCommand::new(
+                    "track.add",
+                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
+                ),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id.clone()),
+        );
 
         assert!(response.ok);
         assert_eq!(
@@ -1874,14 +1943,17 @@ mod tests {
                 | crate::model::ArrangementProjectionOutcome::Failed { .. }
         ));
 
-        let marker = host.dispatch_control(ControlRequest::new(
-            "marker-add",
-            ControlCommand::new(
-                "marker.add",
-                serde_json::json!({"name": "Verse", "tick": 0}),
-            ),
-            Some(1),
-        ));
+        let marker = host.dispatch_control(
+            ControlRequest::new(
+                "marker-add",
+                ControlCommand::new(
+                    "marker.add",
+                    serde_json::json!({"name": "Verse", "tick": 0}),
+                ),
+                Some(1),
+            )
+            .with_expected_project_id(expected_project_id.clone()),
+        );
         assert!(marker.ok);
         assert_eq!(
             marker
@@ -1898,14 +1970,17 @@ mod tests {
             crate::model::ArrangementProjectionOutcome::NotRequired
         ));
 
-        let settings = host.dispatch_control(ControlRequest::new(
-            "session-settings-update",
-            ControlCommand::new(
-                "session.settings.update",
-                serde_json::json!({"note": "authoring note"}),
-            ),
-            Some(2),
-        ));
+        let settings = host.dispatch_control(
+            ControlRequest::new(
+                "session-settings-update",
+                ControlCommand::new(
+                    "session.settings.update",
+                    serde_json::json!({"note": "authoring note"}),
+                ),
+                Some(2),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
         assert!(settings.ok);
         assert_eq!(
             settings

@@ -335,19 +335,23 @@ mod tests {
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
         let events = host
             .state
             .subscribe_events()
             .expect("Host event subscription should be available");
 
-        let response = host.dispatch_control(ControlRequest::new(
-            "track-add",
-            ControlCommand::new(
-                "track.add",
-                serde_json::json!({"name": "Synth", "kind": "instrument"}),
-            ),
-            Some(0),
-        ));
+        let response = host.dispatch_control(
+            ControlRequest::new(
+                "track-add",
+                ControlCommand::new(
+                    "track.add",
+                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
+                ),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
         assert!(response.ok);
 
         let mut canonical_index = None;

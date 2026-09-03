@@ -140,50 +140,35 @@ mod tests {
     }
 
     #[test]
-    fn timebase_update_patches_only_the_requested_fields() {
-        let root = std::env::temp_dir().join(format!("riffra-dispatcher-timebase-{}", now_ms()));
+    fn interactive_history_undoes_and_redoes_a_committed_edit() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-history-{}", now_ms()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
-
-        let updated = dispatcher
-            .dispatch(request("timebase.update", json!({"bpm": 140.0})))
-            .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
-        assert_eq!(session.arrangement.timebase.ppq, 960);
-        assert_eq!(session.arrangement.timebase.bpm, 140.0);
-        assert_eq!(session.arrangement.timebase.time_signature_numerator, 4);
-        assert_eq!(session.arrangement.timebase.time_signature_denominator, 4);
-
-        let updated = dispatcher
+        dispatcher
             .dispatch(request(
-                "timebase.update",
-                json!({
-                    "bpm": 100.0,
-                    "timeSignatureNumerator": 7,
-                    "timeSignatureDenominator": 8
-                }),
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
-        assert_eq!(
-            session.arrangement.timebase,
-            riffra_core::ProjectTimebase {
-                ppq: 960,
-                bpm: 100.0,
-                time_signature_numerator: 7,
-                time_signature_denominator: 8,
-            }
-        );
-        let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn timebase_update_rejects_ppq_as_an_external_field() {
-        let root = std::env::temp_dir().join(format!("riffra-dispatcher-ppq-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
-        let error = dispatcher
-            .dispatch(request("timebase.update", json!({"ppq": 960})))
-            .unwrap_err();
-        assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let undone = dispatcher.dispatch(request("undo", json!({}))).unwrap();
+        assert_eq!(undone.result_type, "arrangementMutation");
+        assert_eq!(
+            undone.value["canonical"]["session"]["arrangement"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let redone = dispatcher.dispatch(request("redo", json!({}))).unwrap();
+        assert_eq!(redone.result_type, "arrangementMutation");
+        assert_eq!(
+            redone.value["canonical"]["session"]["arrangement"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

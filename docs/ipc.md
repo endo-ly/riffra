@@ -40,7 +40,7 @@
      │ stdin/stdout   │ stdin/stdout  │ stdout
 ┌────▼───────┐  ┌─────▼────────┐  ┌──▼──────────┐
 │riffra-audio│  │riffra-render │  │riffra-audio │
-│ --serve    │  │ -worker      │  │ --probe系   │
+│ --serve    │  │ オフライン    │  │ --probe系   │
 │ 常駐・音声  │  │ レンダ要求1  │  │ デバイス列挙│
 └────────────┘  │ 回ごとに起動  │  └─────────────┘
                 └──────────────┘
@@ -74,11 +74,11 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 命令は責務に応じて3つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
-| モード                              | 挙動                                                                                                | 使う命令                                           |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `run_blocking`                      | Host command gate を取得してから実行（正準セッション操作と保存を直列化）                            | 楽曲編集・ライブラリ操作・素材操作の大半           |
-| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理 | プローブ、スキャン、録音一覧、プラグイン接続など   |
-| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                     | play / stop / seek、MIDI送信、プレビュー、ミュート |
+| モード                              | 挙動                                                                                                                | 使う命令                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `run_blocking`                      | Host command gate を取得してから実行（正準セッション操作と保存を直列化）                                            | 楽曲編集・ライブラリ操作・素材操作の大半           |
+| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                 | プローブ、スキャン、録音一覧、プラグイン接続など   |
+| `run_runtime_control`               | Runtime側は永続セッションを変更しないsnapshot読み取りで実行。Project-bound requestはHost入口でProject切替と排他する | play / stop / seek、MIDI送信、プレビュー、ミュート |
 
 ### 3.2 命令カタログ
 
@@ -301,13 +301,14 @@ riffra --data-root ./data --interactive
 riffra --data-root ./data --attach --interactive
 ```
 
-StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。
+StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。Live Hostへ送るProject-bound requestには、Clientが`project.list`または`host.bootstrap`で取得した`expectedProjectId`を付ける。Live Hostはこの値がない要求を拒否し、Active Projectと一致しない要求をConflictとして返す。Standalone Dispatcherは単独でActive Projectを管理するため、欠落した値を自身のActive Projectで補完する。
 
 ```json
 {
   "requestId": "42",
   "command": "track.add",
   "expectedSequence": 18,
+  "expectedProjectId": "550e8400-e29b-41d4-a716-446655440000",
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
@@ -329,13 +330,13 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 }
 ```
 
-| エラーコード         | 発生条件                                         |
-| -------------------- | ------------------------------------------------ |
-| `invalidRequest`     | 入力形式、`params`、型、未知のコマンドが不正     |
-| `commandFailed`      | Core、Host、保存処理が失敗                       |
-| `conflict`           | `expectedSequence`が現在の正準シーケンスと不一致 |
-| `hostUnavailable`    | Attached CLIがHostへ接続できない                 |
-| `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない |
+| エラーコード         | 発生条件                                                                                     |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `invalidRequest`     | 入力形式、`params`、型、未知のコマンド、Project-bound requestの`expectedProjectId`欠落が不正 |
+| `commandFailed`      | Core、Host、保存処理が失敗                                                                   |
+| `conflict`           | `expectedSequence`または`expectedProjectId`が現在の状態と不一致                              |
+| `hostUnavailable`    | Attached CLIがHostへ接続できない                                                             |
+| `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない                                             |
 
 機械判定にはエラーコードを使い、message文字列を解析しない。
 

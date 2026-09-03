@@ -413,4 +413,52 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn timebase_update_patches_only_the_requested_fields() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-timebase-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let updated = dispatcher
+            .dispatch(request("timebase.update", json!({"bpm": 140.0})))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
+        assert_eq!(session.arrangement.timebase.ppq, 960);
+        assert_eq!(session.arrangement.timebase.bpm, 140.0);
+        assert_eq!(session.arrangement.timebase.time_signature_numerator, 4);
+        assert_eq!(session.arrangement.timebase.time_signature_denominator, 4);
+
+        let updated = dispatcher
+            .dispatch(request(
+                "timebase.update",
+                json!({
+                    "bpm": 100.0,
+                    "timeSignatureNumerator": 7,
+                    "timeSignatureDenominator": 8
+                }),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(updated.value).unwrap();
+        assert_eq!(
+            session.arrangement.timebase,
+            riffra_core::ProjectTimebase {
+                ppq: 960,
+                bpm: 100.0,
+                time_signature_numerator: 7,
+                time_signature_denominator: 8,
+            }
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn timebase_update_rejects_ppq_as_an_external_field() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-ppq-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let error = dispatcher
+            .dispatch(request("timebase.update", json!({"ppq": 960})))
+            .unwrap_err();
+        assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let _ = fs::remove_dir_all(root);
+    }
 }

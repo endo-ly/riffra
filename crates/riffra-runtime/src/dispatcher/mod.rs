@@ -809,39 +809,6 @@ mod tests {
     }
 
     #[test]
-    fn interactive_history_undoes_and_redoes_a_committed_edit() {
-        let root = std::env::temp_dir().join(format!("riffra-dispatcher-history-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
-        dispatcher
-            .dispatch(request(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
-            .unwrap();
-
-        let undone = dispatcher.dispatch(request("undo", json!({}))).unwrap();
-        assert_eq!(undone.result_type, "arrangementMutation");
-        assert_eq!(
-            undone.value["canonical"]["session"]["arrangement"]["tracks"]
-                .as_array()
-                .unwrap()
-                .len(),
-            0
-        );
-
-        let redone = dispatcher.dispatch(request("redo", json!({}))).unwrap();
-        assert_eq!(redone.result_type, "arrangementMutation");
-        assert_eq!(
-            redone.value["canonical"]["session"]["arrangement"]["tracks"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn metadata_mutations_report_when_runtime_projection_is_unnecessary() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-effect-{}", now_ms()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
