@@ -187,8 +187,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { handleDrop, isOsFileDrag } = useArrangeDrop({
     api: props.api,
     commit,
-    dropAsset: editor.dropAsset,
     hostGeneration: props.hostGeneration ?? 0,
+    pixelsPerTick,
+    snapTick: editor.snapTick,
     setMessage,
   });
   const sendMidiPreview = useCallback(

@@ -62,6 +62,12 @@ target_sources(riffra-render-core PRIVATE
 )
 
 target_sources(riffra-audio-core PRIVATE
+  src/AudioProtocol.cpp
+  src/AudioProtocol.h
+  src/AudioDeviceService.cpp
+  src/AudioDeviceService.h
+  src/MidiInputService.cpp
+  src/MidiInputService.h
   src/realtime/SafetyAudioCallback.cpp
   src/realtime/SafetyAudioCallback.h
   src/realtime/AudioSafetyDsp.h
@@ -79,12 +85,6 @@ target_sources(riffra-audio-core PRIVATE
 
 target_sources(riffra-audio PRIVATE
   src/AudioMain.cpp
-  src/AudioProtocol.cpp
-  src/AudioProtocol.h
-  src/AudioDeviceService.cpp
-  src/AudioDeviceService.h
-  src/MidiInputService.cpp
-  src/MidiInputService.h
 )
 
 target_sources(riffra-plugin-scan PRIVATE
@@ -208,6 +208,7 @@ target_include_directories(riffra-plugin-scan PRIVATE
 )
 
 target_include_directories(riffra-audio-core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
@@ -342,6 +343,7 @@ if(BUILD_TESTING)
     tests/BoundedMpmcQueueTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
+    tests/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core
