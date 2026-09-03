@@ -77,6 +77,12 @@ target_sources(riffra-audio-core PRIVATE
 
 target_sources(riffra-audio PRIVATE
   src/AudioMain.cpp
+  src/AudioProtocol.cpp
+  src/AudioProtocol.h
+  src/AudioDeviceService.cpp
+  src/AudioDeviceService.h
+  src/MidiInputService.cpp
+  src/MidiInputService.h
 )
 
 target_sources(riffra-plugin-scan PRIVATE
