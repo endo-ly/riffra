@@ -7,7 +7,7 @@
 //!   is rejected, and a persistence failure restores the previous graph. Other
 //!   Arrangement operations commit first and submit a nonblocking projection.
 //!
-//! - Pure-session operations ([`import_session`] and [`restore_generation`])
+//! - Pure-session operations ([`restore_generation`])
 //!   mutate the session and persist it without waiting for VST lifecycle work.
 //!
 //! Core owns editing rules, canonical state, history, and conflict decisions.
@@ -35,11 +35,10 @@ use crate::plugin_catalog;
 #[cfg(test)]
 use riffra_core::CreativeSession;
 use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
-use riffra_host::SessionStore;
 
 pub use crate::session::commit::{
     arrangement_mutation_result, arrangement_mutation_without_projection, commit_core_application,
-    import_session, publish_canonical_state, restore_generation,
+    publish_canonical_state, restore_generation,
 };
 pub use crate::session::context::{SessionContext, current_session};
 pub use crate::session::error::AdapterError;
@@ -52,13 +51,12 @@ use riffra_core::application::SessionSettingsPatch;
 pub fn undo(
     context: &SessionContext<'_>,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
-    let store = SessionStore::new(context.data_root);
     let session = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .undo()
         .map_err(AdapterError::from)?;
-    crate::library::index::refresh(context.data_root, &session);
+    crate::library::index::refresh(context.data_root, &context.storage, &session);
     publish_canonical_state(context)?;
     crate::session::adapter::arrangement_mutation_result(context)
 }
@@ -66,13 +64,12 @@ pub fn undo(
 pub fn redo(
     context: &SessionContext<'_>,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
-    let store = SessionStore::new(context.data_root);
     let session = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .redo()
         .map_err(AdapterError::from)?;
-    crate::library::index::refresh(context.data_root, &session);
+    crate::library::index::refresh(context.data_root, &context.storage, &session);
     publish_canonical_state(context)?;
     crate::session::adapter::arrangement_mutation_result(context)
 }
@@ -177,23 +174,25 @@ mod tests {
         audio: &'a crate::AudioSupervisor,
         core: &'a riffra_core::AppCore<crate::AudioSupervisor>,
     ) -> SessionContext<'a, CandidateRuntimeDriver> {
+        let storage = riffra_host::SessionStore::new(root, "01900000-0000-7000-8000-000000000001");
         SessionContext {
             core,
             audio,
             runtime,
+            storage,
             data_root: root,
             safe_mode: false,
             events: &crate::NoopHostEventSink,
+            project_commit: None,
         }
     }
 
     fn prepared_plugin_candidate<D: RuntimeDriver>(
         context: &SessionContext<'_, D>,
     ) -> riffra_core::PreparedSession {
-        let store = SessionStore::new(context.data_root);
         context
             .core
-            .application(&store)
+            .application(&context.storage)
             .prepare_track_effect(
                 "track:plugin",
                 "Candidate".into(),
@@ -300,7 +299,8 @@ mod tests {
         let hook_core = Arc::clone(&core);
         let hook_root = root.clone();
         driver.set_commit_hook(Arc::new(move || {
-            let store = riffra_host::SessionStore::new(&hook_root);
+            let store =
+                riffra_host::SessionStore::new(&hook_root, "01900000-0000-7000-8000-000000000001");
             hook_core
                 .application(&store)
                 .add_marker(TimelineTick(7), "concurrent".into())
@@ -347,7 +347,7 @@ mod tests {
         );
         let context = candidate_context(&root, &runtime, &audio, &core);
         let candidate = prepared_plugin_candidate(&context);
-        let store = SessionStore::new(&root);
+        let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         core.application(&store)
             .add_marker(TimelineTick(7), "concurrent".into())
             .unwrap();
@@ -420,7 +420,7 @@ mod tests {
         session.arrangement.tracks.push(track);
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(root.clone(), session, audio, false, true);
-        let store = riffra_host::SessionStore::new(&root);
+        let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         store.ensure_layout().unwrap();
         let saved = core
             .application(&store)

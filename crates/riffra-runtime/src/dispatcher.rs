@@ -1,4 +1,7 @@
-use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome, TrackSummary};
+use crate::model::{
+    ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
+};
+use crate::projects;
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
@@ -14,12 +17,13 @@ use riffra_core::{
     MidiClipPatch, MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RackDevice,
     RhythmPattern, TimelineTick, TrackKind, TrackPatch,
 };
-use riffra_host::{DataRootLease, SessionStore, now_ms};
+use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug)]
 pub enum DispatchError {
@@ -29,6 +33,10 @@ pub enum DispatchError {
     Conflict {
         expected_sequence: u64,
         current_sequence: u64,
+    },
+    ProjectConflict {
+        expected_project_id: String,
+        current_project_id: String,
     },
 }
 
@@ -44,6 +52,13 @@ impl fmt::Display for DispatchError {
             } => write!(
                 formatter,
                 "canonical state changed: expected sequence {expected_sequence}, current sequence {current_sequence}"
+            ),
+            Self::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => write!(
+                formatter,
+                "active project changed: expected {expected_project_id}, current {current_project_id}"
             ),
         }
     }
@@ -61,6 +76,10 @@ impl DispatchError {
                 expected_sequence,
                 current_sequence,
             } => ProtocolError::conflict(*expected_sequence, *current_sequence),
+            Self::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => ProtocolError::project_conflict(expected_project_id, current_project_id),
         }
     }
 
@@ -102,14 +121,54 @@ enum CoreRef<'a, A> {
 }
 
 enum StorageRef<'a> {
-    Owned(SessionStore),
+    Owned(Mutex<SessionStore>),
     Borrowed(&'a SessionStore),
+}
+
+impl StorageRef<'_> {
+    fn store(&self) -> Result<SessionStore, String> {
+        match self {
+            Self::Owned(storage) => storage
+                .lock()
+                .map(|storage| storage.clone())
+                .map_err(|_| "session storage lock was poisoned".into()),
+            Self::Borrowed(storage) => Ok((*storage).clone()),
+        }
+    }
+
+    fn replace_owned(&self, storage: SessionStore) {
+        match self {
+            Self::Owned(current) => {
+                *current
+                    .lock()
+                    .expect("standalone session storage lock must not be poisoned") = storage;
+            }
+            Self::Borrowed(_) => {}
+        }
+    }
+}
+
+enum ProjectStoreRef<'a> {
+    Owned(ProjectStore),
+    Borrowed(&'a ProjectStore),
+}
+
+impl ProjectStoreRef<'_> {
+    fn as_ref(&self) -> &ProjectStore {
+        match self {
+            Self::Owned(store) => store,
+            Self::Borrowed(store) => store,
+        }
+    }
 }
 
 impl<'a> SessionStorage for StorageRef<'a> {
     fn save(&self, session: &CreativeSession) -> Result<(), PortError> {
         match self {
-            Self::Owned(storage) => SessionStorage::save(storage, session),
+            Self::Owned(storage) => storage
+                .lock()
+                .map_err(|_| PortError::Storage("session storage lock was poisoned".into()))
+                .and_then(|storage| SessionStorage::save(&*storage, session)),
             Self::Borrowed(storage) => SessionStorage::save(*storage, session),
         }
     }
@@ -146,6 +205,7 @@ pub struct HostDispatcher<'a, A> {
     _lease: Option<DataRootLease>,
     core: CoreRef<'a, A>,
     storage: StorageRef<'a>,
+    project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
     allow_runtime_commands: bool,
 }
@@ -172,9 +232,13 @@ impl HostDispatcher<'static, ()> {
     pub fn open(data_root: PathBuf) -> Result<Self, String> {
         let lease = DataRootLease::acquire(&data_root)
             .map_err(|error| format!("data root could not be opened: {error}"))?;
-        let storage = SessionStore::new(&data_root);
-        let loaded = storage
-            .load_or_create()
+        let project_store = ProjectStore::new(&data_root);
+        let loaded = project_store
+            .initialize()
+            .map_err(|error| error.to_string())?
+            .loaded;
+        let storage = project_store
+            .active_session_store()
             .map_err(|error| error.to_string())?;
         let core = AppCore::new(
             data_root.clone(),
@@ -186,7 +250,8 @@ impl HostDispatcher<'static, ()> {
         Ok(Self {
             _lease: Some(lease),
             core: CoreRef::Owned(core),
-            storage: StorageRef::Owned(storage),
+            storage: StorageRef::Owned(Mutex::new(storage)),
+            project_store: ProjectStoreRef::Owned(project_store),
             data_root,
             allow_runtime_commands: false,
         })
@@ -198,12 +263,14 @@ impl<'a, A> HostDispatcher<'a, A> {
     pub(crate) fn borrowed(
         core: &'a AppCore<A>,
         storage: &'a SessionStore,
+        project_store: &'a ProjectStore,
         data_root: &'a Path,
     ) -> Self {
         Self {
             _lease: None,
             core: CoreRef::Borrowed(core),
             storage: StorageRef::Borrowed(storage),
+            project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
             allow_runtime_commands: true,
         }
@@ -222,6 +289,35 @@ impl<'a, A> HostDispatcher<'a, A> {
             ));
         }
         let canonical = self.core.canonical_state()?;
+        let request = if command_requires_project_id(&request.command)
+            && request.expected_project_id.is_none()
+        {
+            let project_id = self
+                .project_store
+                .as_ref()
+                .active_project_id()
+                .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+            request.with_expected_project_id(project_id)
+        } else {
+            request
+        };
+        let current_project_id = self
+            .project_store
+            .as_ref()
+            .active_project_id()
+            .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
+        validate_project_precondition(
+            &request.command,
+            request.expected_project_id.as_deref(),
+            &current_project_id,
+        )
+        .map_err(|error| match error.code {
+            ErrorCode::Conflict => DispatchError::ProjectConflict {
+                expected_project_id: request.expected_project_id.clone().unwrap_or_default(),
+                current_project_id,
+            },
+            _ => DispatchError::InvalidRequest(error.message),
+        })?;
         if let Some(expected_sequence) = request.expected_sequence
             && expected_sequence != canonical.sequence
         {
@@ -249,6 +345,47 @@ impl<'a, A> HostDispatcher<'a, A> {
             ));
         }
         let result = match request.name.as_str() {
+            "project.list" => self.value("projectState", self.project_state()?),
+            "project.create" => {
+                let params: ProjectCreateParams = decode(request.params)?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create(params.name)
+                    .map_err(|error| error.to_string())?;
+                self.activate_project(&summary.project_id)?
+            }
+            "project.open" => {
+                let params: ProjectOpenParams = decode(request.params)?;
+                self.activate_project(&params.project_id)?
+            }
+            "project.rename" => {
+                let params: ProjectRenameParams = decode(request.params)?;
+                let session = self
+                    .core
+                    .application(&self.storage)
+                    .update_session_settings(SessionSettingsPatch {
+                        project_name: Some(Some(params.name)),
+                        ..Default::default()
+                    })?;
+                let storage = self.storage.store().map_err(DispatchError::from)?;
+                crate::library::index::refresh(&self.data_root, &storage, &session);
+                self.value_with_effect(
+                    "projectState",
+                    self.project_state()?,
+                    CanonicalMutationEffect::CanonicalOnly,
+                )
+            }
+            "project.import" => {
+                let params: ProjectImportParams = decode(request.params)?;
+                let session = riffra_host::import_project(&self.data_root, &params.path)?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create_from_session(&session)
+                    .map_err(|error| error.to_string())?;
+                self.activate_project(&summary.project_id)?
+            }
             "session.get" => self.session(canonical.session.clone()),
             "session.inspect" => {
                 let params: SessionInspectionQuery = decode(request.params)?;
@@ -789,17 +926,16 @@ impl<'a, A> HostDispatcher<'a, A> {
                 )?;
                 self.value("assetId", asset_id)
             }
-            "project.export" => self.value(
-                "projectExport",
-                riffra_host::export_project(&self.data_root, &canonical.session, now_ms())?,
-            ),
-            "project.import" => {
-                let params: ProjectImportParams = decode(request.params)?;
-                let session = riffra_host::import_project(&self.data_root, &params.path)?;
-                self.session(
-                    self.core
-                        .application(&self.storage)
-                        .import_project(session)?,
+            "project.export" => {
+                let params: ProjectExportParams = decode(request.params)?;
+                self.value(
+                    "projectExport",
+                    riffra_host::export_project(
+                        &self.data_root,
+                        &canonical.session,
+                        now_ms(),
+                        &params.output,
+                    )?,
                 )
             }
             "instrument.set" => {
@@ -995,6 +1131,60 @@ impl<'a, A> HostDispatcher<'a, A> {
         self.session_with_effect(session, CanonicalMutationEffect::ProjectArrangement)
     }
 
+    fn project_state(&self) -> Result<ProjectState, DispatchError> {
+        projects::state(self.project_store.as_ref()).map_err(DispatchError::CommandFailed)
+    }
+
+    fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
+        let prepared = projects::prepare(self.project_store.as_ref(), project_id)
+            .map_err(DispatchError::CommandFailed)?;
+        crate::library::index::refresh(
+            &self.data_root,
+            &prepared.storage,
+            &prepared.loaded.session,
+        );
+        let activated = projects::activate(self.project_store.as_ref(), prepared, |session| {
+            self.activate_core_session(session)
+        })
+        .map_err(DispatchError::CommandFailed)?;
+        self.set_core_recovery(activated.loaded.recovered_from_generation);
+        self.storage.replace_owned(activated.storage.clone());
+        let sequence = activated.canonical.sequence;
+        let activation = projects::result(activated);
+        self.value_with_known_sequence("projectActivation", activation, sequence)
+    }
+
+    fn set_core_recovery(&self, recovered: bool) {
+        match &self.core {
+            CoreRef::Owned(core) => core.set_recovered_from_generation(recovered),
+            CoreRef::Borrowed(core) => core.set_recovered_from_generation(recovered),
+        }
+    }
+
+    fn activate_core_session(
+        &self,
+        session: CreativeSession,
+    ) -> Result<riffra_core::CanonicalState, ApplicationError> {
+        match &self.core {
+            CoreRef::Owned(core) => core.activate_session(session),
+            CoreRef::Borrowed(core) => (*core).activate_session(session),
+        }
+    }
+
+    fn value_with_known_sequence<T: serde::Serialize>(
+        &self,
+        result_type: &'static str,
+        value: T,
+        sequence: u64,
+    ) -> Result<DispatchResult, DispatchError> {
+        Ok(DispatchResult {
+            result_type,
+            value: serde_json::to_value(value).expect("project values must serialize"),
+            sequence,
+            projection_effect: CanonicalMutationEffect::CanonicalOnly,
+        })
+    }
+
     fn session_with_effect(
         &self,
         session: CreativeSession,
@@ -1094,6 +1284,34 @@ impl<'a, A> HostDispatcher<'a, A> {
     }
 }
 
+/// Returns whether a control command requires an active Project precondition.
+pub fn command_requires_project_id(command: &str) -> bool {
+    !is_host_scoped_command(command)
+}
+
+pub(crate) fn validate_project_precondition(
+    command: &str,
+    expected_project_id: Option<&str>,
+    current_project_id: &str,
+) -> Result<(), ProtocolError> {
+    if !command_requires_project_id(command) {
+        return Ok(());
+    }
+    let Some(expected_project_id) = expected_project_id else {
+        return Err(ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "expectedProjectId is required for Project-bound commands",
+        ));
+    };
+    if expected_project_id != current_project_id {
+        return Err(ProtocolError::project_conflict(
+            expected_project_id,
+            current_project_id,
+        ));
+    }
+    Ok(())
+}
+
 fn is_read_command(command: &str) -> bool {
     matches!(
         command,
@@ -1106,7 +1324,41 @@ fn is_read_command(command: &str) -> bool {
             | "music.harmony.resolve"
             | "music.harmony.list"
             | "music.region.list"
+            | "project.list"
             | "project.export"
+    )
+}
+
+fn is_host_scoped_command(command: &str) -> bool {
+    matches!(
+        command,
+        "host.status"
+            | "host.info"
+            | "host.bootstrap"
+            | "host.shutdown"
+            | "project.list"
+            | "audio.master-gain.preview"
+            | "audio.emergency-mute"
+            | "midi.listening.enable"
+            | "midi.listening.disable"
+            | "audio.status"
+            | "audio.probe"
+            | "audio.channels.probe"
+            | "audio.recover"
+            | "audio.startup.retry"
+            | "audio.driver.get"
+            | "audio.driver.set"
+            | "asset.preview"
+            | "asset.preview.stop"
+            | "plugin.catalog.list"
+            | "plugin.scan"
+            | "plugin.scan.start"
+            | "job.get"
+            | "job.cancel"
+            | "library.search"
+            | "library.asset.update"
+            | "library.related"
+            | "analysis.start"
     )
 }
 
@@ -1593,8 +1845,32 @@ struct AssetImportParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCreateParams {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectOpenParams {
+    project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRenameParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ProjectImportParams {
     path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectExportParams {
+    output: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1659,7 +1935,7 @@ pub(crate) struct MissingPluginReplaceParams {
 mod tests {
     use super::Dispatcher;
     use riffra_control::ControlCommand;
-    use riffra_host::now_ms;
+    use riffra_host::{ProjectStore, now_ms};
     use serde_json::{Value, json};
     use std::fs;
 
@@ -1667,6 +1943,45 @@ mod tests {
         ControlCommand {
             name: command.into(),
             params,
+        }
+    }
+
+    #[test]
+    fn project_precondition_classification_follows_active_project_dependency() {
+        for command in [
+            "host.status",
+            "host.info",
+            "host.bootstrap",
+            "host.shutdown",
+            "project.list",
+            "audio.emergency-mute",
+            "audio.probe",
+            "audio.driver.get",
+            "plugin.catalog.list",
+            "plugin.scan",
+        ] {
+            assert!(!super::command_requires_project_id(command), "{command}");
+        }
+
+        for command in [
+            "session.get",
+            "track.add",
+            "project.export",
+            "transport.play",
+            "transport.stop",
+            "transport.go-to-start",
+            "transport.seek",
+            "record.start",
+            "record.stop",
+            "render.start",
+            "plugin.editor.open",
+            "take.comparison.start",
+            "instrument.set",
+            "missing.disable-plugin",
+            "undo",
+            "redo",
+        ] {
+            assert!(super::command_requires_project_id(command), "{command}");
         }
     }
 
@@ -1696,6 +2011,209 @@ mod tests {
             .unwrap();
         let session: riffra_core::CreativeSession = serde_json::from_value(result.value).unwrap();
         assert_eq!(session.arrangement.midi_clips.len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_commands_keep_containers_independent_and_switch_the_active_session() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-projects-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+
+        let initial = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap();
+        let initial_id = initial.value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(initial.value["projects"].as_array().unwrap().len(), 1);
+
+        let created = dispatcher
+            .dispatch(request("project.create", json!({"name":"Second"})))
+            .unwrap();
+        let second_id = created.value["projectState"]["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(second_id, initial_id);
+        assert_eq!(
+            created.value["projectState"]["projects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let second_session = dispatcher
+            .dispatch(request("session.get", json!({})))
+            .unwrap();
+        assert_eq!(second_session.value["projectName"], "Second");
+
+        dispatcher
+            .dispatch(request("project.open", json!({"projectId": initial_id})))
+            .unwrap();
+        let reopened = dispatcher
+            .dispatch(request("session.get", json!({})))
+            .unwrap();
+        assert_eq!(reopened.value["projectName"], Value::Null);
+
+        dispatcher
+            .dispatch(request("project.rename", json!({"name":"First"})))
+            .unwrap();
+        let renamed = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap();
+        assert_eq!(
+            renamed.value["projects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|project| project["projectId"] == initial_id)
+                .unwrap()["name"],
+            "First"
+        );
+        assert!(
+            root.join("projects")
+                .join(second_id)
+                .join("session.json")
+                .is_file()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_import_creates_a_new_active_container_without_overwriting_the_source() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-import-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let initial_id = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap()
+            .value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        dispatcher
+            .dispatch(request("project.rename", json!({"name":"Source"})))
+            .unwrap();
+        let export_path = root.join("source.riffra");
+        let export = dispatcher
+            .dispatch(request("project.export", json!({"output": export_path})))
+            .unwrap();
+        let manifest = export.value["path"].as_str().unwrap().to_owned();
+
+        let imported = dispatcher
+            .dispatch(request("project.import", json!({"path":manifest})))
+            .unwrap();
+        let imported_id = imported.value["projectState"]["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(imported_id, initial_id);
+        assert_eq!(
+            imported.value["projectState"]["projects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let imported_again = dispatcher
+            .dispatch(request("project.import", json!({"path":manifest})))
+            .unwrap();
+        let imported_again_id = imported_again.value["projectState"]["activeProjectId"]
+            .as_str()
+            .unwrap();
+        assert_ne!(imported_again_id, imported_id);
+        assert_eq!(
+            imported_again.value["projectState"]["projects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            dispatcher
+                .dispatch(request("session.get", json!({})))
+                .unwrap()
+                .value["projectName"],
+            "Source"
+        );
+
+        dispatcher
+            .dispatch(request("project.open", json!({"projectId":initial_id})))
+            .unwrap();
+        assert_eq!(
+            dispatcher
+                .dispatch(request("session.get", json!({})))
+                .unwrap()
+                .value["projectName"],
+            "Source"
+        );
+        assert!(
+            root.join("projects")
+                .join(&imported_id)
+                .join("session.json")
+                .is_file()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_activation_returns_recovery_for_the_target_project_only() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-recovery-{}", now_ms()));
+        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let initial_id = dispatcher
+            .dispatch(request("project.list", json!({})))
+            .unwrap()
+            .value["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let created = dispatcher
+            .dispatch(request("project.create", json!({"name":"Recovered"})))
+            .unwrap();
+        let recovered_id = created.value["projectState"]["activeProjectId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let project_store = ProjectStore::new(&root);
+        let storage = project_store.session_store(&recovered_id).unwrap();
+        let mut session = storage.load_or_create().unwrap().session;
+        session.settings.note = "generation source".into();
+        storage.save(&session).unwrap();
+        fs::write(
+            root.join("projects")
+                .join(&recovered_id)
+                .join("session.json"),
+            b"not-json",
+        )
+        .unwrap();
+
+        let recovered = dispatcher
+            .dispatch(request("project.open", json!({"projectId":recovered_id})))
+            .unwrap();
+        assert_eq!(recovered.value["recovery"]["recoveredFromGeneration"], true);
+        assert!(
+            !recovered.value["recovery"]["recoveryCandidates"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            recovered.value["recovery"]["recoveryCandidates"][0]["projectName"],
+            "Recovered"
+        );
+
+        let normal = dispatcher
+            .dispatch(request("project.open", json!({"projectId":initial_id})))
+            .unwrap();
+        assert_eq!(normal.value["recovery"]["recoveredFromGeneration"], false);
+        assert!(
+            normal.value["recovery"]["recoveryCandidates"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1780,13 +2298,17 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-invalid-{}", std::process::id()));
         let dispatcher = Dispatcher::open(root.clone()).unwrap();
-        let before = fs::read(root.join("scratch/current.json")).unwrap();
+        let workspace: Value =
+            serde_json::from_slice(&fs::read(root.join("workspace.json")).unwrap()).unwrap();
+        let project_id = workspace["activeProjectId"].as_str().unwrap();
+        let current = root.join("projects").join(project_id).join("session.json");
+        let before = fs::read(&current).unwrap();
         assert!(
             dispatcher
                 .dispatch(request("track.remove", json!({"trackId":"track:missing"}),))
                 .is_err()
         );
-        assert_eq!(fs::read(root.join("scratch/current.json")).unwrap(), before);
+        assert_eq!(fs::read(current).unwrap(), before);
         let _ = fs::remove_dir_all(root);
     }
 

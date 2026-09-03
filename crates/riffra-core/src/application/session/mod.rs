@@ -42,14 +42,6 @@ where
         Ok(self.core.snapshot()?.session)
     }
 
-    /// Imports a complete project through the canonical commit boundary.
-    pub fn import_project(
-        &self,
-        session: CreativeSession,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core.commit_candidate(self.storage, session)
-    }
-
     /// Restores a complete project generation through the canonical commit
     /// boundary.
     pub fn restore_project(

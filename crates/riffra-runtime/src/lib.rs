@@ -31,7 +31,7 @@ use riffra_control::HostEventFrame;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Instant;
 
 pub use audio::{
@@ -39,14 +39,15 @@ pub use audio::{
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;
-pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
+pub use dispatcher::{DispatchError, DispatchResult, Dispatcher, command_requires_project_id};
 pub use host::{DawHost, HostBootstrap, HostConfig, HostError};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
-    AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
-    RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
-    TrackDeviceSummary, TrackRackSummary, TrackSummary,
+    AudioStatus, DeviceChannels, MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState,
+    ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair, TrackDeviceSummary, TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
@@ -64,6 +65,10 @@ use riffra_core::CanonicalState;
 pub enum HostEvent {
     /// The canonical state changed after a successful Core commit.
     CanonicalStateChanged(CanonicalState),
+    /// The active Project or Project list changed.
+    ProjectStateChanged(ProjectState),
+    /// A Project activation completed with its canonical and recovery state.
+    ProjectActivated(crate::ProjectActivationResult),
     /// Startup completed, with the result of the runtime handshake.
     RuntimeStartupFinished { succeeded: bool },
     /// The latest canonical arrangement projection state.
@@ -89,6 +94,10 @@ impl HostEvent {
             Self::CanonicalStateChanged(value) => {
                 ("canonical-state-changed", serde_json::to_value(value))
             }
+            Self::ProjectStateChanged(value) => {
+                ("project-state-changed", serde_json::to_value(value))
+            }
+            Self::ProjectActivated(value) => ("project-activated", serde_json::to_value(value)),
             Self::RuntimeStartupFinished { succeeded } => (
                 "runtime-startup-finished",
                 Ok(serde_json::json!({"succeeded": succeeded})),
@@ -299,6 +308,7 @@ pub struct HostEventHub {
     shell: SharedHostEventSink,
     emit_gate: Mutex<()>,
     subscribers: Mutex<Vec<HostEventSubscriber>>,
+    plugin_project_id: RwLock<Option<String>>,
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -309,8 +319,17 @@ impl HostEventHub {
             shell,
             emit_gate: Mutex::new(()),
             subscribers: Mutex::new(Vec::new()),
+            plugin_project_id: RwLock::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Binds subsequent plugin persistence events to the active Project.
+    pub(crate) fn set_plugin_project_id(&self, project_id: Option<String>) {
+        *self
+            .plugin_project_id
+            .write()
+            .expect("Host event plugin Project lock was poisoned") = project_id;
     }
 
     /// Subscribes one local event consumer.
@@ -392,6 +411,31 @@ impl HostEventSink for HostEventHub {
                 tracing::warn!(error = %error, "local Host event could not be serialized");
                 return;
             }
+        };
+        let frame = if is_plugin_persistence_event(&frame.event)
+            && matches!(
+                &event,
+                HostEvent::TrackPluginStateChanged(_) | HostEvent::TrackPluginParameterChanged(_)
+            ) {
+            let project_id = self
+                .plugin_project_id
+                .read()
+                .expect("Host event plugin Project lock was poisoned")
+                .clone();
+            let mut frame = frame;
+            if let Some(payload) = frame.payload.as_object_mut()
+                && !payload
+                    .get("projectId")
+                    .is_some_and(serde_json::Value::is_string)
+            {
+                payload.insert(
+                    "projectId".into(),
+                    project_id.map_or(Value::Null, Value::String),
+                );
+            }
+            frame
+        } else {
+            frame
         };
         let telemetry = event.is_coalescible();
         let mut subscribers = self
@@ -511,6 +555,24 @@ mod tests {
             &shell_events[0],
             HostEvent::RuntimeRestarted { generation: 4 }
         ));
+    }
+
+    #[test]
+    fn event_hub_preserves_the_project_bound_to_a_plugin_event() {
+        let hub = HostEventHub::new(Arc::new(NoopHostEventSink));
+        let subscription = hub.subscribe_plugin_persistence().unwrap();
+        hub.set_plugin_project_id(Some("project:b".into()));
+
+        hub.emit(HostEvent::TrackPluginParameterChanged(serde_json::json!({
+            "projectId": "project:a",
+            "trackId": "track:1",
+            "deviceId": "device:1",
+            "parameterIndex": 0,
+            "value": 0.5,
+        })));
+
+        let frame = subscription.recv().unwrap();
+        assert_eq!(frame.payload["projectId"], "project:a");
     }
 
     #[test]

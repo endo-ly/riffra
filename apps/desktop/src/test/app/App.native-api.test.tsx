@@ -152,7 +152,33 @@ describe('App native boundary', () => {
     const api = new FakeNativeApi();
     await renderApp(api);
     const newer = { ...defaultSession(), projectName: 'Newest' };
+    newer.arrangement.tracks.push({
+      id: 'track:newest',
+      name: 'Newest Track',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
     const older = { ...defaultSession(), projectName: 'Older' };
+    older.arrangement.tracks.push({
+      id: 'track:older',
+      name: 'Older Track',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
 
     api.emitCanonicalStateChanged({
       session: newer,
@@ -165,8 +191,8 @@ describe('App native boundary', () => {
       history: { canUndo: false, canRedo: false },
     });
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /Newest/ })).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /Older/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Newest Track')).toBeInTheDocument());
+    expect(screen.queryByText('Older Track')).not.toBeInTheDocument();
   });
 
   it('surfaces the native feedback cause in the global safety control', async () => {

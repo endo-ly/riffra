@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::model::{ProjectActivationResult, ProjectState};
+
 #[tauri::command]
 pub async fn undo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
     dispatch(app, "undo", json!({})).await
@@ -29,11 +31,37 @@ pub async fn restore_recovery_generation(
 }
 
 #[tauri::command]
-pub async fn import_scratch_session(
+pub async fn import_project(
     path: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
-    dispatch(app, "project.import-scratch", json!({ "path": path })).await
+) -> Result<ProjectActivationResult, String> {
+    dispatch(app, "project.import", json!({ "path": path })).await
+}
+
+#[tauri::command]
+pub async fn list_projects(app: AppHandle) -> Result<ProjectState, String> {
+    dispatch(app, "project.list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn create_project(
+    name: Option<String>,
+    app: AppHandle,
+) -> Result<ProjectActivationResult, String> {
+    dispatch(app, "project.create", json!({ "name": name })).await
+}
+
+#[tauri::command]
+pub async fn open_project(
+    project_id: String,
+    app: AppHandle,
+) -> Result<ProjectActivationResult, String> {
+    dispatch(app, "project.open", json!({ "projectId": project_id })).await
+}
+
+#[tauri::command]
+pub async fn rename_project(name: String, app: AppHandle) -> Result<ProjectState, String> {
+    dispatch(app, "project.rename", json!({ "name": name })).await
 }
 
 #[tauri::command]

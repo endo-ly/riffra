@@ -1,13 +1,13 @@
 //! Desktop-side ownership and routing for the currently connected Host.
 
-use crate::model::{BootstrapState, RecoveryCandidate};
+use crate::model::{BootstrapState, ProjectRecoveryState, RecoveryCandidate};
 use riffra_control::{
     ControlCommand, ControlRequest, ControlResponse, HostEventFrame, LocalHostClient,
     LocalHostDiscovery, LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
 };
 use riffra_runtime::{
     AudioStatus, DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink,
-    RuntimeBinaries,
+    RuntimeBinaries, command_requires_project_id,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -373,6 +373,7 @@ impl HostEventSink for EmbeddedEventSink {
 pub struct HostConnectionManager {
     active: RwLock<ActiveHost>,
     bootstrap: RwLock<Option<HostBootstrap>>,
+    active_project_id: RwLock<Option<String>>,
     operation_barrier: RwLock<()>,
     switch_mutex: Mutex<()>,
     next_generation: AtomicU64,
@@ -415,6 +416,7 @@ impl HostConnectionManager {
                 reason: "Host is starting".into(),
             }),
             bootstrap: RwLock::new(None),
+            active_project_id: RwLock::new(None),
             operation_barrier: RwLock::new(()),
             switch_mutex: Mutex::new(()),
             next_generation: AtomicU64::new(1),
@@ -464,6 +466,16 @@ impl HostConnectionManager {
     fn handle_message(&self, message: ConnectionMessage) {
         match message {
             ConnectionMessage::Event { generation, frame } => {
+                if frame.event == "project-activated"
+                    && self.active_state().generation == generation
+                    && let Some(project_id) =
+                        frame.payload["projectState"]["activeProjectId"].as_str()
+                {
+                    *self
+                        .active_project_id
+                        .write()
+                        .expect("active Project lock was poisoned") = Some(project_id.to_owned());
+                }
                 self.router.receive(generation, frame);
             }
             ConnectionMessage::Disconnected { generation, reason } => {
@@ -563,6 +575,11 @@ impl HostConnectionManager {
             .bootstrap
             .write()
             .expect("Host bootstrap lock was poisoned") = Some(prepared.bootstrap.clone());
+        *self
+            .active_project_id
+            .write()
+            .expect("active Project lock was poisoned") =
+            Some(prepared.bootstrap.project_state.active_project_id.clone());
         let connection = HostConnectionBootstrap {
             state: state.clone(),
             bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
@@ -866,6 +883,11 @@ impl HostConnectionManager {
             .write()
             .map_err(|_| "Host bootstrap lock was poisoned".to_string())? =
             Some(prepared.bootstrap.clone());
+        *self
+            .active_project_id
+            .write()
+            .map_err(|_| "active Project lock was poisoned".to_string())? =
+            Some(prepared.bootstrap.project_state.active_project_id.clone());
         let result = HostConnectionBootstrap {
             state: state.clone(),
             bootstrap: self.to_desktop_bootstrap(&state, &prepared.bootstrap),
@@ -897,6 +919,17 @@ impl HostConnectionManager {
             ControlCommand::new(command, params),
             None,
         );
+        let request = if command_requires_project_id(command) {
+            let project_id = self
+                .active_project_id
+                .read()
+                .map_err(|_| "active Project lock was poisoned".to_string())?
+                .clone()
+                .ok_or_else(|| "active Project is not available".to_string())?;
+            request.with_expected_project_id(project_id)
+        } else {
+            request
+        };
         let (response, attached_generation) = {
             let active = self
                 .active
@@ -927,6 +960,18 @@ impl HostConnectionManager {
                 return Err(error);
             }
         };
+        if response.ok
+            && let Some(project_id) = response
+                .result
+                .as_ref()
+                .and_then(|result| result.value["projectState"]["activeProjectId"].as_str())
+        {
+            *self
+                .active_project_id
+                .write()
+                .map_err(|_| "active Project lock was poisoned".to_string())? =
+                Some(project_id.to_owned());
+        }
         response_value(response)
     }
 
@@ -1026,13 +1071,18 @@ impl HostConnectionManager {
     ) -> BootstrapState {
         BootstrapState {
             canonical: bootstrap.canonical.clone(),
+            project_state: bootstrap.project_state.clone(),
             plugin_catalog: bootstrap.plugin_catalog.clone(),
             runtime_started: bootstrap.runtime_started,
             runtime_startup_finished: bootstrap.runtime_startup_finished,
-            recovered_from_generation: bootstrap.recovered_from_generation,
+            recovery: ProjectRecoveryState {
+                recovered_from_generation: bootstrap.recovery.recovered_from_generation,
+                recovery_candidates: map_runtime_recovery_candidates(
+                    bootstrap.recovery.recovery_candidates.clone(),
+                ),
+            },
             safe_mode: bootstrap.safe_mode,
             native_available: true,
-            recovery_candidates: map_recovery_candidates(bootstrap.recovery_candidates.clone()),
             data_root: bootstrap.data_root.to_string_lossy().into_owned(),
             vst3_root: default_vst3_root(),
             host_connection: state.clone(),
@@ -1075,12 +1125,26 @@ fn ensure_no_active_recording(recording_active: bool) -> Result<(), String> {
 
 /// Queries one attached Host for its native recording state.
 fn attached_recording_active(client: &LocalHostClient) -> bool {
-    client
+    let project_id = client
         .request(&ControlRequest::new(
-            format!("desktop-recording-status-{}", new_instance_id()),
-            ControlCommand::new("record.status", json!({})),
+            format!("desktop-recording-project-{}", new_instance_id()),
+            ControlCommand::new("project.list", json!({})),
             None,
         ))
+        .ok()
+        .and_then(|response| response_value::<Value>(response).ok())
+        .and_then(|value| value["activeProjectId"].as_str().map(str::to_owned));
+    let request = ControlRequest::new(
+        format!("desktop-recording-status-{}", new_instance_id()),
+        ControlCommand::new("record.status", json!({})),
+        None,
+    );
+    let request = match project_id {
+        Some(project_id) => request.with_expected_project_id(project_id),
+        None => request,
+    };
+    client
+        .request(&request)
         .ok()
         .and_then(|response| response_value::<AudioStatus>(response).ok())
         .map(|status| status.recording.active)
@@ -1138,6 +1202,12 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
         HostEvent::CanonicalStateChanged(value) => {
             HostEventFrame::new("canonical-state-changed", json!(value))
         }
+        HostEvent::ProjectStateChanged(value) => {
+            HostEventFrame::new("project-state-changed", json!(value))
+        }
+        HostEvent::ProjectActivated(value) => {
+            HostEventFrame::new("project-activated", json!(value))
+        }
         HostEvent::RuntimeStartupFinished { succeeded } => {
             HostEventFrame::new("runtime-startup-finished", json!({"succeeded": succeeded}))
         }
@@ -1159,8 +1229,24 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn map_recovery_candidates(
     candidates: Vec<riffra_host::RecoveryCandidate>,
+) -> Vec<RecoveryCandidate> {
+    candidates
+        .into_iter()
+        .map(|candidate| RecoveryCandidate {
+            file_name: candidate.file_name,
+            updated_at_ms: candidate.updated_at_ms,
+            session_id: candidate.session_id,
+            project_name: candidate.project_name,
+            note: candidate.note,
+        })
+        .collect()
+}
+
+fn map_runtime_recovery_candidates(
+    candidates: Vec<riffra_runtime::RecoveryCandidate>,
 ) -> Vec<RecoveryCandidate> {
     candidates
         .into_iter()
@@ -1534,11 +1620,14 @@ mod tests {
         let (command, params) = add_track("Expected sequence 0");
         let response = LocalHostClient::connect_data_root(host.data_root())
             .unwrap()
-            .request(&ControlRequest::new(
-                "lower-sequence-mutation",
-                ControlCommand::new(command, params),
-                Some(switched.bootstrap.canonical.sequence),
-            ))
+            .request(
+                &ControlRequest::new(
+                    "lower-sequence-mutation",
+                    ControlCommand::new(command, params),
+                    Some(switched.bootstrap.canonical.sequence),
+                )
+                .with_expected_project_id(switched.bootstrap.project_state.active_project_id),
+            )
             .unwrap();
         assert!(response.ok);
         assert_eq!(

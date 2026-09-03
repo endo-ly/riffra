@@ -7,7 +7,6 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
-
 const GENERATIONS_TO_KEEP: usize = 20;
 const STORAGE_HEADROOM_BYTES: u64 = 64 * 1024;
 static SESSION_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -40,11 +39,10 @@ impl std::fmt::Display for SessionLoadError {
 impl std::error::Error for SessionLoadError {}
 
 /// Persistent session files and generation recovery for one data root.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SessionStore {
     data_root: PathBuf,
-    scratch_dir: PathBuf,
-    generations_dir: PathBuf,
+    project_id: String,
 }
 
 impl SessionStorage for SessionStore {
@@ -54,20 +52,35 @@ impl SessionStorage for SessionStore {
 }
 
 impl SessionStore {
-    /// Creates a store rooted at `data_root`.
-    pub fn new(data_root: &Path) -> Self {
-        let scratch_dir = data_root.join("scratch");
-        let generations_dir = scratch_dir.join("generations");
+    /// Creates a store rooted at one Project container.
+    pub fn new(data_root: &Path, project_id: &str) -> Self {
         Self {
             data_root: data_root.to_path_buf(),
-            scratch_dir,
-            generations_dir,
+            project_id: project_id.to_owned(),
         }
     }
 
-    /// Creates the scratch and generation directories when they are missing.
+    /// Returns the Project UUID addressed by this store.
+    pub fn project_id(&self) -> io::Result<String> {
+        crate::validate_project_id(&self.project_id).map_err(invalid_data)?;
+        Ok(self.project_id.clone())
+    }
+
+    fn project_dir(&self) -> io::Result<PathBuf> {
+        Ok(self.data_root.join("projects").join(self.project_id()?))
+    }
+
+    fn generations_dir(&self) -> io::Result<PathBuf> {
+        Ok(self.project_dir()?.join("generations"))
+    }
+
+    fn current_path(&self) -> io::Result<PathBuf> {
+        Ok(self.project_dir()?.join("session.json"))
+    }
+
+    /// Creates the Project and generation directories when they are missing.
     pub fn ensure_layout(&self) -> io::Result<()> {
-        fs::create_dir_all(&self.generations_dir)
+        fs::create_dir_all(self.generations_dir()?)
     }
 
     /// Loads the active session or creates the first session for a new root.
@@ -77,21 +90,45 @@ impl SessionStore {
     /// unreadable or when the new session cannot be persisted.
     pub fn load_or_create(&self) -> Result<LoadedSession, SessionLoadError> {
         self.ensure_layout()?;
-        let current = self.scratch_dir.join("current.json");
+        if let Some(loaded) = self.load_saved()? {
+            return Ok(loaded);
+        }
+
+        let session = CreativeSession::new(now_ms());
+        self.save(&session)?;
+        Ok(LoadedSession {
+            session,
+            recovered_from_generation: false,
+        })
+    }
+
+    /// Loads an existing Project without creating a replacement session.
+    pub fn load_existing(&self) -> Result<LoadedSession, SessionLoadError> {
+        self.ensure_layout()?;
+        self.load_saved()?.ok_or_else(|| {
+            SessionLoadError(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Project has no readable session or generation",
+            ))
+        })
+    }
+
+    fn load_saved(&self) -> Result<Option<LoadedSession>, SessionLoadError> {
+        let current = self.current_path()?;
         if current.is_file() {
             match self.read_active(&current) {
                 Ok(session) => {
-                    return Ok(LoadedSession {
+                    return Ok(Some(LoadedSession {
                         session,
                         recovered_from_generation: false,
-                    });
+                    }));
                 }
                 Err(error) => {
                     if let Some(session) = self.newest_valid_generation()? {
-                        return Ok(LoadedSession {
+                        return Ok(Some(LoadedSession {
                             session,
                             recovered_from_generation: true,
-                        });
+                        }));
                     }
                     // A corrupt current session with no valid generation is a
                     // hard load failure. Creating a new file here would destroy
@@ -101,19 +138,12 @@ impl SessionStore {
             }
         }
 
-        if let Some(session) = self.newest_valid_generation()? {
-            return Ok(LoadedSession {
+        Ok(self
+            .newest_valid_generation()?
+            .map(|session| LoadedSession {
                 session,
                 recovered_from_generation: true,
-            });
-        }
-
-        let session = CreativeSession::new(now_ms());
-        self.save(&session)?;
-        Ok(LoadedSession {
-            session,
-            recovered_from_generation: false,
-        })
+            }))
     }
 
     /// Reads and validates the active session without touching the original on failure.
@@ -168,26 +198,26 @@ impl SessionStore {
         crate::asset::validate_session_references(&self.data_root, &normalized)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         self.ensure_layout()?;
-        let current = self.scratch_dir.join("current.json");
+        let current = self.current_path()?;
         let payload = serde_json::to_vec_pretty(&normalized)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let current_bytes = current
             .metadata()
             .map(|metadata| metadata.len())
             .unwrap_or_default();
+        let project_dir = self.project_dir()?;
         ensure_storage_capacity(
-            &self.scratch_dir,
+            &project_dir,
             required_space(payload.len() as u64, current_bytes),
         )?;
         if current.is_file() {
             let generation =
-                self.generations_dir
+                self.generations_dir()?
                     .join(format!("{}-{}.json", now_ms(), std::process::id()));
             fs::copy(&current, generation)?;
         }
         let temporary =
-            self.scratch_dir
-                .join(format!(".current-{}-{}.tmp", std::process::id(), now_ms()));
+            project_dir.join(format!(".current-{}-{}.tmp", std::process::id(), now_ms()));
         {
             let mut file = File::create(&temporary)?;
             file.write_all(&payload)?;
@@ -238,14 +268,14 @@ impl SessionStore {
                 "Recovery generation name is invalid.",
             ));
         }
-        let path = self.generations_dir.join(file_name);
+        let path = self.generations_dir()?.join(file_name);
         let session = self.read_generation(&path)?;
         self.save(&session)?;
         Ok(session)
     }
 
     fn generation_files_newest_first(&self) -> io::Result<Vec<PathBuf>> {
-        let mut files = fs::read_dir(&self.generations_dir)?
+        let mut files = fs::read_dir(self.generations_dir()?)?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| {
@@ -266,6 +296,28 @@ impl SessionStore {
             let _ = fs::remove_file(stale);
         }
         Ok(())
+    }
+
+    pub(crate) fn summary(&self) -> io::Result<crate::ProjectSummary> {
+        let payload = fs::read(self.current_path()?)?;
+        let value: serde_json::Value = serde_json::from_slice(&payload).map_err(invalid_data)?;
+        let project_id = self.project_id()?;
+        let name = value
+            .get("projectName")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Untitled Project")
+            .to_owned();
+        let updated_at_ms = value
+            .get("updatedAtMs")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| invalid_data("Project session has no updatedAtMs"))?;
+        Ok(crate::ProjectSummary {
+            project_id,
+            name,
+            updated_at_ms,
+            error: None,
+        })
     }
 }
 
@@ -416,6 +468,8 @@ mod tests {
     use super::*;
     use riffra_core::{AssetId, AssetKind, AudioClip, TimelineTick, Track, mint_asset_id};
 
+    const TEST_PROJECT_ID: &str = "01900000-0000-7000-8000-000000000001";
+
     fn test_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("riffra-{name}-{}", now_ms()))
     }
@@ -446,14 +500,20 @@ mod tests {
     #[test]
     fn keeps_last_valid_generation_when_current_is_corrupt() {
         let root = test_root("recovery");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         let mut first = CreativeSession::new(now_ms());
         first.settings.note = "recover me".into();
         store.save(&first).unwrap();
         let mut second = first.clone();
         second.settings.note = "newer".into();
         store.save(&second).unwrap();
-        fs::write(root.join("scratch/current.json"), b"not json").unwrap();
+        fs::write(
+            root.join("projects")
+                .join(TEST_PROJECT_ID)
+                .join("session.json"),
+            b"not json",
+        )
+        .unwrap();
 
         let loaded = store.load_or_create().unwrap();
         assert!(loaded.recovered_from_generation);
@@ -464,9 +524,12 @@ mod tests {
     #[test]
     fn refuses_to_replace_a_corrupt_current_when_no_generation_exists() {
         let root = test_root("corrupt-without-recovery");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         store.ensure_layout().unwrap();
-        let current = root.join("scratch/current.json");
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
         fs::write(&current, b"not json").unwrap();
         let original = fs::read(&current).unwrap();
 
@@ -487,7 +550,7 @@ mod tests {
     #[test]
     fn loads_and_round_trips_a_session() {
         let root = test_root("roundtrip");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         let mut session = CreativeSession::new(now_ms());
         session.project_name = Some("Clean".into());
         store.save(&session).unwrap();
@@ -499,22 +562,31 @@ mod tests {
     #[test]
     fn save_rejects_a_session_with_an_unknown_asset_reference() {
         let root = test_root("save-unknown-asset");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
 
         let error = store.save(&session).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(!root.join("scratch/current.json").exists());
+        assert!(
+            !root
+                .join("projects")
+                .join(TEST_PROJECT_ID)
+                .join("session.json")
+                .exists()
+        );
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn load_rejects_a_current_session_with_an_unknown_asset_reference() {
         let root = test_root("load-unknown-asset");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         store.ensure_layout().unwrap();
-        let current = root.join("scratch/current.json");
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
 
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
@@ -533,7 +605,7 @@ mod tests {
     #[test]
     fn load_falls_back_to_a_valid_generation_when_current_has_unknown_asset() {
         let root = test_root("load-fallback-generation");
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
         store.ensure_layout().unwrap();
 
         // A valid generation that references no external asset.
@@ -541,17 +613,19 @@ mod tests {
         generation.project_name = Some("Recoverable".into());
         let generation_payload = serde_json::to_vec_pretty(&generation).unwrap();
         fs::write(
-            root.join("scratch/generations").join(format!(
-                "{}-{}.json",
-                now_ms(),
-                std::process::id()
-            )),
+            root.join("projects")
+                .join(TEST_PROJECT_ID)
+                .join("generations")
+                .join(format!("{}-{}.json", now_ms(), std::process::id())),
             &generation_payload,
         )
         .unwrap();
 
         // Current session references an unknown asset and must be rejected.
-        let current = root.join("scratch/current.json");
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
         fs::write(&current, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
@@ -579,8 +653,15 @@ mod tests {
 
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:asset-backed", "asset-backed", asset_id);
-        SessionStore::new(&root).save(&session).unwrap();
-        assert!(root.join("scratch/current.json").is_file());
+        SessionStore::new(&root, TEST_PROJECT_ID)
+            .save(&session)
+            .unwrap();
+        assert!(
+            root.join("projects")
+                .join(TEST_PROJECT_ID)
+                .join("session.json")
+                .is_file()
+        );
         let _ = fs::remove_dir_all(root);
     }
 

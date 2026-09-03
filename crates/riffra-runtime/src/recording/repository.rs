@@ -850,7 +850,7 @@ mod tests {
             "droppedBlocks": 0,
             "capture": {
                 "captureId": "capture:take-1",
-                "sessionId": "scratch-1",
+                "sessionId": "session-1",
                 "status": "completed",
                 "startedAtMs": 1_000,
                 "completedAtMs": 2_000,
@@ -887,7 +887,7 @@ mod tests {
             "processedFile": "processed.wav",
             "capture": {
                 "captureId": "capture:take-missing-audio",
-                "sessionId": "scratch-1",
+                "sessionId": "session-1",
                 "status": "completed",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
@@ -947,7 +947,7 @@ mod tests {
             "processedFile": "processed.wav",
             "capture": {
                 "captureId": "capture:take-empty",
-                "sessionId": "scratch-1",
+                "sessionId": "session-1",
                 "status": "completed",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
@@ -985,7 +985,7 @@ mod tests {
             "processedFile": "processed.wav",
             "capture": {
                 "captureId": "capture:take-unsafe-path",
-                "sessionId": "scratch-1",
+                "sessionId": "session-1",
                 "status": "recoverable",
                 "startedAtMs": 1_000,
                 "audioDriver": null,
@@ -1057,7 +1057,7 @@ mod tests {
             "recoveryStatus": "partial",
             "capture": {
                 "captureId": "capture:take-partial",
-                "sessionId": "scratch-1",
+                "sessionId": "session-1",
                 "status": "recoverable",
                 "startedAtMs": 1_000,
                 "sampleRate": 44_100,
@@ -1169,7 +1169,7 @@ mod tests {
         let expected_processed_path = processed.to_string_lossy().into_owned();
         fs::remove_file(&processed).unwrap();
 
-        let mut capture = RecordingCapture::start("capture:canonical", "scratch-1", 1_000);
+        let mut capture = RecordingCapture::start("capture:canonical", "session-1", 1_000);
         capture
             .transition(RecordingCaptureStatus::Completing, 2_000)
             .unwrap();
@@ -1231,7 +1231,7 @@ mod tests {
             Some(Provenance::recorded_root()),
         )
         .unwrap();
-        let mut capture = RecordingCapture::start("capture:midi-only", "scratch-1", 1_000);
+        let mut capture = RecordingCapture::start("capture:midi-only", "session-1", 1_000);
         capture
             .transition(RecordingCaptureStatus::Completing, 2_000)
             .unwrap();
@@ -1281,7 +1281,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let capture = RecordingCapture::start("capture:arrange", "scratch-1", 1_000);
+        let capture = RecordingCapture::start("capture:arrange", "session-1", 1_000);
 
         save_capture_start(&take, capture).unwrap();
         save_asset_ids(&take, None, None, None).unwrap();

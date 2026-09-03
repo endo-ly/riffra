@@ -52,7 +52,7 @@ impl CreativeSession {
     /// settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
-            session_id: format!("scratch-{now_ms}"),
+            session_id: format!("session-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
             arrangement: Arrangement::default(),

@@ -89,7 +89,7 @@ pub struct AppCore<A> {
     data_root: PathBuf,
     session: Arc<Mutex<CreativeSession>>,
     audio: A,
-    recovered_from_generation: bool,
+    recovered_from_generation: std::sync::atomic::AtomicBool,
     safe_mode: bool,
     operation_gate: Mutex<()>,
     projection_version: AtomicU64,
@@ -109,7 +109,9 @@ impl<A> AppCore<A> {
             data_root,
             session: Arc::new(Mutex::new(session)),
             audio,
-            recovered_from_generation,
+            recovered_from_generation: std::sync::atomic::AtomicBool::new(
+                recovered_from_generation,
+            ),
             safe_mode,
             operation_gate: Mutex::new(()),
             projection_version: AtomicU64::new(0),
@@ -135,14 +137,59 @@ impl<A> AppCore<A> {
         &self.audio
     }
 
-    /// Reports whether startup restored a recovery generation.
+    /// Reports whether the active Project was loaded from a recovery generation.
     pub fn recovered_from_generation(&self) -> bool {
+        self.recovered_from_generation.load(Ordering::Acquire)
+    }
+
+    /// Updates recovery metadata when the active Project changes.
+    pub fn set_recovered_from_generation(&self, recovered: bool) {
         self.recovered_from_generation
+            .store(recovered, Ordering::Release);
     }
 
     /// Reports whether external devices and plugins are isolated.
     pub fn safe_mode(&self) -> bool {
         self.safe_mode
+    }
+
+    /// Replaces the canonical session while switching Project containers.
+    ///
+    /// Activation advances the canonical sequence and clears all history. It
+    /// deliberately does not persist the session because the ProjectStore has
+    /// already completed the Project-scoped save before activation.
+    ///
+    /// # Errors
+    /// Returns the committed canonical state, or an error when the supplied
+    /// session is invalid or Core state is unavailable.
+    pub fn activate_session(
+        &self,
+        session: CreativeSession,
+    ) -> Result<CanonicalState, ApplicationError> {
+        let _operation = self
+            .operation_gate
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        let session = session
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)?;
+        let mut canonical = self
+            .session
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| ApplicationError::StateLock)?;
+        self.begin_exchange();
+        *canonical = session.clone();
+        history.clear();
+        self.end_exchange();
+        Ok(CanonicalState {
+            session,
+            sequence: self.projection_version.load(Ordering::Acquire) / 2,
+            history: HistoryState::default(),
+        })
     }
 
     /// Captures the canonical session and projection sequence as one pair.
@@ -1216,6 +1263,42 @@ mod tests {
     }
 
     #[test]
+    fn project_activation_swaps_canonical_state_without_persisting_or_retaining_history() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            NoopAudio,
+            false,
+            false,
+        );
+        core.application(&storage)
+            .add_track("Old project", TrackKind::Audio)
+            .unwrap();
+        let saved_before_activation = storage.sessions.lock().unwrap().len();
+
+        let mut next = CreativeSession::new(2);
+        let next_session_id = next.session_id.clone();
+        next.project_name = Some("Next project".into());
+        let activated = core.activate_session(next).unwrap();
+
+        assert_eq!(
+            activated.session.project_name.as_deref(),
+            Some("Next project")
+        );
+        assert_eq!(core.canonical_state().unwrap().sequence, 2);
+        assert_eq!(
+            core.canonical_state().unwrap().session.session_id,
+            next_session_id
+        );
+        assert_eq!(core.history_state().unwrap(), HistoryState::default());
+        assert_eq!(
+            storage.sessions.lock().unwrap().len(),
+            saved_before_activation
+        );
+    }
+
+    #[test]
     fn stale_merge_uses_latest_canonical_state() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
@@ -1293,7 +1376,7 @@ mod tests {
         );
         let snapshot = core.snapshot().unwrap();
         assert_eq!(snapshot.sequence, 0);
-        assert_eq!(snapshot.session.session_id, "scratch-1");
+        assert!(!snapshot.session.session_id.is_empty());
     }
 
     #[test]

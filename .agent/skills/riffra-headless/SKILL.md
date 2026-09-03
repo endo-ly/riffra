@@ -89,11 +89,13 @@ CLI には既定の場所はなく `--data-root` が必須である。位置は�
 
 ```text
 <data_root>/
-├─ scratch/current.json     # 正準セッション(世代履歴は generations/ 配下)
+├─ workspace.json           # Active Projectの識別
+├─ .riffra.lock             # DataRootの排他所有
+├─ projects/<project-id>/   # canonical Project（session.json / generations/）
 ├─ library/riffra.db        # ライブラリ索引(SQLite)
-├─ assets/                  # Audio / MIDI Asset 本体
-├─ recordings/              # 録音キャプチャ
-├─ exports/                 # レンダリング出力と Project package
+├─ assets/imports/          # 外部Assetの取り込み先
+├─ recordings/              # inbox / archive / library
+├─ renders/                 # 音声Renderの出力
 └─ control/host.json        # 接続情報(稼働中の Host のみ出力)
 
 <user-runtime-root>/riffra/hosts/
@@ -106,16 +108,16 @@ Host一覧は、registryに登録された各Hostへ接続して`host.status`を
 
 ### Desktop アプリの DataRoot
 
-Desktop アプリのみ Tauri の app data directory(`identifier` 固定)を使い、位置は常に一定である。
+Desktop Embedded HostはユーザーのMusic directory配下をDataRootとして使い、位置は常に一定である。
 
-| OS      | DataRoot                                             |
-| ------- | ---------------------------------------------------- |
-| Windows | `%APPDATA%\com.riffra.workbench`                     |
-| Linux   | `~/.local/share/com.riffra.workbench`                |
-| macOS   | `~/Library/Application Support/com.riffra.workbench` |
+| OS      | DataRoot                     |
+| ------- | ---------------------------- |
+| Windows | `%USERPROFILE%\Music\Riffra` |
+| Linux   | `~/Music/Riffra`             |
+| macOS   | `~/Music/Riffra`             |
 
 ```powershell
-cargo run -p riffra-cli -- --data-root "$env:APPDATA\com.riffra.workbench" --attach host status
+cargo run -p riffra-cli -- --data-root "$env:USERPROFILE\Music\Riffra" --attach host status
 ```
 
 ## 制御プロトコル(JSON Lines)

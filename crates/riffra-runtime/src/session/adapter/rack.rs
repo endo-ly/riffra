@@ -39,6 +39,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 expected_sequence,
                 current_sequence,
             },
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
@@ -46,6 +53,28 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 AdapterError::command(repair_previous_arrangement(context, message))
             }
         });
+    }
+    let _project_commit_guard = context
+        .project_commit
+        .as_ref()
+        .map(|project_commit| {
+            project_commit
+                .command_gate
+                .lock()
+                .map_err(|_| AdapterError::command("Host command gate was poisoned"))
+        })
+        .transpose()?;
+    if let Some(project_commit) = context.project_commit.as_ref() {
+        let current_project_id = project_commit
+            .project_store
+            .active_project_id()
+            .map_err(|error| AdapterError::command(error.to_string()))?;
+        if current_project_id != project_commit.expected_project_id {
+            return Err(AdapterError::ProjectConflict {
+                expected_project_id: project_commit.expected_project_id.clone(),
+                current_project_id,
+            });
+        }
     }
     if let Err(error) = commit_core_application(context, |core, store| {
         core.application(store).commit_prepared(prepared)
@@ -61,6 +90,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                     current_sequence,
                 }
             }
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
@@ -117,10 +153,9 @@ pub(crate) fn set_track_instrument_with_expected_sequence(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_instrument(
             track_id,
             name,
@@ -165,10 +200,9 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     }
     let (name, validated_path) =
         plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_effect(
             track_id,
             name,
@@ -332,9 +366,13 @@ pub fn open_track_plugin_editor(
         return Err(format!("Track Device is not registered: {device_id}").into());
     }
     drop(session);
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_track_plugin_editor(track_id, device_id)
+        .open_track_plugin_editor(&project_id, track_id, device_id)
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
@@ -467,10 +505,9 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Plugin")
         .to_owned();
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {

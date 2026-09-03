@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     fn fresh() -> RecordingCapture {
-        RecordingCapture::start("capture:1", "scratch-1", 1_000)
+        RecordingCapture::start("capture:1", "session-1", 1_000)
     }
 
     #[test]
