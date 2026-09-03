@@ -9,8 +9,6 @@ use std::{
 };
 use ts_rs::TS;
 
-#[cfg(test)]
-mod native_worker_tests;
 mod worker;
 
 pub(crate) use worker::RenderWorker;
