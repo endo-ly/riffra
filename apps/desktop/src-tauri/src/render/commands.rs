@@ -4,8 +4,8 @@ use serde_json::json;
 use tauri::{AppHandle, Manager};
 
 use crate::AppState;
-use crate::jobs::{BackgroundJobStatus, JobState};
 use crate::render::{RenderOptions, RenderResult};
+use riffra_runtime::jobs::{BackgroundJobStatus, JobState};
 
 #[tauri::command]
 pub async fn render_timeline(

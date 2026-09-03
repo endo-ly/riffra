@@ -25,7 +25,6 @@ riffra-control = { path = "../../../crates/riffra-control" }
 riffra-core = { path = "../../../crates/riffra-core" }
 riffra-host = { path = "../../../crates/riffra-host" }
 riffra-runtime = { path = "../../../crates/riffra-runtime" }
-riffra-render-worker = { path = "../../../crates/riffra-render-worker" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

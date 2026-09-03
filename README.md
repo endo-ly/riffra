@@ -19,12 +19,11 @@
 │  HostConnectionManager ── Embedded / Attached   │
 └──────┬──────────────────────┬─────────────────┘
        │ JSON Lines (stdin/stdout)
-┌──────▼──────────┐   ┌───────▼─────────┐  ┌──────▼────────┐
-│ riffra-audio    │   │ riffra-plugin-  │  │ riffra-render │
-│ リアルタイム音声 │   │ scan            │  │ -worker       │
-│ (C++ / JUCE)    │   │ VST3 スキャン    │  │ オフライン    │
-└─────────────────┘   └─────────────────┘  │ レンダリング   │
-                                           └───────────────┘
+┌──────▼──────────┐   ┌───────▼─────────┐  ┌─────────────────┐
+│ riffra-audio    │   │ riffra-plugin-  │  │ riffra-render   │
+│ リアルタイム音声 │   │ scan            │  │ オフライン      │
+│ (C++ / JUCE)    │   │ VST3 スキャン    │  │ レンダリング    │
+└─────────────────┘   └─────────────────┘  └─────────────────┘
 ```
 
 GUIを使わない場合は `riffra serve` が `riffra-runtime::DawHost` を起動する。
@@ -44,15 +43,15 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 | `apps/desktop/`                  | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
 | `apps/cli/`                      | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
 | `crates/riffra-core/`            | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
+| `crates/riffra-control/`         | Local Host間通信の契約（endpoint / registry / transport / client）               |
 | `crates/riffra-host/`            | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
 | `crates/riffra-runtime/`         | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
-| `crates/riffra-render-worker/`   | オフラインレンダリングの子プロセスバイナリ                                       |
 | `native/audio-engine/`           | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
 | `scripts/`                       | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
 | `docs/`                          | 設計・調整ドキュメント                                                           |
 | `.agent/skills/riffra-headless/` | AI エージェントが CLI でヘッドレス操作するためのスキル                           |
 
-依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-host` / `riffra-runtime` / `riffra-cli` / `riffra-render-worker` / デスクトップバイナリ）で管理する。
+依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / デスクトップバイナリ）で管理する。
 
 ## 技術スタック
 

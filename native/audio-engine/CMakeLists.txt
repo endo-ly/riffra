@@ -42,6 +42,8 @@ add_library(riffra-audio-core STATIC)
 target_sources(riffra-render-core PRIVATE
   src/processing/TimelineEngine.cpp
   src/processing/TimelineEngine.h
+  src/processing/TimelineSnapshotBuilder.cpp
+  src/processing/TimelineSnapshotBuilder.h
   src/processing/TimelineTimebase.h
   src/processing/RecordingCaptureRuntime.cpp
   src/processing/RecordingCaptureRuntime.h
@@ -60,6 +62,12 @@ target_sources(riffra-render-core PRIVATE
 )
 
 target_sources(riffra-audio-core PRIVATE
+  src/AudioProtocol.cpp
+  src/AudioProtocol.h
+  src/AudioDeviceService.cpp
+  src/AudioDeviceService.h
+  src/MidiInputService.cpp
+  src/MidiInputService.h
   src/realtime/SafetyAudioCallback.cpp
   src/realtime/SafetyAudioCallback.h
   src/realtime/AudioSafetyDsp.h
@@ -200,6 +208,7 @@ target_include_directories(riffra-plugin-scan PRIVATE
 )
 
 target_include_directories(riffra-audio-core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
@@ -334,6 +343,7 @@ if(BUILD_TESTING)
     tests/BoundedMpmcQueueTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
+    tests/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core

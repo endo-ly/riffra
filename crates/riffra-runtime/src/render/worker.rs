@@ -4,7 +4,7 @@ use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use serde_json::Value;
 use std::{
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
@@ -14,11 +14,7 @@ use thiserror::Error;
 
 /// Failure reported while invoking the offline render worker.
 #[derive(Debug, Error)]
-pub enum RenderWorkerError {
-    #[error("current executable could not be resolved: {0}")]
-    CurrentExecutable(#[source] std::io::Error),
-    #[error("render worker executable path has no parent directory")]
-    MissingExecutableDirectory,
+enum RenderWorkerError {
     #[error("render worker could not start: {0}")]
     Spawn(#[source] std::io::Error),
     #[error("render request could not be encoded: {0}")]
@@ -41,35 +37,14 @@ pub enum RenderWorkerError {
 
 /// Launches one `riffra-render` process for each offline render request.
 #[derive(Clone)]
-pub struct RenderWorker {
+pub(crate) struct RenderWorker {
     executable: PathBuf,
 }
 
 impl RenderWorker {
     /// Creates an adapter for an explicit worker executable.
-    pub fn new(executable: PathBuf) -> Self {
+    pub(crate) fn new(executable: PathBuf) -> Self {
         Self { executable }
-    }
-
-    /// Resolves a bundled worker located beside the current executable.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the current executable has no parent directory.
-    pub fn bundled() -> Result<Self, RenderWorkerError> {
-        let current = std::env::current_exe().map_err(RenderWorkerError::CurrentExecutable)?;
-        let directory = current
-            .parent()
-            .ok_or(RenderWorkerError::MissingExecutableDirectory)?;
-        Ok(Self::new(directory.join(format!(
-            "riffra-render{}",
-            std::env::consts::EXE_SUFFIX
-        ))))
-    }
-
-    /// Returns the configured worker executable.
-    pub fn executable(&self) -> &Path {
-        &self.executable
     }
 
     fn render(&self, request: OfflineRenderRequest) -> Result<(), RenderWorkerError> {
@@ -190,7 +165,7 @@ impl RenderWorker {
     /// # Errors
     /// Returns a host-provided description when the render cannot be completed
     /// or the flag requests cancellation.
-    pub fn render_timeline_offline_cancellable(
+    pub(super) fn render_timeline_offline_cancellable(
         &self,
         request: OfflineRenderRequest,
         cancelled: &AtomicBool,
@@ -221,7 +196,7 @@ mod tests {
         let worker = RenderWorker::new(path.clone());
 
         // Assert
-        assert_eq!(worker.executable(), path);
+        assert_eq!(worker.executable, path);
     }
 
     #[test]
@@ -244,5 +219,55 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, "render worker was cancelled");
+    }
+
+    #[test]
+    #[ignore = "requires a built riffra-render executable"]
+    fn renders_wave_without_an_audio_device() {
+        // Arrange
+        let executable =
+            std::env::var_os("RIFFRA_RENDER_WORKER").expect("RIFFRA_RENDER_WORKER must be set");
+        let destination = std::env::temp_dir().join(format!(
+            "riffra-native-worker-render-{}.wav",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&destination);
+        let worker = RenderWorker::new(executable.into());
+        let request = OfflineRenderRequest {
+            snapshot: serde_json::json!({
+                "revision": 1,
+                "timebase": {
+                    "ppq": 960,
+                    "bpm": 120.0,
+                    "timeSignatureNumerator": 4,
+                    "timeSignatureDenominator": 4
+                },
+                "loopRange": {
+                    "enabled": false,
+                    "startTick": 0,
+                    "endTick": 0
+                },
+                "tracks": []
+            }),
+            destination: destination.clone(),
+            start_tick: 0,
+            end_tick: 960,
+            sample_rate: 48_000,
+            block_size: 512,
+            master_gain_db: 0.0,
+            normalize: false,
+        };
+
+        // Act
+        worker
+            .render_timeline_offline(request)
+            .expect("offline render should succeed");
+
+        // Assert
+        let wave = std::fs::read(&destination).expect("rendered WAV");
+        assert!(wave.len() > 44);
+        assert_eq!(&wave[..4], b"RIFF");
+        assert_eq!(&wave[8..12], b"WAVE");
+        std::fs::remove_file(destination).expect("rendered WAV cleanup");
     }
 }

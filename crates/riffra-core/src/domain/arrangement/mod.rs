@@ -3,7 +3,6 @@
 use crate::DomainError;
 use crate::domain::asset::AssetId;
 use crate::domain::music::HarmonyEvent;
-use crate::domain::rack::{RackDevice, RackInstance};
 use crate::domain::recording::*;
 use crate::domain::timeline::{
     FrameDuration, FrameRange, ProjectTimebase, TIMELINE_PPQ, TimelineLoopRange,
@@ -15,430 +14,15 @@ use ts_rs::TS;
 
 pub(crate) const MAX_MIDI_NOTES_PER_CLIP: usize = 200_000;
 
-/// The production source hosted by a timeline track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum TrackKind {
-    Audio,
-    Instrument,
-}
+mod audio_clip;
+mod automation;
+mod midi_clip;
+mod track;
 
-/// A physical input channel routed to one Audio Track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioInputRoute {
-    pub channel_index: u32,
-}
-
-/// A MIDI source and channel filter routed to one Instrument Track.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiInputRoute {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub device_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub channel: Option<u8>,
-}
-
-/// A timeline track.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct Track {
-    pub id: String,
-    pub name: String,
-    pub kind: TrackKind,
-    #[serde(default)]
-    pub gain_db: f64,
-    #[serde(default)]
-    pub pan: f64,
-    #[serde(default)]
-    pub muted: bool,
-    #[serde(default)]
-    pub solo: bool,
-    #[serde(default)]
-    pub armed: bool,
-    #[serde(default)]
-    pub monitoring: MonitoringState,
-    /// Presentation color as `#rrggbb`. `None` delegates automatic coloring
-    /// to the presentation layer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub color: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub audio_input: Option<AudioInputRoute>,
-    #[serde(default)]
-    pub midi_input: MidiInputRoute,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub instrument: Option<RackDevice>,
-    pub rack: RackInstance,
-}
-
-/// A partial update for a timeline Track.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrackPatch {
-    pub name: Option<String>,
-    pub gain_db: Option<f64>,
-    pub pan: Option<f64>,
-    pub muted: Option<bool>,
-    pub solo: Option<bool>,
-    pub armed: Option<bool>,
-    pub monitoring: Option<MonitoringState>,
-    /// Sets the presentation color; an empty string clears it and returns
-    /// the track to automatic coloring.
-    pub color: Option<String>,
-}
-
-/// Audio Track input monitoring state. `Auto` monitors only while the track is
-/// armed; `On` always monitors; `Off` never monitors.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum MonitoringState {
-    #[default]
-    Off,
-    Auto,
-    On,
-}
-
-/// A Track mix parameter controlled on the Arrangement timeline.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum AutomationParameter {
-    Volume,
-    Pan,
-}
-
-/// A single value on an Automation Lane.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AutomationPoint {
-    pub id: String,
-    #[ts(type = "number")]
-    pub tick: TimelineTick,
-    pub value: f64,
-}
-
-/// Timeline control data for one Track parameter.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AutomationLane {
-    pub id: String,
-    pub track_id: String,
-    pub parameter: AutomationParameter,
-    pub points: Vec<AutomationPoint>,
-}
-
-fn empty_track_rack() -> RackInstance {
-    RackInstance {
-        devices: Vec::new(),
-        macros: Vec::new(),
-    }
-}
-
-impl Track {
-    /// Creates a neutral audio track.
-    pub fn audio(id: String, name: String) -> Self {
-        Self {
-            id,
-            name,
-            kind: TrackKind::Audio,
-            gain_db: 0.0,
-            pan: 0.0,
-            muted: false,
-            solo: false,
-            armed: false,
-            monitoring: MonitoringState::Off,
-            color: None,
-            audio_input: None,
-            midi_input: MidiInputRoute::default(),
-            instrument: None,
-            rack: empty_track_rack(),
-        }
-    }
-
-    /// Creates a neutral Instrument Track with no assigned instrument.
-    pub fn instrument(id: String, name: String) -> Self {
-        Self {
-            kind: TrackKind::Instrument,
-            ..Self::audio(id, name)
-        }
-    }
-}
-
-/// A single MIDI note inside a [`MidiClip`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiNote {
-    pub id: String,
-    pub note: u8,
-    #[ts(type = "number")]
-    pub start_tick: TimelineTick,
-    pub duration_ticks: u64,
-    pub velocity: u8,
-    pub channel: u8,
-}
-
-/// A MIDI event which has no dedicated piano-roll editing representation.
-///
-/// Note events are represented by [`MidiNote`] so their duration remains
-/// editable. The other event kinds are retained verbatim and are scheduled by
-/// the native timeline runtime at their musical tick.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum MidiEventKind {
-    ControlChange,
-    PitchBend,
-    ChannelPressure,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiEvent {
-    pub id: String,
-    pub kind: MidiEventKind,
-    #[ts(type = "number")]
-    pub tick: TimelineTick,
-    pub channel: u8,
-    pub data1: u8,
-    pub data2: u8,
-}
-
-/// A non-destructive MIDI clip on the arrangement.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiClip {
-    pub id: String,
-    pub name: String,
-    pub track_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub asset_id: Option<AssetId>,
-    #[ts(type = "number")]
-    pub start_tick: TimelineTick,
-    pub duration_ticks: u64,
-    #[serde(default)]
-    pub notes: Vec<MidiNote>,
-    #[serde(default)]
-    pub events: Vec<MidiEvent>,
-    #[serde(default)]
-    pub muted: bool,
-    #[serde(default)]
-    pub loop_enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub recording_take_id: Option<String>,
-}
-
-/// The amplitude curve used by clip fades.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum FadeShape {
-    Linear,
-    #[default]
-    EqualPower,
-    Smooth,
-}
-
-impl FadeShape {
-    /// Engine-facing discriminant matching the audio sidecar contract.
-    pub fn as_code(self) -> u8 {
-        match self {
-            FadeShape::Linear => 0,
-            FadeShape::EqualPower => 1,
-            FadeShape::Smooth => 2,
-        }
-    }
-}
-
-/// A non-destructive audio clip referencing an [`AssetId`].
-///
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioClip {
-    pub id: String,
-    pub track_id: String,
-    pub asset_id: AssetId,
-    #[ts(type = "number")]
-    pub start_tick: TimelineTick,
-    pub source_range: FrameRange,
-    pub source_sample_rate: u32,
-    pub timeline_duration: FrameDuration,
-    pub gain_db: f64,
-    pub pan: f64,
-    pub fade_in: FrameDuration,
-    pub fade_out: FrameDuration,
-    #[serde(default)]
-    pub fade_shape: FadeShape,
-    pub loop_enabled: bool,
-    pub muted: bool,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub recording_take_id: Option<String>,
-    #[serde(default)]
-    pub take_variant: AudioTakeVariant,
-}
-
-impl AudioClip {
-    /// Creates a clip that references an entire source at its native rate.
-    pub fn full_source(
-        id: String,
-        name: String,
-        track_id: String,
-        asset_id: AssetId,
-        start_tick: TimelineTick,
-        sample_rate: u32,
-        source_frames: u64,
-    ) -> Self {
-        let duration = FrameDuration {
-            frames: source_frames,
-            sample_rate,
-        };
-        Self {
-            id,
-            name,
-            track_id,
-            asset_id,
-            start_tick,
-            source_range: FrameRange {
-                start: 0,
-                end: source_frames,
-            },
-            source_sample_rate: sample_rate,
-            timeline_duration: duration,
-            gain_db: 0.0,
-            pan: 0.0,
-            fade_in: FrameDuration {
-                frames: 0,
-                sample_rate,
-            },
-            fade_out: FrameDuration {
-                frames: 0,
-                sample_rate,
-            },
-            loop_enabled: false,
-            muted: false,
-            fade_shape: FadeShape::EqualPower,
-            recording_take_id: None,
-            take_variant: AudioTakeVariant::Raw,
-        }
-    }
-
-    /// Clamps and normalizes the production-managed numeric fields in place.
-    ///
-    /// This is the single canonical place where clip gain, pan, and fade
-    /// limits live; callers supply raw values and rely on this method instead
-    /// of replicating the rule.
-    pub fn normalize_fields(&mut self) {
-        if !self.gain_db.is_finite() {
-            self.gain_db = 0.0;
-        }
-        self.gain_db = self.gain_db.clamp(-90.0, 24.0);
-        if !self.pan.is_finite() {
-            self.pan = 0.0;
-        }
-        self.pan = self.pan.clamp(-1.0, 1.0);
-        self.fade_in.frames = self.fade_in.frames.min(self.timeline_duration.frames);
-        self.fade_out.frames = self.fade_out.frames.min(self.timeline_duration.frames);
-    }
-}
-
-/// A partial update for an existing [`AudioClip`].
-///
-/// Only the supplied fields are written; `None` fields keep the clip's current
-/// value. Numeric normalization (gain, pan, fade clamping) is applied by the
-/// domain, so callers may pass unclamped values.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioClipPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub track_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub start_tick: Option<TimelineTick>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub timeline_duration: Option<FrameDuration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub source_range: Option<FrameRange>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub gain_db: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub pan: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fade_in: Option<FrameDuration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fade_out: Option<FrameDuration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fade_shape: Option<FadeShape>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub loop_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub muted: Option<bool>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioClipMove {
-    pub clip_id: String,
-    #[ts(type = "number")]
-    pub start_tick: TimelineTick,
-    pub track_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiClipMove {
-    pub clip_id: String,
-    #[ts(type = "number")]
-    pub start_tick: TimelineTick,
-    pub track_id: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MidiClipPatch {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub track_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub start_tick: Option<TimelineTick>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub duration_ticks: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub notes: Option<Vec<MidiNote>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub events: Option<Vec<MidiEvent>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub muted: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub loop_enabled: Option<bool>,
-}
+pub use audio_clip::{AudioClip, AudioClipMove, AudioClipPatch, FadeShape};
+pub use automation::{AutomationLane, AutomationParameter, AutomationPoint};
+pub use midi_clip::{MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind, MidiNote};
+pub use track::{AudioInputRoute, MidiInputRoute, MonitoringState, Track, TrackKind, TrackPatch};
 
 /// The Arrange workspace's production state.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
@@ -1826,5 +1410,610 @@ impl Arrangement {
         };
         self.revision = self.revision.saturating_add(1);
         Ok(())
+    }
+}
+
+impl Arrangement {
+    /// Validates and normalizes the arrangement and its owned concepts.
+    pub(crate) fn validate_and_normalize(arrangement: &mut Arrangement) -> Result<(), String> {
+        if arrangement.audio_clips.len() > 512 {
+            return Err("An arrangement cannot contain more than 512 audio clips.".into());
+        }
+        let timebase = &arrangement.timebase;
+        if timebase.ppq != TIMELINE_PPQ
+            || !timebase.bpm.is_finite()
+            || !(20.0..=400.0).contains(&timebase.bpm)
+            || timebase.time_signature_numerator == 0
+            || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
+        {
+            return Err("Arrangement timebase is invalid.".into());
+        }
+        if arrangement.loop_range.enabled
+            && arrangement.loop_range.end_tick <= arrangement.loop_range.start_tick
+        {
+            return Err("Enabled loop range must have a positive duration.".into());
+        }
+        if let Some(punch_range) = arrangement.punch_range
+            && punch_range.end_tick <= punch_range.start_tick
+        {
+            return Err("Punch range must have a positive duration.".into());
+        }
+        if arrangement.tracks.len() > 128 {
+            return Err("An arrangement cannot contain more than 128 tracks.".into());
+        }
+        let mut unique_track_ids = std::collections::HashSet::new();
+        for track in &mut arrangement.tracks {
+            if !unique_track_ids.insert(track.id.clone()) {
+                return Err("Tracks require non-empty ids and names.".into());
+            }
+            track.validate_and_normalize()?;
+        }
+        let audio_clips = std::mem::take(&mut arrangement.audio_clips);
+        let mut normalized_clips = Vec::with_capacity(audio_clips.len());
+        let mut audio_clip_ids = std::collections::HashSet::new();
+        for mut clip in audio_clips {
+            if !audio_clip_ids.insert(clip.id.clone()) {
+                return Err("Audio clips require ids, names, tracks and asset ids.".into());
+            }
+            clip.validate_and_normalize()?;
+            let mut candidate = Arrangement {
+                revision: arrangement.revision,
+                timebase: arrangement.timebase,
+                loop_range: arrangement.loop_range,
+                punch_range: arrangement.punch_range,
+                tracks: arrangement.tracks.clone(),
+                audio_clips: Vec::new(),
+                midi_clips: Vec::new(),
+                automation_lanes: Vec::new(),
+                markers: Vec::new(),
+                regions: Vec::new(),
+                harmony_events: arrangement.harmony_events.clone(),
+                recording_sessions: arrangement.recording_sessions.clone(),
+                recording_passes: arrangement.recording_passes.clone(),
+                takes: arrangement.takes.clone(),
+            };
+            candidate
+                .add_audio_clip(clip, |_| true)
+                .map_err(|error| error.to_string())?;
+            normalized_clips.push(candidate.audio_clips.pop().expect("validated clip"));
+        }
+        arrangement.audio_clips = normalized_clips;
+        if arrangement.midi_clips.len() > 256 {
+            return Err("An arrangement cannot contain more than 256 MIDI clips.".into());
+        }
+        let track_ids = arrangement
+            .tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut midi_clip_ids = std::collections::HashSet::new();
+        for clip in &mut arrangement.midi_clips {
+            if !midi_clip_ids.insert(clip.id.clone()) {
+                return Err("MIDI clips require non-empty ids and names.".into());
+            }
+            let track = arrangement
+                .tracks
+                .iter()
+                .find(|track| track.id == clip.track_id);
+            clip.validate_and_normalize(track)?;
+        }
+        if arrangement.automation_lanes.len() > arrangement.tracks.len().saturating_mul(2) {
+            return Err(
+                "An arrangement cannot contain more than two Automation Lanes per Track.".into(),
+            );
+        }
+        let mut lane_keys = std::collections::HashSet::new();
+        let mut lane_ids = std::collections::HashSet::new();
+        for lane in &mut arrangement.automation_lanes {
+            if lane.id.trim().is_empty()
+                || !lane_ids.insert(lane.id.clone())
+                || !track_ids.contains(lane.track_id.as_str())
+                || !lane_keys.insert((lane.track_id.clone(), lane.parameter))
+            {
+                return Err("Automation Lanes contain invalid or duplicate references.".into());
+            }
+            lane.validate_and_normalize()?;
+        }
+        if arrangement.markers.len() > 256 {
+            return Err("An arrangement cannot contain more than 256 markers.".into());
+        }
+        arrangement.markers.sort_by_key(|marker| marker.tick);
+        arrangement
+            .markers
+            .retain(|marker| !marker.id.trim().is_empty());
+        for marker in &mut arrangement.markers {
+            let normalized_name: String = marker.name.trim().chars().take(80).collect();
+            marker.name = if normalized_name.is_empty() {
+                "Marker".into()
+            } else {
+                normalized_name
+            };
+        }
+        if arrangement.regions.len() > 256 {
+            return Err("an arrangement cannot contain more than 256 timeline regions".into());
+        }
+        arrangement
+            .regions
+            .sort_by_key(|region| (region.start_tick, region.end_tick));
+        let mut region_ids = std::collections::HashSet::new();
+        for region in &mut arrangement.regions {
+            if region.id.trim().is_empty()
+                || !region_ids.insert(region.id.as_str())
+                || region.name.trim().is_empty()
+                || region.end_tick <= region.start_tick
+            {
+                return Err(
+                    "timeline regions require unique ids, names, and positive ranges".into(),
+                );
+            }
+            region.name = region.name.trim().chars().take(80).collect();
+        }
+        if arrangement.harmony_events.len() > 16_384 {
+            return Err("an arrangement cannot contain more than 16,384 harmony events".into());
+        }
+        arrangement
+            .harmony_events
+            .sort_by_key(|event| (event.start_tick, event.end_tick, event.id.clone()));
+        let mut harmony_event_ids = std::collections::HashSet::new();
+        for event in &arrangement.harmony_events {
+            if !harmony_event_ids.insert(event.id.as_str()) || event.validate().is_err() {
+                return Err(
+                    "harmony events require unique ids, positive ranges, and valid chords".into(),
+                );
+            }
+        }
+        if arrangement.recording_sessions.len() > 256
+            || arrangement.recording_passes.len() > 4096
+            || arrangement.takes.len() > 16_384
+        {
+            return Err(
+                "An arrangement contains too many recording sessions, passes, or takes.".into(),
+            );
+        }
+        let session_ids = arrangement
+            .recording_sessions
+            .iter()
+            .map(|recording| recording.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let pass_ids = arrangement
+            .recording_passes
+            .iter()
+            .map(|pass| pass.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let take_ids = arrangement
+            .takes
+            .iter()
+            .map(|take| take.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if session_ids.len() != arrangement.recording_sessions.len()
+            || pass_ids.len() != arrangement.recording_passes.len()
+            || take_ids.len() != arrangement.takes.len()
+        {
+            return Err("Recording Session, Pass, and Take IDs must be unique.".into());
+        }
+        for recording in &arrangement.recording_sessions {
+            let mut slot_track_ids = std::collections::HashSet::new();
+            if recording.id.trim().is_empty()
+                || recording.track_slots.iter().any(|slot| {
+                    let take = arrangement
+                        .takes
+                        .iter()
+                        .find(|take| take.id == slot.active_take_id);
+                    let audio_clip = arrangement
+                        .audio_clips
+                        .iter()
+                        .find(|clip| clip.id == slot.timeline_clip_id);
+                    let midi_clip = arrangement
+                        .midi_clips
+                        .iter()
+                        .find(|clip| clip.id == slot.timeline_clip_id);
+                    !slot_track_ids.insert(slot.track_id.as_str())
+                        || !track_ids.contains(slot.track_id.as_str())
+                        || take.is_none_or(|take| {
+                            take.session_id != recording.id || take.track_id != slot.track_id
+                        })
+                        || match (audio_clip, midi_clip) {
+                            (Some(clip), None) => {
+                                clip.track_id != slot.track_id
+                                    || clip.recording_take_id.as_deref()
+                                        != Some(slot.active_take_id.as_str())
+                            }
+                            (None, Some(clip)) => {
+                                clip.track_id != slot.track_id
+                                    || clip.recording_take_id.as_deref()
+                                        != Some(slot.active_take_id.as_str())
+                            }
+                            _ => true,
+                        }
+                })
+                || recording.pass_ids.iter().any(|id| {
+                    arrangement
+                        .recording_passes
+                        .iter()
+                        .find(|pass| pass.id == *id)
+                        .is_none_or(|pass| pass.session_id != recording.id)
+                })
+            {
+                return Err(
+                    "Recording Sessions contain invalid track, take, or range references.".into(),
+                );
+            }
+        }
+        for pass in &arrangement.recording_passes {
+            let mut pass_take_ids = std::collections::HashSet::new();
+            if pass.id.trim().is_empty()
+                || !session_ids.contains(pass.session_id.as_str())
+                || pass.ordinal == 0
+                || pass.duration_ticks == 0
+                || pass.track_take_ids.iter().any(|id| {
+                    !pass_take_ids.insert(id.as_str())
+                        || arrangement
+                            .takes
+                            .iter()
+                            .find(|take| take.id == *id)
+                            .is_none_or(|take| {
+                                take.pass_id != pass.id || take.session_id != pass.session_id
+                            })
+                })
+            {
+                return Err("Recording Passes contain invalid references or ranges.".into());
+            }
+        }
+        for take in &arrangement.takes {
+            let pass = arrangement
+                .recording_passes
+                .iter()
+                .find(|pass| pass.id == take.pass_id);
+            let audio_sources_valid = take
+                .raw_audio
+                .iter()
+                .chain(take.processed_audio.iter())
+                .all(|source| {
+                    !source.asset_id.as_str().trim().is_empty()
+                        && source.source_end_sample > source.source_start_sample
+                        && source.sample_rate > 0
+                        && (source.tail_end_sample == 0
+                            || source.tail_end_sample >= source.source_end_sample)
+                });
+            let has_audio_source = take.raw_audio.is_some() || take.processed_audio.is_some();
+            if take.id.trim().is_empty()
+                || !session_ids.contains(take.session_id.as_str())
+                || pass.is_none_or(|pass| {
+                    pass.session_id != take.session_id
+                        || !pass.track_take_ids.iter().any(|id| id == &take.id)
+                })
+                || !track_ids.contains(take.track_id.as_str())
+                || take.duration_ticks == 0
+                || take.source_end_sample <= take.source_start_sample
+                || (!has_audio_source && take.midi_asset_id.is_none())
+                || !audio_sources_valid
+            {
+                return Err(
+                    "Recording Takes contain invalid session, pass, track, or range references."
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DomainError;
+    use crate::domain::asset::mint_asset_id;
+    use crate::domain::recording::{
+        RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
+        RecordingTakeRecord, TakeAudioSource,
+    };
+    use crate::domain::session::CreativeSession;
+    use crate::domain::timeline::{ProjectTimebase, TIMELINE_PPQ, TimelineTick};
+
+    fn session_with_recording_relations() -> CreativeSession {
+        let mut session = CreativeSession::new(0);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let asset_id = mint_asset_id();
+        let take = RecordingTakeRecord {
+            id: "take:1".into(),
+            session_id: "recording:1".into(),
+            pass_id: "pass:1".into(),
+            track_id: "track:audio".into(),
+            start_tick: TimelineTick(0),
+            duration_ticks: 960,
+            source_start_sample: 0,
+            source_end_sample: 48_000,
+            raw_audio: Some(TakeAudioSource {
+                asset_id: asset_id.clone(),
+                source_start_sample: 0,
+                source_end_sample: 48_000,
+                tail_end_sample: 48_000,
+                sample_rate: 48_000,
+            }),
+            processed_audio: None,
+            midi_asset_id: None,
+        };
+        let mut clip = AudioClip::full_source(
+            "clip:1".into(),
+            "Take".into(),
+            "track:audio".into(),
+            asset_id,
+            TimelineTick(0),
+            48_000,
+            48_000,
+        );
+        clip.recording_take_id = Some(take.id.clone());
+        session.arrangement.audio_clips.push(clip);
+        session.arrangement.takes.push(take);
+        session
+            .arrangement
+            .recording_passes
+            .push(RecordingPassRecord {
+                id: "pass:1".into(),
+                session_id: "recording:1".into(),
+                ordinal: 1,
+                start_tick: TimelineTick(0),
+                duration_ticks: 960,
+                partial_start: false,
+                partial_end: false,
+                track_take_ids: vec!["take:1".into()],
+            });
+        session
+            .arrangement
+            .recording_sessions
+            .push(RecordingSessionRecord {
+                id: "recording:1".into(),
+                start_tick: TimelineTick(0),
+                track_slots: vec![RecordingSessionTrackSlot {
+                    track_id: "track:audio".into(),
+                    active_take_id: "take:1".into(),
+                    timeline_clip_id: "clip:1".into(),
+                }],
+                pass_ids: vec!["pass:1".into()],
+            });
+        session
+    }
+
+    #[test]
+    fn update_timebase_changes_the_project_clock_once() {
+        let mut arrangement = Arrangement::default();
+        let revision = arrangement.revision;
+        arrangement
+            .update_timebase(ProjectTimebase {
+                ppq: TIMELINE_PPQ,
+                bpm: 98.5,
+                time_signature_numerator: 7,
+                time_signature_denominator: 8,
+            })
+            .unwrap();
+
+        assert_eq!(arrangement.timebase.bpm, 98.5);
+        assert_eq!(arrangement.timebase.time_signature_numerator, 7);
+        assert_eq!(arrangement.revision, revision + 1);
+        assert!(
+            arrangement
+                .update_timebase(ProjectTimebase {
+                    bpm: 10.0,
+                    ..arrangement.timebase
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn timeline_regions_allow_overlap_and_nesting_but_require_valid_ranges() {
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:outer".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(0),
+                end_tick: TimelineTick(3_840),
+            })
+            .unwrap();
+        arrangement
+            .add_region(TimelineRegion {
+                id: "region:inner".into(),
+                name: "A".into(),
+                start_tick: TimelineTick(960),
+                end_tick: TimelineTick(1_920),
+            })
+            .unwrap();
+        assert_eq!(arrangement.regions.len(), 2);
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:empty".into(),
+                    name: " ".into(),
+                    start_tick: TimelineTick(0),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+        assert!(
+            arrangement
+                .add_region(TimelineRegion {
+                    id: "region:inverted".into(),
+                    name: "B".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(960),
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn harmony_events_are_sorted_without_rejecting_overlap_or_gaps() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let chord = HarmonyChord::resolve("C").unwrap();
+        let mut arrangement = Arrangement {
+            harmony_events: vec![
+                HarmonyEvent {
+                    id: "harmony:late".into(),
+                    start_tick: TimelineTick(1_920),
+                    end_tick: TimelineTick(3_840),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:overlap".into(),
+                    start_tick: TimelineTick(960),
+                    end_tick: TimelineTick(2_880),
+                    chord: chord.clone(),
+                },
+                HarmonyEvent {
+                    id: "harmony:gap".into(),
+                    start_tick: TimelineTick(4_800),
+                    end_tick: TimelineTick(5_760),
+                    chord,
+                },
+            ],
+            ..Arrangement::default()
+        };
+
+        Arrangement::validate_and_normalize(&mut arrangement).unwrap();
+
+        assert_eq!(
+            arrangement
+                .harmony_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["harmony:overlap", "harmony:late", "harmony:gap"]
+        );
+    }
+
+    #[test]
+    fn harmony_event_ids_must_be_unique_during_normalization() {
+        use crate::domain::music::{HarmonyChord, HarmonyEvent};
+
+        let event = HarmonyEvent {
+            id: "harmony:duplicate".into(),
+            start_tick: TimelineTick(0),
+            end_tick: TimelineTick(960),
+            chord: HarmonyChord::resolve("C").unwrap(),
+        };
+        let mut arrangement = Arrangement {
+            harmony_events: vec![event.clone(), event],
+            ..Arrangement::default()
+        };
+
+        assert!(Arrangement::validate_and_normalize(&mut arrangement).is_err());
+    }
+
+    #[test]
+    fn recording_relation_validation_rejects_duplicates_and_cross_links() {
+        let valid = session_with_recording_relations()
+            .validate_and_normalize()
+            .unwrap();
+
+        let mut duplicate = valid.clone();
+        duplicate
+            .arrangement
+            .takes
+            .push(duplicate.arrangement.takes[0].clone());
+        assert!(duplicate.validate_and_normalize().is_err());
+
+        let mut wrong_pass = valid.clone();
+        wrong_pass.arrangement.recording_passes[0].track_take_ids = vec!["missing-take".into()];
+        assert!(wrong_pass.validate_and_normalize().is_err());
+
+        let mut wrong_slot = valid;
+        wrong_slot.arrangement.recording_sessions[0].track_slots[0].active_take_id =
+            "missing-take".into();
+        assert!(wrong_slot.validate_and_normalize().is_err());
+
+        let mut missing_from_pass = session_with_recording_relations();
+        missing_from_pass.arrangement.recording_passes[0]
+            .track_take_ids
+            .clear();
+        assert!(missing_from_pass.validate_and_normalize().is_err());
+    }
+
+    #[test]
+    fn deleting_a_recording_slot_clip_prunes_only_its_canonical_take_links() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:copy".into()], &[])
+            .unwrap();
+        assert_eq!(session.arrangement.takes.len(), 1);
+        assert_eq!(session.arrangement.recording_sessions.len(), 1);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_slot_detaches_a_remaining_copy_clip_from_the_removed_take() {
+        let mut session = session_with_recording_relations();
+        let mut copy = session.arrangement.audio_clips[0].clone();
+        copy.id = "clip:copy".into();
+        let asset_id = copy.asset_id.clone();
+        session.arrangement.audio_clips.push(copy);
+
+        session
+            .arrangement
+            .remove_timeline_clips(&["clip:1".into()], &[])
+            .unwrap();
+
+        let copy = session
+            .arrangement
+            .audio_clips
+            .iter()
+            .find(|clip| clip.id == "clip:copy")
+            .unwrap();
+        assert!(copy.recording_take_id.is_none());
+        assert_eq!(copy.asset_id, asset_id);
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn deleting_a_recorded_track_prunes_relations_but_not_assets() {
+        let mut session = session_with_recording_relations();
+        let asset_id = session.arrangement.takes[0]
+            .raw_audio
+            .as_ref()
+            .unwrap()
+            .asset_id
+            .clone();
+        session.arrangement.remove_track("track:audio").unwrap();
+        assert!(session.arrangement.takes.is_empty());
+        assert!(session.arrangement.recording_passes.is_empty());
+        assert!(session.arrangement.recording_sessions.is_empty());
+        // The domain intentionally holds no asset store and therefore cannot
+        // delete this source reference from storage.
+        assert!(!asset_id.as_str().is_empty());
+        assert!(session.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn moving_a_recording_slot_clip_to_another_track_is_rejected() {
+        let mut session = session_with_recording_relations();
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:other".into(), "Other".into()));
+        let error = session
+            .arrangement
+            .move_audio_clips(vec![AudioClipMove {
+                clip_id: "clip:1".into(),
+                track_id: "track:other".into(),
+                start_tick: TimelineTick(0),
+            }])
+            .unwrap_err();
+        assert!(matches!(error, DomainError::InvalidClip(_)));
     }
 }

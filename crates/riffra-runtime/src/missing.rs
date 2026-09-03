@@ -105,6 +105,7 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riffra_control::new_instance_id;
     use riffra_core::{
         AssetId, AudioClip, CreativeSession, DeviceKind, RackDevice, TimelineTick, Track,
     };
@@ -114,7 +115,7 @@ mod tests {
         std::env::temp_dir().join(format!(
             "riffra-missing-{}-{}",
             std::process::id(),
-            now_ms()
+            new_instance_id()
         ))
     }
 

@@ -1,6 +1,5 @@
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession, MusicalPosition, OfflineRenderRequest, RenderRuntime};
-use riffra_render_worker::RenderWorker;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -9,6 +8,10 @@ use std::{
     sync::atomic::AtomicBool,
 };
 use ts_rs::TS;
+
+mod worker;
+
+pub(crate) use worker::RenderWorker;
 
 const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
@@ -93,7 +96,7 @@ pub fn render_timeline_with_options(
 /// # Errors
 /// Returns a host-provided description when validation, rendering, or Asset
 /// registration fails.
-pub fn render_timeline_with_cancellation(
+pub(crate) fn render_timeline_with_cancellation(
     renderer: &RenderWorker,
     data_root: &Path,
     session: &CreativeSession,

@@ -40,7 +40,7 @@
      │ stdin/stdout   │ stdin/stdout  │ stdout
 ┌────▼───────┐  ┌─────▼────────┐  ┌──▼──────────┐
 │riffra-audio│  │riffra-render │  │riffra-audio │
-│ --serve    │  │ -worker      │  │ --probe系   │
+│ --serve    │  │ オフライン    │  │ --probe系   │
 │ 常駐・音声  │  │ レンダ要求1  │  │ デバイス列挙│
 └────────────┘  │ 回ごとに起動  │  └─────────────┘
                 └──────────────┘
@@ -60,7 +60,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | A    | WebView → Rust                                | `invoke`（Tauri command）                               | 一切の操作・編集・照会                                   |
 | B    | Rust → WebView                                | Tauri event                                             | 音声状態・メーター・トランスポート・ランタイム回復の通知 |
 | C    | Rust ↔ riffra-audio                           | 子プロセスの stdin/stdout（JSON Lines）                 | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
-| D    | Rust → riffra-render-worker                   | 子プロセスの stdin/stdout（JSON 1行）                   | オフラインレンダリング（1要求1プロセス）                 |
+| D    | Runtime → riffra-render                       | 子プロセスの stdin/stdout（JSON 1行）                   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe）                  | 子プロセスの stdout（JSON 1行）/ 引数                   | デバイス・チャンネル列挙、VST3スキャン                   |
 | F    | 外部クライアント ↔ Riffra Host Control Server | Windows Named Pipe / Unix Domain Socket（長さ付きJSON） | Hostの正準状態・Runtime操作とHost event購読              |
 
@@ -74,11 +74,11 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 命令は責務に応じて3つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
 
-| モード                              | 挙動                                                                                                | 使う命令                                           |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `run_blocking`                      | Host command gate を取得してから実行（正準セッション操作と保存を直列化）                            | 楽曲編集・ライブラリ操作・素材操作の大半           |
-| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理 | プローブ、スキャン、録音一覧、プラグイン接続など   |
-| `run_runtime_control`               | ゲートなし。永続セッションを決して変更しない音声制御（snapshot の読み取りだけ）                     | play / stop / seek、MIDI送信、プレビュー、ミュート |
+| モード                              | 挙動                                                                                                                | 使う命令                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `run_blocking`                      | Host command gate を取得してから実行（正準セッション操作と保存を直列化）                                            | 楽曲編集・ライブラリ操作・素材操作の大半           |
+| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                 | プローブ、スキャン、録音一覧、プラグイン接続など   |
+| `run_runtime_control`               | Runtime側は永続セッションを変更しないsnapshot読み取りで実行。Project-bound requestはHost入口でProject切替と排他する | play / stop / seek、MIDI送信、プレビュー、ミュート |
 
 ### 3.2 命令カタログ
 
@@ -219,9 +219,9 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ---
 
-## 6. 境界 D: レンダーワーカー（riffra-render-worker）
+## 6. 境界 D: オフラインレンダリング（riffra-render）
 
-- 起動: `render_timeline` 命令のたびに、Composition Rootから渡された `RuntimeBinaries` のレンダーワーカー実行ファイルを1回起動する。DesktopとHeadlessで同じ配置規則を使う
+- 起動: `render_timeline` 命令のたびに、`riffra-runtime::render` がComposition Rootから渡された `RuntimeBinaries` の `riffra-render` executableを1回起動する。DesktopとHeadlessで同じ配置規則を使う
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
 - 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
@@ -301,13 +301,14 @@ riffra --data-root ./data --interactive
 riffra --data-root ./data --attach --interactive
 ```
 
-StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。
+StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。Live Hostへ送るProject-bound requestには、Clientが`project.list`または`host.bootstrap`で取得した`expectedProjectId`を付ける。Live Hostはこの値がない要求を拒否し、Active Projectと一致しない要求をConflictとして返す。Standalone Dispatcherは単独でActive Projectを管理するため、欠落した値を自身のActive Projectで補完する。
 
 ```json
 {
   "requestId": "42",
   "command": "track.add",
   "expectedSequence": 18,
+  "expectedProjectId": "550e8400-e29b-41d4-a716-446655440000",
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
@@ -329,13 +330,13 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 }
 ```
 
-| エラーコード         | 発生条件                                         |
-| -------------------- | ------------------------------------------------ |
-| `invalidRequest`     | 入力形式、`params`、型、未知のコマンドが不正     |
-| `commandFailed`      | Core、Host、保存処理が失敗                       |
-| `conflict`           | `expectedSequence`が現在の正準シーケンスと不一致 |
-| `hostUnavailable`    | Attached CLIがHostへ接続できない                 |
-| `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない |
+| エラーコード         | 発生条件                                                                                     |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `invalidRequest`     | 入力形式、`params`、型、未知のコマンド、Project-bound requestの`expectedProjectId`欠落が不正 |
+| `commandFailed`      | Core、Host、保存処理が失敗                                                                   |
+| `conflict`           | `expectedSequence`または`expectedProjectId`が現在の状態と不一致                              |
+| `hostUnavailable`    | Attached CLIがHostへ接続できない                                                             |
+| `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない                                             |
 
 機械判定にはエラーコードを使い、message文字列を解析しない。
 

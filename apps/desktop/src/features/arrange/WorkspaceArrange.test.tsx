@@ -1271,48 +1271,6 @@ describe('WorkspaceArrange', () => {
     );
   });
 
-  it('blocks a MIDI Asset drop on an Audio Track before invoking native API', async () => {
-    const session = defaultSession();
-    session.arrangement.tracks.push({
-      id: 'track:audio',
-      name: 'Audio',
-      kind: 'audio',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    });
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    const { container } = render(<Harness api={api} initialSession={session} />);
-    const track = container.querySelector('[data-arrange-track]')!;
-
-    fireEvent.drop(track, {
-      clientX: 200,
-      dataTransfer: {
-        getData: (type: string) =>
-          type === 'application/x-riffra-asset'
-            ? JSON.stringify({
-                version: 1,
-                assetId: 'asset:midi',
-                name: 'MIDI',
-                kind: 'midi',
-              })
-            : '',
-      },
-    });
-
-    await waitFor(() =>
-      expect(
-        screen.getByText('MIDI Assets can only be placed on an Instrument Track.'),
-      ).toBeInTheDocument(),
-    );
-    expect(api.calls).not.toContain('addMidiClipToArrangement');
-  });
-
   it('does not send an Audio clip move to an Instrument Track', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push(

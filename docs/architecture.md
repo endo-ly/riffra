@@ -34,22 +34,22 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 └──────┬──────────────────────────┬───────────────────────────────┘
        │ JSON Lines (stdin/stdout)
        │ 1つのコマンド + 1行の応答
-┌──────▼────────────────┐  ┌──────▼──────────────┐  ┌──────▼────────┐
-│ riffra-audio          │  │ riffra-plugin-scan  │  │ riffra-render │
-│ リアルタイム音声       │  │ VST3スキャン        │  │ -worker       │
-│ JUCE / ASIO / WASAPI  │  │ (起動時・再スキャン) │  │ オフライン    │
-│ 投影・演奏・録音・監視 │  └─────────────────────┘  │ レンダリング  │
-│ VST3 ホスティング     │                            └──────────────┘
-└───────────────────────┘
+┌───────────────────────┐  ┌─────────────────────┐  ┌─────────────────┐
+│ riffra-audio          │  │ riffra-plugin-scan  │  │ riffra-render   │
+│ リアルタイム音声       │  │ VST3スキャン        │  │ オフライン      │
+│ JUCE / ASIO / WASAPI  │  │ (起動時・再スキャン) │  │ レンダリング    │
+│ 投影・演奏・録音・監視 │  │                     │  │                 │
+│ VST3 ホスティング     │  │                     │  │                 │
+└───────────────────────┘  └─────────────────────┘  └─────────────────┘
 ```
 
-| プロセス             | 役割                                                        | 所有状態                                   |
-| -------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| Tauri シェル         | DesktopのUI、Host接続、Tauri event bridge                   | UI接続、window、dialog、Host選択           |
-| `riffra serve` Host  | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
-| riffra-audio         | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
-| riffra-plugin-scan   | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
-| riffra-render-worker | タイムラインのオフラインレンダリング                        | なし                                       |
+| プロセス            | 役割                                                        | 所有状態                                   |
+| ------------------- | ----------------------------------------------------------- | ------------------------------------------ |
+| Tauri シェル        | DesktopのUI、Host接続、Tauri event bridge                   | UI接続、window、dialog、Host選択           |
+| `riffra serve` Host | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
+| riffra-audio        | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
+| riffra-plugin-scan  | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
+| riffra-render       | タイムラインのオフラインレンダリング                        | なし                                       |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -82,6 +82,7 @@ Desktop adapter (apps/desktop/src-tauri/src)
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
   ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
   ├─ AudioSupervisor / RuntimeReconciler / Transport ordering
+  ├─ Offline render process adapter（`riffra-render` executable）
   ├─ HostEventSink / HostEventHub / Host bootstrap
   └─ Local Control Server（command connection / events connection）
 
@@ -275,7 +276,7 @@ WindowsのDesktop Embedded Hostは、既定でユーザーの `Music/Riffra` 配
 - **種類**: `Scan`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
 - **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態から `Running` には戻らない
 - ジョブは `progress` / `message` 付きでUIへ状態が配信され、ID重複を避けた登録とクエリで操作される
-- レンダリングは別経路: `OfflineRenderRequest`（riffra-core のポート）を `riffra-render-worker` 子プロセスが処理する
+- レンダリングは別経路: `OfflineRenderRequest`（riffra-core のポート）を `riffra-runtime::render` が受け取り、`riffra-render` executableを子プロセスとして起動・制御する
 
 ---
 

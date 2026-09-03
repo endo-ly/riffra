@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
   type CSSProperties,
 } from 'react';
 import type {
@@ -19,7 +18,6 @@ import type {
   MidiClip,
   PluginEntry,
   RuntimeProjectionStatus,
-  TrackKind,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from './arrange-api';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
@@ -59,6 +57,7 @@ import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hook
 import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeDetailController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
+import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
 import overlayStyles from './WorkspaceArrangeOverlay.module.css';
@@ -129,7 +128,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.hostGeneration ?? 0,
   );
   const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
-  const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
     const contentEnd = Math.max(
@@ -186,6 +184,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     onSplitToolUsed: () => setTool('select'),
   });
   const { commit, setMessage } = editor;
+  const { handleDrop, isOsFileDrag } = useArrangeDrop({
+    api: props.api,
+    commit,
+    hostGeneration: props.hostGeneration ?? 0,
+    pixelsPerTick,
+    snapTick: editor.snapTick,
+    setMessage,
+  });
   const sendMidiPreview = useCallback(
     (trackId: string, bytes: number[]) => api.sendMidiToTrack(trackId, bytes),
     [api],
@@ -193,35 +199,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
   const commitMidiEdit = (operation: Promise<ArrangementMutationResult | null>) =>
     commit(operation);
-  // Accept Standard MIDI Files dragged from the operating system. HTML5 drop
-  // delivers the file contents rather than the OS path, so the bytes are
-  // imported as a canonical MIDI Asset and then placed as a MIDI Clip.
-  const handleOsMidiDrop = useCallback(
-    async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
-      const requestGeneration = props.hostGeneration ?? 0;
-      if (trackKind === 'audio') {
-        setMessage('MIDI Assets can only be placed on an Instrument Track.');
-        return;
-      }
-      for (const file of Array.from(files)) {
-        if (getHostGeneration() !== requestGeneration) return;
-        if (!/\.midi?$/i.test(file.name)) continue;
-        const stem = file.name.replace(/\.(mid|midi)$/i, '');
-        try {
-          const assetId = await api.importMidiBytes(
-            stem,
-            Array.from(new Uint8Array(await file.arrayBuffer())),
-          );
-          if (getHostGeneration() !== requestGeneration) return;
-          if (!assetId) continue;
-          await commit(api.addMidiClipToArrangement(assetId, stem, undefined, trackId));
-        } catch {
-          /* import or placement failure surfaces through the library notice path */
-        }
-      }
-    },
-    [api, commit, props.hostGeneration, setMessage],
-  );
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
   // advance the canonical revision without requiring a new audio graph.
@@ -1074,11 +1051,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               }}
               onDrop={(event) => {
                 setEmptyDragOver(false);
-                if (event.dataTransfer.files?.length) {
-                  void handleOsMidiDrop(event.dataTransfer.files);
-                  return;
-                }
-                void editor.dropAsset(event);
+                handleDrop(event);
               }}
             >
               <span className={styles.emptyIcon}>≋</span>
@@ -1127,11 +1100,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   api={props.api}
                   onCommit={editor.commit}
                   onDrop={(event, trackId, trackKind) => {
-                    if (event.dataTransfer.files?.length) {
-                      void handleOsMidiDrop(event.dataTransfer.files, trackId, trackKind);
-                      return;
-                    }
-                    void editor.dropAsset(event, trackId, trackKind);
+                    handleDrop(event, trackId, trackKind);
                   }}
                   onContextMenu={openTrackLaneContextMenu}
                   onDoubleClickLane={

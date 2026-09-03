@@ -2681,7 +2681,6 @@ dependencies = [
  "riffra-control",
  "riffra-core",
  "riffra-host",
- "riffra-render-worker",
  "riffra-runtime",
  "rusqlite",
  "serde",
@@ -2711,23 +2710,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "riffra-render-worker"
-version = "0.1.0"
-dependencies = [
- "riffra-core",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "riffra-runtime"
 version = "0.1.0"
 dependencies = [
  "riffra-control",
  "riffra-core",
  "riffra-host",
- "riffra-render-worker",
  "rusqlite",
  "serde",
  "serde_json",

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
 use crate::AppState;
-use crate::jobs::BackgroundJobStatus;
 use crate::plugins::ScanReport;
+use riffra_runtime::jobs::BackgroundJobStatus;
 
 #[tauri::command]
 pub async fn scan_vst3_folder(path: Option<String>, app: AppHandle) -> Result<ScanReport, String> {

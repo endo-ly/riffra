@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AudioAnalysis, CanonicalState, CreativeSession, TrackKind } from '@/model/domain';
+import type { AudioAnalysis, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import {
   timelineObjectEndTick,
   snapGridTicks,
-  TRACK_HEADER_WIDTH,
   type ArrangeTool,
   type SnapGrid,
 } from '@/features/arrange/model/arrange-timeline';
-import { readAssetDrag } from '@/shared/asset-drag';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useClipInteractions } from './useClipInteractions';
 import { useArrangeCommands } from './useArrangeCommands';
@@ -109,35 +107,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     },
     [edgeTicks, pixelsPerTick, snap, timebase],
   );
-
-  const dropAsset = async (event: React.DragEvent, trackId?: string, trackKind?: TrackKind) => {
-    event.preventDefault();
-    const asset = readAssetDrag(event.dataTransfer);
-    if (!asset) {
-      setMessage('The dragged Library item is not a valid Audio or MIDI Asset.');
-      return;
-    }
-    const expectedTrackKind = asset.kind === 'audio' ? 'audio' : 'instrument';
-    if (trackKind && trackKind !== expectedTrackKind) {
-      setMessage(
-        asset.kind === 'audio'
-          ? 'Audio Assets can only be placed on an Audio Track.'
-          : 'MIDI Assets can only be placed on an Instrument Track.',
-      );
-      return;
-    }
-    const timeline = event.currentTarget.closest('[data-arrange-timeline]');
-    const bounds = timeline?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
-    const tick = snapTick(
-      (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
-      event.altKey,
-    );
-    await commit(
-      asset.kind === 'audio'
-        ? api.addAudioClipToArrangement(asset.assetId, asset.name, tick, trackId)
-        : api.addMidiClipToArrangement(asset.assetId, asset.name, tick, trackId),
-    );
-  };
 
   const clipInteractions = useClipInteractions({
     session,
@@ -326,7 +295,6 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     marquee,
     commit,
     snapTick,
-    dropAsset,
     selectClip,
     beginMarquee,
     setMessage,
