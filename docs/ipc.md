@@ -31,7 +31,7 @@
 │ React（src/native/native-api.ts）                                    │
 └────┬───────────────────────┬───────────────────────┬───────────────┘
      │ A: Tauri 命令          │ B: イベント購読        │
-     │ invoke 系             │ listen(8種)           │
+     │ invoke 系             │ listen(9種)           │
 ┌────▼───────────────────────▼───────────────────────▼───────────────┐
 │ Rust バックエンド（src-tauri）                                          │
 │ 命令層 → Host Adapter → riffra-core / RuntimeReconciler / 永続化       │
@@ -86,14 +86,14 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 **起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
 
-| 命令                                                                   | 責務                                                   |
-| ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| `get_bootstrap_state`                                                  | CanonicalState・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status`                                                     | 音声状態の照会                                         |
-| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）        |
-| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                               |
-| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                     |
-| `restore_recovery_generation`                                          | 世代からの回復                                         |
+| 命令                                                                   | 責務                                                                 |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `get_bootstrap_state`                                                  | CanonicalState・ProjectState・セーフモード・回復候補の初期状態を返す |
+| `get_audio_status`                                                     | 音声状態の照会                                                       |
+| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                      |
+| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                             |
+| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                   |
+| `restore_recovery_generation`                                          | 世代からの回復                                                       |
 
 **セッション・アレンジ（session/commands/）**
 
@@ -107,8 +107,15 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | マーカー           | `add_marker`、`update_marker`、`remove_marker`                                                                                                                                                                                                                                                                                                                                                          |
 | 設定               | `update_session_settings`                                                                                                                                                                                                                                                                                                                                                                               |
 | 履歴               | `undo_session`、`redo_session`、`get_history_state`                                                                                                                                                                                                                                                                                                                                                     |
-| セッション入出力   | `export_scratch_session`、`import_scratch_session`、`import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                             |
+| Project            | `list_projects`、`create_project`、`open_project`、`rename_project`、`export_project`、`import_project`                                                                                                                                                                                                                                                                                                 |
+| 素材入出力         | `import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                                                                                 |
 | 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                                       |
+
+Project一覧の項目を選ぶ `open_project` は、同じDataRoot内のProject containerを切り替える命令であり、
+ファイルダイアログを開かない。外部packageを扱うのは `import_project` と `export_project` だけである。
+DesktopのImport dialogは `.riffra` packageだけを選択でき、Importは現在のProjectを上書きせず新しい
+Project containerをActiveにする。ExportはDesktopのSave dialogで指定された `.riffra` pathへ一度だけ
+portable packageを書き出し、DataRoot内にExport専用ディレクトリを作らない。
 
 **プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタからのstate / parameter変更はHost内のpersistence coordinatorがイベントをcoalesceしてCanonical stateへ保存する。
 
@@ -160,6 +167,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
 | `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
 | `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                           |
+| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                             |
+| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                  |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。
@@ -216,7 +225,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
 - 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
-- レンダー計画（開始・終了ティック、レンジ解決、出力パス `export/render-{ms}/timeline.wav`、manifest）はRuntime側で組み立て、`riffra-render` は計画の実行だけを担う
+- レンダー計画（開始・終了ティック、レンジ解決、出力パス `renders/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
 
 ---
 
@@ -269,7 +278,7 @@ Hostのイベント配信では、meterやtransport statusなど最新値があ�
 
 外部Hostとの初期同期では、イベント接続を確立してから`host.bootstrap`を取得する。一覧表示は軽量な`host.info`を使い、`host.bootstrap`は接続対象に選ぶときだけ使う。
 
-接続先の変更は、新しい接続とbootstrapを準備してから現在のHostを交換し、交換後は世代を更新して旧Host由来の遅延イベントや応答を破棄する。録音中の切替は拒否する。外部Hostが終了した場合はDisconnectedとし、最後のDataRootとinstanceIdを保持して`host.json`から再接続する。
+接続先の変更は、新しい接続とbootstrapを準備してから現在のHostを交換し、交換後は世代を更新して旧Host由来の遅延イベントや応答を破棄する。録音中の切替は拒否する。外部Hostが終了した場合はDisconnectedとし、最後のDataRootとinstanceIdを保持して`host.json`から再接続する。Projectの切替はHostの切替とは独立し、同じHost内のActive Projectだけを変更する。
 
 ### 8.1 起動とフレーミング
 
@@ -277,6 +286,9 @@ Hostのイベント配信では、meterやtransport statusなど最新値があ�
 
 ```bash
 riffra --data-root ./data session get
+riffra --data-root ./data project list
+riffra --data-root ./data project create --name "New Song"
+riffra --data-root ./data project open <project-id>
 riffra --data-root ./data track add --name Bass --kind instrument
 riffra --data-root ./data serve --safe-mode
 riffra --data-root ./data --attach session get
@@ -355,7 +367,7 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Music Operations       | `music.midi-clip.create`、`music.note.insert`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert`                           |
 | Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                       |
 | Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                  |
-| Asset / Project        | `asset import-midi`、`asset preview`、`project export`、`project import`                                                                                                                                                                                                                                                              |
+| Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                 |
 | Rack state             | `plugin catalog list`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass/parameter-set`                                                                                                                                                                               |
 | Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 

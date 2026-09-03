@@ -358,7 +358,7 @@ fn build_render_plan(
         clip_count,
         source_ids,
         output_path: data_root
-            .join("exports")
+            .join("renders")
             .join(format!("render-{created_at_ms}"))
             .join("timeline.wav"),
     })
@@ -586,6 +586,10 @@ mod tests {
             build_render_plan(&root, &session_with_clips(), 1, &RenderOptions::default()).unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
+        assert_eq!(
+            plan.output_path,
+            root.join("renders").join("render-1").join("timeline.wav")
+        );
     }
 
     #[test]
@@ -629,7 +633,8 @@ mod tests {
         );
 
         assert_eq!(result.unwrap_err(), "render failed");
-        assert!(!root.join("exports").join("render-1").exists());
+        assert!(!root.join("renders").join("render-1").exists());
+        assert!(!root.join("exports").exists());
         let _ = fs::remove_dir_all(root);
     }
 }

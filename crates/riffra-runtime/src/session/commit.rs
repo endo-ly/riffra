@@ -79,9 +79,8 @@ where
     ) -> Result<CreativeSession, ApplicationError>,
 {
     let before_sequence = context.core.snapshot()?.sequence;
-    let store = SessionStore::new(context.data_root);
-    let committed = operation(context.core, &store)?;
-    crate::library::index::refresh(context.data_root, &committed);
+    let committed = operation(context.core, &context.storage)?;
+    crate::library::index::refresh(context.data_root, &context.storage, &committed);
     let canonical = context.core.canonical_state()?;
     if canonical.sequence > before_sequence {
         context
@@ -121,42 +120,25 @@ pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
     .map_err(AdapterError::from)
 }
 
-/// Imports a project manifest and commits the resulting production state.
-pub fn import_session(
-    context: &SessionContext<'_>,
-    path: &Path,
-) -> Result<ArrangementMutationResult, AdapterError> {
-    let session = crate::projects::import(context.data_root, path)?;
-    let store = SessionStore::new(context.data_root);
-    let committed = context
-        .core
-        .application(&store)
-        .import_project(session)
-        .map_err(AdapterError::from)?;
-    crate::library::index::refresh(context.data_root, &committed);
-    publish_canonical_state(context)?;
-    arrangement_mutation_result(context)
-}
-
 /// Restores a saved generation through Core.
 pub fn restore_generation(
     context: &SessionContext<'_>,
     file_name: &str,
 ) -> Result<ArrangementMutationResult, AdapterError> {
-    let session = SessionStore::new(context.data_root)
+    let session = context
+        .storage
         .restore_generation(file_name)
         .map_err(|error| {
             AdapterError::command(format!(
                 "Recovery generation could not be restored: {error}"
             ))
         })?;
-    let store = SessionStore::new(context.data_root);
     let committed = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .restore_project(session)
         .map_err(AdapterError::from)?;
-    crate::library::index::refresh(context.data_root, &committed);
+    crate::library::index::refresh(context.data_root, &context.storage, &committed);
     publish_canonical_state(context)?;
     arrangement_mutation_result(context)
 }

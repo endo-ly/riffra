@@ -20,7 +20,6 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
         ),
     }
 }
-
 /// Validates a plugin-bearing candidate against the real Arrangement Runtime
 /// before persisting it. A failed candidate never becomes part of the
 /// canonical Session, and a persistence failure repairs the previous graph.
@@ -39,6 +38,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 expected_sequence,
                 current_sequence,
             },
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
@@ -46,6 +52,28 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                 AdapterError::command(repair_previous_arrangement(context, message))
             }
         });
+    }
+    let _project_commit_guard = context
+        .project_commit
+        .as_ref()
+        .map(|project_commit| {
+            project_commit
+                .command_gate
+                .lock()
+                .map_err(|_| AdapterError::command("Host command gate was poisoned"))
+        })
+        .transpose()?;
+    if let Some(project_commit) = context.project_commit.as_ref() {
+        let current_project_id = project_commit
+            .project_store
+            .active_project_id()
+            .map_err(|error| AdapterError::command(error.to_string()))?;
+        if current_project_id != project_commit.expected_project_id {
+            return Err(AdapterError::ProjectConflict {
+                expected_project_id: project_commit.expected_project_id.clone(),
+                current_project_id,
+            });
+        }
     }
     if let Err(error) = commit_core_application(context, |core, store| {
         core.application(store).commit_prepared(prepared)
@@ -61,6 +89,13 @@ pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
                     current_sequence,
                 }
             }
+            AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => AdapterError::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            },
             AdapterError::RuntimeUnavailable(message) => {
                 AdapterError::runtime(repair_previous_arrangement(context, message))
             }
@@ -116,10 +151,9 @@ pub(crate) fn set_track_instrument_with_expected_sequence(
         ));
     }
     let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_instrument(
             track_id,
             name,
@@ -163,10 +197,9 @@ pub(crate) fn add_track_effect_with_expected_sequence(
         ));
     }
     let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_effect(
             track_id,
             name,
@@ -330,9 +363,13 @@ pub fn open_track_plugin_editor(
         return Err(format!("Track Device is not registered: {device_id}").into());
     }
     drop(session);
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_track_plugin_editor(track_id, device_id)
+        .open_track_plugin_editor(&project_id, track_id, device_id)
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
@@ -465,10 +502,9 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Plugin")
         .to_owned();
-    let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
-        .application(&store)
+        .application(&context.storage)
         .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {
@@ -476,4 +512,369 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         None => prepared,
     };
     commit_plugin_arrangement(context, prepared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riffra_core::{CreativeSession, DeviceKind, RackDevice, TimelineTick, Track};
+    use serde_json::Value;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    struct CandidateRuntimeDriver {
+        fail_prepare: AtomicBool,
+        generation: AtomicU64,
+        pending: Mutex<Option<u64>>,
+        loaded: Mutex<Vec<u64>>,
+        commit_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    }
+
+    impl CandidateRuntimeDriver {
+        fn new(fail_prepare: bool) -> Self {
+            Self {
+                fail_prepare: AtomicBool::new(fail_prepare),
+                generation: AtomicU64::new(1),
+                pending: Mutex::new(None),
+                loaded: Mutex::new(Vec::new()),
+                commit_hook: Mutex::new(None),
+            }
+        }
+
+        fn set_commit_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+            *self.commit_hook.lock().unwrap() = Some(hook);
+        }
+    }
+
+    impl crate::ProjectionDriver for CandidateRuntimeDriver {
+        fn prepare_timeline_snapshot(
+            &self,
+            snapshot: Value,
+            _timeout: Duration,
+        ) -> Result<(), crate::RuntimeError> {
+            if self.fail_prepare.swap(false, Ordering::AcqRel) {
+                return Err(crate::RuntimeError::NativeRejected(
+                    "Candidate graph was rejected.".into(),
+                ));
+            }
+            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
+            Ok(())
+        }
+
+        fn commit_timeline_snapshot(&self, _timeout: Duration) -> Result<(), crate::RuntimeError> {
+            if let Some(hook) = self.commit_hook.lock().unwrap().take() {
+                hook();
+            }
+            let revision = self.pending.lock().unwrap().take().ok_or_else(|| {
+                crate::RuntimeError::NativeRejected(
+                    "No prepared timeline snapshot is available.".into(),
+                )
+            })?;
+            self.loaded.lock().unwrap().push(revision);
+            Ok(())
+        }
+
+        fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), crate::RuntimeError> {
+            self.pending.lock().unwrap().take();
+            Ok(())
+        }
+
+        fn runtime_generation(&self) -> u64 {
+            self.generation.load(Ordering::Relaxed)
+        }
+    }
+
+    impl crate::TransportDriver for CandidateRuntimeDriver {
+        fn play_timeline(&self) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
+
+        fn stop_timeline(&self) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
+    }
+
+    fn plugin_base_session() -> CreativeSession {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:plugin".into(), "Plugin Track".into()));
+        session
+    }
+
+    fn candidate_context<'a>(
+        root: &'a Path,
+        runtime: &'a crate::RuntimeReconciler<CandidateRuntimeDriver>,
+        audio: &'a crate::AudioSupervisor,
+        core: &'a riffra_core::AppCore<crate::AudioSupervisor>,
+    ) -> SessionContext<'a, CandidateRuntimeDriver> {
+        let storage = riffra_host::SessionStore::new(root, "01900000-0000-7000-8000-000000000001");
+        SessionContext {
+            core,
+            audio,
+            runtime,
+            storage,
+            data_root: root,
+            safe_mode: false,
+            events: &crate::NoopHostEventSink,
+            project_commit: None,
+        }
+    }
+
+    fn prepared_plugin_candidate<D: RuntimeDriver>(
+        context: &SessionContext<'_, D>,
+    ) -> riffra_core::PreparedSession {
+        context
+            .core
+            .application(&context.storage)
+            .prepare_track_effect(
+                "track:plugin",
+                "Candidate".into(),
+                r"C:\plugins\Candidate.vst3".into(),
+            )
+            .unwrap()
+    }
+
+    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if predicate() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!("condition was not met within {timeout:?}");
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn rejected_plugin_candidate_restores_the_canonical_runtime() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-rejected-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = plugin_base_session();
+        let driver = Arc::new(CandidateRuntimeDriver::new(true));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
+        let context = candidate_context(&root, &runtime, &audio, &core);
+
+        // Act
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .rack
+                .devices
+                .is_empty()
+        );
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [0]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejected_plugin_candidate_is_not_requeued_after_runtime_restart() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-restart-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = plugin_base_session();
+        let driver = Arc::new(CandidateRuntimeDriver::new(true));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
+        let context = candidate_context(&root, &runtime, &audio, &core);
+        let candidate = prepared_plugin_candidate(&context);
+        assert!(commit_plugin_arrangement(&context, candidate).is_err());
+        let loaded_before_restart = driver.loaded.lock().unwrap().len();
+        driver.generation.store(2, Ordering::Release);
+
+        // Act
+        let requeued = runtime.requeue_after_runtime_restart(2);
+
+        // Assert
+        assert!(requeued);
+        wait_until(Duration::from_secs(1), || {
+            driver.loaded.lock().unwrap().len() > loaded_before_restart
+        });
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&0));
+        assert!(!driver.loaded.lock().unwrap().contains(&1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn candidate_sequence_conflict_restores_the_newer_canonical_session() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-conflict-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let session = plugin_base_session();
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = Arc::new(riffra_core::AppCore::new(
+            root.clone(),
+            session,
+            audio.clone(),
+            false,
+            false,
+        ));
+        let hook_core = Arc::clone(&core);
+        let hook_root = root.clone();
+        driver.set_commit_hook(Arc::new(move || {
+            let store =
+                riffra_host::SessionStore::new(&hook_root, "01900000-0000-7000-8000-000000000001");
+            hook_core
+                .application(&store)
+                .add_marker(TimelineTick(7), "concurrent".into())
+                .unwrap();
+        }));
+        let context = candidate_context(&root, &runtime, &audio, core.as_ref());
+
+        // Act
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
+        let current = core.snapshot().unwrap().session;
+        assert_eq!(current.arrangement.revision, 1);
+        assert!(current.arrangement.tracks[0].rack.devices.is_empty());
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stale_plugin_candidate_is_rejected_before_runtime_prepare() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-stale-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            plugin_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let context = candidate_context(&root, &runtime, &audio, &core);
+        let candidate = prepared_plugin_candidate(&context);
+        let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
+        core.application(&store)
+            .add_marker(TimelineTick(7), "concurrent".into())
+            .unwrap();
+
+        // Act
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(matches!(
+            result,
+            Err(AdapterError::Conflict {
+                expected_sequence: 0,
+                current_sequence: 1,
+            })
+        ));
+        assert!(driver.loaded.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn plugin_persistence_failure_restores_the_previous_graph() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-candidate-persistence-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::write(&root, b"not a directory").unwrap();
+        let session = plugin_base_session();
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
+        let context = candidate_context(&root, &runtime, &audio, &core);
+
+        // Act
+        let candidate = prepared_plugin_candidate(&context);
+        let result = commit_plugin_arrangement(&context, candidate);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .rack
+                .devices
+                .is_empty()
+        );
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1, 0]);
+        let _ = std::fs::remove_file(&root);
+    }
+
+    #[test]
+    fn plugin_editor_state_survives_canonical_session_round_trip() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-state-round-trip-{}",
+            riffra_host::now_ms()
+        ));
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::audio("track:guitar".into(), "Guitar".into());
+        track.rack.devices.push(RackDevice {
+            id: "device:amp".into(),
+            name: "Amp".into(),
+            kind: DeviceKind::Plugin,
+            path: Some(r"C:\plugins\Amp.vst3".into()),
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        });
+        session.arrangement.tracks.push(track);
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(root.clone(), session, audio, false, true);
+        let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
+        store.ensure_layout().unwrap();
+        let saved = core
+            .application(&store)
+            .persist_track_plugin_state(
+                "track:guitar",
+                "device:amp",
+                vec![0.25, 0.75],
+                Some("opaque-state".into()),
+                true,
+            )
+            .unwrap();
+        let restored =
+            riffra_core::deserialize_session(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let device = &restored.arrangement.tracks[0].rack.devices[0];
+        assert_eq!(device.parameter_values, [0.25, 0.75]);
+        assert_eq!(device.state_data.as_deref(), Some("opaque-state"));
+        assert!(device.bypassed);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -1,4 +1,5 @@
 use super::lifecycle::default_plugin_root;
+use super::project;
 use super::*;
 
 impl HostState {
@@ -23,15 +24,89 @@ impl HostState {
         ControlResponse::failure(request_id, None, error)
     }
 
-    fn session_context(&self) -> SessionContext<'_> {
-        SessionContext {
+    pub(super) fn session_context(&self) -> Result<SessionContext<'_>, ProtocolError> {
+        let storage = self
+            .project_store
+            .active_session_store()
+            .map_err(|error| command_error(error.to_string()))?;
+        Ok(SessionContext {
             core: self.core.as_ref(),
             audio: self.core.audio(),
             runtime: self.runtime.as_ref(),
+            storage,
             data_root: &self.data_root,
             safe_mode: self.core.safe_mode(),
             events: self.events.as_ref(),
+            project_commit: None,
+        })
+    }
+
+    pub(super) fn flush_plugin_persistence(&self) -> Result<(), ProtocolError> {
+        let project_id = self
+            .project_store
+            .active_project_id()
+            .map_err(|error| command_error(error.to_string()))?;
+        let commands = self
+            .plugin_persistence_commands
+            .lock()
+            .map_err(|_| command_error("plugin persistence lock was poisoned"))?;
+        if let Some(commands) = commands.as_ref() {
+            let (result, receiver) = std::sync::mpsc::channel();
+            commands
+                .send(super::persistence::PluginPersistenceCommand::FlushProject {
+                    project_id,
+                    result,
+                })
+                .map_err(|_| command_error("plugin persistence worker is unavailable"))?;
+            let outcome = receiver
+                .recv()
+                .map_err(|_| command_error("plugin persistence worker stopped unexpectedly"))?;
+            outcome.map_err(command_error)?;
         }
+        Ok(())
+    }
+
+    pub(super) fn keep_plugin_persistence_project(&self, project_id: &str) {
+        if let Ok(commands) = self.plugin_persistence_commands.lock()
+            && let Some(commands) = commands.as_ref()
+        {
+            let (result, receiver) = std::sync::mpsc::channel();
+            if commands
+                .send(super::persistence::PluginPersistenceCommand::KeepProject {
+                    project_id: project_id.to_owned(),
+                    result,
+                })
+                .is_ok()
+            {
+                let _ = receiver.recv();
+            }
+        }
+    }
+
+    fn session_context_with_project_commit(
+        &self,
+        expected_project_id: Option<String>,
+    ) -> Result<SessionContext<'_>, ProtocolError> {
+        let storage = self
+            .project_store
+            .active_session_store()
+            .map_err(|error| command_error(error.to_string()))?;
+        Ok(SessionContext {
+            core: self.core.as_ref(),
+            audio: self.core.audio(),
+            runtime: self.runtime.as_ref(),
+            storage,
+            data_root: &self.data_root,
+            safe_mode: self.core.safe_mode(),
+            events: self.events.as_ref(),
+            project_commit: expected_project_id.map(|expected_project_id| {
+                crate::session::context::ProjectCommitContext {
+                    project_store: &self.project_store,
+                    command_gate: &self._command_gate,
+                    expected_project_id,
+                }
+            }),
+        })
     }
 
     pub(crate) fn dispatch_request(&self, request: ControlRequest) -> ControlResponse {
@@ -39,7 +114,7 @@ impl HostState {
     }
 
     pub(super) fn dispatch_persistence_request(&self, request: ControlRequest) -> ControlResponse {
-        self.dispatch_request_inner(request, true)
+        self.dispatch_request_inner(request, true, true)
     }
 
     fn dispatch_request_with_shutdown(
@@ -51,13 +126,14 @@ impl HostState {
             .lifecycle_gate
             .read()
             .expect("Host lifecycle gate was poisoned");
-        self.dispatch_request_inner(request, allow_shutdown)
+        self.dispatch_request_inner(request, allow_shutdown, false)
     }
 
     fn dispatch_request_inner(
         &self,
         request: ControlRequest,
         allow_shutdown: bool,
+        bypass_command_gate: bool,
     ) -> ControlResponse {
         if !allow_shutdown && self.shutting_down.load(Ordering::Acquire) {
             return Self::failure(
@@ -65,15 +141,16 @@ impl HostState {
                 ProtocolError::new(ErrorCode::HostUnavailable, "Riffra Host has shut down"),
             );
         }
-        let _command_gate = if requires_command_gate(request.command.as_str()) {
-            Some(
-                self._command_gate
-                    .lock()
-                    .expect("Host command gate was poisoned"),
-            )
-        } else {
-            None
-        };
+        let _command_gate =
+            if !bypass_command_gate && requires_command_gate(request.command.as_str()) {
+                Some(
+                    self._command_gate
+                        .lock()
+                        .expect("Host command gate was poisoned"),
+                )
+            } else {
+                None
+            };
         let request_id = request.request_id.clone();
         if let Err(error) = request.validate() {
             return Self::failure(request_id, error);
@@ -90,7 +167,30 @@ impl HostState {
                 ProtocolError::conflict(expected_sequence, current.sequence),
             );
         }
-        match self.dispatch(request.command.as_str(), request.params, current) {
+        let active_project_id = match self.project_store.active_project_id() {
+            Ok(project_id) => project_id,
+            Err(error) => return Self::failure(request_id, command_error(error.to_string())),
+        };
+        let request = if crate::dispatcher::command_requires_project_id(&request.command)
+            && request.expected_project_id.is_none()
+        {
+            request.with_expected_project_id(active_project_id.clone())
+        } else {
+            request
+        };
+        if let Err(error) = crate::dispatcher::validate_project_precondition(
+            &request.command,
+            request.expected_project_id.as_deref(),
+            &active_project_id,
+        ) {
+            return Self::failure(request_id, error);
+        }
+        match self.dispatch(
+            request.command.as_str(),
+            request.params,
+            current,
+            request.expected_project_id,
+        ) {
             Ok((result_type, value, sequence)) => {
                 self.response(request_id, result_type, value, sequence)
             }
@@ -103,10 +203,12 @@ impl HostState {
         command: &str,
         params: Value,
         current: CanonicalState,
+        expected_project_id: Option<String>,
     ) -> Result<(&'static str, Value, u64), ProtocolError> {
         if command == "audio.master-gain.set" {
             let params: MasterGainParams = decode(params)?;
-            let pair = session_adapter::set_master_gain_db(&self.session_context(), params.gain_db)
+            let context = self.session_context()?;
+            let pair = session_adapter::set_master_gain_db(&context, params.gain_db)
                 .map_err(|error| error.protocol_error())?;
             return Ok((
                 "sessionAudioPair",
@@ -114,19 +216,37 @@ impl HostState {
                 pair.canonical.sequence,
             ));
         }
+        if project::handles(command) {
+            return project::dispatch(self, command, params, current);
+        }
         if !is_host_runtime_command(command) {
-            if let Some(result) =
-                self.dispatch_shared_session(command, params.clone(), current.sequence)?
-            {
+            let project_commit = is_long_project_operation(command)
+                .then_some(expected_project_id)
+                .flatten();
+            if let Some(result) = self.dispatch_shared_session(
+                command,
+                params.clone(),
+                current.sequence,
+                project_commit,
+            )? {
                 return Ok(result);
             }
             let current_sequence = current.sequence;
-            let result = HostDispatcher::borrowed(&self.core, &self.storage, &self.data_root)
-                .dispatch_with_canonical(
-                    riffra_control::ControlCommand::new(command, params),
-                    current,
-                )
-                .map_err(|error| error.protocol_error())?;
+            let storage = self
+                .project_store
+                .active_session_store()
+                .map_err(|error| command_error(error.to_string()))?;
+            let result = HostDispatcher::borrowed(
+                &self.core,
+                &storage,
+                &self.project_store,
+                &self.data_root,
+            )
+            .dispatch_with_canonical(
+                riffra_control::ControlCommand::new(command, params),
+                current,
+            )
+            .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
                 let mutation = self.after_canonical_commit(result.projection_effect())?;
                 let sequence = mutation.canonical.sequence;
@@ -239,8 +359,9 @@ impl HostState {
             )),
             "plugin.editor.open" => {
                 let params: PluginEditorParams = decode(params)?;
+                let context = self.session_context()?;
                 session_adapter::open_track_plugin_editor(
-                    &self.session_context(),
+                    &context,
                     &params.track_id,
                     &params.device_id,
                 )
@@ -249,11 +370,9 @@ impl HostState {
             }
             "take.comparison.start" => {
                 let params: TakeIdParams = decode(params)?;
-                let status = session_adapter::start_take_comparison(
-                    &self.session_context(),
-                    &params.take_id,
-                )
-                .map_err(|error| error.protocol_error())?;
+                let context = self.session_context()?;
+                let status = session_adapter::start_take_comparison(&context, &params.take_id)
+                    .map_err(|error| error.protocol_error())?;
                 Ok((
                     "audioStatus",
                     serde_json::to_value(status).map_err(serialize_error)?,
@@ -262,11 +381,10 @@ impl HostState {
             }
             "take.comparison.switch" => {
                 let params: TakeComparisonParams = decode(params)?;
-                let status = session_adapter::switch_take_comparison_variant(
-                    &self.session_context(),
-                    params.variant,
-                )
-                .map_err(|error| error.protocol_error())?;
+                let context = self.session_context()?;
+                let status =
+                    session_adapter::switch_take_comparison_variant(&context, params.variant)
+                        .map_err(|error| error.protocol_error())?;
                 Ok((
                     "audioStatus",
                     serde_json::to_value(status).map_err(serialize_error)?,
@@ -274,7 +392,8 @@ impl HostState {
                 ))
             }
             "take.comparison.stop" => {
-                let status = session_adapter::stop_take_comparison(&self.session_context())
+                let context = self.session_context()?;
+                let status = session_adapter::stop_take_comparison(&context)
                     .map_err(|error| error.protocol_error())?;
                 Ok((
                     "audioStatus",
@@ -601,6 +720,10 @@ impl HostState {
                     core: &self.core,
                     audio: self.core.audio(),
                     runtime: &self.runtime,
+                    storage: self
+                        .project_store
+                        .active_session_store()
+                        .map_err(|error| command_error(error.to_string()))?,
                     data_root: &self.data_root,
                     safe_mode: self.core.safe_mode(),
                 };
@@ -817,8 +940,9 @@ impl HostState {
         command: &str,
         params: Value,
         current_sequence: u64,
+        project_commit: Option<String>,
     ) -> Result<Option<(&'static str, Value, u64)>, ProtocolError> {
-        let context = self.session_context();
+        let context = self.session_context_with_project_commit(project_commit)?;
         let result = match command {
             "track.audio-input.set" => {
                 let params: AudioInputParams = decode(params)?;
@@ -988,13 +1112,6 @@ impl HostState {
                         .map_err(|error| error.protocol_error())?,
                 )
             }
-            "project.import-scratch" => {
-                let params: ProjectImportParams = decode(params)?;
-                Some(
-                    session_adapter::import_session(&context, &params.path)
-                        .map_err(|error| error.protocol_error())?,
-                )
-            }
             "plugin.state.persist" => {
                 let params: PluginStatePersistParams = decode(params)?;
                 Some(
@@ -1059,14 +1176,18 @@ impl HostState {
         }))
     }
 
-    fn after_canonical_commit(
+    pub(super) fn after_canonical_commit(
         &self,
         effect: CanonicalMutationEffect,
     ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
-        library::index::refresh(&self.data_root, &canonical.session);
+        let storage = self
+            .project_store
+            .active_session_store()
+            .map_err(|error| command_error(error.to_string()))?;
+        library::index::refresh(&self.data_root, &storage, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
         let mutation = commit::finalize_arrangement_mutation(
@@ -1129,6 +1250,13 @@ fn requires_command_gate(command: &str) -> bool {
             // only block unrelated reads and transport controls.
             "instrument.set" | "effect.add" | "missing.replace-plugin"
         )
+}
+
+fn is_long_project_operation(command: &str) -> bool {
+    matches!(
+        command,
+        "instrument.set" | "effect.add" | "missing.replace-plugin"
+    )
 }
 
 fn is_host_runtime_command(command: &str) -> bool {
@@ -1247,12 +1375,6 @@ struct PluginParameterPersistParams {
 #[serde(rename_all = "camelCase")]
 struct ProjectRestoreParams {
     file_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectImportParams {
-    path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]

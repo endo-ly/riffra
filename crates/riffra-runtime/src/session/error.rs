@@ -11,6 +11,11 @@ pub enum AdapterError {
         expected_sequence: u64,
         current_sequence: u64,
     },
+    #[error("active project changed: expected {expected_project_id}, current {current_project_id}")]
+    ProjectConflict {
+        expected_project_id: String,
+        current_project_id: String,
+    },
     #[error("{0}")]
     RuntimeUnavailable(String),
     #[error("{0}")]
@@ -25,6 +30,10 @@ impl AdapterError {
                 expected_sequence,
                 current_sequence,
             } => ProtocolError::conflict(*expected_sequence, *current_sequence),
+            Self::ProjectConflict {
+                expected_project_id,
+                current_project_id,
+            } => ProtocolError::project_conflict(expected_project_id, current_project_id),
             Self::RuntimeUnavailable(message) => {
                 ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
             }

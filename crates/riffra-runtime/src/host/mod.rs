@@ -4,6 +4,7 @@ mod events;
 mod lifecycle;
 mod persistence;
 mod plugin_scan;
+mod project;
 mod state;
 
 pub use events::{
@@ -43,7 +44,7 @@ use riffra_control::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError,
 };
 use riffra_core::{AppCore, CanonicalState};
-use riffra_host::{DataRootLease, SessionStore, now_ms};
+use riffra_host::{DataRootLease, ProjectStore, now_ms};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -120,9 +121,14 @@ impl DawHost {
 
     /// Returns the canonical history state owned by this Host.
     pub fn history_state(&self) -> Result<riffra_core::HistoryState, HostError> {
+        let storage = self
+            .state
+            .project_store
+            .active_session_store()
+            .map_err(|error| HostError::State(error.to_string()))?;
         self.state
             .core
-            .application(&self.state.storage)
+            .application(&storage)
             .history_state()
             .map_err(|error| HostError::State(error.to_string()))
     }

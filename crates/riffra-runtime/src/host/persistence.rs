@@ -4,16 +4,29 @@ use riffra_control::{ControlCommand, ControlRequest, new_instance_id};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 pub(super) struct PluginStatePersistenceCoordinator {
     stop: Arc<AtomicBool>,
+    pub(super) commands: mpsc::Sender<PluginPersistenceCommand>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+pub(super) enum PluginPersistenceCommand {
+    FlushProject {
+        project_id: String,
+        result: mpsc::Sender<Result<(), String>>,
+    },
+    KeepProject {
+        project_id: String,
+        result: mpsc::Sender<()>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginStateEvent {
+    project_id: String,
     track_id: String,
     device_id: String,
     parameter_values: Vec<f32>,
@@ -24,6 +37,7 @@ struct PluginStateEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginParameterEvent {
+    project_id: String,
     track_id: String,
     device_id: String,
     parameter_index: i32,
@@ -38,13 +52,14 @@ enum PendingPluginChange {
 
 struct QueuedPluginChange {
     order: u64,
+    project_id: String,
     change: PendingPluginChange,
 }
 
 #[derive(Hash, Eq, PartialEq)]
 enum PluginChangeKey {
-    State(String, String),
-    Parameter(String, String, i32),
+    State(String, String, String),
+    Parameter(String, String, String, i32),
 }
 
 impl PluginStatePersistenceCoordinator {
@@ -54,6 +69,7 @@ impl PluginStatePersistenceCoordinator {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let (commands, command_receiver) = mpsc::channel();
         let worker = subscription.and_then(|subscription| {
             std::thread::Builder::new()
                 .name("riffra-plugin-state-persistence".into())
@@ -61,22 +77,44 @@ impl PluginStatePersistenceCoordinator {
                     let mut pending = HashMap::new();
                     let mut next_order = 0;
                     loop {
+                        while let Ok(command) = command_receiver.try_recv() {
+                            match command {
+                                PluginPersistenceCommand::FlushProject { project_id, result } => {
+                                    while let Ok(frame) = subscription.try_recv() {
+                                        collect_plugin_change(&mut pending, frame, &mut next_order);
+                                    }
+                                    let outcome = flush_plugin_changes(
+                                        &state,
+                                        &mut pending,
+                                        Some(&project_id),
+                                    );
+                                    let _ = result.send(outcome);
+                                }
+                                PluginPersistenceCommand::KeepProject { project_id, result } => {
+                                    while let Ok(frame) = subscription.try_recv() {
+                                        collect_plugin_change(&mut pending, frame, &mut next_order);
+                                    }
+                                    pending.retain(|_, change| change.project_id == project_id);
+                                    let _ = result.send(());
+                                }
+                            }
+                        }
                         if worker_stop.load(Ordering::Acquire) {
                             while let Ok(frame) = subscription.try_recv() {
                                 collect_plugin_change(&mut pending, frame, &mut next_order);
                             }
-                            flush_plugin_changes(&state, &mut pending);
+                            let _ = flush_plugin_changes(&state, &mut pending, None);
                             break;
                         }
                         match subscription.recv_timeout(std::time::Duration::from_millis(24)) {
                             Ok(frame) => {
                                 collect_plugin_change(&mut pending, frame, &mut next_order)
                             }
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                                flush_plugin_changes(&state, &mut pending);
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                let _ = flush_plugin_changes(&state, &mut pending, None);
                             }
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                                flush_plugin_changes(&state, &mut pending);
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                let _ = flush_plugin_changes(&state, &mut pending, None);
                                 break;
                             }
                         }
@@ -86,6 +124,7 @@ impl PluginStatePersistenceCoordinator {
         });
         Self {
             stop,
+            commands,
             worker: Mutex::new(worker),
         }
     }
@@ -115,9 +154,14 @@ fn collect_plugin_change(
         "track-plugin-state-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
                 pending.insert(
-                    PluginChangeKey::State(change.track_id.clone(), change.device_id.clone()),
+                    PluginChangeKey::State(
+                        change.project_id.clone(),
+                        change.track_id.clone(),
+                        change.device_id.clone(),
+                    ),
                     QueuedPluginChange {
                         order,
+                        project_id: change.project_id.clone(),
                         change: PendingPluginChange::State(change),
                     },
                 );
@@ -127,12 +171,14 @@ fn collect_plugin_change(
             if let Ok(change) = serde_json::from_value::<PluginParameterEvent>(frame.payload) {
                 pending.insert(
                     PluginChangeKey::Parameter(
+                        change.project_id.clone(),
                         change.track_id.clone(),
                         change.device_id.clone(),
                         change.parameter_index,
                     ),
                     QueuedPluginChange {
                         order,
+                        project_id: change.project_id.clone(),
                         change: PendingPluginChange::Parameter(change),
                     },
                 );
@@ -145,18 +191,29 @@ fn collect_plugin_change(
 fn flush_plugin_changes(
     state: &std::sync::Weak<HostState>,
     pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
-) {
+    expected_project_id: Option<&str>,
+) -> Result<(), String> {
     let Some(state) = state.upgrade() else {
         pending.clear();
-        return;
+        return Ok(());
     };
-    let mut changes = pending
-        .drain()
-        .map(|(_, change)| change)
-        .collect::<Vec<_>>();
-    changes.sort_by_key(|change| change.order);
-    for queued in changes {
-        let (command, params) = match queued.change {
+    let active_project_id = state
+        .project_store
+        .active_project_id()
+        .map_err(|error| error.to_string())?;
+    if expected_project_id.is_some_and(|project_id| project_id != active_project_id) {
+        return Err("active Project changed before plugin state could be flushed".into());
+    }
+    let mut changes = pending.drain().collect::<Vec<_>>();
+    changes.sort_by_key(|(_, change)| change.order);
+    let mut failure = None;
+    for (key, queued) in changes {
+        if expected_project_id.is_some_and(|project_id| project_id != queued.project_id)
+            || queued.project_id != active_project_id
+        {
+            continue;
+        }
+        let (command, params) = match &queued.change {
             PendingPluginChange::State(change) => (
                 "plugin.state.persist",
                 serde_json::json!({
@@ -177,18 +234,33 @@ fn flush_plugin_changes(
                 }),
             ),
         };
-        let response = state.dispatch_persistence_request(ControlRequest::new(
-            format!("plugin-persistence-{}", new_instance_id()),
-            ControlCommand::new(command, params),
-            None,
-        ));
+        let response = state.dispatch_persistence_request(
+            ControlRequest::new(
+                format!("plugin-persistence-{}", new_instance_id()),
+                ControlCommand::new(command, params),
+                None,
+            )
+            .with_expected_project_id(active_project_id.clone()),
+        );
         if !response.ok {
             tracing::warn!(
                 command,
                 error = ?response.error,
                 "Host plugin state persistence failed"
             );
+            pending.insert(key, queued);
+            failure.get_or_insert_with(|| {
+                response
+                    .error
+                    .map(|error| error.message)
+                    .unwrap_or_else(|| "plugin state persistence failed".into())
+            });
         }
+    }
+    if let Some(error) = failure {
+        Err(error)
+    } else {
+        Ok(())
     }
 }
 
@@ -197,72 +269,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plugin_parameter_changes_coalesce_per_parameter_index() {
+    fn plugin_parameter_changes_coalesce_per_project_and_parameter_index() {
         let mut pending = HashMap::new();
         let mut next_order = 0;
+        for (project_id, value) in [("project:a", 0.25), ("project:a", 0.5)] {
+            collect_plugin_change(
+                &mut pending,
+                riffra_control::HostEventFrame::new(
+                    "track-plugin-parameter-changed",
+                    serde_json::json!({
+                        "projectId": project_id,
+                        "trackId": "track:1",
+                        "deviceId": "device:1",
+                        "parameterIndex": 1,
+                        "value": value,
+                    }),
+                ),
+                &mut next_order,
+            );
+        }
         collect_plugin_change(
             &mut pending,
             riffra_control::HostEventFrame::new(
                 "track-plugin-parameter-changed",
                 serde_json::json!({
+                    "projectId": "project:b",
                     "trackId": "track:1",
                     "deviceId": "device:1",
                     "parameterIndex": 1,
-                    "value": 0.25,
-                }),
-            ),
-            &mut next_order,
-        );
-        collect_plugin_change(
-            &mut pending,
-            riffra_control::HostEventFrame::new(
-                "track-plugin-parameter-changed",
-                serde_json::json!({
-                    "trackId": "track:1",
-                    "deviceId": "device:1",
-                    "parameterIndex": 2,
                     "value": 0.75,
-                }),
-            ),
-            &mut next_order,
-        );
-        collect_plugin_change(
-            &mut pending,
-            riffra_control::HostEventFrame::new(
-                "track-plugin-parameter-changed",
-                serde_json::json!({
-                    "trackId": "track:1",
-                    "deviceId": "device:1",
-                    "parameterIndex": 1,
-                    "value": 0.5,
                 }),
             ),
             &mut next_order,
         );
 
         assert_eq!(pending.len(), 2);
-        assert!(matches!(
-            pending.get(&PluginChangeKey::Parameter(
-                "track:1".into(),
-                "device:1".into(),
-                1,
-            )),
-            Some(QueuedPluginChange {
-                change: PendingPluginChange::Parameter(change),
-                ..
-            }) if change.value == 0.5
-        ));
-        assert!(matches!(
-            pending.get(&PluginChangeKey::Parameter(
-                "track:1".into(),
-                "device:1".into(),
-                2,
-            )),
-            Some(QueuedPluginChange {
-                change: PendingPluginChange::Parameter(change),
-                ..
-            }) if change.value == 0.75
-        ));
+        assert!(pending.contains_key(&PluginChangeKey::Parameter(
+            "project:a".into(),
+            "track:1".into(),
+            "device:1".into(),
+            1,
+        )));
+        assert!(pending.contains_key(&PluginChangeKey::Parameter(
+            "project:b".into(),
+            "track:1".into(),
+            "device:1".into(),
+            1,
+        )));
     }
 
     #[test]
@@ -274,6 +327,7 @@ mod tests {
             riffra_control::HostEventFrame::new(
                 "track-plugin-parameter-changed",
                 serde_json::json!({
+                    "projectId": "project:a",
                     "trackId": "track:1",
                     "deviceId": "device:1",
                     "parameterIndex": 1,

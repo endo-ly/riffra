@@ -39,10 +39,9 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
         data_root: context.data_root,
         runtime: context.runtime,
     };
-    let store = riffra_host::SessionStore::new(context.data_root);
     context
         .core
-        .application(&store)
+        .application(&context.storage)
         .project_current(&projection)
         .map_err(|error| error.to_string())?;
     Ok(context.runtime.status())

@@ -30,7 +30,7 @@ pub use audio::{
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;
-pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
+pub use dispatcher::{DispatchError, DispatchResult, Dispatcher, command_requires_project_id};
 pub use host::{
     DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventHub, HostEventSink,
     HostEventSubscription, NoopHostEventSink, RecordingHostEventSink, SharedHostEventSink,
@@ -38,9 +38,10 @@ pub use host::{
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
-    AudioStatus, DeviceChannels, MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
-    RecordingStopResult, RuntimeProjectionState, RuntimeProjectionStatus, SessionAudioPair,
-    TrackDeviceSummary, TrackRackSummary, TrackSummary,
+    AudioStatus, DeviceChannels, MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState,
+    ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair, TrackDeviceSummary, TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,

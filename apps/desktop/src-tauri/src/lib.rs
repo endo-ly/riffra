@@ -97,9 +97,11 @@ pub fn run() {
         })
         .setup(|app| {
             let safe_mode = safe_mode_requested();
-            let data_root = app.path().app_data_dir().map_err(|error| {
-                format!("Windows application data folder is unavailable: {error}")
-            })?;
+            let data_root = app
+                .path()
+                .audio_dir()
+                .map_err(|error| format!("User Music folder is unavailable: {error}"))?
+                .join("Riffra");
             let binaries = RuntimeBinaries::beside_current_executable()?;
             let host_connection = HostConnectionManager::open(
                 app.handle().clone(),
@@ -119,7 +121,7 @@ pub fn run() {
             host_connection::list_local_hosts,
             host_connection::switch_host,
             host_connection::reconnect_host,
-            export_scratch_session,
+            export_project,
             get_background_job,
             cancel_background_job,
             probe_audio_devices,
@@ -139,7 +141,11 @@ pub fn run() {
             session::commands::redo_session,
             session::commands::get_history_state,
             session::commands::restore_recovery_generation,
-            session::commands::import_scratch_session,
+            session::commands::import_project,
+            session::commands::list_projects,
+            session::commands::create_project,
+            session::commands::open_project,
+            session::commands::rename_project,
             session::commands::add_audio_clip_to_arrangement,
             session::commands::create_midi_clip,
             session::commands::add_midi_clip_to_arrangement,
@@ -257,10 +263,14 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!("riffra-bootstrap-recovery-{nonce}"));
-        let store = SessionStore::new(&root);
+        let store = SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         store.ensure_layout().unwrap();
         let payload = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
-        std::fs::write(root.join("scratch/generations/1-1.json"), payload).unwrap();
+        std::fs::write(
+            root.join("projects/01900000-0000-7000-8000-000000000001/generations/1-1.json"),
+            payload,
+        )
+        .unwrap();
 
         // Act
         let normal = map_recovery_candidates(Vec::new());

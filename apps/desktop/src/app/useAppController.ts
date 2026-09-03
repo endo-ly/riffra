@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
@@ -22,6 +22,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const { getAudioStatus } = api;
   const [commandOpen, setCommandOpen] = useState(false);
   const hostConnection = useHostConnection(api);
+  const refreshHosts = hostConnection.refresh;
   const hostReady = hostConnection.connected && !hostConnection.switching;
   const runtime = useAppRuntime(api, hostConnection.state.generation);
   const runtimeProjection = useRuntimeProjectionStatus(api, hostConnection.state.generation);
@@ -43,13 +44,25 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     exportMessage,
     undo,
     redo,
-    renameSession,
-    exportSession,
-    importSession,
+    renameProject,
+    projectState,
+    projectSwitching,
+    projectError,
+    refreshProjects,
+    createProject,
+    openProject,
+    exportProject,
+    importProject,
     restoreRecovery,
     dismissRecovery,
   } = runtime;
   const session = canonicalSession;
+  const projectId = projectState?.activeProjectId ?? null;
+  const refreshProjectHost = useCallback(async () => {
+    const refreshes: Promise<unknown>[] = [refreshHosts()];
+    if (hostReady) refreshes.push(refreshProjects());
+    await Promise.allSettled(refreshes);
+  }, [hostReady, refreshHosts, refreshProjects]);
   const pluginCatalog = usePluginCatalog({
     api,
     boot,
@@ -72,6 +85,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     api,
     boot,
     hostGeneration: hostConnection.state.generation,
+    projectId,
     applyCanonicalState,
     rescanPlugins: scanPlugins,
   });
@@ -93,6 +107,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     api,
     sessionRef,
     hostGeneration: hostConnection.state.generation,
+    projectId,
   });
 
   const audioHook = useAudioSettings(api, {
@@ -131,6 +146,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   const library = useLibrary(api, {
     setAudio,
     hostGeneration: hostConnection.state.generation,
+    projectId,
   });
   const {
     libraryQuery,
@@ -147,6 +163,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
 
   const inbox = useInbox(api, recordings, {
     hostGeneration: hostConnection.state.generation,
+    projectId,
     reload: async () => {
       await reloadRecordings();
     },
@@ -235,7 +252,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     localHosts: hostConnection.hosts,
     hostSwitching: hostConnection.switching,
     hostConnectionError: hostConnection.error,
-    refreshLocalHosts: hostConnection.refresh,
+    refreshProjectHost,
     switchHost: hostConnection.switchHost,
     reconnectHost: hostConnection.reconnect,
     hostConnected: hostReady,
@@ -278,9 +295,14 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     playTransport,
     stopTransport,
     goToStart,
-    renameSession,
-    exportSession,
-    importSession,
+    renameProject,
+    projectState,
+    projectSwitching,
+    projectError,
+    createProject,
+    openProject,
+    exportProject,
+    importProject,
     restoreRecovery,
     dismissRecovery,
     selectLibraryAsset,

@@ -54,6 +54,7 @@
 - Test:
   - AAA パターンで読みやすく
   - テスト観点は最小に。重複した観点を無駄に増やさない。追加する場合は既存ケースの追加でできないか確認する
+  - Rustのunit testは対象実装と同じsource file内に置き、別moduleやtest fileへ集約しない
 - その他ルール
   - Logging: `tracing` を使用、機密情報禁止
   - Error: `thiserror` で構造化、`Display` は lower-case

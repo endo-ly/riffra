@@ -1,16 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type {
-  CreativeSession,
-  HostConnectionState,
-  HostTarget,
-  LocalHostInfo,
-} from '@/model/domain';
+import type { HostConnectionState, HostTarget, LocalHostInfo, ProjectState } from '@/model/domain';
 import { openHostDataRoot } from '@/native/dialog';
 import { Icon } from '@/shared/ui/primitives';
-import styles from './SessionSelector.module.css';
+import styles from './ProjectHostSelector.module.css';
 
-interface SessionSelectorProps {
-  session: CreativeSession | null;
+interface ProjectHostSelectorProps {
   state: HostConnectionState;
   hosts: LocalHostInfo[];
   switching: boolean;
@@ -18,12 +12,17 @@ interface SessionSelectorProps {
   onRefresh: () => Promise<unknown>;
   onSwitch: (target: HostTarget) => Promise<unknown>;
   onReconnect: () => Promise<unknown>;
-  onRenameSession?: (name: string) => void;
-  onExportSession?: () => void;
-  onImportSession?: () => void;
+  onExportProject?: () => void;
+  onImportProject?: () => void;
+  projectState?: ProjectState | null;
+  projectSwitching?: boolean;
+  projectError?: string | null;
+  onCreateProject?: (name?: string) => Promise<unknown>;
+  onOpenProject?: (projectId: string) => Promise<unknown>;
+  onRenameProject?: (name: string) => Promise<unknown>;
 }
 
-export function SessionSelector(props: SessionSelectorProps) {
+export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<'below' | 'above'>('below');
   const [nameDraft, setNameDraft] = useState('');
@@ -32,11 +31,14 @@ export function SessionSelector(props: SessionSelectorProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const hostLabel = getHostLabel(props.state, props.hosts);
-  const sessionName = props.session ? (props.session.projectName ?? 'Untitled Scratch') : null;
+  const activeProject = props.projectState?.projects.find(
+    (project) => project.projectId === props.projectState?.activeProjectId,
+  );
+  const projectName = props.projectState ? (activeProject?.name ?? 'Unreadable Project') : null;
 
   useEffect(() => {
     if (!open) return;
-    setNameDraft(props.session?.projectName ?? '');
+    setNameDraft(activeProject?.name ?? '');
     const onPointerDown = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setOpen(false);
@@ -51,7 +53,7 @@ export function SessionSelector(props: SessionSelectorProps) {
       window.removeEventListener('mousedown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, props.session]);
+  }, [activeProject?.name, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -62,34 +64,35 @@ export function SessionSelector(props: SessionSelectorProps) {
     setPlacement(panel.offsetHeight > spaceBelow - 8 ? 'above' : 'below');
   }, [open]);
 
-  const commitSessionName = () => {
-    if (!props.session || !props.onRenameSession) return;
+  const commitProjectName = () => {
+    if (!props.onRenameProject) return;
     const name = nameDraft.trim().slice(0, 160);
-    if (name === (props.session.projectName ?? '')) return;
-    props.onRenameSession(name);
+    const currentName = activeProject?.name ?? '';
+    if (name === currentName) return;
+    void props.onRenameProject(name);
   };
 
-  const refreshHosts = () => {
+  const refreshSelector = () => {
     setRefreshing(true);
     void Promise.resolve(props.onRefresh()).finally(() => setRefreshing(false));
   };
 
   return (
-    <div ref={containerRef} className={styles.selector} data-session-selector>
+    <div ref={containerRef} className={styles.selector} data-project-host-selector>
       <button
         type="button"
         className={styles.trigger}
-        aria-label={`Session: ${sessionName ?? hostLabel}`}
+        aria-label={`${projectName ? 'Project' : 'Host'}: ${projectName ?? hostLabel}`}
         aria-expanded={open}
         title={props.state.dataRoot ?? hostLabel}
         onClick={() => setOpen((current) => !current)}
       >
         <span className={styles.triggerText}>
-          {sessionName ? (
+          {projectName ? (
             <>
-              <span className={styles.sessionName}>
+              <span className={styles.projectName}>
                 <i className={styles.saveDot} title="Auto-saved" />
-                {sessionName}
+                {props.projectSwitching ? 'Opening…' : projectName}
               </span>
               <span className={styles.hostLine}>
                 {props.state.mode === 'disconnected' && (
@@ -109,19 +112,79 @@ export function SessionSelector(props: SessionSelectorProps) {
       </button>
       {open && (
         <div ref={panelRef} className={styles.panel} data-placement={placement} role="menu">
-          {props.session && (
+          {props.projectState && (
             <>
-              <span className={styles.heading}>Session</span>
+              <span className={styles.heading}>Projects</span>
+              <div className={styles.projectList} role="group" aria-label="Projects">
+                {props.projectState?.projects.map((project) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={styles.projectItem}
+                    key={project.projectId}
+                    disabled={
+                      props.switching ||
+                      props.projectSwitching ||
+                      props.state.mode === 'disconnected' ||
+                      project.projectId === props.projectState?.activeProjectId
+                    }
+                    onClick={() => {
+                      void props.onOpenProject?.(project.projectId);
+                      setOpen(false);
+                    }}
+                  >
+                    <span aria-hidden="true">
+                      {project.projectId === props.projectState?.activeProjectId ? '✓' : ''}
+                    </span>
+                    <span>
+                      <strong>{project.name}</strong>
+                      {project.error && <small>{project.error}</small>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.action}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
+                onClick={() => {
+                  void props.onCreateProject?.();
+                  setOpen(false);
+                }}
+              >
+                + New Project
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.action}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
+                onClick={() => {
+                  props.onImportProject?.();
+                  setOpen(false);
+                }}
+              >
+                Import Project…
+              </button>
+              <span className={styles.heading}>Project</span>
               <input
                 className={styles.renameInput}
-                aria-label="Session name"
-                placeholder="Untitled Scratch"
+                aria-label="Project name"
+                placeholder="Untitled Project"
                 value={nameDraft}
                 maxLength={160}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onChange={(event) => setNameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
-                    commitSessionName();
+                    commitProjectName();
                     setOpen(false);
                   }
                 }}
@@ -130,23 +193,15 @@ export function SessionSelector(props: SessionSelectorProps) {
                 type="button"
                 role="menuitem"
                 className={styles.action}
+                disabled={
+                  props.switching || props.projectSwitching || props.state.mode === 'disconnected'
+                }
                 onClick={() => {
-                  props.onExportSession?.();
+                  props.onExportProject?.();
                   setOpen(false);
                 }}
               >
-                Export Project
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.action}
-                onClick={() => {
-                  props.onImportSession?.();
-                  setOpen(false);
-                }}
-              >
-                Import Project…
+                Export Project…
               </button>
             </>
           )}
@@ -155,7 +210,7 @@ export function SessionSelector(props: SessionSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.hostItem}
-            disabled={props.switching || props.state.mode === 'embedded'}
+            disabled={props.switching || props.projectSwitching || props.state.mode === 'embedded'}
             onClick={() => {
               void props.onSwitch({ type: 'embedded' });
               setOpen(false);
@@ -173,7 +228,11 @@ export function SessionSelector(props: SessionSelectorProps) {
               role="menuitem"
               className={styles.hostItem}
               key={host.instanceId}
-              disabled={props.switching || host.instanceId === props.state.instanceId}
+              disabled={
+                props.switching ||
+                props.projectSwitching ||
+                host.instanceId === props.state.instanceId
+              }
               onClick={() => {
                 void props.onSwitch({ type: 'registration', instanceId: host.instanceId });
                 setOpen(false);
@@ -194,7 +253,7 @@ export function SessionSelector(props: SessionSelectorProps) {
               type="button"
               role="menuitem"
               className={styles.action}
-              disabled={props.switching}
+              disabled={props.switching || props.projectSwitching}
               onClick={() => void props.onReconnect()}
             >
               Reconnect
@@ -204,7 +263,7 @@ export function SessionSelector(props: SessionSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.action}
-            disabled={props.switching}
+            disabled={props.switching || props.projectSwitching}
             onClick={() => {
               void openHostDataRoot()
                 .then((dataRoot) => {
@@ -220,12 +279,14 @@ export function SessionSelector(props: SessionSelectorProps) {
             type="button"
             role="menuitem"
             className={styles.action}
-            disabled={props.switching || refreshing}
-            onClick={refreshHosts}
+            disabled={props.switching || props.projectSwitching || refreshing}
+            onClick={refreshSelector}
           >
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
-          {props.error && <p className={styles.error}>{props.error}</p>}
+          {(props.error || props.projectError) && (
+            <p className={styles.error}>{props.projectError ?? props.error}</p>
+          )}
         </div>
       )}
     </div>

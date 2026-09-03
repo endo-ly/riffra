@@ -3,13 +3,14 @@ use super::events::{HostEventHub, HostEventSubscription, SharedHostEventSink};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::jobs::JobRegistry;
-use crate::model::{AudioStatus, RuntimeProjectionStatus};
+use crate::model::{AudioStatus, ProjectRecoveryState, ProjectState, RuntimeProjectionStatus};
+use crate::projects;
 use crate::render;
 use crate::runtime::RuntimeReconciler;
 use crate::{AudioPreferences, plugins};
 use riffra_control::HostIdentity;
 use riffra_core::{AppCore, CanonicalState};
-use riffra_host::{DataRootLease, SessionStore};
+use riffra_host::{DataRootLease, ProjectStore};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -20,14 +21,14 @@ use std::sync::{Arc, Mutex, RwLock};
 #[serde(rename_all = "camelCase")]
 pub struct HostBootstrap {
     pub canonical: CanonicalState,
+    pub project_state: ProjectState,
     pub plugin_catalog: Vec<plugins::PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
     pub runtime_projection: RuntimeProjectionStatus,
     pub audio_status: AudioStatus,
-    pub recovered_from_generation: bool,
+    pub recovery: ProjectRecoveryState,
     pub safe_mode: bool,
-    pub recovery_candidates: Vec<riffra_host::RecoveryCandidate>,
     pub data_root: PathBuf,
 }
 
@@ -36,7 +37,7 @@ pub(crate) struct HostState {
     pub(super) identity: HostIdentity,
     pub(crate) data_root: PathBuf,
     pub(super) core: Arc<AppCore<AudioSupervisor>>,
-    pub(super) storage: SessionStore,
+    pub(super) project_store: ProjectStore,
     pub(super) runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     pub(super) events: SharedHostEventSink,
     pub(super) event_hub: Arc<HostEventHub>,
@@ -50,6 +51,8 @@ pub(crate) struct HostState {
     pub(super) lifecycle_gate: RwLock<()>,
     pub(super) shutting_down: AtomicBool,
     pub(super) shutdown_requested: AtomicBool,
+    pub(super) plugin_persistence_commands:
+        Mutex<Option<std::sync::mpsc::Sender<super::persistence::PluginPersistenceCommand>>>,
 }
 
 impl HostState {
@@ -69,15 +72,13 @@ impl HostState {
 
     pub(super) fn bootstrap(&self) -> Result<HostBootstrap, HostError> {
         let recovered_from_generation = self.core.recovered_from_generation();
-        let recovery_candidates = if recovered_from_generation {
-            self.storage
-                .recovery_candidates()
-                .map_err(|error| HostError::State(error.to_string()))?
-        } else {
-            Vec::new()
-        };
+        let storage = self
+            .project_store
+            .active_session_store()
+            .map_err(|error| HostError::State(error.to_string()))?;
         Ok(HostBootstrap {
             canonical: self.canonical()?,
+            project_state: projects::state(&self.project_store).map_err(HostError::State)?,
             plugin_catalog: plugins::load(&self.data_root)
                 .map_err(|error| HostError::State(error.to_string()))?,
             runtime_started: self.core.audio().startup_completed(),
@@ -88,9 +89,9 @@ impl HostState {
                 .audio()
                 .status()
                 .map_err(|error| HostError::State(error.to_string()))?,
-            recovered_from_generation,
+            recovery: projects::recovery(&storage, recovered_from_generation)
+                .map_err(HostError::State)?,
             safe_mode: self.core.safe_mode(),
-            recovery_candidates,
             data_root: self.data_root.clone(),
         })
     }
@@ -131,7 +132,7 @@ mod tests {
             bootstrap.runtime_projection.state,
             crate::RuntimeProjectionState::Idle
         );
-        assert!(bootstrap.recovery_candidates.is_empty());
+        assert!(bootstrap.recovery.recovery_candidates.is_empty());
 
         host.shutdown();
         drop(host);

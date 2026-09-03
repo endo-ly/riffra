@@ -23,6 +23,7 @@ interface UseMissingDependenciesOptions {
   api: MissingDependenciesApi;
   boot: BootstrapState | null;
   hostGeneration?: number;
+  projectId?: string | null;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   rescanPlugins: () => Promise<boolean>;
 }
@@ -32,6 +33,7 @@ export function useMissingDependencies({
   api,
   boot,
   hostGeneration = 0,
+  projectId = null,
   applyCanonicalState,
   rescanPlugins,
 }: UseMissingDependenciesOptions) {
@@ -49,7 +51,7 @@ export function useMissingDependencies({
   useEffect(() => {
     currentHostGeneration.current = hostGeneration;
     setMissingDependencies([]);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   useEffect(() => {
     if (!boot) return;

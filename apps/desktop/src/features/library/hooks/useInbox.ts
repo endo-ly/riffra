@@ -5,6 +5,7 @@ import type { AudioApi, LibraryApi } from '@/native/native-api';
 
 interface UseInboxOptions {
   hostGeneration?: number;
+  projectId?: string | null;
   reload: () => void | Promise<void>;
   onRelocate?: (recording: RecordingAsset, nextId: string) => void;
 }
@@ -18,7 +19,7 @@ interface UseInboxOptions {
 export function useInbox(
   api: LibraryApi & AudioApi,
   recordings: RecordingAsset[],
-  { hostGeneration = 0, reload, onRelocate }: UseInboxOptions,
+  { hostGeneration = 0, projectId = null, reload, onRelocate }: UseInboxOptions,
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duplicateGroups, setDuplicateGroups] = useState<string[][]>([]);
@@ -32,7 +33,7 @@ export function useInbox(
     setDuplicateGroups([]);
     setMessage(null);
     setError(null);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   const selected = recordings.find((recording) => recording.id === selectedId) ?? null;
 

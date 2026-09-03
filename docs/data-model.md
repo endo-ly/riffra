@@ -25,15 +25,16 @@
 
 ## 2. 型定義の場所
 
-| エンティティ群                                  | 正準定義（Rust）                                                         | TypeScript                                            | C++ ミラー                                              |
-| ----------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------- |
-| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                         | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
-| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                   | 同上                                                  | —                                                       |
-| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                    | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
-| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                          | 同上                                                  | `native/audio-engine`（録音制御）                       |
-| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`） | 同上                                                  | —                                                       |
-| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                     | 同上                                                  | —                                                       |
-| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                               | 同上                                                  | `native/audio-engine`                                   |
+| エンティティ群                                  | 正準定義（Rust）                                                                | TypeScript                                            | C++ ミラー                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
+| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
+| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                       |
+| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                           | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
+| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                       |
+| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                       |
+| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                       |
+| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                                      | 同上                                                  | `native/audio-engine`                                   |
+| Project container / 選択状態                    | `crates/riffra-host/src/project_store.rs`、`crates/riffra-runtime/src/model.rs` | 同上                                                  | —                                                       |
 
 TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scripts/gen-barrel.js` のバレル生成）で常に Rust から再生成される。手書きの型は追加しない。
 
@@ -54,14 +55,27 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ## 4. エンティティカタログ
 
-### 4.1 セッションと設定
+### 4.1 Project container と Session
+
+`ProjectId` はDataRootの `projects/<project-id>/` を識別するUUIDであり、`CreativeSession` のフィールドではない。`CreativeSession.session_id` は制作Session自身の識別子として保持し、Project packageをImportしても引き継ぐ。表示名は `CreativeSession.project_name` から得る。
+
+`ProjectState` はActive ProjectのIDとProjectSummaryの一覧をまとめたUI・CLI向けの状態である。`ProjectSummary` はProject ID、表示名、更新時刻、読込エラーを持つ。読めないProjectも一覧から除外せず、エラーを表示できる。
+
+`.riffra` はProjectのportable packageである。Importではpackageを検証して新しいProjectIdの
+`projects/<project-id>/`へ取り込み、Exportではユーザーが指定した保存先へ書き出す。packageは
+DataRoot内のcanonical Projectではなく、通常のProject切替にも使わない。
+
+Render結果は音声書き出しの成果物であり、DataRootの `renders/` に保存する。Projectの正準状態や
+`.riffra` packageを `renders/` に保存しない。
+
+### 4.2 セッションと設定
 
 | エンティティ      | 役割                                                                                             |
 | ----------------- | ------------------------------------------------------------------------------------------------ |
 | `CreativeSession` | 永続化される制作状態の単一の正準モデル                                                           |
 | `SessionSettings` | マスターゲイン、ループ、カウントイン、メトロノーム、ノートなど、構造ではないセッション全体の設定 |
 
-### 4.2 アレンジ（時間軸）
+### 4.3 アレンジ（時間軸）
 
 | エンティティ                                                                                 | 役割                                                                                                                                                                                                                                     |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -83,7 +97,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `RhythmPattern` / `RhythmStep`                                                               | Harmony realizationへ渡す反復リズム操作値。任意長、offset、duration、velocityを持ち、正準セッションへ保存しない                                                                                                                          |
 | `Arrangement`                                                                                | 上記のすべてを束ねるアレンジのルート。revision（編集のたびに単調増加）、timebase、tracks、clips、automation、markers、regions、harmony_events、録音レコード群を持つ                                                                      |
 
-### 4.3 録音
+### 4.4 録音
 
 | エンティティ             | 役割                                                                                                                                                                                                                            |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -97,7 +111,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ディスク上の構成は `recordings/inbox|archive|library/<take>/`（manifest.json + raw/processed WAV + midi.json）。再生・編集に使うのはキャプチャから登録された正準 Asset であり、テイクディレクトリはリカバリ用の記録に留まる。
 
-### 4.4 素材（Asset）
+### 4.5 素材（Asset）
 
 | エンティティ                         | 役割                                                                                                                                |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,7 +121,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `Provenance` / `ProvenanceOperation` | 素材がどう生まれたか。operation（recorded / processed / rendered / imported）と source_asset_ids（消費した素材）、parameters        |
 | 生成規則                             | `register`（新規IDを mint）と `derive`（source から派生物を mint）。コンテンツ変更は決して既存IDを上書きしない                      |
 
-### 4.5 ラック
+### 4.6 ラック
 
 | エンティティ   | 役割                                                                                                                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -115,7 +129,7 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 | `RackDevice`   | チェーンの1スロット。`input` / `plugin` / `utility` / `output`。パス、バイパス、ゲイン、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインのプレースホルダ（disabled_placeholder） |
 | `RackMacro`    | パラメータに割り当てる名前付きマクロコントロール                                                                                                                                                   |
 
-### 4.6 バックグラウンドジョブ
+### 4.7 バックグラウンドジョブ
 
 | エンティティ          | 役割                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------- |
@@ -129,7 +143,9 @@ TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scri
 
 ```mermaid
 flowchart TD
-    CS[CreativeSession] --> AR[Arrangement]
+    PC[Project container] --> CS[CreativeSession]
+    PS[ProjectState] --> PM[ProjectSummary]
+    CS --> AR[Arrangement]
     AR --> TR[Track]
     AR --> AC[AudioClip]
     AR --> MC[MidiClip]
@@ -161,7 +177,8 @@ flowchart TD
 
 | 対象           | ルール                                                                                                                                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| session_id     | 空文字禁止。新規は `scratch-<ms>`                                                                                                                                                          |
+| session_id     | 空文字禁止。新規は `session-<ms>`                                                                                                                                                          |
+| ProjectId      | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession`へ埋め込まない                                                                                      |
 | タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                          |
 | 音楽操作値     | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する    |
 | TimelineRegion | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                          |
@@ -170,7 +187,7 @@ flowchart TD
 | パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                                                                                               |
 | フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                    |
 | カウントイン   | `0..=8` 拍                                                                                                                                                                                 |
-| AssetId        | `asset:<UUIDv7>` のみ有効（旧形式・任意文字列は拒否）                                                                                                                                      |
+| AssetId        | `asset:<UUIDv7>` のみ有効                                                                                                                                                                  |
 | 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                      |
 | 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                          |
 | 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                      |
@@ -184,4 +201,5 @@ flowchart TD
 | ------------ | ----------------------------------------------------------------------------------------------------------- |
 | 現行スキーマ | `deserialize_session` は現行のCreativeSessionだけを受け入れる。対応しない形のデータは正準状態へ取り込まない |
 | 世代回復     | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む            |
+| DataRoot     | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                     |
 | 言語間の同期 | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                 |

@@ -14,9 +14,13 @@ impl DawHost {
                 HostError::DataRoot(error.to_string())
             }
         })?;
-        let storage = SessionStore::new(&config.data_root);
-        let loaded = storage
-            .load_or_create()
+        let project_store = ProjectStore::new(&config.data_root);
+        let loaded = project_store
+            .initialize()
+            .map_err(|error| HostError::Session(error.to_string()))?
+            .loaded;
+        let storage = project_store
+            .active_session_store()
             .map_err(|error| HostError::Session(error.to_string()))?;
         let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
         let event_hub = HostEventHub::new(events);
@@ -65,7 +69,7 @@ impl DawHost {
                 loaded.recovered_from_generation,
                 config.safe_mode,
             )),
-            storage,
+            project_store,
             runtime,
             events,
             event_hub,
@@ -79,6 +83,7 @@ impl DawHost {
             lifecycle_gate: RwLock::new(()),
             shutting_down: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
+            plugin_persistence_commands: Mutex::new(None),
         });
         if let Err(error) = audio.set_restart_preferences(preferences) {
             audio.force_shutdown();
@@ -103,12 +108,20 @@ impl DawHost {
             return Err(HostError::State(error.to_string()));
         }
         if let Ok(canonical) = state.canonical() {
-            library::index::refresh(&state.data_root, &canonical.session);
+            library::index::refresh(&state.data_root, &storage, &canonical.session);
+        }
+        if let Ok(project_id) = state.project_store.active_project_id() {
+            state.event_hub.set_plugin_project_id(Some(project_id));
         }
         let plugin_persistence = persistence::PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),
             state.event_hub.subscribe_plugin_persistence(),
         );
+        *state
+            .plugin_persistence_commands
+            .lock()
+            .expect("Host plugin persistence lock was poisoned") =
+            Some(plugin_persistence.commands.clone());
         let control = match ControlServer::start(Arc::clone(&state), identity.clone()) {
             Ok(control) => control,
             Err(error) => {

@@ -50,7 +50,7 @@ impl CreativeSession {
     /// settings.
     pub fn new(now_ms: u64) -> Self {
         Self {
-            session_id: format!("scratch-{now_ms}"),
+            session_id: format!("session-{now_ms}"),
             updated_at_ms: now_ms,
             project_name: None,
             arrangement: Arrangement::default(),
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn new_session_has_empty_arrangement_and_unity_master() {
         let session = CreativeSession::new(0);
-        assert_eq!(session.session_id, "scratch-0");
+        assert_eq!(session.session_id, "session-0");
         assert!(session.arrangement.tracks.is_empty());
         assert_eq!(session.settings.master_db, 0.0);
     }

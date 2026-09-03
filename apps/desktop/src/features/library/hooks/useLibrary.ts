@@ -8,11 +8,12 @@ import { isNativeRuntime, logNativeError } from '@/native/invoke';
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
   hostGeneration?: number;
+  projectId?: string | null;
 }
 
 export function useLibrary(
   api: LibraryApi & AudioApi & Pick<ProjectApi, 'importMidiFile'>,
-  { setAudio, hostGeneration = 0 }: UseLibraryOptions,
+  { setAudio, hostGeneration = 0, projectId = null }: UseLibraryOptions,
 ) {
   const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
   const [libraryQuery, setLibraryQuery] = useState('');
@@ -29,7 +30,7 @@ export function useLibrary(
     setLibraryResults([]);
     setSelectedLibraryAsset(null);
     setRelatedAssets([]);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   const selectLibraryAsset = useCallback(
     async (asset: LibraryAsset) => {

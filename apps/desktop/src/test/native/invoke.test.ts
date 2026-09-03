@@ -10,6 +10,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import {
   HostConnectionChangedError,
+  ProjectChangedError,
+  advanceProjectEpoch,
   invoke,
   invokeLatestHost,
   setHostConnectionAvailability,
@@ -70,6 +72,17 @@ describe('native invoke bridge', () => {
     const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
     setHostGeneration(1);
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    await rejection;
+    expect(tauriInvoke).not.toHaveBeenCalled();
+  });
+
+  it('does not send a coalesced update to a newer Project', async () => {
+    const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const rejection = expect(pending).rejects.toBeInstanceOf(ProjectChangedError);
+    advanceProjectEpoch();
 
     await vi.advanceTimersByTimeAsync(20);
 
