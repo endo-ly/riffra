@@ -1,4 +1,6 @@
 use super::*;
+use riffra_runtime::jobs::BackgroundJobStatus;
+use riffra_runtime::projects::ProjectExport;
 use serde_json::json;
 
 /// Runs a synchronous Host operation without blocking the async worker pool.
@@ -18,9 +20,7 @@ pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState
 }
 
 #[tauri::command]
-pub(crate) async fn export_scratch_session(
-    app: AppHandle,
-) -> Result<projects::ProjectExport, String> {
+pub(crate) async fn export_scratch_session(app: AppHandle) -> Result<ProjectExport, String> {
     run_blocking(app, |state| {
         state.host_connection.dispatch("project.export", json!({}))
     })
@@ -31,7 +31,7 @@ pub(crate) async fn export_scratch_session(
 pub(crate) fn get_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<jobs::BackgroundJobStatus>, String> {
+) -> Result<Option<BackgroundJobStatus>, String> {
     state
         .host_connection
         .dispatch("job.get", json!({ "id": id }))
@@ -41,7 +41,7 @@ pub(crate) fn get_background_job(
 pub(crate) fn cancel_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<jobs::BackgroundJobStatus>, String> {
+) -> Result<Option<BackgroundJobStatus>, String> {
     state
         .host_connection
         .dispatch("job.cancel", json!({ "id": id }))

@@ -23,7 +23,7 @@ use crate::{
     RuntimeRecovery, active_device_matches_preferences, load_or_default,
 };
 use crate::{HostEvent, HostEventHub, HostEventSubscription, SharedHostEventSink};
-use crate::{analysis, library, missing, plugin_catalog, plugin_validation, plugins};
+use crate::{analysis, library, missing, plugins};
 use riffra_control::{
     CommandResult, ControlCommand, ControlRequest, ControlResponse, ErrorCode, HostIdentity,
     ProtocolError, new_instance_id,
@@ -101,7 +101,7 @@ pub(crate) struct HostState {
     events: SharedHostEventSink,
     event_hub: Arc<HostEventHub>,
     binaries: RuntimeBinaries,
-    render_worker: riffra_render_worker::RenderWorker,
+    render_worker: render::RenderWorker,
     jobs: JobRegistry,
     audio_preferences: Mutex<AudioPreferences>,
     recording_gate: Mutex<()>,
@@ -138,7 +138,7 @@ impl HostState {
         };
         Ok(HostBootstrap {
             canonical: self.canonical()?,
-            plugin_catalog: plugin_catalog::load(&self.data_root)
+            plugin_catalog: plugins::load(&self.data_root)
                 .map_err(|error| HostError::State(error.to_string()))?,
             runtime_started: self.core.audio().startup_completed(),
             runtime_startup_finished: self.core.audio().startup_finished(),
@@ -686,7 +686,7 @@ impl HostState {
                 Ok(("ok", Value::Null, current.sequence))
             }
             "plugin.catalog.list" => {
-                let catalog = plugin_catalog::load(&self.data_root).map_err(|error| {
+                let catalog = plugins::load(&self.data_root).map_err(|error| {
                     command_error(format!("plugin catalog could not be loaded: {error}"))
                 })?;
                 Ok((
@@ -1238,10 +1238,10 @@ impl HostState {
             return Err("Safe Mode blocks VST3 discovery and load validation".into());
         }
         let mut report = plugins::discover(&root);
-        plugin_catalog::reuse_cached_scan_results(&self.data_root, &mut report);
-        let mut report = plugin_validation::validate_report(report, &self.binaries.plugin_scan)?;
+        plugins::reuse_cached_scan_results(&self.data_root, &mut report);
+        let mut report = plugins::validate_report(report, &self.binaries.plugin_scan)?;
         report.finished_at_ms = now_ms();
-        plugin_catalog::save(&self.data_root, &report)
+        plugins::save(&self.data_root, &report)
             .map_err(|error| format!("plugin catalog could not be saved: {error}"))?;
         library::sync_plugins(&self.data_root, &report.plugins)?;
         Ok(report)
@@ -1273,8 +1273,8 @@ impl HostState {
                             return;
                         }
                     };
-                plugin_catalog::reuse_cached_scan_results(&data_root, &mut report);
-                let report = match plugin_validation::validate_report_with_cancel(
+                plugins::reuse_cached_scan_results(&data_root, &mut report);
+                let report = match plugins::validate_report_with_cancel(
                     report,
                     &scanner,
                     Some(cancelled.clone()),
@@ -1292,7 +1292,7 @@ impl HostState {
                     registry.mark_cancelled(&job_id);
                     return;
                 }
-                if let Err(error) = plugin_catalog::save(&data_root, &report) {
+                if let Err(error) = plugins::save(&data_root, &report) {
                     jobs::fail(
                         &registry,
                         &data_root,
@@ -1852,7 +1852,7 @@ impl DawHost {
             events,
             event_hub,
             binaries: config.binaries.clone(),
-            render_worker: riffra_render_worker::RenderWorker::new(config.binaries.render.clone()),
+            render_worker: render::RenderWorker::new(config.binaries.render.clone()),
             jobs: JobRegistry::default(),
             audio_preferences: Mutex::new(preferences.clone()),
             recording_gate: Mutex::new(()),

@@ -1,5 +1,5 @@
+use super::worker::RenderWorker;
 use riffra_core::{OfflineRenderRequest, RenderRuntime};
-use riffra_render_worker::RenderWorker;
 
 #[test]
 #[ignore = "requires a built riffra-render executable"]
@@ -7,8 +7,10 @@ fn renders_wave_without_an_audio_device() {
     // Arrange
     let executable =
         std::env::var_os("RIFFRA_RENDER_WORKER").expect("RIFFRA_RENDER_WORKER must be set");
-    let destination = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("render-{}.wav", std::process::id()));
+    let destination = std::env::temp_dir().join(format!(
+        "riffra-native-worker-render-{}.wav",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&destination);
     let worker = RenderWorker::new(executable.into());
     let request = OfflineRenderRequest {

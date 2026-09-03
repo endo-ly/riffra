@@ -4,7 +4,7 @@ use riffra_core::{OfflineRenderRequest, RenderRuntime};
 use serde_json::Value;
 use std::{
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
@@ -14,11 +14,7 @@ use thiserror::Error;
 
 /// Failure reported while invoking the offline render worker.
 #[derive(Debug, Error)]
-pub enum RenderWorkerError {
-    #[error("current executable could not be resolved: {0}")]
-    CurrentExecutable(#[source] std::io::Error),
-    #[error("render worker executable path has no parent directory")]
-    MissingExecutableDirectory,
+enum RenderWorkerError {
     #[error("render worker could not start: {0}")]
     Spawn(#[source] std::io::Error),
     #[error("render request could not be encoded: {0}")]
@@ -41,35 +37,14 @@ pub enum RenderWorkerError {
 
 /// Launches one `riffra-render` process for each offline render request.
 #[derive(Clone)]
-pub struct RenderWorker {
+pub(crate) struct RenderWorker {
     executable: PathBuf,
 }
 
 impl RenderWorker {
     /// Creates an adapter for an explicit worker executable.
-    pub fn new(executable: PathBuf) -> Self {
+    pub(crate) fn new(executable: PathBuf) -> Self {
         Self { executable }
-    }
-
-    /// Resolves a bundled worker located beside the current executable.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the current executable has no parent directory.
-    pub fn bundled() -> Result<Self, RenderWorkerError> {
-        let current = std::env::current_exe().map_err(RenderWorkerError::CurrentExecutable)?;
-        let directory = current
-            .parent()
-            .ok_or(RenderWorkerError::MissingExecutableDirectory)?;
-        Ok(Self::new(directory.join(format!(
-            "riffra-render{}",
-            std::env::consts::EXE_SUFFIX
-        ))))
-    }
-
-    /// Returns the configured worker executable.
-    pub fn executable(&self) -> &Path {
-        &self.executable
     }
 
     fn render(&self, request: OfflineRenderRequest) -> Result<(), RenderWorkerError> {
@@ -190,7 +165,7 @@ impl RenderWorker {
     /// # Errors
     /// Returns a host-provided description when the render cannot be completed
     /// or the flag requests cancellation.
-    pub fn render_timeline_offline_cancellable(
+    pub(super) fn render_timeline_offline_cancellable(
         &self,
         request: OfflineRenderRequest,
         cancelled: &AtomicBool,
@@ -221,7 +196,7 @@ mod tests {
         let worker = RenderWorker::new(path.clone());
 
         // Assert
-        assert_eq!(worker.executable(), path);
+        assert_eq!(worker.executable, path);
     }
 
     #[test]

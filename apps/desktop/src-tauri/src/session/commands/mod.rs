@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
 use crate::AppState;
-use crate::missing::MissingDependency;
 use crate::model::{
     ArrangementMutationResult, AudioStatus, RuntimeProjectionStatus, SessionAudioPair,
 };
@@ -17,6 +16,7 @@ use riffra_core::{
     FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
     TimelineTick, TrackKind,
 };
+use riffra_runtime::missing::MissingDependency;
 
 pub(super) async fn dispatch<T, P>(
     app: AppHandle,

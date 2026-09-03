@@ -31,7 +31,7 @@ use std::path::Path;
 use crate::RuntimeDriver;
 use crate::asset;
 use crate::model::{AudioStatus, SessionAudioPair};
-use crate::plugin_catalog;
+use crate::plugins;
 #[cfg(test)]
 use riffra_core::CreativeSession;
 use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};

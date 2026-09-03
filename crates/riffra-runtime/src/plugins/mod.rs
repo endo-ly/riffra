@@ -8,6 +8,11 @@ use std::{
 };
 use ts_rs::TS;
 
+pub(crate) mod catalog;
+pub(crate) mod validation;
+pub(crate) use catalog::{load, reuse_cached_scan_results, save, validated_plugin};
+pub(crate) use validation::{validate_report, validate_report_with_cancel};
+
 const MAX_ENTRIES: usize = 100_000;
 
 /// Plugin container format. The runtime currently hosts VST3 only; the enum

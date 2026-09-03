@@ -115,8 +115,7 @@ pub(crate) fn set_track_instrument_with_expected_sequence(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.",
         ));
     }
-    let (name, validated_path) =
-        plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
+    let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
     let store = SessionStore::new(context.data_root);
     let prepared = context
         .core
@@ -163,8 +162,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect effects.",
         ));
     }
-    let (name, validated_path) =
-        plugin_catalog::validated_plugin(context.data_root, Path::new(path))?;
+    let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
     let store = SessionStore::new(context.data_root);
     let prepared = context
         .core

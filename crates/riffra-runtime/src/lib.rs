@@ -15,8 +15,6 @@ pub mod jobs;
 pub mod library;
 pub mod missing;
 mod model;
-pub mod plugin_catalog;
-pub mod plugin_validation;
 pub mod plugins;
 mod preferences;
 pub mod projects;
