@@ -60,7 +60,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | A    | WebView → Rust                                | `invoke`（Tauri command）                               | 一切の操作・編集・照会                                   |
 | B    | Rust → WebView                                | Tauri event                                             | 音声状態・メーター・トランスポート・ランタイム回復の通知 |
 | C    | Rust ↔ riffra-audio                           | 子プロセスの stdin/stdout（JSON Lines）                 | 投影・演奏・録音・MIDI・プレビュー・デバイス制御         |
-| D    | Rust → riffra-render-worker                   | 子プロセスの stdin/stdout（JSON 1行）                   | オフラインレンダリング（1要求1プロセス）                 |
+| D    | Runtime → riffra-render                       | 子プロセスの stdin/stdout（JSON 1行）                   | オフラインレンダリング（1要求1プロセス）                 |
 | E    | Rust ↔ riffra-audio（probe）                  | 子プロセスの stdout（JSON 1行）/ 引数                   | デバイス・チャンネル列挙、VST3スキャン                   |
 | F    | 外部クライアント ↔ Riffra Host Control Server | Windows Named Pipe / Unix Domain Socket（長さ付きJSON） | Hostの正準状態・Runtime操作とHost event購読              |
 
@@ -210,13 +210,13 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ---
 
-## 6. 境界 D: レンダーワーカー（riffra-render-worker）
+## 6. 境界 D: オフラインレンダリング（riffra-render）
 
-- 起動: `render_timeline` 命令のたびに、Composition Rootから渡された `RuntimeBinaries` のレンダーワーカー実行ファイルを1回起動する。DesktopとHeadlessで同じ配置規則を使う
+- 起動: `render_timeline` 命令のたびに、`riffra-runtime::render` がComposition Rootから渡された `RuntimeBinaries` の `riffra-render` executableを1回起動する。DesktopとHeadlessで同じ配置規則を使う
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
 - 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
-- レンダー計画（開始・終了ティック、レンジ解決、出力パス `export/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
+- レンダー計画（開始・終了ティック、レンジ解決、出力パス `export/render-{ms}/timeline.wav`、manifest）はRuntime側で組み立て、`riffra-render` は計画の実行だけを担う
 
 ---
 
