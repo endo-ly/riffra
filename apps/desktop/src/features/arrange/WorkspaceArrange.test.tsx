@@ -1910,6 +1910,52 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
   });
 
+  it('collapses the detail area when the resize handle is dragged below its minimum height', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:drag-collapse',
+      name: 'Drag Collapse Track',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:drag-collapse',
+      name: 'Drag Collapse Clip',
+      trackId: 'track:drag-collapse',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:drag-collapse"]')!);
+    await screen.findByLabelText('MIDI Editor');
+
+    const workspace = screen.getByLabelText('Arrange timeline');
+    Object.defineProperty(workspace, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+    // Default detail height is 380: dragging 210px further down lands below the
+    // 180px minimum and collapses instead of shrinking.
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize detail area' });
+    fireEvent.pointerDown(resizeHandle, { clientY: 500 });
+    fireEvent.pointerMove(window, { clientY: 710 });
+    expect(screen.getByRole('button', { name: 'Restore detail area' })).toBeInTheDocument();
+    fireEvent.pointerUp(window, { clientY: 710 });
+  });
+
   it('keeps the Play Surface independent from the MIDI detail area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({

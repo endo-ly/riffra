@@ -1,7 +1,6 @@
 .area {
   position: relative;
   isolation: isolate;
-  min-height: 180px;
   height: var(--detail-height);
   display: grid;
   grid-template-rows: minmax(0, 1fr);

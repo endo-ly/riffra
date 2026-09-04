@@ -20,6 +20,7 @@
   position: relative;
   display: grid;
   grid-template-columns: var(--layout-left-column-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   grid-template-areas: 'left workspace';
   overflow: hidden;
 }

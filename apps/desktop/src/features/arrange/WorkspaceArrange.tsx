@@ -1209,7 +1209,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         collapsed={detail.collapsed}
         maximized={detail.maximized}
         onCollapsedChange={detail.setCollapsed}
-        onMaximizedChange={detail.setMaximized}
         onHeightChange={detail.setHeight}
         collapsedControls={detailControls}
         midiEditor={
