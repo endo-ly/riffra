@@ -126,11 +126,29 @@
   position: absolute;
   left: 0;
   width: 100%;
+  cursor: pointer;
   font:
     var(--font-size-micro) 'DM Mono',
     Consolas,
     monospace;
   font-variant-numeric: tabular-nums;
+}
+
+.pianoKey:hover .pianoWhiteKey {
+  background: color-mix(in srgb, #f1f5f3 72%, var(--color-accent-primary));
+}
+
+.pianoKey:active .pianoWhiteKey {
+  background: color-mix(in srgb, #f1f5f3 45%, var(--color-accent-primary));
+}
+
+.pianoKey:hover .pianoBlackKey {
+  background: color-mix(in srgb, #0b1115 60%, var(--color-accent-primary));
+}
+
+.pianoKey:focus-visible {
+  outline: 1px solid var(--color-accent-primary);
+  outline-offset: -1px;
 }
 
 .pianoWhiteKey {
@@ -265,6 +283,17 @@
   box-shadow:
     0 0 0 1px #d0fff5,
     0 0 12px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+}
+
+.ghostNote {
+  position: absolute;
+  z-index: 2;
+  min-width: 4px;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--color-text-secondary) 26%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--color-text-secondary) 55%, transparent);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
 }
 
 .note.selected {

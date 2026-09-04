@@ -739,6 +739,129 @@ describe('WorkspaceArrange', () => {
     expect(addArgs?.[4]).toBe(96);
   });
 
+  it('auditions a newly placed note on the active instrument', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:audition',
+      name: 'Audition Track',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      instrument: {
+        id: 'device:audition',
+        name: 'Fake Synth',
+        kind: 'plugin',
+        bypassed: false,
+        gainDb: 0,
+        parameterValues: [],
+        disabledPlaceholder: false,
+      },
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.midiClips.push({
+      id: 'clip:audition',
+      name: 'Audition Clip',
+      trackId: 'track:audition',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const sent: { trackId: string; bytes: number[] }[] = [];
+    api.sendMidiToTrack = async (trackId, bytes) => {
+      api.calls.push('sendMidiToTrack');
+      sent.push({ trackId, bytes });
+      return api.audio;
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:audition"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+    const lane = editor.querySelector('[data-midi-lane]')!;
+    Object.defineProperty(lane, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, right: 400, bottom: 1_536, width: 400, height: 1_536 }),
+    });
+
+    fireEvent.doubleClick(lane, { clientX: 100, clientY: 804 });
+
+    await waitFor(() => expect(api.calls).toContain('addMidiNote'));
+    const noteOn = sent.find((message) => message.bytes[0] === 0x90);
+    expect(noteOn?.trackId).toBe('track:audition');
+    expect(noteOn?.bytes).toEqual([0x90, 60, 96]);
+  });
+
+  it('shows overlapping notes from other tracks behind the active clip', async () => {
+    const session = defaultSession();
+    for (const [trackId, name] of [
+      ['track:melody', 'Melody'],
+      ['track:chords', 'Chords'],
+    ] as const) {
+      session.arrangement.tracks.push({
+        id: trackId,
+        name,
+        kind: 'instrument',
+        gainDb: 0,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        rack: { devices: [], macros: [] },
+      });
+    }
+    session.arrangement.midiClips.push(
+      {
+        id: 'clip:melody',
+        name: 'Melody Clip',
+        trackId: 'track:melody',
+        startTick: 0,
+        durationTicks: 1_920,
+        notes: [],
+        events: [],
+        muted: false,
+        loopEnabled: false,
+      },
+      {
+        id: 'clip:chords',
+        name: 'Chords Clip',
+        trackId: 'track:chords',
+        startTick: 0,
+        durationTicks: 1_920,
+        notes: [
+          {
+            id: 'note:chords',
+            note: 64,
+            startTick: 480,
+            durationTicks: 240,
+            velocity: 80,
+            channel: 0,
+          },
+        ],
+        events: [],
+        muted: false,
+        loopEnabled: false,
+      },
+    );
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:melody"]')!);
+    const editor = await screen.findByLabelText('MIDI Editor');
+
+    expect(editor.querySelector('[data-note-id]')).toBeNull();
+    expect(editor.querySelector('[data-ghost-note-id]')).not.toBeNull();
+
+    fireEvent.click(within(editor).getByRole('button', { name: 'Reference notes' }));
+    expect(editor.querySelector('[data-ghost-note-id]')).toBeNull();
+  });
+
   it('renders subdivision lines for the selected MIDI Editor grid', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({

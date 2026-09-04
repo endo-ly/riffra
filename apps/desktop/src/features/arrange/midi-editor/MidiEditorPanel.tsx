@@ -38,6 +38,18 @@ interface MidiNoteInput {
   channel: number;
 }
 
+/**
+ * A note from another clip shown behind the active clip as a timing and
+ * pitch reference. `startTick` is already rebased to the active clip's
+ * local time and the note is never interactive.
+ */
+export interface MidiGhostNote {
+  id: string;
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+}
+
 const ZOOM_STEP = 1.25;
 const LANE_LABEL_WIDTH = 48;
 
@@ -66,6 +78,7 @@ interface MidiEditorPanelProps {
   playing: boolean;
   onSeek?: (tick: number) => void;
   previewAvailable?: boolean;
+  ghostNotes?: MidiGhostNote[];
   onSendMidi?: (trackId: string, bytes: number[]) => Promise<unknown>;
   onPanicMidi?: (trackId: string) => Promise<unknown>;
   toolbarTrailing?: ReactNode;
@@ -74,6 +87,7 @@ interface MidiEditorPanelProps {
 const PITCH_HIGH = 128;
 const PITCH_LOW = 0;
 const EMPTY_NOTES: MidiNote[] = [];
+const EMPTY_GHOSTS: MidiGhostNote[] = [];
 
 function pitchFromClientY(
   clientY: number,
@@ -103,6 +117,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   } | null>(null);
   const [tool, setTool] = useState<MidiEditorTool>('pointer');
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
+  const [ghostsVisible, setGhostsVisible] = useState(true);
   const [velocityDraft, setVelocityDraft] = useState(96);
   const [lastUsedVelocity, setLastUsedVelocity] = useState(96);
   const [pixelsPerTick, setPixelsPerTick] = useState(0.18);
@@ -164,6 +179,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   }, [barTicks, beatTicks, pixelsPerTick, snapTicks, visibleTicks]);
 
   const notes = props.clip?.notes ?? EMPTY_NOTES;
+  const ghostNotes = ghostsVisible ? (props.ghostNotes ?? EMPTY_GHOSTS) : EMPTY_GHOSTS;
   const selectedNotes = useMemo(
     () => notes.filter((note) => selectedNoteIds.includes(note.id)),
     [notes, selectedNoteIds],
@@ -203,6 +219,57 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     if (!previewTrackId || !previewHeldNotesRef.current.delete(pitch)) return;
     void props.onSendMidi?.(previewTrackId, [0x80, pitch, 0]);
   };
+
+  // Short-lived auditions for placed or moved notes. Unlike the held piano
+  // keyboard preview above, each audition schedules its own note-off so a
+  // single placed note rings briefly and can never hang the instrument.
+  const onSendMidi = props.onSendMidi;
+  const auditionTimersRef = useRef(
+    new Map<number, { timeout: ReturnType<typeof setTimeout>; trackId: string }>(),
+  );
+  const auditionMsForTicks = useCallback(
+    (durationTicks: number) => {
+      const ms = (durationTicks * 60_000) / (props.timebase.bpm * props.timebase.ppq);
+      return Math.max(150, Math.min(700, Math.round(ms)));
+    },
+    [props.timebase],
+  );
+  const auditionNote = useCallback(
+    (pitch: number, velocity: number, durationTicks?: number) => {
+      if (!previewCanSend || !previewTrackId || !onSendMidi) return;
+      const clampedPitch = Math.max(PITCH_LOW, Math.min(PITCH_HIGH - 1, Math.round(pitch)));
+      const clampedVelocity = Math.max(1, Math.min(127, Math.round(velocity)));
+      const ringing = auditionTimersRef.current.get(clampedPitch);
+      if (ringing) {
+        clearTimeout(ringing.timeout);
+        auditionTimersRef.current.delete(clampedPitch);
+        void onSendMidi(ringing.trackId, [0x80, clampedPitch, 0]);
+      }
+      void onSendMidi(previewTrackId, [0x90, clampedPitch, clampedVelocity]);
+      const timeout = setTimeout(
+        () => {
+          auditionTimersRef.current.delete(clampedPitch);
+          void onSendMidi(previewTrackId, [0x80, clampedPitch, 0]);
+        },
+        durationTicks === undefined ? 350 : auditionMsForTicks(durationTicks),
+      );
+      auditionTimersRef.current.set(clampedPitch, { timeout, trackId: previewTrackId });
+    },
+    [auditionMsForTicks, previewCanSend, previewTrackId, onSendMidi],
+  );
+
+  // Flush ringing auditions when the edited clip changes so the previous
+  // instrument never holds a note. This also runs on unmount.
+  useEffect(() => {
+    const ringing = auditionTimersRef.current;
+    return () => {
+      ringing.forEach(({ timeout, trackId }, pitch) => {
+        clearTimeout(timeout);
+        void onSendMidi?.(trackId, [0x80, pitch, 0]);
+      });
+      ringing.clear();
+    };
+  }, [clipId, onSendMidi]);
 
   const applyHorizontalZoom = useCallback(
     (next: number, clientX?: number) => {
@@ -437,6 +504,10 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         : Math.max(requestedPitchDelta, PITCH_LOW - lowestSelectedPitch);
     const timeDelta = direction === 'left' ? -timeStep : direction === 'right' ? timeStep : 0;
     if (pitchDelta === 0 && timeDelta === 0) return;
+    if (pitchDelta !== 0 && selectedNotes.length > 0) {
+      const first = selectedNotes[0];
+      auditionNote(first.note + pitchDelta, first.velocity, first.durationTicks);
+    }
     return props.onUpdateNotes(
       clip.id,
       selectedNotes.map((note) => ({
@@ -465,14 +536,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       : Math.max(0, Math.round(rawTick));
     const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
     const beforeIds = new Set(clip.notes.map((note) => note.id));
-    const operation = props.onAddNote(
-      clip.id,
-      startTick,
-      rawPitch,
-      Math.max(1, Math.round(durationTicks)),
-      lastUsedVelocity,
-      1,
-    );
+    const duration = Math.max(1, Math.round(durationTicks));
+    auditionNote(rawPitch, lastUsedVelocity, duration);
+    const operation = props.onAddNote(clip.id, startTick, rawPitch, duration, lastUsedVelocity, 1);
     if (operation === undefined) return;
     void Promise.resolve(operation).then((next) => {
       if (!next) return;
@@ -788,6 +854,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         );
       });
       if (changed) {
+        auditionNote(preview.note, preview.velocity, preview.durationTicks);
         const updates = originNotes.map((candidate) => {
           const next = previewNotes[candidate.id];
           return {
@@ -891,6 +958,14 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           }
           onClick={() => setPreviewEnabled((enabled) => !enabled)}
         />
+        <ToolbarToggle
+          ariaLabel="Reference notes"
+          active={ghostsVisible}
+          title="Show notes from other tracks behind this clip"
+          onClick={() => setGhostsVisible((visible) => !visible)}
+        >
+          Ghost
+        </ToolbarToggle>
         <ToolbarDivider />
         <ToolbarButton
           icon="magnet"
@@ -1120,6 +1195,22 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                   style={{ left: tick * pixelsPerTick }}
                 />
               ))}
+              {ghostNotes
+                .filter((ghost) => ghost.pitch >= PITCH_LOW && ghost.pitch < PITCH_HIGH)
+                .map((ghost) => (
+                  <div
+                    key={ghost.id}
+                    data-ghost-note-id={ghost.id}
+                    aria-hidden="true"
+                    className={styles.ghostNote}
+                    style={{
+                      left: ghost.startTick * pixelsPerTick,
+                      top: pitchRowTop(ghost.pitch, rowHeight),
+                      width: Math.max(4, ghost.durationTicks * pixelsPerTick),
+                      height: rowHeight - 1,
+                    }}
+                  />
+                ))}
               {pitchRows.map((pitch) => (
                 <div
                   key={pitch}

@@ -25,6 +25,7 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import { MidiEditorPanel } from './midi-editor/MidiEditorPanel';
+import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
 import { ArrangeDetailArea } from './ArrangeDetailArea';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
@@ -240,6 +241,29 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const activeMidiTrack = activeMidiClip
     ? (arrangement.tracks.find((track) => track.id === activeMidiClip.trackId) ?? null)
     : null;
+  // Notes from other clips that sound at the same arrangement time, rebased
+  // to the active clip's local time so the editor can show them behind it.
+  const midiGhostNotes = useMemo<MidiGhostNote[]>(() => {
+    if (!activeMidiClip) return [];
+    return arrangement.midiClips.flatMap((clip) => {
+      if (clip.id === activeMidiClip.id) return [];
+      return clip.notes.flatMap((note) => {
+        const localTick = clip.startTick + note.startTick - activeMidiClip.startTick;
+        if (localTick < 0 || localTick >= activeMidiClip.durationTicks) return [];
+        return [
+          {
+            id: `${clip.id}:${note.id}`,
+            pitch: note.note,
+            startTick: localTick,
+            durationTicks: Math.max(
+              1,
+              Math.min(note.durationTicks, activeMidiClip.durationTicks - localTick),
+            ),
+          },
+        ];
+      });
+    });
+  }, [arrangement.midiClips, activeMidiClip]);
   const runtimeReady =
     !playbackOutOfSync &&
     props.audio.state !== 'starting' &&
@@ -1215,6 +1239,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <MidiEditorPanel
             clip={activeMidiClip}
             timebase={timebase}
+            ghostNotes={midiGhostNotes}
             playheadTick={displayTick}
             playheadTickRef={displayTickRef}
             playing={transport?.state === 'playing'}

@@ -493,6 +493,10 @@ Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空�
 
 複数 Note の移動では相対関係を保ち、時間と Pitch をまとめて変更する。Length 変更でも選択群へ同じ差分を適用できる。
 
+Note の作成・移動・長さ変更・Pitch 変更が確定したら、その Note を所属 Track の Instrument で短く試聴する。Preview が有効な場合に限る。
+
+同時刻に鳴る他 Clip の Note は、Active MIDI Clip の背後に参照表示する。参照表示は選択・編集の対象にならず、表示の有無を切り替えられる。
+
 #### Clipboard と Duplicate
 
 Copy は Note 群の相対時間、Pitch、Length、Velocity、Channel を保持する。Paste では先頭 Note を Playhead へ合わせ、新しい ID を割り当てたうえで貼り付けた Note 群を選択する。
