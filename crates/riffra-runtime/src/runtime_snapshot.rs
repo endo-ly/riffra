@@ -1,9 +1,14 @@
 use crate::asset;
-use riffra_core::{CreativeSession, DeviceKind};
+use crate::instrument::BuiltInInstrumentCatalog;
+use riffra_core::{CreativeSession, InternalInstrumentResource, TrackInstrumentSource};
 use std::path::{Path, PathBuf};
 
 /// Builds the device-independent projection consumed by the native graph.
-pub fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) -> serde_json::Value {
+pub fn runtime_timeline_snapshot(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    session: &CreativeSession,
+) -> serde_json::Value {
     let arrangement = &session.arrangement;
     let mut unavailable_clip_ids = Vec::new();
     let mut missing_device_ids = Vec::new();
@@ -11,12 +16,11 @@ pub fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) ->
         .tracks
         .iter()
         .map(|track| {
-            let mut runtime_instrument = track.instrument.clone();
             let mut runtime_rack = track.rack.clone();
-            for device in runtime_instrument
+            for device in runtime_rack
+                .devices
                 .iter_mut()
-                .chain(runtime_rack.devices.iter_mut())
-                .filter(|device| device.kind == DeviceKind::Plugin)
+                .filter(|device| device.kind == riffra_core::DeviceKind::Plugin)
             {
                 if !device.disabled_placeholder
                     && device
@@ -28,6 +32,47 @@ pub fn runtime_timeline_snapshot(data_root: &Path, session: &CreativeSession) ->
                     device.disabled_placeholder = true;
                 }
             }
+            let runtime_instrument = track.instrument.as_ref().map(|instrument| match &instrument
+                .source
+            {
+                TrackInstrumentSource::Internal {
+                    definition_json,
+                    resource: InternalInstrumentResource::BuiltInPreset { preset_id },
+                } => {
+                    let base_dir = built_in_instruments.root().join(preset_id);
+                    serde_json::json!({
+                        "id": instrument.id,
+                        "name": instrument.name,
+                        "type": "internal",
+                        "bypassed": instrument.bypassed,
+                        "resourceType": "builtInPreset",
+                        "presetId": preset_id,
+                        "definitionJson": definition_json,
+                        "definitionBaseDir": base_dir.to_string_lossy().into_owned(),
+                    })
+                }
+                TrackInstrumentSource::Vst3 {
+                    path,
+                    parameter_values,
+                    state_data,
+                    disabled_placeholder,
+                } => {
+                    let runtime_disabled = *disabled_placeholder || !PathBuf::from(path).exists();
+                    if !*disabled_placeholder && runtime_disabled {
+                        missing_device_ids.push(instrument.id.clone());
+                    }
+                    serde_json::json!({
+                        "id": instrument.id,
+                        "name": instrument.name,
+                        "type": "vst3",
+                        "bypassed": instrument.bypassed,
+                        "path": path,
+                        "parameterValues": parameter_values,
+                        "stateData": state_data,
+                        "disabledPlaceholder": runtime_disabled,
+                    })
+                }
+            });
             let audio_clips = arrangement
                 .audio_clips
                 .iter()

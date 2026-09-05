@@ -22,6 +22,7 @@ pub struct BootstrapState {
     pub canonical: riffra_core::CanonicalState,
     pub project_state: ProjectState,
     pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
+    pub built_in_instruments: Vec<riffra_runtime::BuiltInInstrumentSummary>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
     pub recovery: ProjectRecoveryState,

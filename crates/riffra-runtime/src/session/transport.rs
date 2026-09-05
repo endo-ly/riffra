@@ -15,6 +15,7 @@ const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct RuntimeProjectionAdapter<'a, D: RuntimeDriver> {
     data_root: &'a Path,
+    built_in_instruments: &'a crate::instrument::BuiltInInstrumentCatalog,
     runtime: &'a RuntimeReconciler<D>,
 }
 
@@ -24,7 +25,8 @@ impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
             sequence: request.sequence(),
             session_revision: request.session().arrangement.revision,
         };
-        let snapshot = runtime_timeline_snapshot(self.data_root, request.session());
+        let snapshot =
+            runtime_timeline_snapshot(self.data_root, self.built_in_instruments, request.session());
         self.runtime
             .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
             .map(|_| ())
@@ -37,6 +39,7 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
 ) -> Result<crate::RuntimeProjectionStatus, String> {
     let projection = RuntimeProjectionAdapter {
         data_root: context.data_root,
+        built_in_instruments: context.built_in_instruments,
         runtime: context.runtime,
     };
     context
@@ -65,7 +68,7 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
     context
         .runtime
         .apply_candidate_and_wait(
-            runtime_timeline_snapshot(context.data_root, candidate),
+            runtime_timeline_snapshot(context.data_root, context.built_in_instruments, candidate),
             riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
@@ -82,7 +85,11 @@ pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> R
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
     context.runtime.apply_and_play(
         transport_sequence,
-        runtime_timeline_snapshot(context.data_root, &projection.session),
+        runtime_timeline_snapshot(
+            context.data_root,
+            context.built_in_instruments,
+            &projection.session,
+        ),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
@@ -122,26 +129,32 @@ pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{DeviceKind, RackDevice, Track};
+    use riffra_core::{Track, TrackInstrument};
 
     #[test]
     fn missing_track_plugin_is_projected_as_a_runtime_placeholder() {
         let mut session = CreativeSession::new(1);
         let mut track = Track::instrument("track:synth".into(), "Synth".into());
-        track.instrument = Some(RackDevice {
-            id: "device:missing".into(),
-            name: "Missing Synth".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\missing\Synth.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
+        track.instrument = Some(
+            TrackInstrument::vst3(
+                "device:missing".into(),
+                "Missing Synth".into(),
+                r"C:\missing\Synth.vst3".into(),
+            )
+            .unwrap(),
+        );
         session.arrangement.tracks.push(track);
 
-        let snapshot = runtime_timeline_snapshot(Path::new("."), &session);
+        let resource_root =
+            std::env::temp_dir().join(format!("riffra-transport-builtins-{}", std::process::id()));
+        std::fs::create_dir_all(&resource_root).unwrap();
+        std::fs::write(
+            resource_root.join("manifest.json"),
+            br#"{"sourceRevision":"test-revision","presets":[]}"#,
+        )
+        .unwrap();
+        let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resource_root).unwrap();
+        let snapshot = runtime_timeline_snapshot(&resource_root, &catalog, &session);
 
         assert_eq!(
             snapshot["missingDeviceIds"],
@@ -156,7 +169,10 @@ mod tests {
                 .instrument
                 .as_ref()
                 .unwrap()
+                .as_vst3()
+                .unwrap()
                 .disabled_placeholder
         );
+        let _ = std::fs::remove_dir_all(resource_root);
     }
 }

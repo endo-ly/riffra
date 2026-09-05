@@ -157,6 +157,7 @@ fn activate_project(
         activated.canonical.clone(),
         state.runtime.as_ref(),
         &state.data_root,
+        state.built_in_instruments.as_ref(),
         state.core.safe_mode(),
         CanonicalMutationEffect::ProjectArrangement,
     ) {
@@ -246,6 +247,9 @@ mod tests {
         let host = DawHost::open(
             HostConfig {
                 data_root: data_root.clone(),
+                built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                    &data_root,
+                ),
                 safe_mode: true,
                 binaries: RuntimeBinaries::new(
                     data_root.join("riffra-audio"),

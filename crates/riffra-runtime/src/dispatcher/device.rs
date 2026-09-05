@@ -5,7 +5,9 @@ use super::*;
 pub(super) fn handles(command: &str) -> bool {
     matches!(
         command,
-        "instrument.set"
+        "instrument.builtin.list"
+            | "instrument.builtin.set"
+            | "instrument.vst3.set"
             | "instrument.clear"
             | "effect.add"
             | "effect.remove"
@@ -24,8 +26,16 @@ pub(super) fn dispatch<A>(
     _canonical: riffra_core::CanonicalState,
 ) -> Result<DispatchResult, DispatchError> {
     Ok(match request.name.as_str() {
-        "instrument.set" => {
-            let params: PluginPathParams = decode(request.params)?;
+        "instrument.builtin.list" => dispatcher.value(
+            "builtInInstruments",
+            dispatcher.built_in_instruments.summaries(),
+        ),
+        "instrument.builtin.set" => {
+            let params: BuiltInInstrumentParams = decode(request.params)?;
+            let definition = dispatcher
+                .built_in_instruments
+                .resolve(&params.preset_id)
+                .map_err(DispatchError::CommandFailed)?;
             let snapshot = dispatcher.core.snapshot()?;
             let track = snapshot
                 .session
@@ -39,14 +49,46 @@ pub(super) fn dispatch<A>(
                 .as_ref()
                 .map(|device| device.id.clone())
                 .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
+            let instrument = riffra_core::TrackInstrument::built_in(
+                id,
+                definition.summary.name.clone(),
+                params.preset_id,
+                definition.definition_json.clone(),
+            )
+            .map_err(DispatchError::CommandFailed)?;
             dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .set_track_instrument(
-                        &params.track_id,
-                        Some(plugin_device(id, params.plugin_path)?),
-                    )?,
+                    .set_track_instrument(&params.track_id, Some(instrument))?,
+            )
+        }
+        "instrument.vst3.set" => {
+            let params: PluginPathParams = decode(request.params)?;
+            let snapshot = dispatcher.core.snapshot()?;
+            let track = snapshot
+                .session
+                .arrangement
+                .tracks
+                .iter()
+                .find(|track| track.id == params.track_id)
+                .ok_or_else(|| format!("track is not registered: {}", params.track_id))?;
+            let id = track
+                .instrument
+                .as_ref()
+                .map(|instrument| instrument.id.clone())
+                .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
+            let instrument = riffra_core::TrackInstrument::vst3(
+                id,
+                plugin_name(&params.plugin_path),
+                params.plugin_path,
+            )
+            .map_err(DispatchError::CommandFailed)?;
+            dispatcher.session(
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .set_track_instrument(&track.id, Some(instrument))?,
             )
         }
         "instrument.clear" => {
@@ -168,28 +210,58 @@ pub(super) fn dispatch<A>(
                 )));
             }
             let snapshot = dispatcher.core.snapshot()?;
-            let mut replacement = snapshot
+            let instrument = snapshot
                 .session
                 .arrangement
                 .tracks
                 .iter()
-                .flat_map(|track| track.instrument.iter().chain(track.rack.devices.iter()))
-                .find(|device| device.id == params.device_id)
-                .cloned()
-                .ok_or_else(|| format!("track device is not registered: {}", params.device_id))?;
-            replacement.name = path
+                .find_map(|track| {
+                    track
+                        .instrument
+                        .as_ref()
+                        .filter(|instrument| instrument.id == params.device_id)
+                })
+                .cloned();
+            let name = path
                 .file_stem()
                 .and_then(|value| value.to_str())
                 .unwrap_or("Plugin")
                 .to_owned();
-            replacement.path = Some(path.to_string_lossy().into_owned());
-            replacement.disabled_placeholder = false;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .replace_track_plugin(&params.device_id, replacement)?,
-            )
+            if instrument.is_some() {
+                let replacement = riffra_core::TrackInstrument::vst3(
+                    params.device_id.clone(),
+                    name,
+                    path.to_string_lossy().into_owned(),
+                )
+                .map_err(DispatchError::CommandFailed)?;
+                dispatcher.session(
+                    dispatcher
+                        .core
+                        .application(&dispatcher.storage)
+                        .replace_track_instrument(&params.device_id, replacement)?,
+                )
+            } else {
+                let mut replacement = snapshot
+                    .session
+                    .arrangement
+                    .tracks
+                    .iter()
+                    .flat_map(|track| track.rack.devices.iter())
+                    .find(|device| device.id == params.device_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("track device is not registered: {}", params.device_id)
+                    })?;
+                replacement.name = name;
+                replacement.path = Some(path.to_string_lossy().into_owned());
+                replacement.disabled_placeholder = false;
+                dispatcher.session(
+                    dispatcher
+                        .core
+                        .application(&dispatcher.storage)
+                        .replace_track_plugin(&params.device_id, replacement)?,
+                )
+            }
         }
         _ => unreachable!("unsupported device command family"),
     })
@@ -222,6 +294,22 @@ pub(crate) struct DeviceBypassParams {
 pub(crate) struct PluginPathParams {
     pub(crate) track_id: String,
     pub(crate) plugin_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BuiltInInstrumentParams {
+    pub(crate) track_id: String,
+    pub(crate) preset_id: String,
+}
+
+fn plugin_name(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Plugin")
+        .to_owned()
 }
 
 #[derive(Debug, Deserialize)]

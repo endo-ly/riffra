@@ -1,14 +1,35 @@
 use super::*;
 
 #[tauri::command]
-pub async fn set_track_instrument(
+pub async fn list_built_in_instruments(
+    app: AppHandle,
+) -> Result<Vec<riffra_runtime::BuiltInInstrumentSummary>, String> {
+    dispatch(app, "instrument.builtin.list", ()).await
+}
+
+#[tauri::command]
+pub async fn set_track_built_in_instrument(
+    track_id: String,
+    preset_id: String,
+    app: AppHandle,
+) -> Result<ArrangementMutationResult, String> {
+    dispatch(
+        app,
+        "instrument.builtin.set",
+        json!({ "trackId": track_id, "presetId": preset_id }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_track_vst3_instrument(
     track_id: String,
     plugin_path: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, String> {
     dispatch(
         app,
-        "instrument.set",
+        "instrument.vst3.set",
         json!({ "trackId": track_id, "pluginPath": plugin_path }),
     )
     .await

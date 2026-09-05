@@ -66,7 +66,11 @@ mod tests {
     #[test]
     fn session_inspect_is_read_only_scoped_and_lightweight() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-inspect-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let track = dispatcher
             .dispatch(request(
                 "track.add",
@@ -142,7 +146,11 @@ mod tests {
     #[test]
     fn interactive_history_undoes_and_redoes_a_committed_edit() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-history-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         dispatcher
             .dispatch(request(
                 "track.add",
@@ -169,6 +177,72 @@ mod tests {
                 .len(),
             1
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn standalone_dispatcher_lists_and_assigns_catalog_built_in_instruments() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-built-in-{}", now_ms()));
+        let resources = root.join("resources");
+        fs::create_dir_all(resources.join("01-clean-sub-bass")).unwrap();
+        fs::write(
+            resources.join("01-clean-sub-bass/definition.json"),
+            r#"{"metadata":{"name":"Clean Sub Bass","description":"Test preset"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRevision":"test-revision","presets":["01-clean-sub-bass"]}"#,
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+
+        let listed = dispatcher
+            .dispatch(request("instrument.builtin.list", Value::Null))
+            .unwrap();
+        assert_eq!(listed.result_type, "builtInInstruments");
+        assert_eq!(listed.value[0]["id"], "01-clean-sub-bass");
+        assert_eq!(listed.value[0]["name"], "Clean Sub Bass");
+
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Keys","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        let assigned = dispatcher
+            .dispatch(request(
+                "instrument.builtin.set",
+                json!({"trackId":track_id,"presetId":"01-clean-sub-bass"}),
+            ))
+            .unwrap();
+        assert_eq!(assigned.result_type, "arrangementMutation");
+        assert_eq!(
+            assigned.value["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"]["source"]
+                ["type"],
+            "internal"
+        );
+        assert_eq!(
+            assigned.value["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"]["source"]
+                ["resource"]["presetId"],
+            "01-clean-sub-bass"
+        );
+
+        let before = dispatcher
+            .dispatch(request("session.get", Value::Null))
+            .unwrap();
+        let unknown = dispatcher.dispatch(request(
+            "instrument.builtin.set",
+            json!({"trackId":track_id,"presetId":"99-unknown"}),
+        ));
+        assert!(unknown.is_err());
+        let after = dispatcher
+            .dispatch(request("session.get", Value::Null))
+            .unwrap();
+        assert_eq!(after.sequence, before.sequence);
+        assert_eq!(after.value, before.value);
         let _ = fs::remove_dir_all(root);
     }
 }

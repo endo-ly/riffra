@@ -112,6 +112,7 @@ impl HostState {
             .apply_and_wait(
                 crate::runtime_snapshot::runtime_timeline_snapshot(
                     &self.data_root,
+                    self.built_in_instruments.as_ref(),
                     &snapshot.session,
                 ),
                 riffra_core::ProjectionKey {
@@ -219,6 +220,7 @@ impl HostState {
             .apply_and_wait(
                 crate::runtime_snapshot::runtime_timeline_snapshot(
                     &self.data_root,
+                    self.built_in_instruments.as_ref(),
                     &snapshot.session,
                 ),
                 riffra_core::ProjectionKey {
@@ -260,6 +262,7 @@ impl HostState {
             &self.core,
             &self.runtime,
             &self.data_root,
+            self.built_in_instruments.as_ref(),
             &self.shutting_down,
         );
         let succeeded = initialized

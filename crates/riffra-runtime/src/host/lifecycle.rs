@@ -15,6 +15,9 @@ impl DawHost {
             }
         })?;
         let project_store = ProjectStore::new(&config.data_root);
+        let built_in_instruments =
+            crate::instrument::BuiltInInstrumentCatalog::load(&config.built_in_instruments_root)
+                .map_err(HostError::State)?;
         let loaded = project_store
             .initialize()
             .map_err(|error| HostError::Session(error.to_string()))?
@@ -71,6 +74,7 @@ impl DawHost {
             )),
             project_store,
             runtime,
+            built_in_instruments: Arc::new(built_in_instruments),
             events,
             event_hub,
             binaries: config.binaries.clone(),
@@ -201,6 +205,7 @@ fn queue_runtime_startup(
                 &state.core,
                 &state.runtime,
                 &state.data_root,
+                &state.built_in_instruments,
                 &state.shutting_down,
             );
             let succeeded = initialized
@@ -256,6 +261,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -282,6 +290,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -327,6 +338,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: false,
             binaries: RuntimeBinaries::new(
                 data_root.join("missing-riffra-audio"),
@@ -394,6 +408,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),

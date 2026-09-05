@@ -2,6 +2,7 @@ use super::HostError;
 use super::events::{HostEventHub, HostEventSubscription, SharedHostEventSink};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
+use crate::instrument::{BuiltInInstrumentCatalog, BuiltInInstrumentSummary};
 use crate::jobs::JobRegistry;
 use crate::model::{AudioStatus, ProjectRecoveryState, ProjectState, RuntimeProjectionStatus};
 use crate::projects;
@@ -23,6 +24,7 @@ pub struct HostBootstrap {
     pub canonical: CanonicalState,
     pub project_state: ProjectState,
     pub plugin_catalog: Vec<plugins::PluginEntry>,
+    pub built_in_instruments: Vec<BuiltInInstrumentSummary>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
     pub runtime_projection: RuntimeProjectionStatus,
@@ -39,6 +41,7 @@ pub(crate) struct HostState {
     pub(super) core: Arc<AppCore<AudioSupervisor>>,
     pub(super) project_store: ProjectStore,
     pub(super) runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
+    pub(super) built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     pub(super) events: SharedHostEventSink,
     pub(super) event_hub: Arc<HostEventHub>,
     pub(super) binaries: RuntimeBinaries,
@@ -81,6 +84,7 @@ impl HostState {
             project_state: projects::state(&self.project_store).map_err(HostError::State)?,
             plugin_catalog: plugins::load(&self.data_root)
                 .map_err(|error| HostError::State(error.to_string()))?,
+            built_in_instruments: self.built_in_instruments.summaries(),
             runtime_started: self.core.audio().startup_completed(),
             runtime_startup_finished: self.core.audio().startup_finished(),
             runtime_projection: self.runtime.status(),
@@ -112,6 +116,9 @@ mod tests {
         let host = DawHost::open(
             HostConfig {
                 data_root: data_root.clone(),
+                built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                    &data_root,
+                ),
                 safe_mode: true,
                 binaries: RuntimeBinaries::new(
                     data_root.join("riffra-audio"),
