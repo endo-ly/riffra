@@ -13,6 +13,7 @@
 #include "PluginChain.h"
 #include "RecordingCaptureRuntime.h"
 #include "TimelineTimebase.h"
+#include "instrument/InstrumentRuntime.h"
 
 namespace riffra {
 
@@ -151,11 +152,11 @@ private:
         juce::String id;
         std::vector<std::unique_ptr<Clip>> clips;
         std::vector<MidiClip> midiClips;
-        std::unique_ptr<PluginRack> instrumentRack;
-        // Timeline MIDI is rendered by `instrumentRack`; Play Surface and
-        // external-live MIDI is rendered by `liveInstrumentRack` so it reaches
+        std::unique_ptr<InstrumentRuntime> instrumentRuntime;
+        // Timeline MIDI is rendered by instrumentRuntime; Play Surface and
+        // external-live MIDI is rendered by liveInstrumentRuntime so it reaches
         // the output without the inter-track delay compensation line.
-        std::unique_ptr<PluginRack> liveInstrumentRack;
+        std::unique_ptr<InstrumentRuntime> liveInstrumentRuntime;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
         juce::String instrumentTopologySignature;
@@ -180,6 +181,7 @@ private:
         std::int64_t pluginDelaySamples = 0;
         std::int64_t pluginTailSamples = 0;
         double outputSampleRate = 0.0;
+        int preparedBlockSize = 0;
         float gainDb = 0.0f;
         float pan = 0.0f;
         std::vector<ArrangementGraph::AutomationPoint> volumeAutomation;
@@ -209,6 +211,8 @@ private:
         bool metronomeEnabled = false;
         std::int64_t beatSamples = 0;
         std::int64_t beatsPerBar = 4;
+        std::uint16_t timeSignatureNumerator = 4;
+        std::uint16_t timeSignatureDenominator = 4;
         juce::Array<juce::var> unavailableClipIds;
         juce::Array<juce::var> missingDeviceIds;
         std::vector<std::unique_ptr<Track>> tracks;
@@ -220,14 +224,17 @@ private:
                        int inputChannelCount, float* const* outputChannels, int channelCount,
                        std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
-                                     int channelCount, int sampleCount) noexcept;
+                                     int channelCount, std::int64_t rangeStart,
+                                     int sampleCount) noexcept;
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
                                 int sampleCount) noexcept;
-    void processInstrumentTrack(Track& track, int sampleCount,
-                                const juce::MidiBuffer* timelineMidi) noexcept;
-    void processLiveInstrumentTrack(Track& track, int sampleCount) noexcept;
+    void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
+                                const juce::MidiBuffer* timelineMidi,
+                                std::int64_t rangeStart) noexcept;
+    void processLiveInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
+                                    std::int64_t rangeStart, bool playing) noexcept;
     void mixProcessedTrack(Track& track, bool audible, float* const* outputChannels,
                            int channelCount, std::int64_t rangeStart, int destinationStart,
                            int sampleCount) noexcept;
@@ -241,6 +248,8 @@ private:
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateLoopProcessedVariants(PreparedTimeline& timeline,
                                        ArrangementCaptureSink* sink) noexcept;
+    [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
+        const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;

@@ -9,6 +9,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 include(CTest)
 
+set(RIFFRA_SONALLOY_REVISION "4f8d5ee99232224bfda3ebecc7df93f91efae087" CACHE STRING
+  "Pinned Sonalloy source revision used for the built-in instrument engine and resources")
+
 FetchContent_Declare(
   JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -17,6 +20,92 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(JUCE)
+
+FetchContent_Declare(
+  SONALLOY
+  GIT_REPOSITORY https://github.com/endo-ly/sonalloy.git
+  GIT_TAG ${RIFFRA_SONALLOY_REVISION}
+  GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(SONALLOY)
+
+set(RIFFRA_SONALLOY_CARGO_TARGET_DIR
+  "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-cargo-target")
+set(RIFFRA_SONALLOY_CARGO_PROFILE "" CACHE STRING
+  "Cargo profile used to build the Sonalloy C API (dev or release)")
+if(NOT RIFFRA_SONALLOY_CARGO_PROFILE)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(RIFFRA_SONALLOY_CARGO_PROFILE "dev")
+  else()
+    set(RIFFRA_SONALLOY_CARGO_PROFILE "release")
+  endif()
+endif()
+if(NOT RIFFRA_SONALLOY_CARGO_PROFILE STREQUAL "dev" AND
+   NOT RIFFRA_SONALLOY_CARGO_PROFILE STREQUAL "release")
+  message(FATAL_ERROR
+    "RIFFRA_SONALLOY_CARGO_PROFILE must be either dev or release")
+endif()
+if(RIFFRA_SONALLOY_CARGO_PROFILE STREQUAL "dev")
+  set(RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY "debug")
+  set(RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG)
+else()
+  set(RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY "release")
+  set(RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG --release)
+endif()
+if(MSVC)
+  set(RIFFRA_SONALLOY_STATIC_LIBRARY
+    "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-capi/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}/sonalloy_capi.lib")
+  set(RIFFRA_SONALLOY_CARGO_OUTPUT
+    "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}/sonalloy_capi.lib")
+else()
+  set(RIFFRA_SONALLOY_STATIC_LIBRARY
+    "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-capi/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}/libsonalloy_capi.a")
+  set(RIFFRA_SONALLOY_CARGO_OUTPUT
+    "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}/libsonalloy_capi.a")
+endif()
+add_custom_command(
+  OUTPUT "${RIFFRA_SONALLOY_STATIC_LIBRARY}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-capi/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}"
+  COMMAND cargo build
+    --manifest-path "${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/Cargo.toml"
+    --package sonalloy-capi
+    ${RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG}
+    --target-dir "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${RIFFRA_SONALLOY_CARGO_OUTPUT}"
+    "${RIFFRA_SONALLOY_STATIC_LIBRARY}"
+  DEPENDS
+    "${sonalloy_SOURCE_DIR}/Cargo.lock"
+    "${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/Cargo.toml"
+  VERBATIM
+)
+add_custom_target(riffra-sonalloy-capi-build
+  DEPENDS "${RIFFRA_SONALLOY_STATIC_LIBRARY}")
+add_library(sonalloy-capi STATIC IMPORTED GLOBAL)
+set_target_properties(sonalloy-capi PROPERTIES
+  IMPORTED_LOCATION "${RIFFRA_SONALLOY_STATIC_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES
+    "${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/include")
+add_dependencies(sonalloy-capi riffra-sonalloy-capi-build)
+if(MSVC)
+  target_link_libraries(sonalloy-capi INTERFACE bcrypt advapi32 ntdll userenv ws2_32)
+elseif(APPLE)
+  target_link_libraries(sonalloy-capi INTERFACE c++)
+elseif(UNIX)
+  target_link_libraries(sonalloy-capi INTERFACE stdc++ m dl pthread)
+endif()
+
+set(RIFFRA_BUILTIN_RESOURCE_ROOT
+  "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin")
+add_custom_target(riffra-builtin-resource-stage ALL
+  COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_PRESETS=${sonalloy_SOURCE_DIR}/presets
+    -DDESTINATION=${RIFFRA_BUILTIN_RESOURCE_ROOT}
+    -DSOURCE_REVISION=${RIFFRA_SONALLOY_REVISION}
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_builtin_resources.cmake"
+  VERBATIM
+)
 
 juce_add_console_app(riffra-audio
   PRODUCT_NAME "Riffra Audio Engine"
@@ -54,6 +143,11 @@ target_sources(riffra-render-core PRIVATE
   src/processing/ArrangementCaptureSink.h
   src/processing/PluginRack.cpp
   src/processing/PluginRack.h
+  src/processing/instrument/InstrumentRuntime.h
+  src/processing/instrument/Vst3InstrumentRuntime.cpp
+  src/processing/instrument/Vst3InstrumentRuntime.h
+  src/processing/instrument/SonalloyInstrumentRuntime.cpp
+  src/processing/instrument/SonalloyInstrumentRuntime.h
   src/processing/BoundedMpmcQueue.h
   src/processing/PluginChain.cpp
   src/processing/PluginChain.h
@@ -174,6 +268,7 @@ set(RIFFRA_PLUGIN_SCAN_JUCE_LIBRARIES
 
 target_link_libraries(riffra-render-core PUBLIC
   ${RIFFRA_RENDER_JUCE_LIBRARIES}
+  sonalloy-capi
 )
 
 target_link_libraries(riffra-audio-core PUBLIC
@@ -200,7 +295,10 @@ juce_generate_juce_header(riffra-render)
 target_include_directories(riffra-render-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
   ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
+  ${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/include
 )
+
+add_dependencies(riffra-render-core riffra-builtin-resource-stage)
 
 target_include_directories(riffra-plugin-scan PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
@@ -343,12 +441,26 @@ if(BUILD_TESTING)
     tests/BoundedMpmcQueueTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
+    tests/SonalloyInstrumentRuntimeTest.cpp
     tests/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core
     GTest::gtest_main
   )
+  target_compile_definitions(riffra-audio-tests PRIVATE
+    RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
+    RIFFRA_SONALLOY_TEST_SOURCE_REVISION="${RIFFRA_SONALLOY_REVISION}"
+    RIFFRA_SONALLOY_TEST_SOURCE_ROOT="${sonalloy_SOURCE_DIR}")
+  add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
+  if(UNIX)
+    target_compile_definitions(riffra-audio-tests PRIVATE RIFFRA_TRACK_MALLOC=1)
+    if(APPLE)
+      target_link_options(riffra-audio-tests PRIVATE "-Wl,-wrap,malloc")
+    else()
+      target_link_options(riffra-audio-tests PRIVATE "-Wl,--wrap=malloc")
+    endif()
+  endif()
   # JUCE definitions come through riffra-audio-core's PUBLIC interface.
   if(MSVC)
     target_compile_options(riffra-audio-tests PRIVATE ${RIFFRA_MSVC_WARNINGS})
@@ -399,7 +511,10 @@ endif()
 # headless CLI artifact. A distribution can disable this by leaving the
 # destination empty and still install the Tauri bundle copies below.
 set(RIFFRA_HEADLESS_BINARIES_DESTINATION "" CACHE STRING
-    "Relative install destination for unsuffixed headless sidecars")
+  "Relative install destination for unsuffixed headless sidecars")
+
+set(RIFFRA_HEADLESS_RESOURCES_DESTINATION "" CACHE STRING
+  "Relative install destination for headless built-in instrument resources")
 
 foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
   install(FILES $<TARGET_FILE:${sidecar}>
@@ -415,3 +530,30 @@ foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
     )
   endif()
 endforeach()
+
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin/"
+    DESTINATION "apps/desktop/src-tauri/resources/instruments/builtin"
+    COMPONENT riffra-sidecars
+)
+if(RIFFRA_HEADLESS_RESOURCES_DESTINATION)
+  install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin/"
+      DESTINATION "${RIFFRA_HEADLESS_RESOURCES_DESTINATION}/riffra-resources/instruments/builtin"
+      COMPONENT riffra-sidecars
+  )
+endif()
+install(FILES
+    "${sonalloy_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+    "${sonalloy_SOURCE_DIR}/LICENSE-MIT"
+    "${sonalloy_SOURCE_DIR}/LICENSE-APACHE"
+    DESTINATION "apps/desktop/src-tauri/resources"
+    COMPONENT riffra-sidecars
+)
+if(RIFFRA_HEADLESS_RESOURCES_DESTINATION)
+  install(FILES
+      "${sonalloy_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+      "${sonalloy_SOURCE_DIR}/LICENSE-MIT"
+      "${sonalloy_SOURCE_DIR}/LICENSE-APACHE"
+      DESTINATION "${RIFFRA_HEADLESS_RESOURCES_DESTINATION}/riffra-resources"
+      COMPONENT riffra-sidecars
+  )
+endif()

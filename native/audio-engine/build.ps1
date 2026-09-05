@@ -1,4 +1,4 @@
-# Build the native audio engine, run tests, and install sidecar binaries.
+# Build the native audio engine, run tests, and install sidecars and resources.
 param(
     [ValidateSet('Release', 'Debug')]
     [string] $Configuration = 'Release',
@@ -38,6 +38,14 @@ $headlessDestination = if ($env:RIFFRA_HEADLESS_BINARIES_DESTINATION) {
 } else {
     'target/release'
 }
+$headlessResourcesDestination = if ($env:RIFFRA_HEADLESS_RESOURCES_DESTINATION) {
+    $env:RIFFRA_HEADLESS_RESOURCES_DESTINATION
+} elseif ($Configuration -eq 'Debug') {
+    'target/debug'
+} else {
+    'target/release'
+}
+$sonalloyCargoProfile = if ($Configuration -eq 'Debug') { 'dev' } else { 'release' }
 
 # Use the configured generator. Visual Studio generators support -A for the
 # target architecture; other generators select their architecture themselves.
@@ -45,7 +53,9 @@ $configureArgs = @(
     '-S', $engineDir,
     '-B', $buildDir,
     '-G', $Generator,
-    "-DRIFFRA_HEADLESS_BINARIES_DESTINATION=$headlessDestination"
+    "-DRIFFRA_HEADLESS_BINARIES_DESTINATION=$headlessDestination",
+    "-DRIFFRA_HEADLESS_RESOURCES_DESTINATION=$headlessResourcesDestination",
+    "-DRIFFRA_SONALLOY_CARGO_PROFILE=$sonalloyCargoProfile"
 )
 if ($Generator -like 'Visual Studio *' -and $Architecture) {
     $configureArgs += @('-A', $Architecture)
@@ -64,4 +74,4 @@ if (-not $SkipTests) {
 & $cmake --install $buildDir --prefix $repoRoot --component riffra-sidecars --config $Configuration
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine install failed.' }
 
-Write-Host "Audio engine built, tested, and installed to apps/desktop/src-tauri/binaries and $headlessDestination" -ForegroundColor Green
+Write-Host "Audio engine built, tested, and installed to apps/desktop/src-tauri and $headlessDestination" -ForegroundColor Green
