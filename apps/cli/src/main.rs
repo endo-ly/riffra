@@ -1,6 +1,7 @@
 mod args;
 mod attached;
 mod output;
+mod resources;
 mod serve;
 
 use args::{Cli, CliCommand};
@@ -74,7 +75,8 @@ fn run() -> Result<(), String> {
         return Err(format!("{}: {}", error.code, error.message));
     }
 
-    let dispatcher = Dispatcher::open(data_root)?;
+    let built_in_instruments_root = resources::built_in_instruments_root()?;
+    let dispatcher = Dispatcher::open(data_root, built_in_instruments_root)?;
     if interactive {
         return run_interactive(&dispatcher);
     }
@@ -173,10 +175,20 @@ mod tests {
     use serde_json::json;
     use std::fs;
 
+    fn open_test_dispatcher(root: std::path::PathBuf) -> Dispatcher {
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("manifest.json"),
+            br#"{"sourceRevision":"test-revision","presets":[]}"#,
+        )
+        .unwrap();
+        Dispatcher::open(root.clone(), root).unwrap()
+    }
+
     #[test]
     fn control_requests_return_request_id_and_sequence() {
         let root = std::env::temp_dir().join(format!("riffra-cli-protocol-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"42","command":"session.get","params":{}}"#,
@@ -193,7 +205,7 @@ mod tests {
             "riffra-cli-mutation-receipt-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
@@ -215,7 +227,7 @@ mod tests {
             "riffra-cli-note-duplicate-receipt-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
 
         let track = handle_request(
             &dispatcher,
@@ -357,7 +369,7 @@ mod tests {
     fn interactive_undo_requires_the_current_expected_sequence() {
         let root =
             std::env::temp_dir().join(format!("riffra-cli-undo-sequence-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let mutation = handle_request(
             &dispatcher,
             r#"{"requestId":"mutation","command":"track.add","expectedSequence":0,"params":{"name":"Bass","kind":"instrument"}}"#,
@@ -380,7 +392,7 @@ mod tests {
     fn malformed_command_params_return_invalid_request() {
         let root =
             std::env::temp_dir().join(format!("riffra-cli-protocol-params-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"43","command":"track.add","params":{"name":"Bass"}}"#,
@@ -399,7 +411,7 @@ mod tests {
             "riffra-cli-protocol-unknown-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"44","command":"unknown.command","params":{}}"#,
@@ -418,7 +430,7 @@ mod tests {
             "riffra-cli-protocol-conflict-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"45","command":"track.list","expectedSequence":1,"params":{}}"#,
@@ -434,7 +446,7 @@ mod tests {
     fn split_tick_is_required_in_protocol_requests() {
         let root =
             std::env::temp_dir().join(format!("riffra-cli-protocol-split-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"44","command":"audio-clip.split","params":{"clipId":"clip:missing"}}"#,
@@ -453,7 +465,7 @@ mod tests {
             "riffra-cli-protocol-command-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"45","command":"track.remove","params":{"trackId":"track:missing"}}"#,
@@ -472,7 +484,7 @@ mod tests {
             "riffra-cli-runtime-unavailable-{}",
             std::process::id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = open_test_dispatcher(root.clone());
         let response = handle_request(
             &dispatcher,
             r#"{"requestId":"46","command":"missing.list","params":{}}"#,

@@ -39,6 +39,12 @@
       "binaries/riffra-plugin-scan",
       "binaries/riffra-render"
     ],
+    "resources": {
+      "resources/instruments/builtin": "instruments/builtin",
+      "resources/THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "resources/LICENSE-MIT": "LICENSE-MIT",
+      "resources/LICENSE-APACHE": "LICENSE-APACHE"
+    },
     "shortDescription": "Hear, shape, capture, compare, and reuse.",
     "longDescription": "A Windows-first integrated music production workbench."
   }
