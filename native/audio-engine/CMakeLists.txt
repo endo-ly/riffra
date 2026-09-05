@@ -521,13 +521,13 @@ set(RIFFRA_HEADLESS_RESOURCES_DESTINATION "" CACHE STRING
   "Relative install destination for headless built-in instrument resources")
 
 foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
-  install(FILES $<TARGET_FILE:${sidecar}>
+  install(PROGRAMS $<TARGET_FILE:${sidecar}>
       DESTINATION "apps/desktop/src-tauri/binaries"
       RENAME "${sidecar}-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
       COMPONENT riffra-sidecars
   )
   if(RIFFRA_HEADLESS_BINARIES_DESTINATION)
-    install(FILES $<TARGET_FILE:${sidecar}>
+    install(PROGRAMS $<TARGET_FILE:${sidecar}>
         DESTINATION "${RIFFRA_HEADLESS_BINARIES_DESTINATION}"
         RENAME "${sidecar}${RIFFRA_BINARY_SUFFIX}"
         COMPONENT riffra-sidecars
