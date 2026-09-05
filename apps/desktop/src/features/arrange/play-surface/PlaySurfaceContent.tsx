@@ -59,8 +59,8 @@ export function PlaySurfaceContent({
     setComputerKeys(false);
   }, [targetTrackId]);
   const instrumentMissing = Boolean(
-    track?.instrument &&
-    (track.instrument.disabledPlaceholder || missingDeviceIds.includes(track.instrument.id)),
+    track?.instrument?.source.type === 'vst3' &&
+    (track.instrument.source.disabledPlaceholder || missingDeviceIds.includes(track.instrument.id)),
   );
   const instrumentReady = Boolean(
     track?.kind === 'instrument' && track.instrument && !instrumentMissing,

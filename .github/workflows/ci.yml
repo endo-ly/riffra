@@ -70,7 +70,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: native-sidecars-windows
-          path: apps/desktop/src-tauri/binaries
+          path: apps/desktop/src-tauri
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -101,6 +101,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Stage built-in instrument resources
+        shell: bash
+        run: |
+          resource_root="$RUNNER_TEMP/riffra-resources/instruments/builtin"
+          bash scripts/ci/stage-builtin-resources.sh "$resource_root"
+          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resource_root" >> "$GITHUB_ENV"
+
       - run: bash scripts/ci/headless-host-process.sh
 
   headless-process-windows:
@@ -112,6 +119,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Stage built-in instrument resources
+        shell: pwsh
+        run: |
+          $resourceRoot = Join-Path $env:RUNNER_TEMP 'riffra-resources\instruments\builtin'
+          .\scripts\ci\stage-builtin-resources.ps1 -Destination $resourceRoot
+          "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resourceRoot" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - run: .\scripts\ci\headless-host-process.ps1
 
   native-linux:
@@ -119,6 +134,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux dependencies
         shell: bash
@@ -147,8 +164,6 @@ jobs:
         with:
           path: native/audio-engine/build/_deps
           key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-native-deps-
 
       - uses: actions/cache@v6
         with:
@@ -178,8 +193,6 @@ jobs:
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         run: ./native/audio-engine/build.sh Debug
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - name: Exercise normal headless Host with native sidecars
         shell: bash
         env:
@@ -192,18 +205,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: actions/cache@v6
         with:
           path: native/audio-engine/build/_deps
           key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-native-deps-
 
       - name: Build and test on Windows
         shell: pwsh
         run: .\native\audio-engine\build.ps1 -Configuration Debug
-
-      - uses: dtolnay/rust-toolchain@stable
 
       - name: Exercise normal headless Host with native sidecars
         shell: pwsh
@@ -215,5 +226,43 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: native-sidecars-windows
-          path: apps/desktop/src-tauri/binaries
+          path: |
+            apps/desktop/src-tauri/binaries
+            apps/desktop/src-tauri/resources
           if-no-files-found: error
+
+  native-macos:
+    name: Native audio engine (macOS arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v6
+        with:
+          path: native/audio-engine/build/_deps
+          key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+
+      - name: Build, test, and package on macOS
+        shell: bash
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 2
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+        run: ./native/audio-engine/build.sh Release
+
+      - name: Verify release package resources
+        shell: bash
+        run: |
+          test -x target/release/riffra-audio
+          test -x target/release/riffra-plugin-scan
+          test -x target/release/riffra-render
+          test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
+          test -f target/release/riffra-resources/instruments/builtin/manifest.json
+          test -f target/release/riffra-resources/THIRD_PARTY_NOTICES.md
+          test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json
+          test -f apps/desktop/src-tauri/resources/THIRD_PARTY_NOTICES.md
+          test -f apps/desktop/src-tauri/resources/LICENSE-MIT
+          test -f apps/desktop/src-tauri/resources/LICENSE-APACHE

@@ -360,7 +360,11 @@ mod tests {
     #[test]
     fn track_list_omits_device_parameter_values() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-track-list-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let added = dispatcher
             .dispatch(request(
                 "track.add",
@@ -371,7 +375,7 @@ mod tests {
         let track_id = session.arrangement.tracks[0].id.clone();
         let instrument = dispatcher
             .dispatch(request(
-                "instrument.set",
+                "instrument.vst3.set",
                 json!({
                     "trackId": track_id,
                     "pluginPath": "C:\\Plugins\\Synth.vst3"
@@ -417,7 +421,11 @@ mod tests {
     #[test]
     fn timebase_update_patches_only_the_requested_fields() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-timebase-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
 
         let updated = dispatcher
             .dispatch(request("timebase.update", json!({"bpm": 140.0})))
@@ -454,7 +462,11 @@ mod tests {
     #[test]
     fn timebase_update_rejects_ppq_as_an_external_field() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-ppq-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let error = dispatcher
             .dispatch(request("timebase.update", json!({"ppq": 960})))
             .unwrap_err();

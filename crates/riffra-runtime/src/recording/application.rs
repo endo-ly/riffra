@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use crate::asset;
 use crate::audio::AudioSupervisor;
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::library;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus,
@@ -56,6 +57,7 @@ pub struct RecordingContext<'a> {
     pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
     pub storage: riffra_host::SessionStore,
     pub data_root: &'a Path,
+    pub built_in_instruments: &'a BuiltInInstrumentCatalog,
     pub safe_mode: bool,
 }
 
@@ -114,7 +116,7 @@ fn start_recording_in_session(
         ));
     }
     context.runtime.apply_and_wait(
-        runtime_timeline_snapshot(context.data_root, &session),
+        runtime_timeline_snapshot(context.data_root, context.built_in_instruments, &session),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
@@ -1120,6 +1122,7 @@ fn finalize_arrange_recording(
         canonical,
         context.runtime,
         context.data_root,
+        context.built_in_instruments,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )
@@ -1581,6 +1584,7 @@ fn place_recording_on_timeline(
         canonical,
         context.runtime,
         context.data_root,
+        context.built_in_instruments,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )?))
@@ -1730,6 +1734,7 @@ mod tests {
                 "01900000-0000-7000-8000-000000000001",
             ),
             data_root,
+            built_in_instruments: crate::test_support::empty_built_in_catalog(),
             safe_mode,
         }
     }
@@ -1851,6 +1856,7 @@ mod tests {
             runtime: &runtime,
             storage: riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001"),
             data_root: &root,
+            built_in_instruments: crate::test_support::empty_built_in_catalog(),
             safe_mode: false,
         };
 

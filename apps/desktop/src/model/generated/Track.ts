@@ -2,8 +2,8 @@
 import type { AudioInputRoute } from "./AudioInputRoute";
 import type { MidiInputRoute } from "./MidiInputRoute";
 import type { MonitoringState } from "./MonitoringState";
-import type { RackDevice } from "./RackDevice";
 import type { RackInstance } from "./RackInstance";
+import type { TrackInstrument } from "./TrackInstrument";
 import type { TrackKind } from "./TrackKind";
 
 /**
@@ -14,4 +14,4 @@ export type Track = { id: string, name: string, kind: TrackKind, gainDb: number,
  * Presentation color as `#rrggbb`. `None` delegates automatic coloring
  * to the presentation layer.
  */
-color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: RackDevice, rack: RackInstance, };
+color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrument, rack: RackInstance, };

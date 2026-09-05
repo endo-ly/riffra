@@ -121,7 +121,17 @@ Render結果は音声書き出しの成果物であり、DataRootの `renders/` 
 | `Provenance` / `ProvenanceOperation` | 素材がどう生まれたか。operation（recorded / processed / rendered / imported）と source_asset_ids（消費した素材）、parameters        |
 | 生成規則                             | `register`（新規IDを mint）と `derive`（source から派生物を mint）。コンテンツ変更は決して既存IDを上書きしない                      |
 
-### 4.6 ラック
+### 4.6 Instrument とラック
+
+| エンティティ                 | 役割                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceを持つ                                              |
+| `TrackInstrumentSource`      | `internal`（同梱definition本文とBuilt-in preset ID）または `vst3`（外部path、parameter、state）を表す判別付きsource |
+| `InternalInstrumentResource` | 同梱されたBuilt-in presetの識別子。definition本文も正準状態に保存し、resourceの絶対pathは保存しない                 |
+
+`TrackInstrument`はEffect用の`RackDevice`とは別に管理する。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathを割り当てない。
+
+### 4.7 ラック
 
 | エンティティ   | 役割                                                                                                                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -129,7 +139,7 @@ Render結果は音声書き出しの成果物であり、DataRootの `renders/` 
 | `RackDevice`   | チェーンの1スロット。`input` / `plugin` / `utility` / `output`。パス、バイパス、ゲイン、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインのプレースホルダ（disabled_placeholder） |
 | `RackMacro`    | パラメータに割り当てる名前付きマクロコントロール                                                                                                                                                   |
 
-### 4.7 バックグラウンドジョブ
+### 4.8 バックグラウンドジョブ
 
 | エンティティ          | 役割                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------- |

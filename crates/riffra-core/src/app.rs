@@ -547,7 +547,7 @@ mod tests {
     use crate::domain::asset::mint_asset_id;
     use crate::domain::{
         AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, MidiNote, RackDevice,
-        TimelineTick, TrackKind,
+        TimelineTick, TrackInstrument, TrackKind,
     };
     use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
     use std::sync::{Arc, Barrier, Mutex};
@@ -956,7 +956,15 @@ mod tests {
             .unwrap();
         let track_id = with_track.arrangement.tracks[0].id.clone();
         let prepared = application
-            .prepare_track_instrument(&track_id, "Synth".into(), "Synth.vst3".into())
+            .prepare_track_instrument(
+                &track_id,
+                TrackInstrument::vst3(
+                    "device:instrument".into(),
+                    "Synth".into(),
+                    "Synth.vst3".into(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         let validated_arrangement = prepared.session().arrangement.clone();
 
@@ -1181,19 +1189,11 @@ mod tests {
             .add_track("Synth", TrackKind::Instrument)
             .unwrap();
         let track_id = track.arrangement.tracks[0].id.clone();
-        let device = RackDevice {
-            id: "device:synth".into(),
-            name: "Synth".into(),
-            kind: DeviceKind::Plugin,
-            path: Some("Synth.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        };
+        let instrument =
+            TrackInstrument::vst3("device:synth".into(), "Synth".into(), "Synth.vst3".into())
+                .unwrap();
         application
-            .set_track_instrument(&track_id, Some(device))
+            .set_track_instrument(&track_id, Some(instrument))
             .unwrap();
         let with_state = application
             .persist_track_plugin_state(
@@ -1208,8 +1208,9 @@ mod tests {
             .instrument
             .as_ref()
             .unwrap();
-        assert_eq!(instrument.parameter_values, [0.25]);
-        assert_eq!(instrument.state_data.as_deref(), Some("state"));
+        let vst3 = instrument.as_vst3().unwrap();
+        assert_eq!(vst3.parameter_values, [0.25]);
+        assert_eq!(vst3.state_data, Some("state"));
         assert!(instrument.bypassed);
         let disabled = application.disable_missing_plugin("device:synth").unwrap();
         assert!(
@@ -1217,25 +1218,63 @@ mod tests {
                 .instrument
                 .as_ref()
                 .unwrap()
+                .as_vst3()
+                .unwrap()
                 .disabled_placeholder
         );
 
-        let replacement = RackDevice {
-            path: Some("Other.vst3".into()),
-            disabled_placeholder: false,
-            ..disabled.arrangement.tracks[0].instrument.clone().unwrap()
-        };
+        let replacement =
+            TrackInstrument::vst3("device:synth".into(), "Other".into(), "Other.vst3".into())
+                .unwrap();
         let replaced = application
-            .replace_track_plugin("device:synth", replacement)
+            .replace_track_instrument("device:synth", replacement)
             .unwrap();
         assert_eq!(
             replaced.arrangement.tracks[0]
                 .instrument
                 .as_ref()
                 .unwrap()
-                .path
-                .as_deref(),
-            Some("Other.vst3")
+                .as_vst3()
+                .unwrap()
+                .path,
+            "Other.vst3"
+        );
+
+        let built_in_track = application
+            .add_track("Built-in", TrackKind::Instrument)
+            .unwrap();
+        let built_in_track_id = built_in_track.arrangement.tracks[1].id.clone();
+        application
+            .set_track_instrument(
+                &built_in_track_id,
+                Some(
+                    TrackInstrument::built_in(
+                        "device:built-in".into(),
+                        "Clean Sub Bass".into(),
+                        "01-clean-sub-bass".into(),
+                        r#"{"schemaVersion":1}"#.into(),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+        assert!(
+            application
+                .disable_missing_plugin("device:built-in")
+                .is_err()
+        );
+        assert!(
+            application
+                .replace_track_instrument(
+                    "device:built-in",
+                    TrackInstrument::vst3(
+                        "device:built-in".into(),
+                        "Other".into(),
+                        "Other.vst3".into(),
+                    )
+                    .unwrap(),
+                )
+                .is_err()
         );
     }
 
@@ -1425,7 +1464,15 @@ mod tests {
             .unwrap();
         let track_id = track.arrangement.tracks[0].id.clone();
         let prepared = application
-            .prepare_track_instrument(&track_id, "Synth".into(), "Synth.vst3".into())
+            .prepare_track_instrument(
+                &track_id,
+                TrackInstrument::vst3(
+                    "device:instrument".into(),
+                    "Synth".into(),
+                    "Synth.vst3".into(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         application
             .update_session_settings(crate::application::SessionSettingsPatch {

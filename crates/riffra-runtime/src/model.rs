@@ -1,6 +1,6 @@
 use riffra_core::{
     AudioInputRoute, CanonicalState, DeviceKind, MidiInputRoute, MonitoringState, RackDevice,
-    RackMacro, Track, TrackKind,
+    RackMacro, Track, TrackInstrument, TrackInstrumentSource, TrackKind,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -99,7 +99,7 @@ pub struct TrackSummary {
     pub midi_input: MidiInputRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub instrument: Option<TrackDeviceSummary>,
+    pub instrument: Option<TrackInstrumentSummary>,
     pub rack: TrackRackSummary,
 }
 
@@ -119,6 +119,24 @@ pub struct TrackDeviceSummary {
     #[ts(optional)]
     pub state_data: Option<String>,
     pub disabled_placeholder: bool,
+}
+
+/// Instrument metadata included in a lightweight Track projection.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackInstrumentSummary {
+    pub id: String,
+    pub name: String,
+    pub bypassed: bool,
+    pub source: TrackInstrumentSummarySource,
+}
+
+/// Instrument implementation family included in a Track summary.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum TrackInstrumentSummarySource {
+    Internal,
+    Vst3,
 }
 
 /// Rack metadata included in a lightweight Track projection.
@@ -147,7 +165,7 @@ impl TrackSummary {
             instrument: track
                 .instrument
                 .as_ref()
-                .map(TrackDeviceSummary::from_device),
+                .map(TrackInstrumentSummary::from_instrument),
             rack: TrackRackSummary {
                 devices: track
                     .rack
@@ -172,6 +190,20 @@ impl TrackDeviceSummary {
             gain_db: device.gain_db,
             state_data: device.state_data.clone(),
             disabled_placeholder: device.disabled_placeholder,
+        }
+    }
+}
+
+impl TrackInstrumentSummary {
+    fn from_instrument(instrument: &TrackInstrument) -> Self {
+        Self {
+            id: instrument.id.clone(),
+            name: instrument.name.clone(),
+            bypassed: instrument.bypassed,
+            source: match &instrument.source {
+                TrackInstrumentSource::Internal { .. } => TrackInstrumentSummarySource::Internal,
+                TrackInstrumentSource::Vst3 { .. } => TrackInstrumentSummarySource::Vst3,
+            },
         }
     }
 }

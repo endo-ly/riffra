@@ -193,11 +193,11 @@ Input、Monitoring、名称など Track 自体の詳細属性は Properties が�
 
 Track Menu は Track 単位の操作をまとめる。Audio Track と Instrument Track で同じ構造を持ち、Device の編集面への入口と Track の複製・削除を提供する。Device が挿入された Track では挿入済み Device をそのまま開けるため、Track を選んで Plugin Editor へ至る最短経路になる。
 
-| 項目                           | 仕様                                                             |
-| ------------------------------ | ---------------------------------------------------------------- |
-| Open `<Device 名>`             | 挿入済み Device の Plugin Editor を開く。Instrument、Effect の順 |
-| Choose Instrument / Add Effect | Device が未挿入のときの追加入口。Track Kind に応じて候補を絞る   |
-| Duplicate / Delete             | Track の複製と削除。Delete は Clip 数の確認を伴う                |
+| 項目                           | 仕様                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| Open `<Device 名>`             | 挿入済みVST3 DeviceのPlugin Editorを開く。Built-in音源には表示しない                      |
+| Choose Instrument / Add Effect | Deviceが未挿入のときの追加入口。InstrumentはBuilt-in音源と外部VST3を同じflat listで選べる |
+| Duplicate / Delete             | Track の複製と削除。Delete は Clip 数の確認を伴う                                         |
 
 ### 3.4 Clip 共通操作
 
@@ -352,13 +352,14 @@ Arrange Selection
 
 Track 自体の属性を扱う。
 
-| 領域       | 内容                                                                  |
-| ---------- | --------------------------------------------------------------------- |
-| Identity   | Track 名、種別                                                        |
-| Input      | Audio / MIDI Input routing                                            |
-| Monitoring | Input Monitoring                                                      |
-| Mix        | Volume / Pan の数値確認と精密調整                                     |
-| Status     | Input source、recording、missing dependency など Track に関係する状態 |
+| 領域       | 内容                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| Identity   | Track 名、種別                                                                             |
+| Input      | Audio / MIDI Input routing                                                                 |
+| Monitoring | Input Monitoring                                                                           |
+| Mix        | Volume / Pan の数値確認と精密調整                                                          |
+| Status     | Input source、recording、missing dependency など Track に関係する状態                      |
+| Instrument | Built-in音源またはVST3音源の名前、Bypass、Change、Clear。EditとMissing操作はVST3だけに表示 |
 
 Track Properties は Track 属性を編集する。Instrument と Effect Chain は Devices の編集面で扱う。
 

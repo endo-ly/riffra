@@ -3,7 +3,7 @@
 use crate::application::{MusicalHarmonyEventView, MusicalRegionView};
 use crate::domain::{
     AssetId, AudioClip, AutomationLane, DeviceKind, MidiClip, MusicalPosition, ProjectTimebase,
-    TimelineTick, TrackKind,
+    TimelineTick, TrackInstrument, TrackInstrumentSource, TrackKind,
 };
 use crate::{
     ApplicationError, AudioInputRoute, CanonicalState, HistoryState, MidiInputRoute,
@@ -103,7 +103,7 @@ pub struct TrackInspection {
     pub monitoring: MonitoringState,
     pub audio_input: Option<AudioInputRoute>,
     pub midi_input: MidiInputRoute,
-    pub instrument: Option<DeviceInspection>,
+    pub instrument: Option<InstrumentInspection>,
     pub effects: Vec<DeviceInspection>,
     pub audio_clip_count: usize,
     pub midi_clip_count: usize,
@@ -123,6 +123,24 @@ pub struct DeviceInspection {
     pub kind: DeviceKind,
     pub bypassed: bool,
     pub disabled_placeholder: bool,
+}
+
+/// Lightweight metadata for an Instrument Track assignment.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentInspection {
+    pub id: String,
+    pub name: String,
+    pub bypassed: bool,
+    pub source: InstrumentSourceKind,
+}
+
+/// The implementation family of an Instrument Track assignment.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstrumentSourceKind {
+    Internal,
+    Vst3,
 }
 
 /// A musical marker projection.
@@ -447,7 +465,10 @@ fn inspect_track(
         monitoring: track.monitoring,
         audio_input: track.audio_input,
         midi_input: track.midi_input.clone(),
-        instrument: track.instrument.as_ref().map(DeviceInspection::from_device),
+        instrument: track
+            .instrument
+            .as_ref()
+            .map(InstrumentInspection::from_instrument),
         effects: track
             .rack
             .devices
@@ -486,6 +507,20 @@ impl DeviceInspection {
             kind: device.kind,
             bypassed: device.bypassed,
             disabled_placeholder: device.disabled_placeholder,
+        }
+    }
+}
+
+impl InstrumentInspection {
+    fn from_instrument(instrument: &TrackInstrument) -> Self {
+        Self {
+            id: instrument.id.clone(),
+            name: instrument.name.clone(),
+            bypassed: instrument.bypassed,
+            source: match &instrument.source {
+                TrackInstrumentSource::Internal { .. } => InstrumentSourceKind::Internal,
+                TrackInstrumentSource::Vst3 { .. } => InstrumentSourceKind::Vst3,
+            },
         }
     }
 }
@@ -598,7 +633,7 @@ mod tests {
     use super::*;
     use crate::{
         AutomationLane, CreativeSession, HarmonyChord, HarmonyEvent, MidiClip, MidiEvent,
-        MidiEventKind, MidiNote, RackDevice, RackInstance, TimelineRegion, Track,
+        MidiEventKind, MidiNote, RackInstance, TimelineRegion, Track, TrackInstrument,
     };
 
     fn canonical(session: CreativeSession) -> CanonicalState {
@@ -821,17 +856,10 @@ mod tests {
     fn inspection_has_no_fixed_structural_cap_and_omits_detail_payloads() {
         let mut session = CreativeSession::new(1);
         let mut track = Track::instrument("track:keys".into(), "Keys".into());
-        track.instrument = Some(RackDevice {
-            id: "device:synth".into(),
-            name: "Synth".into(),
-            kind: DeviceKind::Plugin,
-            path: Some("synth.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: vec![0.25],
-            state_data: Some("large plugin state".into()),
-            disabled_placeholder: false,
-        });
+        track.instrument = Some(
+            TrackInstrument::vst3("device:synth".into(), "Synth".into(), "synth.vst3".into())
+                .unwrap(),
+        );
         track.rack = RackInstance {
             devices: Vec::new(),
             macros: Vec::new(),

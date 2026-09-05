@@ -2,8 +2,9 @@
 name: riffra-headless
 description: >-
   Use when operating Riffra without the desktop GUI: editing sessions,
-  tracks, clips, and MIDI notes, or running playback, recording, rendering,
-  and plugin operations through the riffra CLI. Also trigger on:
+  tracks, clips, and MIDI notes, selecting built-in instruments, or running
+  playback, recording, rendering, and plugin operations through the riffra CLI.
+  Also trigger on:
   riffra CLI, ヘッドレス操作, CLIでDAWを操作.
 ---
 

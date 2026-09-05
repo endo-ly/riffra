@@ -86,21 +86,21 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 **起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
 
-| 命令                                                                   | 責務                                                                 |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `get_bootstrap_state`                                                  | CanonicalState・ProjectState・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status`                                                     | 音声状態の照会                                                       |
-| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                      |
-| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                             |
-| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                   |
-| `restore_recovery_generation`                                          | 世代からの回復                                                       |
+| 命令                                                                   | 責務                                                                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `get_bootstrap_state`                                                  | CanonicalState・ProjectState・Built-in instrument catalog・セーフモード・回復候補の初期状態を返す |
+| `get_audio_status`                                                     | 音声状態の照会                                                                                    |
+| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                                                   |
+| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                                          |
+| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                                                |
+| `restore_recovery_generation`                                          | 世代からの回復                                                                                    |
 
 **セッション・アレンジ（session/commands/）**
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | タイムラインレンジ | `update_timeline_loop_range`、`update_timeline_punch_range`、`update_arrangement_timebase`                                                                                                                                                                                                                                                                                                              |
-| トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`set_track_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                                                                                           |
+| トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`list_built_in_instruments`、`set_track_built_in_instrument`、`set_track_vst3_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                        |
 | クリップ           | `add_audio_clip_to_arrangement`、`add_midi_clip_to_arrangement`、`create_midi_clip`、`update_audio_clip`、`update_midi_clip`、`move_audio_clips`、`move_midi_clips`、`trim_audio_clip`、`trim_midi_clip`、`split_audio_clip`、`split_midi_clip`、`crossfade_audio_clips`、`duplicate_audio_clip`、`duplicate_midi_clip`、`remove_timeline_clips`、`paste_timeline_clips`、`set_audio_clip_take_variant` |
 | ノート             | `add_midi_note`、`insert_midi_notes`、`update_midi_note`、`update_midi_notes`、`remove_midi_note`、`remove_midi_notes`、`duplicate_midi_notes`、`quantize_midi_notes`                                                                                                                                                                                                                                   |
 | オートメーション   | `set_track_automation`                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -369,7 +369,7 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                       |
 | Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                  |
 | Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                 |
-| Rack state             | `plugin catalog list`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass/parameter-set`                                                                                                                                                                               |
+| Rack state             | `plugin catalog list`、`instrument builtin list/set`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass/parameter-set`                                                                                                                                                |
 | Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
 Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
@@ -382,15 +382,15 @@ Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答�
 
 DesktopのTauri command境界が所有する機能と、Live HostのControl Serverが所有する機能は次のように分かれる。
 
-| 操作群                                                 | Desktop / serve       | Standalone           |
-| ------------------------------------------------------ | --------------------- | -------------------- |
-| Runtime投影・トランスポート                            | HostのRuntime         | `runtimeUnavailable` |
-| 音声状態・Live MIDI                                    | HostのAudio Runtime   | `runtimeUnavailable` |
-| プラグイン一覧・VST音源/エフェクト・デバイスパラメータ | HostのPlugin Runtime  | `runtimeUnavailable` |
-| 欠落依存                                               | HostのMissing service | `runtimeUnavailable` |
-| 録音                                                   | HostのRecording       | `runtimeUnavailable` |
-| レンダー・ジョブ                                       | HostのRenderWorker    | `runtimeUnavailable` |
-| ライブラリ・解析・Asset preview                        | Hostのshared service  | `runtimeUnavailable` |
+| 操作群                                                               | Desktop / serve                   | Standalone                                                                          |
+| -------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
+| Runtime投影・トランスポート                                          | HostのRuntime                     | `runtimeUnavailable`                                                                |
+| 音声状態・Live MIDI                                                  | HostのAudio Runtime               | `runtimeUnavailable`                                                                |
+| Built-in一覧・プラグイン一覧・VST音源/エフェクト・デバイスパラメータ | HostのInstrument / Plugin Runtime | Built-inの一覧・割り当てはCanonical編集として利用可能、その他は`runtimeUnavailable` |
+| 欠落依存                                                             | HostのMissing service             | `runtimeUnavailable`                                                                |
+| 録音                                                                 | HostのRecording                   | `runtimeUnavailable`                                                                |
+| レンダー・ジョブ                                                     | HostのRenderWorker                | `runtimeUnavailable`                                                                |
+| ライブラリ・解析・Asset preview                                      | Hostのshared service              | `runtimeUnavailable`                                                                |
 
 プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。プラグインエディタのopen command、録音、プレビュー、VSTスキャン、ライブラリmetadata、解析は現在HostのRuntime / shared serviceを使う。エディタから発生したplugin state / parameterの永続化はHost内のcoordinatorがCanonical commitを行い、Desktop WebViewの往復には依存しない。
 

@@ -8,22 +8,22 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 ) -> String {
     if !context.runtime.reset_for_repair() {
         return format!(
-            "Arrangement Runtime rejected the VST candidate and could not be reset for the canonical Session: {original_error}"
+            "Arrangement Runtime rejected the instrument or device candidate and could not be reset for the canonical Session: {original_error}"
         );
     }
     match sync_arrangement_runtime(context) {
         Ok(_) => format!(
-            "Arrangement Runtime rejected the VST candidate; the canonical Session was restored: {original_error}"
+            "Arrangement Runtime rejected the instrument or device candidate; the canonical Session was restored: {original_error}"
         ),
         Err(restore_error) => format!(
-            "Arrangement Runtime rejected the VST candidate and the previous graph could not be restored ({restore_error}): {original_error}"
+            "Arrangement Runtime rejected the instrument or device candidate and the previous graph could not be restored ({restore_error}): {original_error}"
         ),
     }
 }
 /// Validates a plugin-bearing candidate against the real Arrangement Runtime
 /// before persisting it. A failed candidate never becomes part of the
 /// canonical Session, and a persistence failure repairs the previous graph.
-pub(super) fn commit_plugin_arrangement<D: RuntimeDriver>(
+pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
@@ -131,16 +131,16 @@ pub fn set_track_midi_input(
     crate::session::adapter::arrangement_mutation_result(context)
 }
 
-pub fn set_track_instrument(
-    context: &SessionContext<'_>,
+pub fn set_track_vst3_instrument<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     track_id: &str,
     path: &str,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
-    set_track_instrument_with_expected_sequence(context, track_id, path, None)
+    set_track_vst3_instrument_with_expected_sequence(context, track_id, path, None)
 }
 
-pub(crate) fn set_track_instrument_with_expected_sequence(
-    context: &SessionContext<'_>,
+pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
     track_id: &str,
     path: &str,
     expected_sequence: Option<u64>,
@@ -151,20 +151,82 @@ pub(crate) fn set_track_instrument_with_expected_sequence(
         ));
     }
     let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
+    let snapshot = current_session(context)?;
+    let id = snapshot
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track.instrument.as_ref())
+        .map(|instrument| instrument.id.clone())
+        .unwrap_or_else(|| format!("device:instrument:{track_id}"));
+    let instrument =
+        riffra_core::TrackInstrument::vst3(id, name, validated_path.to_string_lossy().into_owned())
+            .map_err(AdapterError::command)?;
     let prepared = context
         .core
         .application(&context.storage)
-        .prepare_track_instrument(
-            track_id,
-            name,
-            validated_path.to_string_lossy().into_owned(),
-        )
+        .prepare_track_instrument(track_id, instrument)
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_plugin_arrangement(context, prepared)
+    commit_device_arrangement(context, prepared)
+}
+
+/// Assigns a built-in instrument resolved from the immutable Host catalog.
+pub fn set_track_builtin_instrument<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    track_id: &str,
+    preset_id: &str,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    set_track_builtin_instrument_with_expected_sequence(context, track_id, preset_id, None)
+}
+
+pub(crate) fn set_track_builtin_instrument_with_expected_sequence<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    track_id: &str,
+    preset_id: &str,
+    expected_sequence: Option<u64>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    let definition = context
+        .built_in_instruments
+        .resolve(preset_id)
+        .map_err(AdapterError::command)?;
+    let snapshot = current_session(context)?;
+    let id = snapshot
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track.instrument.as_ref())
+        .map(|instrument| instrument.id.clone())
+        .unwrap_or_else(|| format!("device:instrument:{track_id}"));
+    let instrument = riffra_core::TrackInstrument::built_in(
+        id,
+        definition.summary.name.clone(),
+        preset_id.to_owned(),
+        definition.definition_json.clone(),
+    )
+    .map_err(AdapterError::command)?;
+    let prepared = context
+        .core
+        .application(&context.storage)
+        .prepare_track_instrument(track_id, instrument)
+        .map_err(AdapterError::from)?;
+    let prepared = match expected_sequence {
+        Some(sequence) => prepared.with_expected_sequence(sequence),
+        None => prepared,
+    };
+    if context.safe_mode {
+        commit_core_application(context, |core, store| {
+            core.application(store).commit_prepared(prepared)
+        })?;
+        arrangement_mutation_without_projection(context)
+    } else {
+        commit_device_arrangement(context, prepared)
+    }
 }
 
 pub fn clear_track_instrument(
@@ -210,7 +272,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_plugin_arrangement(context, prepared)
+    commit_device_arrangement(context, prepared)
 }
 
 pub fn remove_track_effect(
@@ -254,16 +316,18 @@ pub fn set_track_device_bypassed(
                 .instrument
                 .as_ref()
                 .filter(|device| device.id == device_id)
+                .map(|device| device.bypassed)
                 .or_else(|| {
                     track
                         .rack
                         .devices
                         .iter()
                         .find(|device| device.id == device_id)
+                        .map(|device| device.bypassed)
                 })
         })
         .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
-    let previous = device.bypassed;
+    let previous = device;
     context
         .audio
         .set_track_device_bypassed(track_id, device_id, bypassed)?;
@@ -294,28 +358,37 @@ pub fn set_track_device_parameter(
     }
     let value = value.clamp(0.0, 1.0);
     let session = current_session(context)?;
-    let device = session
+    let track = session
         .arrangement
         .tracks
         .iter()
         .find(|track| track.id == track_id)
-        .and_then(|track| {
-            track
-                .instrument
-                .as_ref()
-                .filter(|device| device.id == device_id)
-                .or_else(|| {
-                    track
-                        .rack
-                        .devices
-                        .iter()
-                        .find(|device| device.id == device_id)
-                })
-        })
-        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
+        .ok_or_else(|| AdapterError::command(format!("Track is not registered: {track_id}")))?;
     let index = usize::try_from(parameter_index)
         .map_err(|_| "Track Device parameter index is invalid.".to_string())?;
-    let previous = device.parameter_values.get(index).copied().unwrap_or(0.0);
+    let previous = if let Some(instrument) = track
+        .instrument
+        .as_ref()
+        .filter(|instrument| instrument.id == device_id)
+    {
+        let vst3 = instrument.as_vst3().ok_or_else(|| {
+            AdapterError::command("Built-in instruments do not expose parameters.")
+        })?;
+        vst3.parameter_values.get(index).copied().unwrap_or(0.0)
+    } else {
+        track
+            .rack
+            .devices
+            .iter()
+            .find(|device| device.id == device_id)
+            .ok_or_else(|| {
+                AdapterError::command(format!("Track Device is not registered: {device_id}"))
+            })?
+            .parameter_values
+            .get(index)
+            .copied()
+            .unwrap_or(0.0)
+    };
     context
         .audio
         .set_track_device_parameter(track_id, device_id, parameter_index, value)?;
@@ -349,18 +422,26 @@ pub fn open_track_plugin_editor(
         .iter()
         .find(|track| track.id == track_id)
         .is_some_and(|track| {
-            track
-                .instrument
-                .as_ref()
-                .is_some_and(|device| device.id == device_id)
-                || track
-                    .rack
-                    .devices
-                    .iter()
-                    .any(|device| device.id == device_id)
+            track.instrument.as_ref().is_some_and(|instrument| {
+                instrument.id == device_id && instrument.as_vst3().is_some()
+            }) || track
+                .rack
+                .devices
+                .iter()
+                .any(|device| device.id == device_id)
         });
     if !registered {
         return Err(format!("Track Device is not registered: {device_id}").into());
+    }
+    if session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .and_then(|track| track.instrument.as_ref())
+        .is_some_and(|instrument| instrument.id == device_id && instrument.as_vst3().is_none())
+    {
+        return Err("Built-in instruments do not provide a plugin editor.".into());
     }
     drop(session);
     let project_id = context
@@ -511,7 +592,7 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_plugin_arrangement(context, prepared)
+    commit_device_arrangement(context, prepared)
 }
 
 #[cfg(test)]
@@ -605,11 +686,37 @@ mod tests {
         session
     }
 
-    fn candidate_context<'a>(
+    fn built_in_base_session() -> CreativeSession {
+        let mut session = CreativeSession::new(1);
+        session.arrangement.tracks.push(Track::instrument(
+            "track:instrument".into(),
+            "Instrument Track".into(),
+        ));
+        session
+    }
+
+    fn built_in_catalog(root: &Path) -> crate::instrument::BuiltInInstrumentCatalog {
+        let directory = root.join("01-clean-sub-bass");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("definition.json"),
+            r#"{"metadata":{"name":"Clean Sub Bass","description":"Test preset"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":["01-clean-sub-bass"]}"#,
+        )
+        .unwrap();
+        crate::instrument::BuiltInInstrumentCatalog::load(root).unwrap()
+    }
+
+    fn candidate_context_with_catalog<'a>(
         root: &'a Path,
         runtime: &'a crate::RuntimeReconciler<CandidateRuntimeDriver>,
         audio: &'a crate::AudioSupervisor,
         core: &'a riffra_core::AppCore<crate::AudioSupervisor>,
+        built_in_instruments: &'a crate::instrument::BuiltInInstrumentCatalog,
     ) -> SessionContext<'a, CandidateRuntimeDriver> {
         let storage = riffra_host::SessionStore::new(root, "01900000-0000-7000-8000-000000000001");
         SessionContext {
@@ -618,10 +725,26 @@ mod tests {
             runtime,
             storage,
             data_root: root,
+            built_in_instruments,
             safe_mode: false,
             events: &crate::NoopHostEventSink,
             project_commit: None,
         }
+    }
+
+    fn candidate_context<'a>(
+        root: &'a Path,
+        runtime: &'a crate::RuntimeReconciler<CandidateRuntimeDriver>,
+        audio: &'a crate::AudioSupervisor,
+        core: &'a riffra_core::AppCore<crate::AudioSupervisor>,
+    ) -> SessionContext<'a, CandidateRuntimeDriver> {
+        candidate_context_with_catalog(
+            root,
+            runtime,
+            audio,
+            core,
+            crate::test_support::empty_built_in_catalog(),
+        )
     }
 
     fn prepared_plugin_candidate<D: RuntimeDriver>(
@@ -636,6 +759,121 @@ mod tests {
                 r"C:\plugins\Candidate.vst3".into(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn built_in_candidate_commits_after_runtime_prepare() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-built-in-candidate-committed-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = built_in_catalog(&root);
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            built_in_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let context = candidate_context_with_catalog(&root, &runtime, &audio, &core, &catalog);
+
+        // Act
+        let result =
+            set_track_builtin_instrument(&context, "track:instrument", "01-clean-sub-bass");
+
+        // Assert
+        assert!(result.is_ok());
+        let snapshot = core.snapshot().unwrap();
+        let instrument = snapshot.session.arrangement.tracks[0]
+            .instrument
+            .as_ref()
+            .unwrap();
+        assert_eq!(instrument.name, "Clean Sub Bass");
+        assert_eq!(instrument.built_in_preset_id(), Some("01-clean-sub-bass"));
+        assert_eq!(
+            instrument.as_internal().unwrap().0,
+            r#"{"metadata":{"name":"Clean Sub Bass","description":"Test preset"}}"#
+        );
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejected_built_in_candidate_leaves_the_canonical_session_unchanged() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-built-in-candidate-rejected-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = built_in_catalog(&root);
+        let driver = Arc::new(CandidateRuntimeDriver::new(true));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            built_in_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let context = candidate_context_with_catalog(&root, &runtime, &audio, &core, &catalog);
+
+        // Act
+        let result =
+            set_track_builtin_instrument(&context, "track:instrument", "01-clean-sub-bass");
+
+        // Assert
+        assert!(result.is_err());
+        assert!(
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .instrument
+                .is_none()
+        );
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), [0]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn safe_mode_commits_a_built_in_assignment_without_runtime_projection() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-built-in-candidate-safe-mode-{}",
+            riffra_host::now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = built_in_catalog(&root);
+        let driver = Arc::new(CandidateRuntimeDriver::new(false));
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let audio = crate::AudioSupervisor::offline("test");
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            built_in_base_session(),
+            audio.clone(),
+            false,
+            false,
+        );
+        let mut context = candidate_context_with_catalog(&root, &runtime, &audio, &core, &catalog);
+        context.safe_mode = true;
+
+        // Act
+        let result =
+            set_track_builtin_instrument(&context, "track:instrument", "01-clean-sub-bass");
+
+        // Assert
+        assert!(result.is_ok());
+        assert!(
+            core.snapshot().unwrap().session.arrangement.tracks[0]
+                .instrument
+                .is_some()
+        );
+        assert!(driver.loaded.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
@@ -668,7 +906,7 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_plugin_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&context, candidate);
 
         // Assert
         assert!(result.is_err());
@@ -697,7 +935,7 @@ mod tests {
         let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
         let context = candidate_context(&root, &runtime, &audio, &core);
         let candidate = prepared_plugin_candidate(&context);
-        assert!(commit_plugin_arrangement(&context, candidate).is_err());
+        assert!(commit_device_arrangement(&context, candidate).is_err());
         let loaded_before_restart = driver.loaded.lock().unwrap().len();
         driver.generation.store(2, Ordering::Release);
 
@@ -747,7 +985,7 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_plugin_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&context, candidate);
 
         // Assert
         assert!(matches!(
@@ -790,7 +1028,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let result = commit_plugin_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&context, candidate);
 
         // Assert
         assert!(matches!(
@@ -821,7 +1059,7 @@ mod tests {
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_plugin_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&context, candidate);
 
         // Assert
         assert!(result.is_err());

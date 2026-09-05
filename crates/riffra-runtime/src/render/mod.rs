@@ -1,4 +1,5 @@
 use crate::asset;
+use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_core::{AssetId, CreativeSession, MusicalPosition, OfflineRenderRequest, RenderRuntime};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -76,12 +77,14 @@ struct RenderPlan {
 pub fn render_timeline_with_options(
     renderer: &impl RenderRuntime,
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
 ) -> Result<RenderResult, String> {
     render_timeline_with_renderer(
         data_root,
+        built_in_instruments,
         session,
         created_at_ms,
         options,
@@ -99,6 +102,7 @@ pub fn render_timeline_with_options(
 pub(crate) fn render_timeline_with_cancellation(
     renderer: &RenderWorker,
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
@@ -106,6 +110,7 @@ pub(crate) fn render_timeline_with_cancellation(
 ) -> Result<RenderResult, String> {
     render_timeline_with_renderer(
         data_root,
+        built_in_instruments,
         session,
         created_at_ms,
         options,
@@ -116,13 +121,20 @@ pub(crate) fn render_timeline_with_cancellation(
 
 fn render_timeline_with_renderer(
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
     render: impl FnOnce(OfflineRenderRequest) -> Result<(), String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
-    let plan = build_render_plan(data_root, session, created_at_ms, &options)?;
+    let plan = build_render_plan(
+        data_root,
+        built_in_instruments,
+        session,
+        created_at_ms,
+        &options,
+    )?;
     if let Some(parent) = plan.output_path.parent()
         && let Err(error) = fs::create_dir_all(parent)
     {
@@ -250,6 +262,7 @@ fn remove_empty_render_directory(output_path: &Path) {
 
 fn build_render_plan(
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
     created_at_ms: u64,
     options: &RenderOptions,
@@ -347,7 +360,11 @@ fn build_render_plan(
             "Offline Render source asset is not registered: {missing_id}"
         ));
     }
-    let snapshot = crate::runtime_snapshot::runtime_timeline_snapshot(data_root, &render_session);
+    let snapshot = crate::runtime_snapshot::runtime_timeline_snapshot(
+        data_root,
+        built_in_instruments,
+        &render_session,
+    );
     fail_for_missing_dependencies(&snapshot)?;
 
     Ok(RenderPlan {
@@ -497,6 +514,10 @@ mod tests {
         session
     }
 
+    fn empty_catalog() -> &'static BuiltInInstrumentCatalog {
+        crate::test_support::empty_built_in_catalog()
+    }
+
     #[test]
     fn entire_arrangement_uses_tick_extent() {
         let session = session_with_clips();
@@ -582,8 +603,15 @@ mod tests {
     #[test]
     fn midi_session_data_does_not_invent_an_asset_source() {
         let root = std::env::temp_dir().join("riffra-midi-render-plan");
-        let plan =
-            build_render_plan(&root, &session_with_clips(), 1, &RenderOptions::default()).unwrap();
+        let catalog = empty_catalog();
+        let plan = build_render_plan(
+            &root,
+            catalog,
+            &session_with_clips(),
+            1,
+            &RenderOptions::default(),
+        )
+        .unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
         assert_eq!(
@@ -600,8 +628,10 @@ mod tests {
             "latency-reference".into(),
             "Latency Reference".into(),
         ));
+        let catalog = empty_catalog();
         let plan = build_render_plan(
             &root,
+            catalog,
             &session,
             1,
             &RenderOptions {
@@ -623,8 +653,10 @@ mod tests {
     fn failed_render_removes_empty_output_directory() {
         let root =
             std::env::temp_dir().join(format!("riffra-failed-render-{}", std::process::id()));
+        let catalog = empty_catalog();
         let result = render_timeline_with_renderer(
             &root,
+            catalog,
             &session_with_clips(),
             1,
             RenderOptions::default(),

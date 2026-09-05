@@ -7,7 +7,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 import { toast } from '@/shared/toasts';
 
 export function useArrangeShell(
-  api: Pick<ArrangeApi, 'setTrackInstrument' | 'addTrackEffect'>,
+  api: Pick<ArrangeApi, 'setTrackVst3Instrument' | 'addTrackEffect'>,
   session: CreativeSession | null,
   applyCanonicalState: (canonical: CanonicalState) => boolean,
   hostGeneration = 0,
@@ -46,7 +46,7 @@ export function useArrangeShell(
     try {
       const next =
         target === 'instrument'
-          ? await api.setTrackInstrument(selectedTrack.id, plugin.path)
+          ? await api.setTrackVst3Instrument(selectedTrack.id, plugin.path)
           : await api.addTrackEffect(selectedTrack.id, plugin.path);
       if (currentHostGeneration.current !== requestGeneration) return;
       applyArrangementMutation(next, applyCanonicalState, (message) =>
