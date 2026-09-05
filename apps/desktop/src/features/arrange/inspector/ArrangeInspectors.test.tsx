@@ -132,6 +132,57 @@ describe('Arrange Inspectors', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
   });
 
+  it('shows built-in instruments without editor or missing-plugin actions', () => {
+    const session = defaultSession();
+    const track = {
+      id: 'track:builtin',
+      name: 'Built-in Keys',
+      kind: 'instrument' as const,
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off' as const,
+      midiInput: {},
+      instrument: {
+        id: '01-clean-sub-bass',
+        name: 'Clean Sub Bass',
+        bypassed: false,
+        source: {
+          type: 'internal' as const,
+          definitionJson: '{}',
+          resource: { type: 'builtInPreset' as const, presetId: '01-clean-sub-bass' },
+        },
+      },
+      rack: { devices: [], macros: [] },
+    };
+    session.arrangement.tracks.push(track);
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+
+    render(
+      <TrackInspector
+        track={track}
+        session={session}
+        applyCanonicalState={() => true}
+        audio={fakeAudioStatus()}
+        missingDeviceIds={[]}
+        plugins={[]}
+        builtInInstruments={[]}
+        onDisableMissingPlugin={async () => undefined}
+        onReplaceMissingPlugin={async () => undefined}
+        onRescanMissingPlugins={async () => undefined}
+        api={api}
+      />,
+    );
+
+    expect(screen.getByText('Clean Sub Bass')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bypass' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByText('MISSING PLUGIN')).not.toBeInTheDocument();
+  });
+
   it('changes Raw/Processed source only on the selected Clip', async () => {
     const initial = recordingSession();
     const canonical = structuredClone(initial);

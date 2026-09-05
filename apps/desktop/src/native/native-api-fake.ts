@@ -3,6 +3,7 @@ import type {
   ArrangementMutationResult,
   AudioStatus,
   BackgroundJobStatus,
+  BuiltInInstrumentSummary,
   BootstrapState,
   CanonicalState,
   MissingDependency,
@@ -32,6 +33,7 @@ export interface FakeNativeApiOptions {
   audio?: AudioStatus;
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
+  builtInInstruments?: BuiltInInstrumentSummary[];
   missingDependencies?: MissingDependency[];
   responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
   failures?: Partial<Record<keyof NativeApi, Error>>;
@@ -105,6 +107,7 @@ export class FakeNativeApi implements NativeApi {
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
+  builtInInstruments: BuiltInInstrumentSummary[];
   bootstrapState: BootstrapState;
   hostConnectionState: HostConnectionState;
   missing: MissingDependency[];
@@ -135,7 +138,13 @@ export class FakeNativeApi implements NativeApi {
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
-    this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    this.bootstrapState = mergeBootstrap({
+      ...options.bootstrapState,
+      ...(options.builtInInstruments
+        ? { builtInInstruments: options.builtInInstruments }
+        : undefined),
+    });
+    this.builtInInstruments = this.bootstrapState.builtInInstruments;
     this.hostConnectionState = {
       ...this.bootstrapState.hostConnection,
       ...options.hostConnection,
@@ -412,8 +421,14 @@ export class FakeNativeApi implements NativeApi {
   setTrackMidiInput(...args: Parameters<NativeApi['setTrackMidiInput']>) {
     return this.command('setTrackMidiInput', args);
   }
-  setTrackInstrument(...args: Parameters<NativeApi['setTrackInstrument']>) {
-    return this.command('setTrackInstrument', args);
+  listBuiltInInstruments(...args: Parameters<NativeApi['listBuiltInInstruments']>) {
+    return this.command('listBuiltInInstruments', args);
+  }
+  setTrackBuiltInInstrument(...args: Parameters<NativeApi['setTrackBuiltInInstrument']>) {
+    return this.command('setTrackBuiltInInstrument', args);
+  }
+  setTrackVst3Instrument(...args: Parameters<NativeApi['setTrackVst3Instrument']>) {
+    return this.command('setTrackVst3Instrument', args);
   }
   clearTrackInstrument(...args: Parameters<NativeApi['clearTrackInstrument']>) {
     return this.command('clearTrackInstrument', args);
@@ -631,6 +646,7 @@ export class FakeNativeApi implements NativeApi {
       discontinuity: 0,
       unavailableClipIds: [],
       missingDeviceIds: [],
+      instrumentFaults: [],
       ...status,
     };
     this.transportListeners.forEach((listener) => listener(next));
@@ -693,6 +709,8 @@ export class FakeNativeApi implements NativeApi {
     switch (name) {
       case 'bootstrap':
         return Promise.resolve(this.bootstrapState);
+      case 'listBuiltInInstruments':
+        return Promise.resolve(this.builtInInstruments);
       case 'getHostConnectionState':
         return Promise.resolve(this.hostConnectionState);
       case 'listLocalHosts':
@@ -891,7 +909,8 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'setTrackAutomation',
   'setTrackAudioInput',
   'setTrackMidiInput',
-  'setTrackInstrument',
+  'setTrackBuiltInInstrument',
+  'setTrackVst3Instrument',
   'clearTrackInstrument',
   'addTrackEffect',
   'removeTrackEffect',
@@ -954,6 +973,13 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
   };
   return {
     pluginCatalog: [],
+    builtInInstruments: [
+      {
+        id: '01-clean-sub-bass',
+        name: 'Clean Sub Bass',
+        description: 'A focused low-frequency bass instrument.',
+      },
+    ],
     projectState: {
       activeProjectId: '01900000-0000-7000-8000-000000000001',
       projects: [

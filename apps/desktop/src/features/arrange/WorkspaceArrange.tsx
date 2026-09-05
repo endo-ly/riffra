@@ -12,6 +12,7 @@ import type {
   AutomationParameter,
   AudioStatus,
   ArrangementMutationResult,
+  BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
   Marker,
@@ -30,6 +31,7 @@ import { ArrangeDetailArea } from './ArrangeDetailArea';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
 import { PluginPicker } from './inspector/PluginPicker';
+import { InstrumentPicker } from './inspector/InstrumentPicker';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
@@ -79,6 +81,7 @@ interface WorkspaceArrangeProps {
   onRetryRuntimeProjection: () => Promise<void>;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
+  builtInInstruments?: BuiltInInstrumentSummary[];
   playSurfaceHost: HTMLElement | null;
 }
 
@@ -270,8 +273,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.audio.state !== 'faulted' &&
     props.audio.state !== 'offline';
   const activeInstrumentUnavailable = Boolean(
-    activeMidiTrack?.instrument &&
-    (activeMidiTrack.instrument.disabledPlaceholder ||
+    activeMidiTrack?.instrument?.source.type === 'vst3' &&
+    (activeMidiTrack.instrument.source.disabledPlaceholder ||
       props.missingDeviceIds?.includes(activeMidiTrack.instrument.id) ||
       transport?.missingDeviceIds.includes(activeMidiTrack.instrument.id)),
   );
@@ -900,23 +903,37 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
       />
 
-      {pluginPicker && (
-        <PluginPicker
-          api={props.api}
-          plugins={props.plugins}
-          title={pluginPicker.kind === 'effect' ? 'Add Effect' : 'Choose Instrument'}
-          onSelect={(plugin) => {
-            const { trackId, kind } = pluginPicker;
-            setPluginPicker(null);
-            if (kind === 'effect') {
+      {pluginPicker &&
+        (pluginPicker.kind === 'instrument' ? (
+          <InstrumentPicker
+            api={props.api}
+            builtInInstruments={props.builtInInstruments ?? []}
+            plugins={props.plugins}
+            onSelectBuiltIn={(presetId) => {
+              const { trackId } = pluginPicker;
+              setPluginPicker(null);
+              void editor.commit(props.api.setTrackBuiltInInstrument(trackId, presetId));
+            }}
+            onSelectVst3={(plugin) => {
+              const { trackId } = pluginPicker;
+              setPluginPicker(null);
+              void editor.commit(props.api.setTrackVst3Instrument(trackId, plugin.path));
+            }}
+            onClose={() => setPluginPicker(null)}
+          />
+        ) : (
+          <PluginPicker
+            api={props.api}
+            plugins={props.plugins}
+            title="Add Effect"
+            onSelect={(plugin) => {
+              const { trackId } = pluginPicker;
+              setPluginPicker(null);
               void editor.commit(props.api.addTrackEffect(trackId, plugin.path));
-            } else {
-              void editor.commit(props.api.setTrackInstrument(trackId, plugin.path));
-            }
-          }}
-          onClose={() => setPluginPicker(null)}
-        />
-      )}
+            }}
+            onClose={() => setPluginPicker(null)}
+          />
+        ))}
 
       {ruler.markerRename && (
         <form
