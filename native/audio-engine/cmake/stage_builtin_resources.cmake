@@ -1,5 +1,5 @@
-if(NOT DEFINED SOURCE_PRESETS OR NOT DEFINED DESTINATION OR NOT DEFINED SOURCE_REVISION)
-  message(FATAL_ERROR "SOURCE_PRESETS, DESTINATION, and SOURCE_REVISION are required")
+if(NOT DEFINED SOURCE_PRESETS OR NOT DEFINED DESTINATION OR NOT DEFINED SOURCE_RELEASE)
+  message(FATAL_ERROR "SOURCE_PRESETS, DESTINATION, and SOURCE_RELEASE are required")
 endif()
 
 file(REMOVE_RECURSE "${DESTINATION}")
@@ -21,7 +21,7 @@ if(EXISTS "${SOURCE_PRESETS}/assets")
   file(COPY "${SOURCE_PRESETS}/assets/" DESTINATION "${DESTINATION}/assets")
 endif()
 
-set(manifest "{\n  \"sourceRevision\": \"${SOURCE_REVISION}\",\n  \"presets\": [")
+set(manifest "{\n  \"sourceRelease\": \"${SOURCE_RELEASE}\",\n  \"presets\": [")
 set(first_preset TRUE)
 foreach(preset_id IN LISTS preset_ids)
   if(first_preset)

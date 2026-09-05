@@ -164,8 +164,6 @@ jobs:
         with:
           path: native/audio-engine/build/_deps
           key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-native-deps-
 
       - uses: actions/cache@v6
         with:
@@ -213,8 +211,6 @@ jobs:
         with:
           path: native/audio-engine/build/_deps
           key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-native-deps-
 
       - name: Build and test on Windows
         shell: pwsh
@@ -247,13 +243,12 @@ jobs:
         with:
           path: native/audio-engine/build/_deps
           key: ${{ runner.os }}-native-deps-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-native-deps-
 
       - name: Build, test, and package on macOS
         shell: bash
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: 2
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
         run: ./native/audio-engine/build.sh Release
 
       - name: Verify release package resources

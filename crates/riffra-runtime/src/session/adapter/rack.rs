@@ -705,7 +705,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             root.join("manifest.json"),
-            br#"{"sourceRevision":"test-revision","presets":["01-clean-sub-bass"]}"#,
+            br#"{"sourceRelease":"vtest","presets":["01-clean-sub-bass"]}"#,
         )
         .unwrap();
         crate::instrument::BuiltInInstrumentCatalog::load(root).unwrap()

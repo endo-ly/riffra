@@ -33,7 +33,7 @@ pub struct BuiltInInstrumentCatalog {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResourceManifest {
-    source_revision: String,
+    source_release: String,
     presets: Vec<String>,
 }
 
@@ -146,8 +146,8 @@ impl BuiltInInstrumentCatalog {
         let manifest_ids = manifest.presets;
         let mut sorted_manifest_ids = manifest_ids.clone();
         sorted_manifest_ids.sort();
-        if manifest.source_revision.trim().is_empty() {
-            return Err("built-in instrument resource manifest has no sourceRevision".into());
+        if manifest.source_release.trim().is_empty() {
+            return Err("built-in instrument resource manifest has no sourceRelease".into());
         }
         if manifest_ids != sorted_manifest_ids {
             return Err("built-in instrument resource manifest preset list is not sorted".into());
@@ -255,7 +255,7 @@ mod tests {
         fs::write(
             root.join("manifest.json"),
             serde_json::json!({
-                "sourceRevision": "test-revision",
+                "sourceRelease": "vtest",
                 "presets": presets,
             })
             .to_string(),
@@ -306,7 +306,7 @@ mod tests {
         write_definition(&root.0, "01-first", "First");
         fs::write(
             root.0.join("manifest.json"),
-            r#"{"sourceRevision":"revision","presets":["02-missing"]}"#,
+            r#"{"sourceRelease":"vtest","presets":["02-missing"]}"#,
         )
         .unwrap();
 
@@ -331,7 +331,7 @@ mod tests {
         write_definition(&root.0, "01-first", "First");
         fs::write(
             root.0.join("manifest.json"),
-            r#"{"sourceRevision":"revision","presets":["01-first","01-first"]}"#,
+            r#"{"sourceRelease":"vtest","presets":["01-first","01-first"]}"#,
         )
         .unwrap();
 

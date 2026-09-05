@@ -116,12 +116,12 @@ void processBlock(SonalloyInstrumentRuntime& runtime, juce::AudioBuffer<float>& 
 
 }  // namespace
 
-TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryPinnedPreset) {
+TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     const auto manifest =
         juce::JSON::parse(presetRoot().getChildFile("manifest.json").loadFileAsString());
     ASSERT_TRUE(manifest.isObject());
-    EXPECT_EQ(manifest.getProperty("sourceRevision", {}).toString(),
-              RIFFRA_SONALLOY_TEST_SOURCE_REVISION);
+    EXPECT_EQ(manifest.getProperty("sourceRelease", {}).toString(),
+              RIFFRA_SONALLOY_TEST_SOURCE_RELEASE);
     const auto manifestPresets = manifest.getProperty("presets", {});
     ASSERT_TRUE(manifestPresets.isArray());
 

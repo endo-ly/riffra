@@ -192,7 +192,7 @@ mod tests {
         .unwrap();
         fs::write(
             resources.join("manifest.json"),
-            br#"{"sourceRevision":"test-revision","presets":["01-clean-sub-bass"]}"#,
+            br#"{"sourceRelease":"vtest","presets":["01-clean-sub-bass"]}"#,
         )
         .unwrap();
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();

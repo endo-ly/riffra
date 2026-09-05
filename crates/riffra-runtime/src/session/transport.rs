@@ -150,7 +150,7 @@ mod tests {
         std::fs::create_dir_all(&resource_root).unwrap();
         std::fs::write(
             resource_root.join("manifest.json"),
-            br#"{"sourceRevision":"test-revision","presets":[]}"#,
+            br#"{"sourceRelease":"vtest","presets":[]}"#,
         )
         .unwrap();
         let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resource_root).unwrap();

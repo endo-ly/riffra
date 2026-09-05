@@ -179,7 +179,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("manifest.json"),
-            br#"{"sourceRevision":"test-revision","presets":[]}"#,
+            br#"{"sourceRelease":"vtest","presets":[]}"#,
         )
         .unwrap();
         Dispatcher::open(root.clone(), root).unwrap()

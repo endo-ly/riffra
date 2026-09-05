@@ -1396,7 +1396,7 @@ mod tests {
         std::fs::create_dir_all(root).expect("the test resource root should be created");
         std::fs::write(
             root.join("manifest.json"),
-            br#"{"sourceRevision":"test-revision","presets":[]}"#,
+            br#"{"sourceRelease":"vtest","presets":[]}"#,
         )
         .expect("the test resource manifest should be written");
     }

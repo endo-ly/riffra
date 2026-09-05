@@ -9,8 +9,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 include(CTest)
 
-set(RIFFRA_SONALLOY_REVISION "4f8d5ee99232224bfda3ebecc7df93f91efae087" CACHE STRING
-  "Pinned Sonalloy source revision used for the built-in instrument engine and resources")
+set(RIFFRA_SONALLOY_VERSION "2026.9.5" CACHE STRING
+  "Pinned Sonalloy release version used for the built-in instrument engine and resources")
+set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
   JUCE
@@ -24,7 +25,8 @@ FetchContent_MakeAvailable(JUCE)
 FetchContent_Declare(
   SONALLOY
   GIT_REPOSITORY https://github.com/endo-ly/sonalloy.git
-  GIT_TAG ${RIFFRA_SONALLOY_REVISION}
+  GIT_TAG "${RIFFRA_SONALLOY_RELEASE_TAG}"
+  GIT_SHALLOW TRUE
   GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(SONALLOY)
@@ -48,9 +50,11 @@ endif()
 if(RIFFRA_SONALLOY_CARGO_PROFILE STREQUAL "dev")
   set(RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY "debug")
   set(RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG)
+  set(RIFFRA_SONALLOY_MSVC_RUNTIME "debug")
 else()
   set(RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY "release")
   set(RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG --release)
+  set(RIFFRA_SONALLOY_MSVC_RUNTIME "release")
 endif()
 if(MSVC)
   set(RIFFRA_SONALLOY_STATIC_LIBRARY
@@ -67,10 +71,14 @@ add_custom_command(
   OUTPUT "${RIFFRA_SONALLOY_STATIC_LIBRARY}"
   COMMAND ${CMAKE_COMMAND} -E make_directory
     "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-capi/${RIFFRA_SONALLOY_CARGO_PROFILE_DIRECTORY}"
-  COMMAND cargo build
+  COMMAND ${CMAKE_COMMAND} -E env
+    "SONALLOY_DSP_MSVC_RUNTIME=${RIFFRA_SONALLOY_MSVC_RUNTIME}"
+    cargo rustc
     --manifest-path "${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/Cargo.toml"
     --package sonalloy-capi
     ${RIFFRA_SONALLOY_CARGO_BUILD_PROFILE_FLAG}
+    --lib
+    --crate-type staticlib
     --target-dir "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${RIFFRA_SONALLOY_CARGO_OUTPUT}"
@@ -102,7 +110,7 @@ add_custom_target(riffra-builtin-resource-stage ALL
   COMMAND ${CMAKE_COMMAND}
     -DSOURCE_PRESETS=${sonalloy_SOURCE_DIR}/presets
     -DDESTINATION=${RIFFRA_BUILTIN_RESOURCE_ROOT}
-    -DSOURCE_REVISION=${RIFFRA_SONALLOY_REVISION}
+    -DSOURCE_RELEASE=${RIFFRA_SONALLOY_RELEASE_TAG}
     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_builtin_resources.cmake"
   VERBATIM
 )
@@ -450,16 +458,12 @@ if(BUILD_TESTING)
   )
   target_compile_definitions(riffra-audio-tests PRIVATE
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
-    RIFFRA_SONALLOY_TEST_SOURCE_REVISION="${RIFFRA_SONALLOY_REVISION}"
+    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}"
     RIFFRA_SONALLOY_TEST_SOURCE_ROOT="${sonalloy_SOURCE_DIR}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
-  if(UNIX)
+  if(UNIX AND NOT APPLE)
     target_compile_definitions(riffra-audio-tests PRIVATE RIFFRA_TRACK_MALLOC=1)
-    if(APPLE)
-      target_link_options(riffra-audio-tests PRIVATE "-Wl,-wrap,malloc")
-    else()
-      target_link_options(riffra-audio-tests PRIVATE "-Wl,--wrap=malloc")
-    endif()
+    target_link_options(riffra-audio-tests PRIVATE "-Wl,--wrap=malloc")
   endif()
   # JUCE definitions come through riffra-audio-core's PUBLIC interface.
   if(MSVC)
