@@ -473,8 +473,6 @@ TEST(SonalloyInstrumentRuntimeTest, IgnoresMaximumSizedSysExWithoutCallbackAlloc
 
 #if defined(RIFFRA_TRACK_MALLOC) || (defined(_MSC_VER) && defined(_DEBUG))
     EXPECT_EQ(allocationCounter.count(), 0u);
-#else
-    GTEST_SKIP() << "callback allocation tracking is unavailable on this platform";
 #endif
     EXPECT_EQ(runtime->faultCode(), 0u);
 }

@@ -257,6 +257,9 @@ jobs:
           test -x target/release/riffra-audio
           test -x target/release/riffra-plugin-scan
           test -x target/release/riffra-render
+          test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
           test -f target/release/riffra-resources/instruments/builtin/manifest.json
           test -f target/release/riffra-resources/THIRD_PARTY_NOTICES.md
           test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json
