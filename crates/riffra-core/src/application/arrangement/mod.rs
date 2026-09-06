@@ -585,26 +585,25 @@ where
                 "midi channel must be between 1 and 16".into(),
             ));
         }
+        if duration_ticks == 0 {
+            return Err(ApplicationError::InvalidCommand(
+                "midi note duration must be positive".into(),
+            ));
+        }
         self.commit_arrangement(|arrangement| {
-            let clip = arrangement
-                .midi_clips
-                .iter_mut()
-                .find(|clip| clip.id == clip_id)
-                .ok_or_else(|| {
-                    crate::DomainError::InvalidClip(format!(
-                        "midi clip '{clip_id}' is not registered"
-                    ))
-                })?;
-            clip.notes.push(MidiNote {
-                id: next_id("note"),
-                note: pitch,
-                start_tick,
-                duration_ticks: duration_ticks.max(1),
-                velocity,
-                channel,
-            });
-            arrangement.revision = arrangement.revision.saturating_add(1);
-            Ok(())
+            arrangement
+                .insert_midi_notes(
+                    clip_id,
+                    vec![MidiNote {
+                        id: next_id("note"),
+                        note: pitch,
+                        start_tick,
+                        duration_ticks,
+                        velocity,
+                        channel,
+                    }],
+                )
+                .map_err(Into::into)
         })
     }
 
@@ -640,6 +639,11 @@ where
                     "midi channel must be between 1 and 16".into(),
                 ));
             }
+            if input.duration_ticks == 0 {
+                return Err(ApplicationError::InvalidCommand(
+                    "midi note duration must be positive".into(),
+                ));
+            }
         }
         let notes = inputs
             .into_iter()
@@ -647,7 +651,7 @@ where
                 id: next_id("note"),
                 note: input.pitch,
                 start_tick: input.start_tick,
-                duration_ticks: input.duration_ticks.max(1),
+                duration_ticks: input.duration_ticks,
                 velocity: input.velocity,
                 channel: input.channel,
             })
@@ -680,17 +684,18 @@ where
             ));
         }
         self.commit_arrangement(|arrangement| {
-            let clip = arrangement
+            let index = arrangement
                 .midi_clips
-                .iter_mut()
-                .find(|clip| clip.id == clip_id)
+                .iter()
+                .position(|clip| clip.id == clip_id)
                 .ok_or_else(|| {
                     crate::DomainError::InvalidClip(format!(
                         "midi clip '{clip_id}' is not registered"
                     ))
                 })?;
+            let mut candidate = arrangement.midi_clips[index].clone();
             for update in updates {
-                let note = clip
+                let note = candidate
                     .notes
                     .iter_mut()
                     .find(|note| note.id == update.note_id)
@@ -701,18 +706,35 @@ where
                         ))
                     })?;
                 if let Some(pitch) = update.patch.note {
-                    note.note = pitch.min(127);
+                    note.note = pitch;
                 }
                 if let Some(start_tick) = update.patch.start_tick {
                     note.start_tick = start_tick;
                 }
                 if let Some(duration_ticks) = update.patch.duration_ticks {
-                    note.duration_ticks = duration_ticks.max(1);
+                    if duration_ticks == 0 {
+                        return Err(ApplicationError::InvalidCommand(
+                            "midi note duration must be positive".into(),
+                        ));
+                    }
+                    note.duration_ticks = duration_ticks;
                 }
                 if let Some(velocity) = update.patch.velocity {
-                    note.velocity = velocity.min(127);
+                    note.velocity = velocity;
+                }
+                if let Some(channel) = update.patch.channel {
+                    if !(1..=16).contains(&channel) {
+                        return Err(ApplicationError::InvalidCommand(
+                            "midi channel must be between 1 and 16".into(),
+                        ));
+                    }
+                    note.channel = channel;
                 }
             }
+            arrangement
+                .validate_midi_clip(&candidate)
+                .map_err(ApplicationError::from)?;
+            arrangement.midi_clips[index] = candidate;
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -961,7 +983,7 @@ pub(super) fn create_midi_clip_in_arrangement(
             track_id: track_id.to_owned(),
             asset_id: None,
             start_tick,
-            duration_ticks: duration_ticks.max(1),
+            duration_ticks,
             notes: Vec::new(),
             events: Vec::new(),
             muted: false,

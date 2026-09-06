@@ -687,7 +687,7 @@ mod tests {
             .create_musical_midi_clip(
                 &track_id,
                 "1:1".parse().unwrap(),
-                "2:1".parse().unwrap(),
+                "3:1".parse().unwrap(),
                 None,
             )
             .unwrap();

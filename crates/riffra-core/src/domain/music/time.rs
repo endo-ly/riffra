@@ -363,6 +363,33 @@ impl ProjectTimebase {
         u64::try_from(ticks).map_err(|_| invalid_value("duration is too large"))
     }
 
+    /// Converts an exact positive timeline duration to its reduced whole-note
+    /// fraction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timebase is invalid, the duration is zero, or
+    /// the reduced fraction cannot be represented by [`MusicalDuration`].
+    pub fn ticks_to_musical_duration(
+        self,
+        duration_ticks: u64,
+    ) -> Result<MusicalDuration, DomainError> {
+        self.ticks_per_notated_beat()?;
+        if duration_ticks == 0 {
+            return Err(invalid_value("duration must be positive"));
+        }
+        let whole_note_ticks = u128::from(self.ppq)
+            .checked_mul(4)
+            .ok_or_else(|| invalid_value("duration is too large"))?;
+        let duration_ticks = u128::from(duration_ticks);
+        let divisor = gcd_u128(duration_ticks, whole_note_ticks);
+        let numerator = u32::try_from(duration_ticks / divisor)
+            .map_err(|_| invalid_value("duration numerator is too large"))?;
+        let denominator = u32::try_from(whole_note_ticks / divisor)
+            .map_err(|_| invalid_value("duration denominator is too large"))?;
+        MusicalDuration::new(numerator, denominator)
+    }
+
     /// Converts a non-negative whole-note offset to the nearest timeline tick.
     ///
     /// # Errors
@@ -425,6 +452,15 @@ fn round_fraction(numerator: u128, denominator: u128) -> u128 {
 }
 
 fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left.max(1)
+}
+
+fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
     while right != 0 {
         let remainder = left % right;
         left = right;
@@ -525,6 +561,16 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn tick_durations_round_trip_as_reduced_whole_note_fractions() {
+        let timebase = ProjectTimebase::default();
+        for (ticks, expected) in [(960, "1/4"), (480, "1/8"), (1_440, "3/8")] {
+            let duration = timebase.ticks_to_musical_duration(ticks).unwrap();
+            assert_eq!(duration.to_string(), expected);
+            assert_eq!(timebase.musical_duration_to_ticks(duration).unwrap(), ticks);
+        }
     }
 
     #[test]

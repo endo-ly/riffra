@@ -25,7 +25,8 @@ use uuid::Uuid;
 
 pub use music::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
-    MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalRegionView,
+    MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalMidiNotePatch, MusicalMidiNoteView,
+    MusicalRegionView,
 };
 pub use session::{
     ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
@@ -53,6 +54,7 @@ pub struct MidiNotePatch {
     pub start_tick: Option<TimelineTick>,
     pub duration_ticks: Option<u64>,
     pub velocity: Option<u8>,
+    pub channel: Option<u8>,
 }
 
 /// One note update within an atomic MIDI edit.

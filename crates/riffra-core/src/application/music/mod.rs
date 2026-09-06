@@ -27,6 +27,29 @@ pub struct MusicalMidiNoteInput {
     pub channel: Option<u8>,
 }
 
+/// A MIDI note exposed in musical coordinates rather than timeline ticks.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalMidiNoteView {
+    pub id: String,
+    pub pitch: MusicalPitch,
+    pub position: MusicalPosition,
+    pub duration: MusicalDuration,
+    pub velocity: u8,
+    pub channel: u8,
+}
+
+/// Partial update for a MIDI note expressed in musical coordinates.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalMidiNotePatch {
+    pub pitch: Option<MusicalPitch>,
+    pub position: Option<MusicalPosition>,
+    pub duration: Option<MusicalDuration>,
+    pub velocity: Option<u8>,
+    pub channel: Option<u8>,
+}
+
 /// A music-level view of a named timeline range.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +139,184 @@ where
                 .map(|input| resolve_musical_note(timebase, input))
                 .collect::<Result<Vec<_>, _>>()?;
             insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
+                .map_err(Into::into)
+        })
+    }
+
+    /// Lists MIDI notes using absolute musical positions.
+    pub fn list_musical_notes(
+        &self,
+        clip_id: &str,
+        start: Option<MusicalPosition>,
+        end: Option<MusicalPosition>,
+    ) -> Result<Vec<MusicalMidiNoteView>, ApplicationError> {
+        if start.is_some() != end.is_some() {
+            return Err(ApplicationError::InvalidCommand(
+                "note list requires both start and end when filtering a range".into(),
+            ));
+        }
+        let session = self.get_session()?;
+        let timebase = session.arrangement.timebase;
+        let clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
+            })?;
+        let query = start
+            .zip(end)
+            .map(|(start, end)| {
+                Ok::<_, ApplicationError>((
+                    timebase.musical_position_to_tick(start)?,
+                    timebase.musical_position_to_tick(end)?,
+                ))
+            })
+            .transpose()?;
+        if let Some((start, end)) = query
+            && end <= start
+        {
+            return Err(ApplicationError::InvalidCommand(
+                "note list range must have a positive duration".into(),
+            ));
+        }
+        clip.notes
+            .iter()
+            .filter(|note| match query {
+                Some((start, end)) => {
+                    let note_start = clip.start_tick.0.checked_add(note.start_tick.0);
+                    let note_end =
+                        note_start.and_then(|value| value.checked_add(note.duration_ticks));
+                    note_start
+                        .zip(note_end)
+                        .is_some_and(|(note_start, note_end)| {
+                            note_start < end.0 && note_end > start.0
+                        })
+                }
+                None => true,
+            })
+            .map(|note| musical_note_view(timebase, clip.start_tick, note))
+            .collect()
+    }
+
+    /// Gets one MIDI note using musical coordinates.
+    pub fn get_musical_note(
+        &self,
+        clip_id: &str,
+        note_id: &str,
+    ) -> Result<MusicalMidiNoteView, ApplicationError> {
+        let session = self.get_session()?;
+        let timebase = session.arrangement.timebase;
+        let clip = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
+            })?;
+        let note = clip
+            .notes
+            .iter()
+            .find(|note| note.id == note_id)
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand(format!("midi note '{note_id}' is not registered"))
+            })?;
+        musical_note_view(timebase, clip.start_tick, note)
+    }
+
+    /// Updates one MIDI note using only the supplied musical fields.
+    pub fn update_musical_note(
+        &self,
+        clip_id: &str,
+        note_id: &str,
+        patch: MusicalMidiNotePatch,
+    ) -> Result<CreativeSession, ApplicationError> {
+        if patch.pitch.is_none()
+            && patch.position.is_none()
+            && patch.duration.is_none()
+            && patch.velocity.is_none()
+            && patch.channel.is_none()
+        {
+            return Err(ApplicationError::InvalidCommand(
+                "at least one musical note field is required".into(),
+            ));
+        }
+        let session = self.get_session()?;
+        let timebase = session.arrangement.timebase;
+        let clip_start = session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id == clip_id)
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
+            })?
+            .start_tick;
+        let raw_patch = MidiNotePatch {
+            note: patch.pitch.map(MusicalPitch::midi_pitch),
+            start_tick: patch
+                .position
+                .map(|position| timebase.musical_position_to_tick(position))
+                .transpose()?
+                .map(|absolute| {
+                    absolute.0.checked_sub(clip_start.0).ok_or_else(|| {
+                        crate::DomainError::InvalidMusicalValue(
+                            "note position must not precede the MIDI clip".into(),
+                        )
+                    })
+                })
+                .transpose()?
+                .map(TimelineTick),
+            duration_ticks: patch
+                .duration
+                .map(|duration| timebase.musical_duration_to_ticks(duration))
+                .transpose()?,
+            velocity: patch.velocity,
+            channel: patch.channel,
+        };
+        self.update_midi_notes(
+            clip_id,
+            vec![MidiNoteUpdate {
+                note_id: note_id.to_owned(),
+                patch: raw_patch,
+            }],
+        )
+    }
+
+    /// Removes one MIDI note by its stable identity.
+    pub fn remove_musical_note(
+        &self,
+        clip_id: &str,
+        note_id: &str,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.remove_midi_note(clip_id, note_id)
+    }
+
+    /// Resizes a MIDI Clip using absolute musical positions.
+    pub fn resize_musical_midi_clip(
+        &self,
+        clip_id: &str,
+        start: Option<MusicalPosition>,
+        end: Option<MusicalPosition>,
+    ) -> Result<CreativeSession, ApplicationError> {
+        if start.is_none() && end.is_none() {
+            return Err(ApplicationError::InvalidCommand(
+                "MIDI clip resize requires a start or end".into(),
+            ));
+        }
+        self.commit_arrangement(|arrangement| {
+            let timebase = arrangement.timebase;
+            arrangement
+                .resize_midi_clip(
+                    clip_id,
+                    start
+                        .map(|value| timebase.musical_position_to_tick(value))
+                        .transpose()?,
+                    end.map(|value| timebase.musical_position_to_tick(value))
+                        .transpose()?,
+                )
                 .map_err(Into::into)
         })
     }
@@ -233,6 +434,24 @@ fn resolve_musical_note(
         duration_ticks: timebase.musical_duration_to_ticks(input.duration)?,
         velocity,
         channel,
+    })
+}
+
+fn musical_note_view(
+    timebase: ProjectTimebase,
+    clip_start: TimelineTick,
+    note: &MidiNote,
+) -> Result<MusicalMidiNoteView, ApplicationError> {
+    let absolute_start = clip_start.0.checked_add(note.start_tick.0).ok_or_else(|| {
+        ApplicationError::InvalidCommand("MIDI note position is too large".into())
+    })?;
+    Ok(MusicalMidiNoteView {
+        id: note.id.clone(),
+        pitch: MusicalPitch::from_midi_pitch(note.note)?,
+        position: timebase.tick_to_musical_position(TimelineTick(absolute_start)),
+        duration: timebase.ticks_to_musical_duration(note.duration_ticks)?,
+        velocity: note.velocity,
+        channel: note.channel,
     })
 }
 
@@ -462,7 +681,7 @@ mod tests {
                     },
                     MusicalMidiNoteInput {
                         pitch: "A4".parse().unwrap(),
-                        position: "13:1".parse().unwrap(),
+                        position: "12:4".parse().unwrap(),
                         duration: "1/8".parse().unwrap(),
                         velocity: None,
                         channel: None,
@@ -478,10 +697,10 @@ mod tests {
         assert_eq!(notes[1].start_tick, TimelineTick(6_080));
         assert_eq!(notes[1].duration_ticks, 320);
         assert_eq!(notes[1].note, 70);
-        assert_eq!(notes[2].start_tick, TimelineTick(30_720));
+        assert_eq!(notes[2].start_tick, TimelineTick(29_760));
         assert_eq!(notes[2].duration_ticks, 480);
         assert_eq!(notes[2].note, 69);
-        assert_eq!(inserted.arrangement.midi_clips[0].duration_ticks, 31_200);
+        assert_eq!(inserted.arrangement.midi_clips[0].duration_ticks, 30_720);
         assert!(
             application
                 .insert_musical_notes(
@@ -497,6 +716,77 @@ mod tests {
                 .is_err()
         );
         assert_eq!(storage.0.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn musical_note_crud_and_clip_resize_keep_absolute_positions() {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            (),
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track = application
+            .add_track("Keys", TrackKind::Instrument)
+            .unwrap();
+        let clip = application
+            .create_musical_midi_clip(
+                &track.arrangement.tracks[0].id,
+                "1:1".parse().unwrap(),
+                "5:1".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+        let clip_id = clip.arrangement.midi_clips[0].id.clone();
+        let inserted = application
+            .insert_musical_notes(
+                &clip_id,
+                vec![MusicalMidiNoteInput {
+                    pitch: "C4".parse().unwrap(),
+                    position: "2:1".parse().unwrap(),
+                    duration: "1/4".parse().unwrap(),
+                    velocity: Some(90),
+                    channel: Some(2),
+                }],
+            )
+            .unwrap();
+        let note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+
+        let listed = application
+            .list_musical_notes(
+                &clip_id,
+                Some("2:1+1/8".parse().unwrap()),
+                Some("2:1+1/4".parse().unwrap()),
+            )
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].position.to_string(), "2:1");
+        assert_eq!(listed[0].duration.to_string(), "1/4");
+        assert_eq!(listed[0].channel, 2);
+
+        application
+            .update_musical_note(
+                &clip_id,
+                &note_id,
+                MusicalMidiNotePatch {
+                    position: Some("3:1".parse().unwrap()),
+                    duration: Some("1/2".parse().unwrap()),
+                    ..MusicalMidiNotePatch::default()
+                },
+            )
+            .unwrap();
+        application
+            .resize_musical_midi_clip(&clip_id, Some("1:2".parse().unwrap()), None)
+            .unwrap();
+
+        let fetched = application.get_musical_note(&clip_id, &note_id).unwrap();
+        assert_eq!(fetched.position.to_string(), "3:1");
+        assert_eq!(fetched.duration.to_string(), "1/2");
+        application.remove_musical_note(&clip_id, &note_id).unwrap();
+        assert!(application.get_musical_note(&clip_id, &note_id).is_err());
     }
 
     #[test]

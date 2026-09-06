@@ -249,6 +249,21 @@ impl MusicalPitch {
             + self.note.accidental.semitone();
         u8::try_from(midi_pitch).expect("a musical pitch always has a valid MIDI value")
     }
+
+    /// Creates the canonical sharp-spelled pitch for a MIDI note number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `midi_pitch` is outside the MIDI range.
+    pub fn from_midi_pitch(midi_pitch: u8) -> Result<Self, DomainError> {
+        const NAMES: [&str; 12] = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        let name = NAMES[usize::from(midi_pitch % 12)];
+        let octave = i16::from(midi_pitch / 12) - 1;
+        let value = format!("{name}{octave}");
+        value.parse()
+    }
 }
 
 impl fmt::Display for MusicalPitch {
@@ -389,5 +404,14 @@ mod tests {
         assert!("C4".parse::<MusicalNoteName>().is_err());
         assert!("H4".parse::<MusicalPitch>().is_err());
         assert!("C10".parse::<MusicalPitch>().is_err());
+        assert_eq!(MusicalPitch::from_midi_pitch(60).unwrap().to_string(), "C4");
+        assert_eq!(
+            MusicalPitch::from_midi_pitch(61).unwrap().to_string(),
+            "C#4"
+        );
+        assert_eq!(
+            MusicalPitch::from_midi_pitch(127).unwrap().to_string(),
+            "G9"
+        );
     }
 }

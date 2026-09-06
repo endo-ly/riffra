@@ -461,6 +461,11 @@ impl Arrangement {
                 || note.channel > 16
                 || note.duration_ticks == 0
                 || note.start_tick.0 >= clip.duration_ticks
+                || note
+                    .start_tick
+                    .0
+                    .checked_add(note.duration_ticks)
+                    .is_none_or(|end| end > clip.duration_ticks)
             {
                 return Err(DomainError::InvalidClip(format!(
                     "MIDI clip '{}' contains an invalid note.",
@@ -523,12 +528,6 @@ impl Arrangement {
                 "midi note identities must be unique.".into(),
             ));
         }
-        let required_duration = notes
-            .iter()
-            .map(|note| note.start_tick.0.saturating_add(note.duration_ticks))
-            .max()
-            .unwrap_or(1);
-        candidate.duration_ticks = candidate.duration_ticks.max(required_duration);
         candidate.notes.extend(notes);
         self.validate_midi_clip(&candidate)?;
         self.midi_clips[index] = candidate;
@@ -563,7 +562,7 @@ impl Arrangement {
             clip.start_tick = start_tick;
         }
         if let Some(duration_ticks) = patch.duration_ticks {
-            clip.duration_ticks = duration_ticks.max(1);
+            clip.duration_ticks = duration_ticks;
         }
         if let Some(notes) = patch.notes {
             clip.notes = notes;
@@ -579,6 +578,85 @@ impl Arrangement {
         }
         self.validate_midi_clip(&clip)?;
         self.midi_clips[index] = clip;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Resizes a MIDI Clip while preserving the absolute timeline positions of
+    /// all contained notes and events.
+    pub fn resize_midi_clip(
+        &mut self,
+        clip_id: &str,
+        start_tick: Option<TimelineTick>,
+        end_tick: Option<TimelineTick>,
+    ) -> Result<(), DomainError> {
+        if start_tick.is_none() && end_tick.is_none() {
+            return Err(DomainError::InvalidClip(
+                "MIDI clip resize requires a start or end.".into(),
+            ));
+        }
+        let index = self
+            .midi_clips
+            .iter()
+            .position(|clip| clip.id == clip_id)
+            .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
+        let current = self.midi_clips[index].clone();
+        let current_end = current
+            .start_tick
+            .0
+            .checked_add(current.duration_ticks)
+            .ok_or_else(|| DomainError::InvalidClip("MIDI clip range is too large.".into()))?;
+        let next_start = start_tick.unwrap_or(current.start_tick);
+        let next_end = end_tick.unwrap_or(TimelineTick(current_end));
+        let next_duration = next_end
+            .0
+            .checked_sub(next_start.0)
+            .filter(|duration| *duration > 0)
+            .ok_or_else(|| {
+                DomainError::InvalidClip("MIDI clip resize must have a positive range.".into())
+            })?;
+
+        let old_start = current.start_tick;
+        let mut candidate = current;
+        candidate.start_tick = next_start;
+        candidate.duration_ticks = next_duration;
+        for note in &mut candidate.notes {
+            let absolute_start = old_start.0.checked_add(note.start_tick.0).ok_or_else(|| {
+                DomainError::InvalidClip("MIDI note position is too large.".into())
+            })?;
+            let relative_start = absolute_start.checked_sub(next_start.0).ok_or_else(|| {
+                DomainError::InvalidClip(
+                    "MIDI clip resize would move a note before the Clip.".into(),
+                )
+            })?;
+            let relative_end = relative_start
+                .checked_add(note.duration_ticks)
+                .ok_or_else(|| DomainError::InvalidClip("MIDI note range is too large.".into()))?;
+            if relative_start >= next_duration || relative_end > next_duration {
+                return Err(DomainError::InvalidClip(
+                    "MIDI clip resize would cut a note.".into(),
+                ));
+            }
+            note.start_tick = TimelineTick(relative_start);
+        }
+        for event in &mut candidate.events {
+            let absolute_tick = old_start.0.checked_add(event.tick.0).ok_or_else(|| {
+                DomainError::InvalidClip("MIDI event position is too large.".into())
+            })?;
+            let relative_tick = absolute_tick.checked_sub(next_start.0).ok_or_else(|| {
+                DomainError::InvalidClip(
+                    "MIDI clip resize would move an event before the Clip.".into(),
+                )
+            })?;
+            if relative_tick >= next_duration {
+                return Err(DomainError::InvalidClip(
+                    "MIDI clip resize would cut an event.".into(),
+                ));
+            }
+            event.tick = TimelineTick(relative_tick);
+        }
+        self.validate_midi_clip(&candidate)?;
+        self.midi_clips[index] = candidate;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -633,19 +711,28 @@ impl Arrangement {
         start_tick: TimelineTick,
         duration_ticks: u64,
     ) -> Result<(), DomainError> {
-        let clip = self
+        let index = self
             .midi_clips
-            .iter_mut()
-            .find(|clip| clip.id == clip_id)
+            .iter()
+            .position(|clip| clip.id == clip_id)
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
-        let duration_ticks = duration_ticks.max(1);
+        let mut clip = self.midi_clips[index].clone();
+        if duration_ticks == 0 {
+            return Err(DomainError::InvalidClip(
+                "MIDI trim duration must be positive.".into(),
+            ));
+        }
         let relative_start = start_tick.0.saturating_sub(clip.start_tick.0);
-        let relative_end = relative_start.saturating_add(duration_ticks);
+        let relative_end = relative_start
+            .checked_add(duration_ticks)
+            .ok_or_else(|| DomainError::InvalidClip("MIDI trim range is too large.".into()))?;
         clip.start_tick = start_tick;
         clip.duration_ticks = duration_ticks;
         clip.notes.retain(|note| {
-            note.start_tick.0 < relative_end
-                && note.start_tick.0.saturating_add(note.duration_ticks) > relative_start
+            note.start_tick
+                .0
+                .checked_add(note.duration_ticks)
+                .is_some_and(|end| note.start_tick.0 < relative_end && end > relative_start)
         });
         clip.events
             .retain(|event| event.tick.0 >= relative_start && event.tick.0 < relative_end);
@@ -659,6 +746,8 @@ impl Arrangement {
         for event in &mut clip.events {
             event.tick = TimelineTick(event.tick.0.saturating_sub(relative_start));
         }
+        self.validate_midi_clip(&clip)?;
+        self.midi_clips[index] = clip;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -680,7 +769,12 @@ impl Arrangement {
             .position(|clip| clip.id == clip_id)
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
         let source = self.midi_clips[index].clone();
-        let relative = split_tick.0.saturating_sub(source.start_tick.0);
+        let relative = split_tick
+            .0
+            .checked_sub(source.start_tick.0)
+            .ok_or_else(|| {
+                DomainError::InvalidClip("MIDI split must be inside the clip.".into())
+            })?;
         if relative == 0 || relative >= source.duration_ticks {
             return Err(DomainError::InvalidClip(
                 "MIDI split must be inside the clip.".into(),
@@ -709,6 +803,8 @@ impl Arrangement {
         for event in &mut right.events {
             event.tick = TimelineTick(event.tick.0 - relative);
         }
+        self.validate_midi_clip(&left)?;
+        self.validate_midi_clip(&right)?;
         self.midi_clips[index] = left;
         self.midi_clips.insert(index + 1, right);
         self.revision = self.revision.saturating_add(1);
@@ -731,7 +827,12 @@ impl Arrangement {
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
         copy.id = id;
         copy.name = format!("{} copy", copy.name);
-        copy.start_tick = TimelineTick(copy.start_tick.0.saturating_add(copy.duration_ticks));
+        copy.start_tick = TimelineTick(
+            copy.start_tick
+                .0
+                .checked_add(copy.duration_ticks)
+                .ok_or_else(|| DomainError::InvalidClip("MIDI clip range is too large.".into()))?,
+        );
         self.midi_clips.push(copy);
         self.revision = self.revision.saturating_add(1);
         Ok(())
@@ -748,22 +849,28 @@ impl Arrangement {
                 "MIDI quantize grid must be positive.".into(),
             ));
         }
-        let clip = self
+        let index = self
             .midi_clips
-            .iter_mut()
-            .find(|clip| clip.id == clip_id)
+            .iter()
+            .position(|clip| clip.id == clip_id)
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
-        for note in &mut clip.notes {
+        let mut candidate = self.midi_clips[index].clone();
+        for note in &mut candidate.notes {
             if note_ids.iter().any(|id| id == &note.id) {
-                note.start_tick =
-                    TimelineTick(((note.start_tick.0 + grid_ticks / 2) / grid_ticks) * grid_ticks);
-                note.start_tick =
-                    TimelineTick(note.start_tick.0.min(clip.duration_ticks.saturating_sub(1)));
-                note.duration_ticks = note
-                    .duration_ticks
-                    .min(clip.duration_ticks.saturating_sub(note.start_tick.0).max(1));
+                let rounded_units = note
+                    .start_tick
+                    .0
+                    .checked_add(grid_ticks / 2)
+                    .ok_or_else(|| DomainError::InvalidClip("MIDI quantize overflowed.".into()))?
+                    / grid_ticks;
+                let rounded = rounded_units
+                    .checked_mul(grid_ticks)
+                    .ok_or_else(|| DomainError::InvalidClip("MIDI quantize overflowed.".into()))?;
+                note.start_tick = TimelineTick(rounded);
             }
         }
+        self.validate_midi_clip(&candidate)?;
+        self.midi_clips[index] = candidate;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -785,11 +892,12 @@ impl Arrangement {
                 "no midi notes were selected.".into(),
             ));
         }
-        let clip = self
+        let index = self
             .midi_clips
-            .iter_mut()
-            .find(|clip| clip.id == clip_id)
+            .iter()
+            .position(|clip| clip.id == clip_id)
             .ok_or_else(|| DomainError::InvalidClip(format!("MIDI clip '{clip_id}' not found.")))?;
+        let clip = self.midi_clips[index].clone();
         let mut selected_ids = std::collections::HashSet::with_capacity(note_ids.len());
         if note_ids
             .iter()
@@ -813,14 +921,17 @@ impl Arrangement {
             .filter(|note| note_ids.iter().any(|id| id == &note.id))
             .cloned()
             .collect::<Vec<_>>();
+        let mut candidate = clip;
         for (index, mut note) in selected.into_iter().enumerate() {
             note.id = format!("note:duplicate:{}:{index}", self.revision);
-            note.start_tick = TimelineTick(note.start_tick.0.saturating_add(offset_ticks));
-            clip.duration_ticks = clip
-                .duration_ticks
-                .max(note.start_tick.0.saturating_add(note.duration_ticks.max(1)));
-            clip.notes.push(note);
+            note.start_tick =
+                TimelineTick(note.start_tick.0.checked_add(offset_ticks).ok_or_else(|| {
+                    DomainError::InvalidClip("MIDI duplicate overflowed.".into())
+                })?);
+            candidate.notes.push(note);
         }
+        self.validate_midi_clip(&candidate)?;
+        self.midi_clips[index] = candidate;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -1070,11 +1181,13 @@ impl Arrangement {
             }
             copy.id = id.clone();
             copy.name = format!("{} copy", copy.name);
-            copy.start_tick = TimelineTick(
-                start_tick
-                    .0
-                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
-            );
+            let offset =
+                copy.start_tick.0.checked_sub(anchor).ok_or_else(|| {
+                    DomainError::InvalidClip("Clipboard range is invalid.".into())
+                })?;
+            copy.start_tick = TimelineTick(start_tick.0.checked_add(offset).ok_or_else(|| {
+                DomainError::InvalidClip("Pasted Clip range is too large.".into())
+            })?);
             copies.push(copy);
         }
         let mut midi_copies = Vec::with_capacity(midi_sources.len());
@@ -1090,11 +1203,13 @@ impl Arrangement {
             }
             copy.id = id.clone();
             copy.name = format!("{} copy", copy.name);
-            copy.start_tick = TimelineTick(
-                start_tick
-                    .0
-                    .saturating_add(copy.start_tick.0.saturating_sub(anchor)),
-            );
+            let offset =
+                copy.start_tick.0.checked_sub(anchor).ok_or_else(|| {
+                    DomainError::InvalidClip("Clipboard range is invalid.".into())
+                })?;
+            copy.start_tick = TimelineTick(start_tick.0.checked_add(offset).ok_or_else(|| {
+                DomainError::InvalidClip("Pasted Clip range is too large.".into())
+            })?);
             midi_copies.push(copy);
         }
         self.audio_clips.extend(copies);
