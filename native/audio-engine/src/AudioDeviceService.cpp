@@ -105,6 +105,8 @@ juce::var AudioDeviceService::discover() {
     auto* result = new juce::DynamicObject();
     result->setProperty("type", "audioDeviceProbe");
     result->setProperty("drivers", driverTypes);
+    result->setProperty("refreshedAtMs", juce::Time::currentTimeMillis());
+    result->setProperty("message", "Audio device list refreshed.");
     result->setProperty("emergencyMuted", true);
     result->setProperty("limiterCeiling", 0.98);
     return juce::var(result);

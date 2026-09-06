@@ -9,7 +9,9 @@ param(
 
     [string] $Architecture = 'x64',
 
-    [switch] $SkipTests
+    [switch] $SkipTests,
+
+    [switch] $SidecarsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,7 +65,11 @@ if ($Generator -like 'Visual Studio *' -and $Architecture) {
 & $cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
-& $cmake --build $buildDir --config $Configuration --parallel
+$buildArgs = @('--build', $buildDir, '--config', $Configuration, '--parallel')
+if ($SidecarsOnly) {
+    $buildArgs += @('--target', 'riffra-runtime-sidecars')
+}
+& $cmake @buildArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine build failed.' }
 
 if (-not $SkipTests) {
@@ -74,4 +80,4 @@ if (-not $SkipTests) {
 & $cmake --install $buildDir --prefix $repoRoot --component riffra-sidecars --config $Configuration
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine install failed.' }
 
-Write-Host "Audio engine built, tested, and installed to apps/desktop/src-tauri and $headlessDestination" -ForegroundColor Green
+Write-Host "Audio engine built and installed to apps/desktop/src-tauri and $headlessDestination" -ForegroundColor Green

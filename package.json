@@ -10,6 +10,7 @@
     "dev": "npm run dev --workspace @riffra/desktop",
     "build": "npm run build --workspace @riffra/desktop",
     "preview": "npm run preview --workspace @riffra/desktop",
+    "ensure:desktop-runtime": "node scripts/dev/ensure-desktop.mjs",
     "test": "npm run test --workspace @riffra/desktop --",
     "dev:tauri": "npm run dev:tauri --workspace @riffra/desktop",
     "gen:types": "npm run gen:types --workspace @riffra/desktop",

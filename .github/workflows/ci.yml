@@ -101,12 +101,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Stage built-in instrument resources
         shell: bash
         run: |
-          resource_root="$RUNNER_TEMP/riffra-resources/instruments/builtin"
-          bash scripts/ci/stage-builtin-resources.sh "$resource_root"
-          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resource_root" >> "$GITHUB_ENV"
+          resource_root="$RUNNER_TEMP/riffra-resources"
+          node scripts/resources/prepare-builtin.mjs --destination "$resource_root"
+          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resource_root/instruments/builtin" >> "$GITHUB_ENV"
 
       - run: bash scripts/ci/headless-host-process.sh
 
@@ -119,12 +123,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Stage built-in instrument resources
         shell: pwsh
         run: |
-          $resourceRoot = Join-Path $env:RUNNER_TEMP 'riffra-resources\instruments\builtin'
-          .\scripts\ci\stage-builtin-resources.ps1 -Destination $resourceRoot
-          "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resourceRoot" | Out-File `
+          $resourceRoot = Join-Path $env:RUNNER_TEMP 'riffra-resources'
+          node scripts/resources/prepare-builtin.mjs --destination $resourceRoot
+          "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$(Join-Path $resourceRoot 'instruments\builtin')" | Out-File `
             -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - run: .\scripts\ci\headless-host-process.ps1
@@ -136,6 +144,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       - name: Install Linux dependencies
         shell: bash
@@ -207,6 +219,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - uses: actions/cache@v6
         with:
           path: native/audio-engine/build/_deps
@@ -238,6 +254,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       - uses: actions/cache@v6
         with:

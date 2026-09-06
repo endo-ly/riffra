@@ -59,6 +59,16 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
 }
 
+TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
+    const auto probe = AudioDeviceService::discover();
+
+    ASSERT_TRUE(probe.isObject());
+    EXPECT_EQ(probe.getProperty("type", {}).toString(), "audioDeviceProbe");
+    EXPECT_TRUE(static_cast<bool>(probe.getProperty("drivers", {}).isArray()));
+    EXPECT_GT(static_cast<juce::int64>(probe.getProperty("refreshedAtMs", 0)), 0);
+    EXPECT_EQ(probe.getProperty("message", {}).toString(), "Audio device list refreshed.");
+}
+
 TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
     SafetyAudioCallback callback;
     TimelineEngine timeline;
