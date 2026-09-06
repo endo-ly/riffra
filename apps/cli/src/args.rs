@@ -1581,6 +1581,18 @@ impl Cli {
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
         command_request(command)
     }
+
+    pub(crate) fn plugin_state_save_output(&self) -> Option<PathBuf> {
+        match self.command.as_ref() {
+            Some(CliCommand::Plugin {
+                command:
+                    PluginCommand::State {
+                        command: PluginStateCommand::Save(args),
+                    },
+            }) => Some(args.output.clone()),
+            _ => None,
+        }
+    }
 }
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
@@ -1897,7 +1909,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                     json!({
                         "trackId": args.track_id,
                         "deviceId": args.device_id,
-                        "output": args.output,
                     }),
                 ),
                 PluginStateCommand::Load(args) => plugin_state_load(args)?,
@@ -2329,6 +2340,36 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(cli.request().unwrap().name, "instrument.vst3.set");
+    }
+
+    #[test]
+    fn plugin_state_save_keeps_output_path_out_of_control_params() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "plugin",
+            "state",
+            "save",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--output",
+            "state.json",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.plugin_state_save_output(),
+            Some(PathBuf::from("state.json"))
+        );
+        let request = cli.request().unwrap();
+        assert_eq!(
+            request,
+            ControlCommand::new(
+                "plugin.state.get",
+                json!({"trackId":"track:keys","deviceId":"device:synth"})
+            )
+        );
     }
 
     #[test]

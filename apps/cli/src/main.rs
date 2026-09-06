@@ -14,6 +14,7 @@ use riffra_control::{
 };
 use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 fn main() {
     if let Err(error) = run() {
@@ -30,6 +31,7 @@ fn run() -> Result<(), String> {
     let interactive = cli.interactive;
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
+    let plugin_state_output = cli.plugin_state_save_output();
     let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
     let is_host_list = matches!(
@@ -101,7 +103,11 @@ fn run() -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let response = save_plugin_state_response(&request, attached.request(&request)?)?;
+        let response = save_plugin_state_response(
+            plugin_state_output.as_deref(),
+            &request,
+            attached.request(&request)?,
+        )?;
         let response = compact_agent_response(&request.command, &request.params, response);
         if response.ok {
             return write_response(&response);
@@ -137,7 +143,7 @@ fn run() -> Result<(), String> {
             value: dispatched.value,
         },
     );
-    let response = save_plugin_state_response(&request, response)?;
+    let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
     write_response(&compact_agent_response(
         &request.command,
         &request.params,
@@ -146,14 +152,11 @@ fn run() -> Result<(), String> {
 }
 
 fn save_plugin_state_response(
+    output: Option<&Path>,
     request: &ControlRequest,
     mut response: ControlResponse,
 ) -> Result<ControlResponse, String> {
-    let Some(output) = request
-        .params
-        .get("output")
-        .and_then(serde_json::Value::as_str)
-    else {
+    let Some(output) = output else {
         return Ok(response);
     };
     if request.command != "plugin.state.get" || !response.ok {
@@ -169,7 +172,7 @@ fn save_plugin_state_response(
         .map_err(|error| format!("plugin state file could not be written: {error}"))?;
     response.result = Some(CommandResult {
         result_type: "pluginStateSaved".into(),
-        value: serde_json::json!({"output": output}),
+        value: serde_json::json!({"output": output.to_string_lossy()}),
     });
     Ok(response)
 }
