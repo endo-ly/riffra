@@ -1,12 +1,11 @@
 use crate::output::compact_agent_response;
 use riffra_control::{
     ControlCommand, ControlRequest, ControlResponse, ErrorCode, LocalHostClient,
-    LocalHostClientError, ProtocolError, new_instance_id,
+    LocalHostClientError, LocalHostDiscovery, ProtocolError, new_instance_id,
 };
 use riffra_runtime::command_requires_project_id;
 use serde_json::Value;
 use std::io::{BufRead, Write};
-use std::path::Path;
 
 /// Client-only backend for commands owned by a running Riffra Host.
 pub struct AttachedBackend {
@@ -14,11 +13,11 @@ pub struct AttachedBackend {
 }
 
 impl AttachedBackend {
-    /// Connects and completes the Host handshake without opening the Data Root.
-    pub fn connect(data_root: &Path) -> Result<Self, String> {
-        LocalHostClient::connect_data_root(data_root)
-            .map(|client| Self { client })
-            .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))
+    /// Creates an attached backend from a Host selected by the caller.
+    pub fn from_discovery(discovery: LocalHostDiscovery) -> Self {
+        Self {
+            client: discovery.client,
+        }
     }
 
     /// Sends one request and waits for its ordered response.
@@ -121,16 +120,15 @@ mod tests {
 
     #[test]
     fn attached_backend_discovers_endpoint_and_completes_handshake() {
-        let data_root = std::env::temp_dir().join(format!(
-            "riffra-cli-attached-{}-{}",
-            std::process::id(),
-            riffra_control::new_instance_id()
-        ));
         let descriptor =
             EndpointDescriptor::new(riffra_control::new_instance_id(), std::process::id());
         let mut listener =
             riffra_control::transport::LocalControlListener::bind(descriptor.endpoint()).unwrap();
-        riffra_control::publish_endpoint(&data_root, &descriptor).unwrap();
+        let registration = riffra_control::LocalHostRegistration::from_descriptor(
+            "/tmp/riffra-test",
+            &descriptor,
+            riffra_control::now_ms(),
+        );
 
         let request = ControlRequest::new(
             "42",
@@ -191,7 +189,10 @@ mod tests {
             .unwrap();
         });
 
-        let backend = AttachedBackend::connect(&data_root).unwrap();
+        let backend = AttachedBackend::from_discovery(LocalHostDiscovery {
+            client: LocalHostClient::connect_registration(&registration),
+            registration,
+        });
         let response = backend.request(&request).unwrap();
 
         assert_eq!(response.request_id, "42");
@@ -199,7 +200,5 @@ mod tests {
         assert_eq!(response.result.unwrap().value["sequence"], 12);
 
         server.join().unwrap();
-        riffra_control::remove_endpoint_if_matches(&data_root, &descriptor.instance_id).unwrap();
-        let _ = std::fs::remove_dir_all(data_root);
     }
 }

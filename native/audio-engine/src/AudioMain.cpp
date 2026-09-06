@@ -433,6 +433,134 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 }
                 continue;
             }
+            if (type == "getTrackDeviceStatus" || type == "getTrackDeviceParameters" ||
+                type == "getTrackDevicePrograms" || type == "getTrackPluginState") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Track "
+                                        "device inspection can be retried shortly."));
+                    continue;
+                }
+                const auto requestId = currentRequestId();
+                const auto queryType = type;
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                const auto deviceId = command.getProperty("deviceId", {}).toString();
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId, queryType, trackId, deviceId] {
+                        juce::String deviceError;
+                        juce::var result;
+                        if (queryType == "getTrackDeviceStatus") {
+                            result = timelineEngine.deviceStatus(trackId, deviceId, deviceError);
+                        } else if (queryType == "getTrackDeviceParameters") {
+                            result = timelineEngine.deviceParameterStatus(trackId, deviceId,
+                                                                          deviceError);
+                        } else if (queryType == "getTrackDevicePrograms") {
+                            result =
+                                timelineEngine.deviceProgramStatus(trackId, deviceId, deviceError);
+                        } else {
+                            const auto state =
+                                timelineEngine.devicePersistedState(trackId, deviceId, deviceError);
+                            if (!state.isVoid()) {
+                                auto* response = new juce::DynamicObject();
+                                response->setProperty("type", "trackPluginState");
+                                response->setProperty("state", state);
+                                result = juce::var(response);
+                            }
+                        }
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (result.isVoid()) {
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        writeJson(result, requestId);
+                    },
+                    std::chrono::seconds(10));
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
+                continue;
+            }
+            if (type == "setTrackPluginState") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Track "
+                                        "plugin state changes can be retried shortly."));
+                    continue;
+                }
+                const auto requestId = currentRequestId();
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                const auto deviceId = command.getProperty("deviceId", {}).toString();
+                const auto state = command.getProperty("state", {});
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId, trackId, deviceId, state] {
+                        juce::String deviceError;
+                        const auto changed = timelineEngine.setDevicePersistedState(
+                            trackId, deviceId, state, deviceError);
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (!changed) {
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        writeJson(timelineEngine.status(), requestId);
+                    },
+                    std::chrono::seconds(10));
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
+                continue;
+            }
+            if (type == "setTrackDeviceProgram") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still loading a VST3. Track "
+                                        "plugin programs can be changed shortly."));
+                    continue;
+                }
+                const auto requestId = currentRequestId();
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                const auto deviceId = command.getProperty("deviceId", {}).toString();
+                const auto programIndex = static_cast<int>(
+                    command.getProperty("programIndex", static_cast<juce::int64>(-1)));
+                timelineOperationRunning.store(true, std::memory_order_release);
+                const auto submitted = runtimeLifecycle.submit(
+                    [&, requestId, trackId, deviceId, programIndex] {
+                        juce::String deviceError;
+                        const auto changed = timelineEngine.setDeviceProgram(
+                            trackId, deviceId, programIndex, deviceError);
+                        if (!changed) {
+                            timelineOperationRunning.store(false, std::memory_order_release);
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        const auto program =
+                            timelineEngine.deviceProgramStatus(trackId, deviceId, deviceError);
+                        const auto state =
+                            timelineEngine.devicePersistedState(trackId, deviceId, deviceError);
+                        timelineOperationRunning.store(false, std::memory_order_release);
+                        if (program.isVoid() || state.isVoid()) {
+                            writeJson(makeError("trackDevice", deviceError), requestId);
+                            return;
+                        }
+                        auto* response = new juce::DynamicObject();
+                        response->setProperty("type", "trackDeviceProgramChanged");
+                        response->setProperty("program", program);
+                        response->setProperty("state", state);
+                        writeJson(juce::var(response), requestId);
+                    },
+                    std::chrono::seconds(10));
+                if (!submitted) {
+                    timelineOperationRunning.store(false, std::memory_order_release);
+                    writeJson(
+                        makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
+                }
+                continue;
+            }
             if (type == "openTrackPluginEditor") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError("timelineBusy",

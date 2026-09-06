@@ -6,7 +6,12 @@ pub(super) fn handles(command: &str) -> bool {
     matches!(
         command,
         "music.midi-clip.create"
+            | "music.midi-clip.resize"
             | "music.note.insert"
+            | "music.note.list"
+            | "music.note.get"
+            | "music.note.update"
+            | "music.note.remove"
             | "music.harmony.resolve"
             | "music.harmony.list"
             | "music.harmony.insert"
@@ -48,6 +53,71 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .insert_musical_notes(&params.clip_id, params.notes)?,
+            )
+        }
+        "music.note.list" => {
+            let params: MusicalNoteListParams = decode(request.params)?;
+            dispatcher.value(
+                "musicNotes",
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .list_musical_notes(&params.clip_id, params.start, params.end)?,
+            )
+        }
+        "music.note.get" => {
+            let params: MusicalNoteIdParams = decode(request.params)?;
+            dispatcher.value(
+                "musicNote",
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .get_musical_note(&params.clip_id, &params.note_id)?,
+            )
+        }
+        "music.note.update" => {
+            let params: MusicalNoteUpdateParams = decode(request.params)?;
+            if params.patch.pitch.is_none()
+                && params.patch.position.is_none()
+                && params.patch.duration.is_none()
+                && params.patch.velocity.is_none()
+                && params.patch.channel.is_none()
+            {
+                return Err(DispatchError::InvalidRequest(
+                    "at least one musical note field is required".into(),
+                ));
+            }
+            dispatcher.session_with_effect(
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .update_musical_note(&params.clip_id, &params.note_id, params.patch)?,
+                CanonicalMutationEffect::ProjectArrangement,
+            )
+        }
+        "music.note.remove" => {
+            let params: MusicalNoteIdParams = decode(request.params)?;
+            dispatcher.session_with_effect(
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .remove_musical_note(&params.clip_id, &params.note_id)?,
+                CanonicalMutationEffect::ProjectArrangement,
+            )
+        }
+        "music.midi-clip.resize" => {
+            let params: MusicalMidiClipResizeParams = decode(request.params)?;
+            if params.start.is_none() && params.end.is_none() {
+                return Err(DispatchError::InvalidRequest(
+                    "MIDI clip resize requires a start or end".into(),
+                ));
+            }
+            dispatcher.session_with_effect(
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .resize_musical_midi_clip(&params.clip_id, params.start, params.end)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.harmony.resolve" => {
@@ -189,6 +259,38 @@ struct MusicalMidiClipCreateParams {
 struct MusicalNoteInsertParams {
     clip_id: String,
     notes: Vec<MusicalMidiNoteInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteListParams {
+    clip_id: String,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteIdParams {
+    clip_id: String,
+    note_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteUpdateParams {
+    clip_id: String,
+    note_id: String,
+    #[serde(flatten)]
+    patch: riffra_core::application::MusicalMidiNotePatch,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalMidiClipResizeParams {
+    clip_id: String,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,6 +440,73 @@ mod tests {
         assert_eq!(clip.notes[3].note, 70);
         assert_eq!(clip.notes[3].start_tick, riffra_core::TimelineTick(6_080));
         assert_eq!(clip.notes[3].duration_ticks, 320);
+
+        let note_id = clip.notes[0].id.clone();
+        let listed = dispatcher
+            .dispatch(request(
+                "music.note.list",
+                json!({
+                    "clipId": clip_id,
+                    "start": "5:1",
+                    "end": "5:1+1/4"
+                }),
+            ))
+            .unwrap();
+        assert_eq!(listed.result_type, "musicNotes");
+        assert_eq!(listed.value.as_array().unwrap().len(), 1);
+        assert_eq!(listed.value[0]["pitch"], "C4");
+        assert!(listed.value[0].get("startTick").is_none());
+        assert!(listed.value[0].get("note").is_none());
+
+        let fetched = dispatcher
+            .dispatch(request(
+                "music.note.get",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
+            .unwrap();
+        assert_eq!(fetched.result_type, "musicNote");
+        assert_eq!(fetched.value["position"], "5:1");
+
+        dispatcher
+            .dispatch(request(
+                "music.note.update",
+                json!({
+                    "clipId": clip_id,
+                    "noteId": note_id,
+                    "position": "5:2",
+                    "duration": "1/4"
+                }),
+            ))
+            .unwrap();
+        let updated = dispatcher
+            .dispatch(request(
+                "music.note.get",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
+            .unwrap();
+        assert_eq!(updated.value["position"], "5:2");
+        assert_eq!(updated.value["duration"], "1/4");
+
+        dispatcher
+            .dispatch(request(
+                "music.midi-clip.resize",
+                json!({"clipId": clip_id, "end": "12:1"}),
+            ))
+            .unwrap();
+        dispatcher
+            .dispatch(request(
+                "music.note.remove",
+                json!({"clipId": clip_id, "noteId": note_id}),
+            ))
+            .unwrap();
+        assert!(
+            dispatcher
+                .dispatch(request(
+                    "music.note.get",
+                    json!({"clipId": clip_id, "noteId": note_id}),
+                ))
+                .is_err()
+        );
 
         let listed = dispatcher
             .dispatch(request("music.region.list", json!({})))

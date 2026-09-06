@@ -306,6 +306,7 @@ impl AudioSupervisor {
                                 &event_responses,
                                 request_id,
                                 response.result.as_ref().err().cloned(),
+                                response.value.clone(),
                             );
                         }
                         if matches!(response.event, NativeEvent::AudioStatus) {

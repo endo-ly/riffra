@@ -9,6 +9,18 @@
 | 正準状態の編集   | session / track / music / clip / midi-note / marker / rack / missing 復旧 | すべての実行形態               |
 | Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin  | Live Host(`serve`)+ `--attach` |
 
+## Hostの発見と接続
+
+Standaloneのワンショット、Standaloneの対話、serveはdata-rootが必要である。Attachedはdata-rootを指定せず、current-user registryを使う。
+
+```powershell
+riffra host list
+riffra --attach session inspect
+riffra --attach --host <instance-id> session inspect
+```
+
+稼働Hostが0件ならhostUnavailable、1件なら自動選択、2件以上ならinstance IDを指定する。host listはregistryをhandshakeで検証した結果を返し、各Hostのinstance ID、PID、DataRoot、起動時刻を表示する。Attached CLIはDataRootを開いたり、HostをDataRootから選択したりしない。
+
 ## 正準状態の編集
 
 ### 基本サイクル
@@ -20,22 +32,22 @@
 
 ```powershell
 # 現在の構造と sequence を把握
-riffra --data-root ./riffra-data --attach session inspect
+riffra --attach session inspect
 
 # 必要な範囲だけ確認
-riffra --data-root ./riffra-data --attach session inspect --start 9:1 --end 13:1 --track-id track:01j...
+riffra --attach session inspect --start 9:1 --end 13:1 --track-id track:01j...
 
 # Track 追加 → 軽量なmutation receiptからIDを得て、続けてInspectで状態を確認する
-riffra --data-root ./riffra-data --attach --expected-sequence 0 track add --name Drums --kind audio
-riffra --data-root ./riffra-data --attach session inspect
+riffra --attach --expected-sequence 0 track add --name Drums --kind audio
+riffra --attach session inspect
 
 # MIDI Clip 作成 → 再Inspectで状態を確認して音楽上のNoteを積む
-riffra --data-root ./riffra-data --attach --expected-sequence 1 music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
-riffra --data-root ./riffra-data --attach session inspect --track-id track:01j...
-riffra --data-root ./riffra-data --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
+riffra --attach --expected-sequence 1 music midi-clip create --track-id track:01j... --start 5:1 --end 13:1 --name Piano
+riffra --attach session inspect --track-id track:01j...
+riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j... --notes-json '[{"pitch":"C4","position":"5:1","duration":"1/8"}]'
 ```
 
-通常の作曲では、対応する `music.*` の音楽表現を使う。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
+通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
 
 ### Music Operations
 
@@ -51,6 +63,31 @@ riffra --data-root ./riffra-data music note insert `
 ```
 
 `position` はArrangement全体の絶対位置で、Clip内部の相対位置ではない。`velocity` の既定値は100、`channel` の既定値は1である。複数Noteは1回の `music note insert` で渡す。
+
+Noteの参照と更新も音楽座標を使う。
+
+```powershell
+riffra --attach music note list --clip-id midi-clip:01j... --start 5:1 --end 9:1
+riffra --attach music note get --clip-id midi-clip:01j... --note-id note:01j...
+riffra --attach --expected-sequence 20 music note update `
+  --clip-id midi-clip:01j... --note-id note:01j... `
+  --position 6:1 --duration 1/4 --pitch F#4 --velocity 96
+riffra --attach --expected-sequence 21 music note remove `
+  --clip-id midi-clip:01j... --note-id note:01j...
+riffra --attach --expected-sequence 22 music midi-clip resize `
+  --clip-id midi-clip:01j... --end 17:1
+```
+
+Noteのlist/get応答にはtickやMIDI note numberを含めない。listの範囲は半開区間で、Noteと範囲が重なるものを返す。ClipのresizeはNote/EventのArrangement上の絶対位置を保ち、範囲外へ出る場合はNote/Eventを削除・cropせず失敗する。
+
+Note入力はJSON配列を一度に渡す。inline、file、stdinは排他的で、file/stdinでも1回のMutationになる。
+
+```powershell
+riffra --attach music note insert --clip-id midi-clip:01j... --notes-file ./notes.json
+Get-Content ./notes.json -Raw | riffra --attach music note insert --clip-id midi-clip:01j... --stdin
+```
+
+Noteのpitch、position、duration、velocity、channelの意味検証はCoreが行う。CLIは入力の読み込み、JSON parse、top-levelが配列であることだけを確認する。ClipのNoteがClip終端を超える追加・更新・複製は自動延長せず、Mutation全体が失敗する。
 
 #### Region
 
@@ -231,9 +268,24 @@ Automation の points 配列は既存ポイントを置き換える。各要素�
 | `effect remove`           | `--track-id` `--device-id`                                                                     |
 | `effect reorder`          | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
 | `device bypass`           | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
-| `device parameter-set`    | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
+| `device inspect`          | `--track-id` `--device-id`                                                                     |
+| `device parameter list`   | `--track-id` `--device-id`                                                                     |
+| `device parameter get`    | `--track-id` `--device-id` `--parameter-index`                                                 |
+| `device parameter set`    | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
 
 パスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。
+
+device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3のparameter list/getはHostから取得できる範囲のindex/valueを返し、parameter名が公開されない場合は推測しない。
+
+```powershell
+riffra --attach plugin state save --track-id track:01j... --device-id device:01j... --output ./piano-state.json
+riffra --attach plugin state load --track-id track:01j... --device-id device:01j... --file ./piano-state.json
+riffra --attach plugin preset list --track-id track:01j... --device-id device:01j...
+riffra --attach plugin preset get --track-id track:01j... --device-id device:01j...
+riffra --attach plugin preset set --track-id track:01j... --device-id device:01j... --preset-index 2
+```
+
+Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固有GUIのpreset browserは対象外である。Plugin state fileにはschema version、Plugin path、parameter values、opaque stateを含め、別VST3のstateは適用しない。
 
 `instrument builtin list`はHostのresource catalogを返す。`instrument builtin set`はcatalogに存在するpreset IDをTrackへ割り当て、definition本文をCanonical Sessionへ保存する。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
@@ -268,13 +320,13 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
 ### 接続と終了
 
 ```powershell
-riffra --data-root ./riffra-data --attach host status
-riffra --data-root ./riffra-data --attach session get
-riffra --data-root ./riffra-data --attach --interactive   # 1 接続で連続要求
-riffra --data-root ./riffra-data --attach host shutdown
+riffra --attach host status
+riffra --attach session get
+riffra --attach --interactive   # 1 接続で連続要求
+riffra --attach host shutdown
 ```
 
-- `--attach` は `control/host.json` を読み、handshake(`instanceId` と `pid` 一致)後に要求を転送する。DataRoot の排他所有は Host が持つため、attach 側が開き直すことはない
+- `--attach` はcurrent-user registryのdiscovery結果から選んだHostとhandshakeし、要求を転送する。DataRootの排他所有はHostが持つため、attach側が開き直すことはない
 - 初期状態を取得するprotocol clientはevents connectionを先に確立し、command connectionで`host.bootstrap`を要求する。bootstrap中のeventは受信順に適用する
 - 接続できない場合は `hostUnavailable`。Standalone への自動フォールバックはないので、Host の生存を確認してから再試行する
 - Host の停止は `host shutdown`、またはプロセスへの SIGINT / SIGTERM
@@ -316,11 +368,11 @@ Runtime 系コマンドのうち、次のグループが `runtimeUnavailable` �
 ### 録音
 
 ```powershell
-riffra --data-root ./riffra-data --attach record start
-riffra --data-root ./riffra-data --attach record status
-riffra --data-root ./riffra-data --attach record stop
-riffra --data-root ./riffra-data --attach record list
-riffra --data-root ./riffra-data --attach record promote --id rec:01j...
+riffra --attach record start
+riffra --attach record status
+riffra --attach record stop
+riffra --attach record list
+riffra --attach record promote --id rec:01j...
 ```
 
 | コマンド                                | 主要引数                    |
@@ -337,10 +389,10 @@ riffra --data-root ./riffra-data --attach record promote --id rec:01j...
 ### レンダリング(非同期ジョブ)
 
 ```powershell
-riffra --data-root ./riffra-data --attach --expected-sequence 43 render start --range loop-range --normalize true
-riffra --data-root ./riffra-data --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
-riffra --data-root ./riffra-data --attach job get --id job:01j...
-riffra --data-root ./riffra-data --attach job cancel --id job:01j...
+riffra --attach --expected-sequence 43 render start --range loop-range --normalize true
+riffra --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
+riffra --attach job get --id job:01j...
+riffra --attach job cancel --id job:01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない

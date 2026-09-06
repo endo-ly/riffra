@@ -13,7 +13,15 @@ pub(super) fn handles(command: &str) -> bool {
             | "effect.remove"
             | "effect.reorder"
             | "device.bypass"
+            | "device.inspect"
+            | "device.parameter.list"
+            | "device.parameter.get"
             | "device.parameter.set"
+            | "plugin.preset.list"
+            | "plugin.preset.get"
+            | "plugin.preset.set"
+            | "plugin.state.get"
+            | "plugin.state.set"
             | "missing.relink"
             | "missing.disable-plugin"
             | "missing.replace-plugin"
@@ -23,7 +31,6 @@ pub(super) fn handles(command: &str) -> bool {
 pub(super) fn dispatch<A>(
     dispatcher: &HostDispatcher<'_, A>,
     request: ControlCommand,
-    _canonical: riffra_core::CanonicalState,
 ) -> Result<DispatchResult, DispatchError> {
     Ok(match request.name.as_str() {
         "instrument.builtin.list" => dispatcher.value(
@@ -161,6 +168,18 @@ pub(super) fn dispatch<A>(
                         params.value,
                     )?,
             )
+        }
+        "device.inspect"
+        | "device.parameter.list"
+        | "device.parameter.get"
+        | "plugin.preset.list"
+        | "plugin.preset.get"
+        | "plugin.preset.set"
+        | "plugin.state.get"
+        | "plugin.state.set" => {
+            return Err(DispatchError::RuntimeUnavailable(
+                "this command requires --attach to a running Riffra Host".into(),
+            ));
         }
         "missing.relink" => {
             let params: MissingRelinkParams = decode(request.params)?;
@@ -319,6 +338,52 @@ pub(crate) struct DeviceParameterParams {
     pub(crate) device_id: String,
     pub(crate) parameter_index: u32,
     pub(crate) value: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceInspectParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceParameterListParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeviceParameterGetParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) parameter_index: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginDeviceParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginPresetSetParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) preset: Option<String>,
+    pub(crate) preset_index: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginStateSetParams {
+    pub(crate) track_id: String,
+    pub(crate) device_id: String,
+    pub(crate) state: crate::model::PluginStateSnapshot,
 }
 
 #[derive(Debug, Deserialize)]

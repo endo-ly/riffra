@@ -34,7 +34,13 @@ try {
     }
     if (-not (Test-Path $endpoint)) { throw 'riffra serve did not publish its endpoint' }
 
-    & $binary --data-root $dataRoot --attach session get |
+    $hosts = @(& $binary host list | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'Host discovery failed' }
+    if ($hosts.Count -ne 1 -or $hosts[0].dataRoot -ne $dataRoot) {
+        throw 'Host discovery returned an invalid registry entry'
+    }
+
+    & $binary --attach session get |
         Out-File (Join-Path $dataRoot 'session.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached session.get failed' }
     $session = Get-Content (Join-Path $dataRoot 'session.json') | ConvertFrom-Json
@@ -42,7 +48,7 @@ try {
         throw 'Attached session.get returned an invalid contract'
     }
     '{"requestId":"bootstrap","command":"host.bootstrap","params":{}}' |
-        & $binary --data-root $dataRoot --attach --interactive |
+        & $binary --attach --interactive |
         Out-File (Join-Path $dataRoot 'bootstrap.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached host.bootstrap failed' }
     $bootstrap = Get-Content (Join-Path $dataRoot 'bootstrap.json') | ConvertFrom-Json
@@ -50,7 +56,7 @@ try {
         $bootstrap.result.value.canonical.sequence -ne 0) {
         throw 'Attached host.bootstrap returned an invalid contract'
     }
-    & $binary --data-root $dataRoot --attach --expected-sequence 0 track add --name 'Process Test' --kind instrument |
+    & $binary --attach --expected-sequence 0 track add --name 'Process Test' --kind instrument |
         Out-File (Join-Path $dataRoot 'track.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached track.add failed' }
     $track = Get-Content (Join-Path $dataRoot 'track.json') | ConvertFrom-Json
@@ -58,7 +64,7 @@ try {
         $null -ne $track.result.value.canonical -or $track.result.value.entityIds.tracks.Count -ne 1) {
         throw 'Attached track.add returned an invalid contract'
     }
-    & $binary --data-root $dataRoot --attach --expected-sequence 1 undo |
+    & $binary --attach --expected-sequence 1 undo |
         Out-File (Join-Path $dataRoot 'undo.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached undo failed' }
     $undo = Get-Content (Join-Path $dataRoot 'undo.json') | ConvertFrom-Json
@@ -68,7 +74,7 @@ try {
     }
 
     if ($safeMode -eq '1') {
-        & $binary --data-root $dataRoot --attach audio status |
+        & $binary --attach audio status |
             Out-File (Join-Path $dataRoot 'safe-audio.json')
         if ($LASTEXITCODE -ne 0) { throw 'Safe Mode audio.status failed' }
         $safeAudio = Get-Content (Join-Path $dataRoot 'safe-audio.json') | ConvertFrom-Json
@@ -76,35 +82,35 @@ try {
             throw 'Safe Mode audio.status returned an invalid contract'
         }
 
-        $transportOutput = & $binary --data-root $dataRoot --attach transport play --transport-sequence 1 2>&1
+        $transportOutput = & $binary --attach transport play --transport-sequence 1 2>&1
         $transportExitCode = $LASTEXITCODE
         if ($transportExitCode -eq 0) { throw 'transport play unexpectedly succeeded in Safe Mode' }
         if (-not (($transportOutput -join "`n") -match 'runtimeUnavailable')) {
             throw 'Safe Mode transport play did not return runtimeUnavailable'
         }
 
-        $probeOutput = & $binary --data-root $dataRoot --attach audio probe 2>&1
+        $probeOutput = & $binary --attach audio probe 2>&1
         $probeExitCode = $LASTEXITCODE
         if ($probeExitCode -eq 0) { throw 'audio probe unexpectedly succeeded in Safe Mode' }
         if (-not (($probeOutput -join "`n") -match 'runtimeUnavailable')) {
             throw 'Safe Mode audio probe did not return runtimeUnavailable'
         }
 
-        $pluginOutput = & $binary --data-root $dataRoot --attach plugin scan --path $dataRoot 2>&1
+        $pluginOutput = & $binary --attach plugin scan --path $dataRoot 2>&1
         $pluginExitCode = $LASTEXITCODE
         if ($pluginExitCode -eq 0) { throw 'plugin scan unexpectedly succeeded in Safe Mode' }
         if (-not (($pluginOutput -join "`n") -match 'runtimeUnavailable')) {
             throw 'Safe Mode plugin scan did not return runtimeUnavailable'
         }
     } else {
-        & $binary --data-root $dataRoot --attach host status |
+        & $binary --attach host status |
             Out-File (Join-Path $dataRoot 'host.json')
         if ($LASTEXITCODE -ne 0) { throw 'Attached host.status failed' }
         $hostStatus = Get-Content (Join-Path $dataRoot 'host.json') | ConvertFrom-Json
         if (-not $hostStatus.ok -or $hostStatus.result.type -ne 'hostStatus') {
             throw 'Attached host.status returned an invalid contract'
         }
-        & $binary --data-root $dataRoot --attach audio status |
+        & $binary --attach audio status |
             Out-File (Join-Path $dataRoot 'audio.json')
         if ($LASTEXITCODE -ne 0) { throw 'Attached audio.status failed' }
         $audioStatus = Get-Content (Join-Path $dataRoot 'audio.json') | ConvertFrom-Json
@@ -113,7 +119,7 @@ try {
         }
     }
 
-    & $binary --data-root $dataRoot --attach host shutdown |
+    & $binary --attach host shutdown |
         Out-File (Join-Path $dataRoot 'shutdown.json')
     if ($LASTEXITCODE -ne 0) { throw 'Attached host.shutdown failed' }
     $shutdown = Get-Content (Join-Path $dataRoot 'shutdown.json') | ConvertFrom-Json

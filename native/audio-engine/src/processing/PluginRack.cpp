@@ -184,6 +184,22 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     if (auto configurationError = configureProcessor(*candidate, sampleRate, blockSize))
         return configurationError;
 
+    auto candidateProgramCount = 0;
+    try {
+        candidateProgramCount = std::max(0, candidate->getNumPrograms());
+    } catch (...) {
+        // Program enumeration remains available through programStatus(), which
+        // reports the plugin error. A failed capability probe must not prevent
+        // the plugin from loading.
+    }
+    auto candidateHasEditor = false;
+    try {
+        candidateHasEditor = candidate->hasEditor();
+    } catch (...) {
+        // Editor creation remains available through createEditor(), which
+        // reports the plugin error. A failed capability probe must not prevent
+        // the plugin from loading.
+    }
     updateParameterCache(*candidate);
     const auto candidateParameterCount =
         static_cast<std::size_t>(candidate->getParameters().size());
@@ -216,6 +232,8 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     preparedBlockSize.store(blockSize, std::memory_order_release);
     pluginInputChannels.store(inputChannels, std::memory_order_release);
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
+    cachedProgramCount.store(candidateProgramCount, std::memory_order_release);
+    cachedHasEditor.store(candidateHasEditor, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -317,6 +335,8 @@ void PluginRack::clear() noexcept {
     loaded.store(false, std::memory_order_release);
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
+    cachedProgramCount.store(0, std::memory_order_release);
+    cachedHasEditor.store(false, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -384,6 +404,10 @@ std::size_t PluginRack::parameterCount() const noexcept {
     return cachedParameters.size();
 }
 
+bool PluginRack::hasPrograms() const noexcept {
+    return cachedProgramCount.load(std::memory_order_acquire) > 0;
+}
+
 bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& error) noexcept {
     if (count == 0) {
         pendingParameterValues.reset();
@@ -448,6 +472,29 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
     parameters[index]->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
     updateParameterCache(*plugin);
     return true;
+}
+
+bool PluginRack::setProgram(const int index, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return false;
+    }
+    try {
+        const auto programCount = plugin->getNumPrograms();
+        if (index < 0 || index >= programCount) {
+            error = "Plugin program index is out of range.";
+            return false;
+        }
+        plugin->setCurrentProgram(index);
+        updateParameterCache(*plugin);
+        return true;
+    } catch (const std::exception& exception) {
+        error = "VST3 program change raised an exception: " + juce::String(exception.what());
+    } catch (...) {
+        error = "VST3 program change failed with an unknown exception.";
+    }
+    return false;
 }
 
 bool PluginRack::applyStateData(const juce::String& base64, juce::String& error) noexcept {
@@ -726,5 +773,43 @@ juce::var PluginRack::cachedStatus(const bool includeParameters) const {
 juce::var PluginRack::status() const { return cachedStatus(false); }
 
 juce::var PluginRack::parameterStatus() const { return cachedStatus(true); }
+
+juce::var PluginRack::programStatus() const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    auto* result = new juce::DynamicObject();
+    result->setProperty("supported", false);
+    result->setProperty("currentIndex", -1);
+    result->setProperty("currentName", juce::String());
+    result->setProperty("programs", juce::Array<juce::var>{});
+    if (plugin == nullptr) return juce::var(result);
+
+    try {
+        const auto programCount = plugin->getNumPrograms();
+        juce::Array<juce::var> programs;
+        for (int index = 0; index < programCount; ++index) {
+            auto* program = new juce::DynamicObject();
+            program->setProperty("index", index);
+            program->setProperty("name", plugin->getProgramName(index));
+            programs.add(juce::var(program));
+        }
+        const auto currentIndex = plugin->getCurrentProgram();
+        result->setProperty("supported", programCount > 0);
+        result->setProperty("currentIndex", currentIndex);
+        result->setProperty("currentName", currentIndex >= 0 && currentIndex < programCount
+                                               ? plugin->getProgramName(currentIndex)
+                                               : juce::String());
+        result->setProperty("programs", programs);
+    } catch (const std::exception& exception) {
+        result->setProperty("error",
+                            "VST3 program enumeration failed: " + juce::String(exception.what()));
+    } catch (...) {
+        result->setProperty("error", "VST3 program enumeration failed.");
+    }
+    return juce::var(result);
+}
+
+bool PluginRack::hasEditor() const noexcept {
+    return cachedHasEditor.load(std::memory_order_acquire);
+}
 
 }  // namespace riffra

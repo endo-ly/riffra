@@ -5,6 +5,7 @@ use crate::model::AudioStatus;
 use crate::preferences::AudioDriverConfig;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
+use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
@@ -159,6 +160,101 @@ impl AudioSupervisor {
             "",
         )?;
         Ok(())
+    }
+
+    pub fn inspect_track_device(
+        &self,
+        track_id: &str,
+        device_id: &str,
+    ) -> NativeAudioResult<Value> {
+        self.send_command_value(
+            serde_json::json!({
+                "type": "getTrackDeviceStatus",
+                "trackId": track_id,
+                "deviceId": device_id,
+            }),
+            Duration::from_secs(10),
+        )
+    }
+
+    pub fn list_track_device_parameters(
+        &self,
+        track_id: &str,
+        device_id: &str,
+    ) -> NativeAudioResult<Value> {
+        self.send_command_value(
+            serde_json::json!({
+                "type": "getTrackDeviceParameters",
+                "trackId": track_id,
+                "deviceId": device_id,
+            }),
+            Duration::from_secs(10),
+        )
+    }
+
+    pub fn get_track_plugin_state(
+        &self,
+        track_id: &str,
+        device_id: &str,
+    ) -> NativeAudioResult<Value> {
+        self.send_command_value(
+            serde_json::json!({
+                "type": "getTrackPluginState",
+                "trackId": track_id,
+                "deviceId": device_id,
+            }),
+            Duration::from_secs(10),
+        )
+    }
+
+    pub fn set_track_plugin_state(
+        &self,
+        track_id: &str,
+        device_id: &str,
+        state: Value,
+    ) -> NativeAudioResult<()> {
+        self.send_command_ack(
+            serde_json::json!({
+                "type": "setTrackPluginState",
+                "trackId": track_id,
+                "deviceId": device_id,
+                "state": state,
+            }),
+            "",
+            Duration::from_secs(10),
+        )
+    }
+
+    pub fn list_track_plugin_programs(
+        &self,
+        track_id: &str,
+        device_id: &str,
+    ) -> NativeAudioResult<Value> {
+        self.send_command_value(
+            serde_json::json!({
+                "type": "getTrackDevicePrograms",
+                "trackId": track_id,
+                "deviceId": device_id,
+            }),
+            Duration::from_secs(10),
+        )
+    }
+
+    pub fn set_track_plugin_program(
+        &self,
+        track_id: &str,
+        device_id: &str,
+        program_index: u32,
+    ) -> NativeAudioResult<Value> {
+        self.send_command_value(
+            serde_json::json!({
+                "type": "setTrackDeviceProgram",
+                "trackId": track_id,
+                "deviceId": device_id,
+                "programIndex": program_index,
+            }),
+            Duration::from_secs(10),
+        )
     }
 
     pub fn open_track_plugin_editor(

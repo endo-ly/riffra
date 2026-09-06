@@ -21,13 +21,13 @@ description: >-
 | Standalone ワンショット | `riffra --data-root <path> <command> ...`       | 1 操作を実行し JSON 応答を出す            |
 | Standalone 対話         | `riffra --data-root <path> --interactive`       | stdin へ JSON Lines 要求で連続操作        |
 | Live Host               | `riffra --data-root <path> serve [--safe-mode]` | フォアグラウンド常駐し Audio Runtime 提供 |
-| Attached                | `riffra --data-root <path> --attach <command>`  | 稼働中の Host へ接続                      |
+| Attached                | `riffra --attach <command>`                     | current-user registryから選んだHostへ接続 |
 
 正準状態は操作ごとに DataRoot へ永続化されるため、編集自体はどの形態でもプロセスを跨いで引き継がれる。履歴(Undo / Redo)と `expectedSequence` のRevision tokenはプロセスまたはHostの寿命に紐づくため、Standaloneで連続利用する場合は `--interactive` を使う。Audio Runtimeを利用する場合は `serve` を使う。
 
 - 音声を伴わない編集なら Standalone。単発はワンショット、Undo / Redo や連続操作は `--interactive`
 - 再生・録音・レンダリングなど Runtime を伴う操作は `serve` + `--attach`
-- `--interactive` はワンショットコマンドと併用できない。`serve` は `--attach` / `--interactive` / `--expected-sequence` と併用できない
+- `--interactive` はワンショットコマンドと併用できない。`serve` は `--attach` / `--interactive` / `--expected-sequence` と併用できない。`--attach` は `--data-root` と併用しない
 
 ## コマンドの 2 系統
 
@@ -72,7 +72,7 @@ description: >-
 - クリップ開始位置を使った相対tickの計算
 - Node.js / Python / PowerShellでのMIDI note JSON生成
 
-通常の作曲では、対応する `music.*` 操作がある場合はそれを優先する。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作で使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。
+通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
@@ -84,9 +84,9 @@ description: >-
 
 和声のTone、MIDI pitch番号、Phrase / Rhythmの反復、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算しない。Coreが解決・展開し、HarmonyEventを正準セッションへ保存する。
 
-## DataRoot
+## Host discoveryとDataRoot
 
-CLI には既定の場所はなく `--data-root` が必須である。位置は自由(慣例は `./riffra-data`)で、作った場所は呼び出し側が引き回す。同じ DataRoot を同時に所有できるプロセスは 1 つだけである。
+Standaloneと`serve`では既定の場所はなく `--data-root` が必須である。AttachedはDataRootを開かず、current-user registryからHostを発見する。位置は自由(慣例は `./riffra-data`)で、作った場所は呼び出し側が引き回す。同じ DataRoot を同時に所有できるプロセスは 1 つだけである。
 
 ```text
 <data_root>/
@@ -103,22 +103,19 @@ CLI には既定の場所はなく `--data-root` が必須である。位置は�
 └─ <instance-id>.json       # 同一OSユーザーの稼働Host一覧
 ```
 
-`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。`control/host.json`（instanceId・pid・エンドポイント）を読んで接続する。ファイルの有無だけでは「稼働中か」「誰も所有していないか」を判断できない。
+`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。CLIは`LocalHostRegistry::current_user().discover()`でhandshake済みのHostを取得する。候補が1件なら自動選択し、複数件なら`--host <instance-id>`を要求する。
 
-Host一覧は、registryに登録された各Hostへ接続して`host.status`を確認する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
-
-### Desktop アプリの DataRoot
-
-Desktop Embedded HostはユーザーのMusic directory配下をDataRootとして使い、位置は常に一定である。
-
-| OS      | DataRoot                     |
-| ------- | ---------------------------- |
-| Windows | `%USERPROFILE%\Music\Riffra` |
-| Linux   | `~/Music/Riffra`             |
-| macOS   | `~/Music/Riffra`             |
+Host一覧は次で確認する。
 
 ```powershell
-cargo run -p riffra-cli -- --data-root "$env:USERPROFILE\Music\Riffra" --attach host status
+riffra host list
+riffra --attach --host <instance-id> session inspect
+```
+
+`host list`はcurrent-user registryのローカル操作である。registryの各候補をhandshakeで検証し、稼働HostのDataRoot、PID、instance ID、起動時刻を表示する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
+
+```powershell
+cargo run -p riffra-cli -- --attach host status
 ```
 
 ## 制御プロトコル(JSON Lines)
@@ -188,10 +185,10 @@ Event frameはRuntime型を直接持たない。
 
 分岐は必ず `error.code` で判定する。message 文字列の解析はしない。
 
-| code                 | 意味                                          | 対処                                                 |
-| -------------------- | --------------------------------------------- | ---------------------------------------------------- |
-| `invalidRequest`     | 要求形式・params・未知のコマンドが不正        | params のキー名(camelCase)と型を見直す               |
-| `commandFailed`      | Core / Host / 保存処理の失敗(ID 不存在など)   | message の内容に対処する                             |
-| `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | 最新状態を `session inspect` して編集内容を決め直す  |
-| `hostUnavailable`    | Attached が Host へ接続できない               | `control/host.json` の有無と Host プロセスの生存確認 |
-| `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える                    |
+| code                 | 意味                                          | 対処                                                |
+| -------------------- | --------------------------------------------- | --------------------------------------------------- |
+| `invalidRequest`     | 要求形式・params・未知のコマンドが不正        | params のキー名(camelCase)と型を見直す              |
+| `commandFailed`      | Core / Host / 保存処理の失敗(ID 不存在など)   | message の内容に対処する                            |
+| `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | 最新状態を `session inspect` して編集内容を決め直す |
+| `hostUnavailable`    | Attached が Host へ接続できない               | `riffra host list`でHostの登録とhandshake状態を確認 |
+| `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える                   |

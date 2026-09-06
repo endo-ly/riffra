@@ -254,7 +254,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 同じDataRootを別のHostが所有している場合、Standalone CLIと`serve`は起動に失敗し、DesktopはそのHostへ接続する。
 
-起動中のHostは、接続情報を`<data_root>/control/host.json`へ公開し、同じユーザーのregistryへも登録する。接続先が分からない場合はregistryから候補を探し、各候補へ接続して`host.status`を確認する。
+起動中のHostは、接続情報を`<data_root>/control/host.json`へ公開し、同じユーザーのregistryへも登録する。Desktopなどの接続管理は必要に応じてregistryから候補を探し、各候補へ接続して`host.status`を確認する。Attached CLIはcurrent-user registryを正本とし、DataRootや`host.json`を直接探索しない。
 
 候補を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
 
@@ -291,14 +291,18 @@ riffra --data-root ./data project create --name "New Song"
 riffra --data-root ./data project open <project-id>
 riffra --data-root ./data track add --name Bass --kind instrument
 riffra --data-root ./data serve --safe-mode
-riffra --data-root ./data --attach session get
+riffra --attach session get
+riffra host list
+riffra --attach --host <instance-id> session get
 ```
+
+Attached CLIは候補が1件なら自動接続し、複数件なら`--host`によるinstanceIdの明示を要求する。`host list`はcurrent-user registryを表示するローカル操作であり、DataRootを必要としない。
 
 対話モードは標準入力の1行を1要求として読み、標準出力へ1行の応答を書いてflushする。空行は無視する。
 
 ```bash
 riffra --data-root ./data --interactive
-riffra --data-root ./data --attach --interactive
+riffra --attach --interactive
 ```
 
 StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。Live Hostへ送るProject-bound requestには、Clientが`project.list`または`host.bootstrap`で取得した`expectedProjectId`を付ける。Live Hostはこの値がない要求を拒否し、Active Projectと一致しない要求をConflictとして返す。Standalone Dispatcherは単独でActive Projectを管理するため、欠落した値を自身のActive Projectで補完する。
@@ -359,22 +363,24 @@ Standaloneの`undo`と`redo`はそのプロセス内の履歴を使う。serve�
 
 CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
 
-| 分類                   | コマンド                                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session / History      | `session inspect`、`session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                            |
-| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                          |
-| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                           |
-| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/clear/quantize/transform/duplicate`                                                                                                                                              |
-| Music Operations       | `music.midi-clip.create`、`music.note.insert`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert`                           |
-| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                       |
-| Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                  |
-| Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                 |
-| Rack state             | `plugin catalog list`、`instrument builtin list/set`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass/parameter-set`                                                                                                                                                |
-| Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
+| 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session / History      | `session inspect`、`session get`、`session settings update`、`history get`、`undo`、`redo`                                                                                                                                                                                                                                                |
+| Track / Routing        | `track list`、`add`、`update`、`remove`、`duplicate`、`reorder`、`audio-input`、`midi-input`                                                                                                                                                                                                                                              |
+| Audio Clip             | `audio-clip list`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`crossfade`                                                                                                                                                                                                                                               |
+| MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/clear/quantize/transform/duplicate`                                                                                                                                                  |
+| Music Operations       | `music.midi-clip.create/resize`、`music.note.list/get/insert/update/remove`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert` |
+| Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                           |
+| Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                      |
+| Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                     |
+| Rack state             | `plugin catalog list`、`instrument builtin list/set`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                         |
+| Runtime services       | `audio status/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin`     |
 
 Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
 
 `session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、件数に固定上限を設けない。`automationLaneCount` はTrack全体のLane数、`automationPointCount` は指定範囲に含まれるPoint数を表す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
+
+`music.note.list` と `music.note.get` はpitch、音楽座標のposition、音楽分数のduration、velocity、channelだけを返し、tickやMIDI note numberを返さない。`device.inspect` はmetadataとcapabilityだけを返し、Plugin parameterの値一覧やopaqueな`stateData`を含めない。Pluginのstateは`plugin.state.get`で取得でき、CLIの`plugin state save`はその結果を指定ファイルへ保存し、標準出力には保存先だけを返す。
 
 Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答を軽量な `mutation` receiptへ変換する。receiptは応答の `sequence`、Projection状態、構造Entity ID(Track、Clip、Region、Harmony、Marker、Automation Lane、Device)を含み、一部の直接Note操作では生成されたMIDI Note IDも含む。Canonical Session、MIDI Note/Eventの内容、Automation Point、Plugin parameter、`stateData` は含まない。後続操作に必要な最新状態は `session inspect` で取得する。DesktopとHost間の共有Control protocolではDesktop同期のためCanonical結果を維持する。
 

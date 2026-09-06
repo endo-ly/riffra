@@ -66,6 +66,18 @@ public:
                            juce::String& error) noexcept;
     bool setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
                             int parameterIndex, float value, juce::String& error) noexcept;
+    bool setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
+                          int programIndex, juce::String& error);
+    bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
+                                 const juce::var& persistedState, juce::String& error);
+    [[nodiscard]] juce::var deviceStatus(const juce::String& trackId, const juce::String& deviceId,
+                                         juce::String& error) const;
+    [[nodiscard]] juce::var deviceParameterStatus(const juce::String& trackId,
+                                                  const juce::String& deviceId,
+                                                  juce::String& error) const;
+    [[nodiscard]] juce::var deviceProgramStatus(const juce::String& trackId,
+                                                const juce::String& deviceId,
+                                                juce::String& error) const;
     [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
                                          const juce::String& deviceId) noexcept;
     bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,

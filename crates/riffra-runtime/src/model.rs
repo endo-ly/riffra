@@ -121,6 +121,62 @@ pub struct TrackDeviceSummary {
     pub disabled_placeholder: bool,
 }
 
+/// Lightweight metadata and capabilities for one Track Device.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInspection {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub bypassed: bool,
+    pub capabilities: DeviceCapabilities,
+    pub parameter_count: usize,
+    pub state_persisted: bool,
+}
+
+/// Host-visible capabilities of one Track Device.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCapabilities {
+    pub parameters: bool,
+    pub state: bool,
+    pub presets: bool,
+    pub editor: bool,
+}
+
+/// One persisted or runtime-reported plugin parameter.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterInfo {
+    pub index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    pub value: f32,
+    pub default_value: f32,
+    pub automatable: bool,
+}
+
+/// One program exposed by a plugin host.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPresetInfo {
+    pub index: u32,
+    pub name: String,
+}
+
+/// Opaque plugin state transported between the Host and the CLI.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStateSnapshot {
+    pub schema_version: u32,
+    pub plugin_path: String,
+    pub parameter_values: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub state_data: Option<String>,
+}
+
 /// Instrument metadata included in a lightweight Track projection.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

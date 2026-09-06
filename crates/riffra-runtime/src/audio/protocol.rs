@@ -14,6 +14,7 @@ pub(super) struct NativeReply {
     pub(super) request_id: Option<u64>,
     pub(super) result: NativeAudioResult<()>,
     pub(super) event: NativeEvent,
+    pub(super) value: serde_json::Value,
 }
 
 /// JSON message body for the audio sidecar IPC.
@@ -228,6 +229,9 @@ enum ParsedNativeLine {
     Acknowledgement {
         request_id: Option<u64>,
     },
+    Response {
+        request_id: Option<u64>,
+    },
     Error {
         request_id: Option<u64>,
         fault: bool,
@@ -271,18 +275,17 @@ fn apply_emergency_mute_state(current: &mut AudioStatus, emergency_muted: bool) 
     true
 }
 
-/// Parses one JSON line from the sidecar into a typed reply. Returns `None` for
-/// non-JSON or unrecognized message types so the caller can ignore them.
-fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
-    let payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+/// Classifies one parsed sidecar payload. Returns `None` for unrecognized
+/// message types so the caller can ignore them.
+fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
     let request_id = payload.get("requestId").and_then(serde_json::Value::as_u64);
     match payload.get("type").and_then(serde_json::Value::as_str) {
         Some("audioStatus") => {
-            let status = serde_json::from_value::<NativeStatus>(payload).ok()?;
+            let status = serde_json::from_value::<NativeStatus>(payload.clone()).ok()?;
             Some(ParsedNativeLine::Status { request_id, status })
         }
         Some("audioMeters") => {
-            let meters = serde_json::from_value::<NativeMeters>(payload).ok()?;
+            let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
         Some("transportStatus" | "timelineAck") => {
@@ -304,15 +307,31 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
                 detail,
             })
         }
+        Some(
+            "audioDeviceProbe"
+            | "deviceChannels"
+            | "trackDeviceStatus"
+            | "trackDeviceParameters"
+            | "trackDevicePrograms"
+            | "trackPluginState"
+            | "trackDeviceProgramChanged",
+        ) => Some(ParsedNativeLine::Response { request_id }),
         _ => None,
     }
+}
+
+#[cfg(test)]
+fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
+    let payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    parse_native_value(&payload)
 }
 
 pub(super) fn handle_native_stdout(
     status: &Arc<Mutex<AudioStatus>>,
     bytes: &[u8],
 ) -> Option<NativeReply> {
-    let parsed = parse_native_line(bytes)?;
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    let parsed = parse_native_value(&value)?;
     match parsed {
         ParsedNativeLine::Status {
             request_id,
@@ -325,6 +344,7 @@ pub(super) fn handle_native_stdout(
                 request_id,
                 result: Ok(()),
                 event: NativeEvent::AudioStatus,
+                value,
             })
         }
         ParsedNativeLine::Meters { request_id, meters } => {
@@ -352,12 +372,20 @@ pub(super) fn handle_native_stdout(
                 } else {
                     NativeEvent::AudioMeters
                 },
+                value,
             })
         }
         ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
             request_id,
             result: Ok(()),
             event: NativeEvent::None,
+            value,
+        }),
+        ParsedNativeLine::Response { request_id } => Some(NativeReply {
+            request_id,
+            result: Ok(()),
+            event: NativeEvent::None,
+            value,
         }),
         ParsedNativeLine::Error {
             request_id,
@@ -373,6 +401,7 @@ pub(super) fn handle_native_stdout(
                 request_id,
                 result: Err(NativeAudioError::native_rejected(detail)),
                 event: NativeEvent::AudioStatus,
+                value,
             })
         }
     }
@@ -537,6 +566,7 @@ mod tests {
             }
             ParsedNativeLine::Meters { .. }
             | ParsedNativeLine::Acknowledgement { .. }
+            | ParsedNativeLine::Response { .. }
             | ParsedNativeLine::Error { .. } => {
                 panic!("expected a status line")
             }
@@ -570,10 +600,36 @@ mod tests {
             }
             ParsedNativeLine::Status { .. }
             | ParsedNativeLine::Meters { .. }
-            | ParsedNativeLine::Acknowledgement { .. } => {
+            | ParsedNativeLine::Acknowledgement { .. }
+            | ParsedNativeLine::Response { .. } => {
                 panic!("expected an error line")
             }
         }
+    }
+
+    #[test]
+    fn recognizes_known_plugin_response_types() {
+        for message_type in [
+            "trackDeviceStatus",
+            "trackDeviceParameters",
+            "trackDevicePrograms",
+            "trackPluginState",
+            "trackDeviceProgramChanged",
+        ] {
+            let line = format!(r#"{{"type":"{message_type}","requestId":11}}"#);
+            let parsed = parse_native_line(line.as_bytes()).expect("known response line");
+            assert!(matches!(
+                parsed,
+                ParsedNativeLine::Response {
+                    request_id: Some(11)
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_response_types_even_with_request_ids() {
+        assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
     }
 
     #[test]

@@ -90,7 +90,7 @@ npm run typecheck      # tsc
 cargo run -p riffra-cli -- --data-root ./riffra-data session get
 cargo run -p riffra-cli -- --data-root ./riffra-data --interactive
 cargo run -p riffra-cli -- --data-root ./riffra-data serve --safe-mode
-cargo run -p riffra-cli -- --data-root ./riffra-data --attach session get
+cargo run -p riffra-cli -- --attach session get
 
 # Native audio engineを使うLive Host
 ./native/audio-engine/build.sh Debug

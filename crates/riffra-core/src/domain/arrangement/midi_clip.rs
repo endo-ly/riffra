@@ -107,6 +107,11 @@ impl MidiClip {
                 || note.channel > 16
                 || note.duration_ticks == 0
                 || note.start_tick.0 >= self.duration_ticks
+                || note
+                    .start_tick
+                    .0
+                    .checked_add(note.duration_ticks)
+                    .is_none_or(|end| end > self.duration_ticks)
             {
                 return Err(format!(
                     "MIDI clip '{}' contains an invalid note.",

@@ -34,8 +34,10 @@ mod session;
 mod track;
 
 pub(crate) use device::{
-    DeviceBypassParams, DeviceIdParams, DeviceParameterParams, EffectRemoveParams,
-    EffectReorderParams, MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+    DeviceBypassParams, DeviceIdParams, DeviceInspectParams, DeviceParameterGetParams,
+    DeviceParameterListParams, DeviceParameterParams, EffectRemoveParams, EffectReorderParams,
+    MissingPluginReplaceParams, MissingRelinkParams, PluginDeviceParams, PluginPathParams,
+    PluginPresetSetParams, PluginStateSetParams,
 };
 pub(crate) use track::{AudioInputParams, MidiInputParams};
 
@@ -385,7 +387,7 @@ impl<'a, A> HostDispatcher<'a, A> {
         } else if project::handles(&command) {
             project::dispatch(self, request, canonical.clone())?
         } else if device::handles(&command) {
-            device::dispatch(self, request, canonical)?
+            device::dispatch(self, request)?
         } else {
             return Err(DispatchError::invalid_request(format!(
                 "unknown command: {command}"
@@ -517,7 +519,15 @@ fn is_read_command(command: &str) -> bool {
             | "midi-clip.list"
             | "music.harmony.resolve"
             | "music.harmony.list"
+            | "music.note.list"
+            | "music.note.get"
             | "music.region.list"
+            | "device.inspect"
+            | "device.parameter.list"
+            | "device.parameter.get"
+            | "plugin.preset.list"
+            | "plugin.preset.get"
+            | "plugin.state.get"
             | "project.export"
             | "project.list"
             | "instrument.builtin.list"
@@ -628,6 +638,14 @@ fn is_runtime_host_only(command: &str) -> bool {
             | "asset.preview.stop"
             | "midi.send"
             | "midi.panic"
+            | "device.inspect"
+            | "device.parameter.list"
+            | "device.parameter.get"
+            | "plugin.preset.list"
+            | "plugin.preset.get"
+            | "plugin.preset.set"
+            | "plugin.state.get"
+            | "plugin.state.set"
             | "plugin.catalog.list"
             | "plugin.scan"
             | "plugin.scan.start"

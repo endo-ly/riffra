@@ -651,6 +651,118 @@ PluginRack* TimelineEngine::findDevice(const juce::String& trackId,
     return track.effectChain.findDevice(deviceId);
 }
 
+juce::var TimelineEngine::deviceStatus(const juce::String& trackId, const juce::String& deviceId,
+                                       juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Arrangement Graph is not loaded.";
+        return {};
+    }
+    const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
+                                    [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return {};
+    }
+    const auto& track = **found;
+    const auto isInstrument = track.instrument && track.instrumentDeviceId == deviceId;
+    const auto* rack =
+        isInstrument
+            ? (track.instrumentRuntime != nullptr ? track.instrumentRuntime->vst3Rack() : nullptr)
+            : track.effectChain.findDevice(deviceId);
+    if (rack == nullptr) {
+        error = isInstrument ? "Built-in instruments do not expose plugin status."
+                             : "Track Device was not found.";
+        return {};
+    }
+    auto result = rack->status();
+    if (!result.isObject()) {
+        error = "Plugin status was not an object.";
+        return {};
+    }
+    auto* object = result.getDynamicObject();
+    object->setProperty("type", "trackDeviceStatus");
+    object->setProperty("id", deviceId);
+    object->setProperty("source", "vst3");
+    object->setProperty("parameterCount", static_cast<int>(rack->parameterCount()));
+    object->setProperty("statePersisted", true);
+    auto* capabilities = new juce::DynamicObject();
+    capabilities->setProperty("parameters", rack->parameterCount() > 0);
+    capabilities->setProperty("state", true);
+    capabilities->setProperty("presets", rack->hasPrograms());
+    capabilities->setProperty("editor", rack->hasEditor());
+    object->setProperty("capabilities", juce::var(capabilities));
+    return result;
+}
+
+juce::var TimelineEngine::deviceParameterStatus(const juce::String& trackId,
+                                                const juce::String& deviceId,
+                                                juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Arrangement Graph is not loaded.";
+        return {};
+    }
+    const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
+                                    [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return {};
+    }
+    const auto& track = **found;
+    const auto isInstrument = track.instrument && track.instrumentDeviceId == deviceId;
+    const auto* rack =
+        isInstrument
+            ? (track.instrumentRuntime != nullptr ? track.instrumentRuntime->vst3Rack() : nullptr)
+            : track.effectChain.findDevice(deviceId);
+    if (rack == nullptr) {
+        error = isInstrument ? "Built-in instruments do not expose plugin parameters."
+                             : "Track Device was not found.";
+        return {};
+    }
+    auto result = rack->parameterStatus();
+    if (!result.isObject()) {
+        error = "Plugin parameter status was not an object.";
+        return {};
+    }
+    result.getDynamicObject()->setProperty("type", "trackDeviceParameters");
+    return result;
+}
+
+juce::var TimelineEngine::deviceProgramStatus(const juce::String& trackId,
+                                              const juce::String& deviceId,
+                                              juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Arrangement Graph is not loaded.";
+        return {};
+    }
+    const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
+                                    [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return {};
+    }
+    const auto& track = **found;
+    const auto isInstrument = track.instrument && track.instrumentDeviceId == deviceId;
+    const auto* rack =
+        isInstrument
+            ? (track.instrumentRuntime != nullptr ? track.instrumentRuntime->vst3Rack() : nullptr)
+            : track.effectChain.findDevice(deviceId);
+    if (rack == nullptr) {
+        error = isInstrument ? "Built-in instruments do not expose plugin programs."
+                             : "Track Device was not found.";
+        return {};
+    }
+    auto result = rack->programStatus();
+    if (!result.isObject()) {
+        error = "Plugin program status was not an object.";
+        return {};
+    }
+    result.getDynamicObject()->setProperty("type", "trackDevicePrograms");
+    return result;
+}
+
 bool TimelineEngine::mirrorEditorDeviceState(const juce::String& trackId,
                                              const juce::String& deviceId,
                                              const juce::var& persistedState,
@@ -867,6 +979,143 @@ bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce:
         if (live != nullptr) (void)live->setParameter(parameterIndex, previous, rollbackError);
         if (liveInstrument != nullptr)
             (void)liveInstrument->setParameter(parameterIndex, previous, rollbackError);
+        return false;
+    }
+    sequence.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool TimelineEngine::setDevicePersistedState(const juce::String& trackId,
+                                             const juce::String& deviceId,
+                                             const juce::var& persistedState, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Arrangement Graph is not loaded.";
+        return false;
+    }
+    const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
+                                    [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return false;
+    }
+    auto& track = **found;
+    std::vector<PluginRack*> targets;
+    if (track.instrument && track.instrumentDeviceId == deviceId) {
+        if (track.instrumentRuntime != nullptr) {
+            if (auto* rack = track.instrumentRuntime->vst3Rack()) targets.push_back(rack);
+        }
+        if (track.liveInstrumentRuntime != nullptr) {
+            if (auto* rack = track.liveInstrumentRuntime->vst3Rack()) targets.push_back(rack);
+        }
+    } else {
+        if (auto* rack = track.effectChain.findDevice(deviceId)) targets.push_back(rack);
+        if (auto* rack = track.liveEffectChain.findDevice(deviceId)) targets.push_back(rack);
+        if (auto* rack = track.recordingCapture.effectChain.findDevice(deviceId))
+            targets.push_back(rack);
+    }
+    if (targets.empty()) {
+        error = track.instrument && track.instrumentDeviceId == deviceId
+                    ? "Built-in instruments do not expose plugin state."
+                    : "Track Device was not found.";
+        return false;
+    }
+    targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+
+    std::vector<std::pair<PluginRack*, juce::var>> previous;
+    previous.reserve(targets.size());
+    const auto rollback = [&previous] {
+        for (const auto& [rack, savedState] : previous) {
+            juce::String rollbackError;
+            (void)rack->applyPersistedState(savedState, rollbackError);
+        }
+    };
+    for (auto* target : targets) {
+        auto saved = target->persistedState(error);
+        if (saved.isVoid()) {
+            rollback();
+            return false;
+        }
+        previous.emplace_back(target, saved);
+        if (target->applyPersistedState(persistedState, error)) continue;
+        rollback();
+        return false;
+    }
+    sequence.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool TimelineEngine::setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
+                                      const int programIndex, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "Arrangement Graph is not loaded.";
+        return false;
+    }
+    const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
+                                    [&](const auto& track) { return track->id == trackId; });
+    if (found == timeline->tracks.end()) {
+        error = "Track was not found.";
+        return false;
+    }
+    auto& track = **found;
+    std::vector<PluginRack*> targets;
+    if (track.instrument && track.instrumentDeviceId == deviceId) {
+        if (track.instrumentRuntime != nullptr) {
+            if (auto* rack = track.instrumentRuntime->vst3Rack()) targets.push_back(rack);
+        }
+        if (track.liveInstrumentRuntime != nullptr) {
+            if (auto* rack = track.liveInstrumentRuntime->vst3Rack()) targets.push_back(rack);
+        }
+    } else {
+        if (auto* rack = track.effectChain.findDevice(deviceId)) targets.push_back(rack);
+        if (auto* rack = track.liveEffectChain.findDevice(deviceId)) targets.push_back(rack);
+        if (auto* rack = track.recordingCapture.effectChain.findDevice(deviceId))
+            targets.push_back(rack);
+    }
+    if (targets.empty()) {
+        error = track.instrument && track.instrumentDeviceId == deviceId
+                    ? "Built-in instruments do not expose plugin programs."
+                    : "Track Device was not found.";
+        return false;
+    }
+    targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+
+    std::vector<std::pair<PluginRack*, int>> previous;
+    previous.reserve(targets.size());
+    for (auto* target : targets) {
+        const auto status = target->programStatus();
+        if (!status.isObject()) {
+            error = "Plugin program status was not an object.";
+            return false;
+        }
+        const auto enumerationError = status.getProperty("error", {});
+        if (!enumerationError.isVoid()) {
+            error = enumerationError.toString();
+            return false;
+        }
+        const auto programs = status.getProperty("programs", {});
+        const auto currentIndex = static_cast<int>(status.getProperty("currentIndex", -1));
+        if (!programs.isArray() || currentIndex < 0 || currentIndex >= programs.size()) {
+            error = "Plugin program state could not be captured for rollback.";
+            return false;
+        }
+        if (programIndex < 0 || programIndex >= programs.size()) {
+            error = "Plugin program index is out of range.";
+            return false;
+        }
+        previous.emplace_back(target, currentIndex);
+    }
+
+    const auto rollback = [&previous] {
+        for (const auto& [rack, index] : previous) {
+            juce::String rollbackError;
+            (void)rack->setProgram(index, rollbackError);
+        }
+    };
+    for (auto* target : targets) {
+        if (target->setProgram(programIndex, error)) continue;
+        rollback();
         return false;
     }
     sequence.fetch_add(1, std::memory_order_relaxed);

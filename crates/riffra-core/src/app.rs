@@ -737,7 +737,7 @@ mod tests {
             .create_midi_clip(
                 &instrument_id,
                 TimelineTick(480),
-                0,
+                960,
                 Some("  Lead  ".into()),
             )
             .unwrap();
@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(clip.name, "Lead");
         assert_eq!(clip.track_id, instrument_id);
         assert_eq!(clip.start_tick, TimelineTick(480));
-        assert_eq!(clip.duration_ticks, 1);
+        assert_eq!(clip.duration_ticks, 960);
         assert!(clip.asset_id.is_none());
         assert!(clip.notes.is_empty());
         assert!(clip.events.is_empty());
@@ -804,7 +804,7 @@ mod tests {
                     crate::application::MidiNoteInput {
                         pitch: 64,
                         start_tick: TimelineTick(480),
-                        duration_ticks: 0,
+                        duration_ticks: 480,
                         velocity: 100,
                         channel: 1,
                     },
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(inserted.arrangement.midi_clips[0].notes.len(), 2);
         assert_eq!(
             inserted.arrangement.midi_clips[0].notes[1].duration_ticks,
-            1
+            480
         );
         assert_ne!(
             inserted.arrangement.midi_clips[0].notes[0].id,
@@ -873,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn midi_note_duplicate_and_paste_extend_the_clip_as_one_edit() {
+    fn midi_note_duplicate_and_paste_reject_out_of_range_notes() {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -907,17 +907,14 @@ mod tests {
 
         let duplicated = application
             .duplicate_midi_notes(&clip_id, vec![note_id], 1_920)
-            .unwrap();
-        let duplicated_clip = &duplicated.arrangement.midi_clips[0];
-        assert_eq!(duplicated_clip.duration_ticks, 3_840);
-        assert_eq!(duplicated_clip.notes.len(), 2);
-        assert_eq!(duplicated_clip.notes[1].start_tick, TimelineTick(1_920));
-        assert_eq!(duplicated_clip.notes[1].duration_ticks, 1_920);
-
-        let undone_duplicate = core.undo(&storage).unwrap();
-        let undone_clip = &undone_duplicate.arrangement.midi_clips[0];
-        assert_eq!(undone_clip.duration_ticks, 1_920);
-        assert_eq!(undone_clip.notes.len(), 1);
+            .unwrap_err();
+        assert!(duplicated.to_string().contains("invalid note"));
+        let unchanged = core.snapshot().unwrap();
+        assert_eq!(
+            unchanged.session.arrangement.midi_clips[0].duration_ticks,
+            1_920
+        );
+        assert_eq!(unchanged.session.arrangement.midi_clips[0].notes.len(), 1);
 
         let pasted = application
             .insert_midi_notes(
@@ -930,14 +927,14 @@ mod tests {
                     channel: 1,
                 }],
             )
-            .unwrap();
-        let pasted_clip = &pasted.arrangement.midi_clips[0];
-        assert_eq!(pasted_clip.duration_ticks, 2_400);
-        assert_eq!(pasted_clip.notes.len(), 2);
-
-        let undone_paste = core.undo(&storage).unwrap();
-        assert_eq!(undone_paste.arrangement.midi_clips[0].duration_ticks, 1_920);
-        assert_eq!(undone_paste.arrangement.midi_clips[0].notes.len(), 1);
+            .unwrap_err();
+        assert!(pasted.to_string().contains("invalid note"));
+        let unchanged = core.snapshot().unwrap();
+        assert_eq!(
+            unchanged.session.arrangement.midi_clips[0].duration_ticks,
+            1_920
+        );
+        assert_eq!(unchanged.session.arrangement.midi_clips[0].notes.len(), 1);
     }
 
     #[test]

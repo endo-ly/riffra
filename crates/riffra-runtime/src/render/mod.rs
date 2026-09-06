@@ -528,6 +528,20 @@ mod tests {
     }
 
     #[test]
+    fn entire_arrangement_uses_the_explicit_midi_clip_end_after_resize() {
+        let mut session = session_with_clips();
+        session
+            .arrangement
+            .resize_midi_clip("clip", None, Some(TimelineTick(1_920)))
+            .unwrap();
+
+        assert_eq!(
+            resolve_range(&session, &RenderRange::EntireArrangement).unwrap(),
+            (0, 1_920)
+        );
+    }
+
+    #[test]
     fn loop_range_requires_an_enabled_positive_range() {
         let mut session = session_with_clips();
         assert!(resolve_range(&session, &RenderRange::LoopRange).is_err());

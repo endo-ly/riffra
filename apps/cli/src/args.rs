@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use riffra_control::ControlCommand;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -9,7 +10,10 @@ use std::path::PathBuf;
 pub struct Cli {
     /// Root directory containing the session, library, and Asset stores.
     #[arg(long)]
-    pub data_root: PathBuf,
+    pub data_root: Option<PathBuf>,
+    /// Select one Host registration when more than one Host is running.
+    #[arg(long)]
+    pub host: Option<String>,
     /// Read JSON Lines requests from stdin.
     #[arg(long)]
     pub interactive: bool,
@@ -160,6 +164,7 @@ pub struct ServeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum HostCommand {
+    List,
     Status,
     Shutdown,
 }
@@ -537,7 +542,11 @@ pub struct MidiNoteBulkArgs {
     #[arg(long)]
     pub clip_id: String,
     #[arg(long, alias = "notes")]
-    pub notes_json: String,
+    pub notes_json: Option<String>,
+    #[arg(long)]
+    pub notes_file: Option<PathBuf>,
+    #[arg(long)]
+    pub stdin: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -637,6 +646,7 @@ pub struct MusicalPhraseInsertArgs {
 #[derive(Debug, Subcommand)]
 pub enum MusicMidiClipCommand {
     Create(MusicalMidiClipCreateArgs),
+    Resize(MusicalMidiClipResizeArgs),
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -652,18 +662,90 @@ pub struct MusicalMidiClipCreateArgs {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum MusicNoteCommand {
-    Insert(MusicalNoteBulkArgs),
+#[derive(Debug, Args)]
+pub struct MusicalMidiClipResizeArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    pub start: Option<String>,
+    #[arg(long)]
+    pub end: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Subcommand)]
+pub enum MusicNoteCommand {
+    List(MusicalNoteListArgs),
+    Get(MusicalNoteGetArgs),
+    Insert(MusicalNoteBulkArgs),
+    Update(MusicalNoteUpdateArgs),
+    Remove(MusicalNoteRemoveArgs),
+}
+
+#[derive(Debug, Args)]
 pub struct MusicalNoteBulkArgs {
     #[arg(long)]
     pub clip_id: String,
     #[arg(long, alias = "notes")]
-    pub notes_json: String,
+    pub notes_json: Option<String>,
+    #[arg(long)]
+    pub notes_file: Option<PathBuf>,
+    #[arg(long)]
+    pub stdin: bool,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteListArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteGetArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    pub note_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteUpdateArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    pub note_id: String,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub velocity: Option<u8>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<u8>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteRemoveArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long)]
+    pub note_id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1049,7 +1131,11 @@ pub struct EffectReorderArgs {
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
     Bypass(DeviceBypassArgs),
-    ParameterSet(DeviceParameterSetArgs),
+    Inspect(DeviceInspectArgs),
+    Parameter {
+        #[command(subcommand)]
+        command: DeviceParameterCommand,
+    },
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -1075,6 +1161,42 @@ pub struct DeviceParameterSetArgs {
     pub parameter_index: u32,
     #[arg(long)]
     pub value: f32,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeviceParameterCommand {
+    List(DeviceParameterListArgs),
+    Get(DeviceParameterGetArgs),
+    Set(DeviceParameterSetArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInspectArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterListArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterGetArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub parameter_index: u32,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1287,6 +1409,14 @@ pub enum PluginCommand {
     Effect(PluginPathArgs),
     Scan(PluginScanArgs),
     ScanStart(PluginScanArgs),
+    Preset {
+        #[command(subcommand)]
+        command: PluginPresetCommand,
+    },
+    State {
+        #[command(subcommand)]
+        command: PluginStateCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1308,6 +1438,63 @@ pub struct PluginPathArgs {
 pub struct PluginScanArgs {
     #[arg(long)]
     pub path: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginPresetCommand {
+    List(PluginDeviceArgs),
+    Get(PluginDeviceArgs),
+    Set(PluginPresetSetArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginStateCommand {
+    Save(PluginStateSaveArgs),
+    Load(PluginStateLoadArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDeviceArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPresetSetArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub preset: Option<String>,
+    #[arg(long)]
+    pub preset_index: Option<u32>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStateSaveArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStateLoadArgs {
+    #[arg(long)]
+    pub track_id: String,
+    #[arg(long)]
+    pub device_id: String,
+    #[arg(long)]
+    pub file: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1381,6 +1568,18 @@ impl Cli {
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
         command_request(command)
     }
+
+    pub(crate) fn plugin_state_save_output(&self) -> Option<PathBuf> {
+        match self.command.as_ref() {
+            Some(CliCommand::Plugin {
+                command:
+                    PluginCommand::State {
+                        command: PluginStateCommand::Save(args),
+                    },
+            }) => Some(args.output.clone()),
+            _ => None,
+        }
+    }
 }
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
@@ -1389,6 +1588,9 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             return Err("serve is a process mode and cannot be used as a one-shot command".into());
         }
         CliCommand::Host { command } => match command {
+            HostCommand::List => {
+                return Err("host list is handled locally by the CLI".into());
+            }
             HostCommand::Status => simple("host.status"),
             HostCommand::Shutdown => simple("host.shutdown"),
         },
@@ -1463,9 +1665,13 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         },
         CliCommand::MidiNote { command } => match command {
             MidiNoteCommand::Add(args) => value("midi-note.add", args),
-            MidiNoteCommand::Insert(args) => {
-                json_string("midi-note.insert", args.clip_id, "notes", args.notes_json)?
-            }
+            MidiNoteCommand::Insert(args) => note_source_command(
+                "midi-note.insert",
+                args.clip_id,
+                args.notes_json,
+                args.notes_file,
+                args.stdin,
+            )?,
             MidiNoteCommand::Update(args) => {
                 let patch: Value = serde_json::from_str(&args.patch)
                     .map_err(|error| format!("--patch is invalid JSON: {error}"))?;
@@ -1498,11 +1704,32 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         CliCommand::Music { command } => match command {
             MusicCommand::MidiClip { command } => match command {
                 MusicMidiClipCommand::Create(args) => value("music.midi-clip.create", args),
+                MusicMidiClipCommand::Resize(args) => {
+                    if args.start.is_none() && args.end.is_none() {
+                        return Err("--start or --end is required for clip resize".into());
+                    }
+                    value(
+                        "music.midi-clip.resize",
+                        json!({
+                            "clipId": args.clip_id,
+                            "start": args.start,
+                            "end": args.end,
+                        }),
+                    )
+                }
             },
             MusicCommand::Note { command } => match command {
-                MusicNoteCommand::Insert(args) => {
-                    json_string("music.note.insert", args.clip_id, "notes", args.notes_json)?
-                }
+                MusicNoteCommand::List(args) => value("music.note.list", args),
+                MusicNoteCommand::Get(args) => value("music.note.get", args),
+                MusicNoteCommand::Insert(args) => note_source_command(
+                    "music.note.insert",
+                    args.clip_id,
+                    args.notes_json,
+                    args.notes_file,
+                    args.stdin,
+                )?,
+                MusicNoteCommand::Update(args) => value("music.note.update", args),
+                MusicNoteCommand::Remove(args) => value("music.note.remove", args),
             },
             MusicCommand::Region { command } => match command {
                 MusicRegionCommand::List => simple("music.region.list"),
@@ -1593,7 +1820,12 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         },
         CliCommand::Device { command } => match command {
             DeviceCommand::Bypass(args) => device_bypass_value(args),
-            DeviceCommand::ParameterSet(args) => value("device.parameter.set", args),
+            DeviceCommand::Inspect(args) => value("device.inspect", args),
+            DeviceCommand::Parameter { command } => match command {
+                DeviceParameterCommand::List(args) => value("device.parameter.list", args),
+                DeviceParameterCommand::Get(args) => value("device.parameter.get", args),
+                DeviceParameterCommand::Set(args) => value("device.parameter.set", args),
+            },
         },
         CliCommand::Runtime { command } => match command {
             RuntimeCommand::Projection { command } => match command {
@@ -1651,6 +1883,21 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             PluginCommand::Effect(args) => value("effect.add", args),
             PluginCommand::Scan(args) => value("plugin.scan", args),
             PluginCommand::ScanStart(args) => value("plugin.scan.start", args),
+            PluginCommand::Preset { command } => match command {
+                PluginPresetCommand::List(args) => value("plugin.preset.list", args),
+                PluginPresetCommand::Get(args) => value("plugin.preset.get", args),
+                PluginPresetCommand::Set(args) => plugin_preset_set(args)?,
+            },
+            PluginCommand::State { command } => match command {
+                PluginStateCommand::Save(args) => value(
+                    "plugin.state.get",
+                    json!({
+                        "trackId": args.track_id,
+                        "deviceId": args.device_id,
+                    }),
+                ),
+                PluginStateCommand::Load(args) => plugin_state_load(args)?,
+            },
         },
         CliCommand::Missing { command } => match command {
             MissingCommand::List => simple("missing.list"),
@@ -1729,6 +1976,71 @@ fn json_string(
     let points: Value = serde_json::from_str(&encoded)
         .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?;
     Ok(value(command, json!({"clipId": clip_id, field: points})))
+}
+
+fn note_source_command(
+    command: &str,
+    clip_id: String,
+    notes_json: Option<String>,
+    notes_file: Option<PathBuf>,
+    use_stdin: bool,
+) -> Result<ControlCommand, String> {
+    let source_count = usize::from(notes_json.is_some())
+        + usize::from(notes_file.is_some())
+        + usize::from(use_stdin);
+    if source_count != 1 {
+        return Err("exactly one of --notes-json, --notes-file, or --stdin is required".into());
+    }
+    let encoded = if let Some(notes_json) = notes_json {
+        notes_json
+    } else if let Some(notes_file) = notes_file {
+        std::fs::read_to_string(&notes_file)
+            .map_err(|error| format!("--notes-file could not be read: {error}"))?
+    } else {
+        let mut encoded = String::new();
+        std::io::stdin()
+            .read_to_string(&mut encoded)
+            .map_err(|error| format!("--stdin could not be read: {error}"))?;
+        encoded
+    };
+    let notes: Value = serde_json::from_str(&encoded)
+        .map_err(|error| format!("note input is invalid JSON: {error}"))?;
+    if !notes.is_array() {
+        return Err("note input must be a JSON array".into());
+    }
+    Ok(value(command, json!({"clipId": clip_id, "notes": notes})))
+}
+
+fn plugin_preset_set(args: PluginPresetSetArgs) -> Result<ControlCommand, String> {
+    if args.preset.is_some() == args.preset_index.is_some() {
+        return Err(
+            "--preset and --preset-index are mutually exclusive and one is required".into(),
+        );
+    }
+    Ok(value(
+        "plugin.preset.set",
+        json!({
+            "trackId": args.track_id,
+            "deviceId": args.device_id,
+            "preset": args.preset,
+            "presetIndex": args.preset_index,
+        }),
+    ))
+}
+
+fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, String> {
+    let encoded = std::fs::read_to_string(&args.file)
+        .map_err(|error| format!("--file could not be read: {error}"))?;
+    let state = serde_json::from_str::<Value>(&encoded)
+        .map_err(|error| format!("--file is invalid JSON: {error}"))?;
+    Ok(value(
+        "plugin.state.set",
+        json!({
+            "trackId": args.track_id,
+            "deviceId": args.device_id,
+            "state": state,
+        }),
+    ))
 }
 
 fn json_string_with_fields<T: Serialize>(
@@ -2003,6 +2315,36 @@ mod tests {
     }
 
     #[test]
+    fn plugin_state_save_keeps_output_path_out_of_control_params() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "plugin",
+            "state",
+            "save",
+            "--track-id",
+            "track:keys",
+            "--device-id",
+            "device:synth",
+            "--output",
+            "state.json",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.plugin_state_save_output(),
+            Some(PathBuf::from("state.json"))
+        );
+        let request = cli.request().unwrap();
+        assert_eq!(
+            request,
+            ControlCommand::new(
+                "plugin.state.get",
+                json!({"trackId":"track:keys","deviceId":"device:synth"})
+            )
+        );
+    }
+
+    #[test]
     fn session_inspect_preserves_optional_musical_scope() {
         let cli = Cli::try_parse_from([
             "riffra",
@@ -2147,6 +2489,70 @@ mod tests {
             request.params,
             json!({"name":"A'","start":"5:1","end":"13:1"})
         );
+    }
+
+    #[test]
+    fn bulk_note_sources_are_exclusive_and_must_be_arrays() {
+        let path = std::env::temp_dir().join(format!(
+            "riffra-cli-notes-source-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            br#"[{"pitch":"C4","position":"1:1","duration":"1/8"}]"#,
+        )
+        .unwrap();
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--notes-file",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params["notes"],
+            json!([{"pitch":"C4","position":"1:1","duration":"1/8"}])
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--notes-json",
+            "[]",
+            "--notes-file",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "note",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--notes-json",
+            "{}",
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

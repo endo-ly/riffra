@@ -8,9 +8,13 @@ use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
 use output::compact_agent_response;
-use riffra_control::{CommandResult, ControlRequest, ControlResponse, ErrorCode, ProtocolError};
+use riffra_control::{
+    CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
+    LocalHostRegistry, ProtocolError,
+};
 use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 fn main() {
     if let Err(error) = run() {
@@ -27,7 +31,33 @@ fn run() -> Result<(), String> {
     let interactive = cli.interactive;
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
+    let plugin_state_output = cli.plugin_state_save_output();
+    let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
+    let is_host_list = matches!(
+        cli.command.as_ref(),
+        Some(CliCommand::Host {
+            command: args::HostCommand::List
+        })
+    );
+    if is_host_list {
+        if interactive {
+            return Err("host list cannot be combined with --interactive".into());
+        }
+        if attach {
+            return Err("host list cannot be combined with --attach".into());
+        }
+        if host_id.is_some() {
+            return Err("--host can only be used with --attach".into());
+        }
+        if data_root.is_some() {
+            return Err("host list does not use --data-root".into());
+        }
+        if expected_sequence.is_some() {
+            return Err("host list cannot be combined with --expected-sequence".into());
+        }
+        return list_hosts();
+    }
     if let Some(CliCommand::Serve(args)) = cli.command.as_ref() {
         if attach {
             return Err("serve cannot be combined with --attach".into());
@@ -38,9 +68,18 @@ fn run() -> Result<(), String> {
         if expected_sequence.is_some() {
             return Err("serve cannot be combined with --expected-sequence".into());
         }
-        return serve::run(data_root, args.clone());
+        if host_id.is_some() {
+            return Err("--host can only be used with --attach".into());
+        }
+        return serve::run(
+            data_root.ok_or_else(|| "--data-root is required for serve".to_string())?,
+            args.clone(),
+        );
     }
     let request = if interactive {
+        if expected_sequence.is_some() {
+            return Err("--expected-sequence cannot be combined with --interactive".into());
+        }
         None
     } else {
         let request = cli.request()?;
@@ -52,7 +91,10 @@ fn run() -> Result<(), String> {
         Some(request)
     };
     if attach {
-        let attached = AttachedBackend::connect(&data_root)?;
+        if data_root.is_some() {
+            return Err("--data-root cannot be combined with --attach".into());
+        }
+        let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
         if interactive {
             return attached.run_interactive();
         }
@@ -61,11 +103,12 @@ fn run() -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let response = compact_agent_response(
-            &request.command,
-            &request.params,
+        let response = save_plugin_state_response(
+            plugin_state_output.as_deref(),
+            &request,
             attached.request(&request)?,
-        );
+        )?;
+        let response = compact_agent_response(&request.command, &request.params, response);
         if response.ok {
             return write_response(&response);
         }
@@ -75,6 +118,10 @@ fn run() -> Result<(), String> {
         return Err(format!("{}: {}", error.code, error.message));
     }
 
+    if host_id.is_some() {
+        return Err("--host requires --attach".into());
+    }
+    let data_root = data_root.ok_or_else(|| "--data-root is required".to_string())?;
     let built_in_instruments_root = resources::built_in_instruments_root()?;
     let dispatcher = Dispatcher::open(data_root, built_in_instruments_root)?;
     if interactive {
@@ -89,18 +136,95 @@ fn run() -> Result<(), String> {
         .dispatch_request(request.clone())
         .map_err(|error| error.to_string())?;
     let response = ControlResponse::success(
-        request.request_id,
+        request.request_id.clone(),
         dispatched.sequence,
         CommandResult {
             result_type: dispatched.result_type.into(),
             value: dispatched.value,
         },
     );
+    let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
     write_response(&compact_agent_response(
         &request.command,
         &request.params,
         response,
     ))
+}
+
+fn save_plugin_state_response(
+    output: Option<&Path>,
+    request: &ControlRequest,
+    mut response: ControlResponse,
+) -> Result<ControlResponse, String> {
+    let Some(output) = output else {
+        return Ok(response);
+    };
+    if request.command != "plugin.state.get" || !response.ok {
+        return Ok(response);
+    }
+    let result = response
+        .result
+        .take()
+        .ok_or_else(|| "plugin state response did not contain a result".to_string())?;
+    let encoded = serde_json::to_vec_pretty(&result.value)
+        .map_err(|error| format!("plugin state could not be encoded: {error}"))?;
+    std::fs::write(output, encoded)
+        .map_err(|error| format!("plugin state file could not be written: {error}"))?;
+    response.result = Some(CommandResult {
+        result_type: "pluginStateSaved".into(),
+        value: serde_json::json!({"output": output.to_string_lossy()}),
+    });
+    Ok(response)
+}
+
+fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> {
+    let discovered = LocalHostRegistry::current_user()
+        .discover()
+        .map_err(|error| format!("Host discovery failed: {error}"))?;
+    if let Some(instance_id) = instance_id {
+        return discovered
+            .into_iter()
+            .find(|host| host.registration.instance_id == instance_id)
+            .ok_or_else(|| format!("Riffra Host was not found: {instance_id}"));
+    }
+    match discovered.len() {
+        0 => Err("no running Riffra Host was discovered".into()),
+        1 => Ok(discovered
+            .into_iter()
+            .next()
+            .expect("one discovered Host exists")),
+        _ => {
+            let candidates = discovered
+                .iter()
+                .map(|host| host.registration.instance_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "multiple Riffra Hosts are running; choose one with --host (candidates: {candidates})"
+            ))
+        }
+    }
+}
+
+fn list_hosts() -> Result<(), String> {
+    let hosts = LocalHostRegistry::current_user()
+        .discover()
+        .map_err(|error| format!("Host discovery failed: {error}"))?;
+    let entries = hosts
+        .iter()
+        .map(|host| {
+            serde_json::json!({
+                "instanceId": host.registration.instance_id,
+                "pid": host.registration.pid,
+                "dataRoot": host.registration.data_root,
+                "startedAtMs": host.registration.started_at_ms,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_writer_pretty(io::stdout().lock(), &entries)
+        .map_err(|error| format!("Host list could not be encoded: {error}"))?;
+    println!();
+    Ok(())
 }
 
 fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
