@@ -771,14 +771,13 @@ juce::var PluginRack::programStatus() const {
         const auto currentIndex = plugin->getCurrentProgram();
         result->setProperty("supported", programCount > 0);
         result->setProperty("currentIndex", currentIndex);
-        result->setProperty(
-            "currentName",
-            currentIndex >= 0 && currentIndex < programCount ? plugin->getProgramName(currentIndex)
-                                                              : juce::String());
+        result->setProperty("currentName", currentIndex >= 0 && currentIndex < programCount
+                                               ? plugin->getProgramName(currentIndex)
+                                               : juce::String());
         result->setProperty("programs", programs);
     } catch (const std::exception& exception) {
-        result->setProperty("error", "VST3 program enumeration failed: " +
-                                         juce::String(exception.what()));
+        result->setProperty("error",
+                            "VST3 program enumeration failed: " + juce::String(exception.what()));
     } catch (...) {
         result->setProperty("error", "VST3 program enumeration failed.");
     }

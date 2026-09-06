@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 
 #include "TestAudioProcessor.h"
 
@@ -136,6 +137,46 @@ TEST(PluginRackTest, DoesNotExposePersistedStateInRuntimeStatus) {
     EXPECT_FALSE(status.hasProperty("parameters"));
     EXPECT_TRUE(parameterStatus.hasProperty("parameters"));
     EXPECT_FALSE(parameterStatus.hasProperty("stateData"));
+}
+
+TEST(PluginRackTest, ChangesAndReportsPluginPrograms) {
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = makeRack(trace, error);
+    ASSERT_NE(rack, nullptr) << error;
+
+    const auto initial = rack->programStatus();
+    ASSERT_TRUE(initial.getProperty("supported", false));
+    ASSERT_EQ(initial.getProperty("programs", {}).size(), 2);
+    EXPECT_EQ(static_cast<int>(initial.getProperty("currentIndex", -1)), 0);
+    EXPECT_EQ(initial.getProperty("currentName", {}).toString(), "Program 0");
+
+    EXPECT_TRUE(rack->setProgram(1, error)) << error;
+    EXPECT_EQ(trace.currentProgram, 1);
+    const auto changed = rack->programStatus();
+    EXPECT_EQ(static_cast<int>(changed.getProperty("currentIndex", -1)), 1);
+    EXPECT_EQ(changed.getProperty("currentName", {}).toString(), "Program 1");
+    EXPECT_FALSE(rack->setProgram(2, error));
+}
+
+TEST(PluginRackTest, RestoresPersistedPluginState) {
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), kSampleRate,
+                                            kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+
+    ASSERT_TRUE(rack->setParameter(0, 0.75f, error)) << error;
+    const auto saved = rack->persistedState(error);
+    ASSERT_FALSE(saved.isVoid()) << error;
+    ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
+
+    ASSERT_TRUE(rack->applyPersistedState(saved, error)) << error;
+    const auto restored = rack->persistedState(error);
+    ASSERT_FALSE(restored.isVoid()) << error;
+    const auto values = restored.getProperty("parameterValues", {});
+    ASSERT_TRUE(values.isArray());
+    ASSERT_GT(values.size(), 0);
+    EXPECT_NEAR(static_cast<float>(values[0]), 0.75f, 0.0001f);
 }
 
 TEST(PluginRackTest, ReleasesProcessorWhenCleared) {

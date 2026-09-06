@@ -295,6 +295,52 @@ public:
                std::abs(static_cast<float>(liveValues[0]) - 0.75f) <= 0.0001f;
     }
 
+    static bool persistedStateRollsBackWhenRuntimeUnavailable() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        if (!engine.loadSnapshot(
+                makeInstrumentSnapshot("track:plugin-state", "instrument:plugin-state"), formats,
+                48'000.0, 32, error))
+            return false;
+
+        auto timelineRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
+                                                        48'000.0, 32, error);
+        auto liveRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
+                                                    48'000.0, 32, error);
+        if (timelineRack == nullptr || liveRack == nullptr) return false;
+        auto* timelineRackPointer = timelineRack.get();
+        auto* liveRackPointer = liveRack.get();
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
+            auto& track = *engine.timeline->tracks.front();
+            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
+            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+        }
+        if (!timelineRackPointer->setParameter(0, 0.25f, error) ||
+            !liveRackPointer->setParameter(0, 0.5f, error))
+            return false;
+
+        auto* desiredState = new juce::DynamicObject();
+        desiredState->setProperty("parameterValues", juce::Array<juce::var>{0.75f});
+        desiredState->setProperty("bypassed", false);
+        liveRackPointer->clear();
+
+        // Act
+        const auto changed = engine.setDevicePersistedState(
+            "track:plugin-state", "instrument:plugin-state", juce::var(desiredState), error);
+
+        // Assert
+        if (changed) return false;
+        const auto restored = timelineRackPointer->persistedState(error);
+        const auto values = restored.getProperty("parameterValues", {});
+        return values.isArray() && values.size() > 0 &&
+               std::abs(static_cast<float>(values[0]) - 0.25f) <= 0.0001f;
+    }
+
     static bool liveInstrumentProcessesWhileStopped() {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -1588,6 +1634,10 @@ TEST(TimelineEngineTest, MirrorsEditorParameterToLiveInstrument) {
 
     // Assert
     EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, RollsBackPluginStateWhenOneRuntimeCannotBeUpdated) {
+    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateRollsBackWhenRuntimeUnavailable());
 }
 
 TEST(TimelineEngineTest, RetainsEmergencyPanicUntilAReadableGraphIsAvailable) {

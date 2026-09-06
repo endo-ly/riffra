@@ -453,10 +453,11 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         if (queryType == "getTrackDeviceStatus") {
                             result = timelineEngine.deviceStatus(trackId, deviceId, deviceError);
                         } else if (queryType == "getTrackDeviceParameters") {
-                            result =
-                                timelineEngine.deviceParameterStatus(trackId, deviceId, deviceError);
+                            result = timelineEngine.deviceParameterStatus(trackId, deviceId,
+                                                                          deviceError);
                         } else if (queryType == "getTrackDevicePrograms") {
-                            result = timelineEngine.deviceProgramStatus(trackId, deviceId, deviceError);
+                            result =
+                                timelineEngine.deviceProgramStatus(trackId, deviceId, deviceError);
                         } else {
                             const auto state =
                                 timelineEngine.devicePersistedState(trackId, deviceId, deviceError);

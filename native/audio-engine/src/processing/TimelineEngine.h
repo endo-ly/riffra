@@ -70,12 +70,11 @@ public:
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
                                  const juce::var& persistedState, juce::String& error);
-    [[nodiscard]] juce::var deviceStatus(const juce::String& trackId,
-                                          const juce::String& deviceId,
-                                          juce::String& error) const;
+    [[nodiscard]] juce::var deviceStatus(const juce::String& trackId, const juce::String& deviceId,
+                                         juce::String& error) const;
     [[nodiscard]] juce::var deviceParameterStatus(const juce::String& trackId,
-                                                   const juce::String& deviceId,
-                                                   juce::String& error) const;
+                                                  const juce::String& deviceId,
+                                                  juce::String& error) const;
     [[nodiscard]] juce::var deviceProgramStatus(const juce::String& trackId,
                                                 const juce::String& deviceId,
                                                 juce::String& error) const;
