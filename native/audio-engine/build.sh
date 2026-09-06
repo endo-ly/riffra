@@ -7,6 +7,7 @@ ENGINE_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ENGINE_DIR/../.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ENGINE_DIR/build}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
+SIDECARS_ONLY="${SIDECARS_ONLY:-0}"
 
 if [[ -n "${RIFFRA_HEADLESS_BINARIES_DESTINATION:-}" ]]; then
   headless_destination="$RIFFRA_HEADLESS_BINARIES_DESTINATION"
@@ -59,6 +60,9 @@ if [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
 fi
 "$CMAKE" "${configure_args[@]}"
 build_args=(--build "$BUILD_DIR" --config "$CONFIG" --parallel)
+if [[ "$SIDECARS_ONLY" -eq 1 ]]; then
+  build_args+=(--target riffra-runtime-sidecars)
+fi
 if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]; then
   build_args+=("$CMAKE_BUILD_PARALLEL_LEVEL")
 fi
@@ -68,4 +72,4 @@ if [ "$SKIP_TESTS" -ne 1 ]; then
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"
 
-echo "Audio engine built, tested, and installed to apps/desktop/src-tauri and $headless_destination"
+echo "Audio engine built and installed to apps/desktop/src-tauri and $headless_destination"

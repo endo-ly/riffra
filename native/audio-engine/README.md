@@ -39,7 +39,8 @@ Arrange recording stores captured MIDI with the track's recording result.
 
 ## Building
 
-The engine is built with CMake. Use the wrapper script for your platform:
+The engine is built with CMake, a compatible C++ toolchain, Rust/Cargo, and
+Node.js. The wrapper script does not require `npm install`:
 
 ```powershell
 # Windows
@@ -66,13 +67,17 @@ cross-compiling, pass `-DRIFFRA_TARGET_TRIPLE=<triple>` to CMake.
 Both scripts do the following:
 
 1. Configure CMake.
-2. Build `riffra-audio` and `riffra-plugin-scan`.
+2. Build the three runtime sidecars.
 3. Run CTest.
 4. Install the Tauri-named sidecars to `apps/desktop/src-tauri/binaries/` and
    unsuffixed copies beside the matching Cargo CLI artifact (`target/debug/`
    for Debug, `target/release/` otherwise) with `cmake --install`.
 
-This directory can be built independently of npm. The Tauri application expects
+For development startup, the repository ensure step uses the same wrapper with
+`-SidecarsOnly` on Windows or `SIDECARS_ONLY=1` on other platforms. This builds
+the three runtime sidecars without compiling or running the native test suite.
+
+This directory can be built independently of the npm workspace. The Tauri application expects
 the target-triple-named sidecars under `apps/desktop/src-tauri/binaries/`, while
 `riffra serve` resolves the unsuffixed copies beside the `riffra` executable.
 Set `RIFFRA_HEADLESS_BINARIES_DESTINATION` to override the headless install

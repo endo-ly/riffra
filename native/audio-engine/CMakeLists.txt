@@ -104,14 +104,17 @@ elseif(UNIX)
   target_link_libraries(sonalloy-capi INTERFACE stdc++ m dl pthread)
 endif()
 
+find_program(RIFFRA_NODE_EXECUTABLE node REQUIRED)
+set(RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT
+  "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources")
 set(RIFFRA_BUILTIN_RESOURCE_ROOT
-  "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin")
-add_custom_target(riffra-builtin-resource-stage ALL
-  COMMAND ${CMAKE_COMMAND}
-    -DSOURCE_PRESETS=${sonalloy_SOURCE_DIR}/presets
-    -DDESTINATION=${RIFFRA_BUILTIN_RESOURCE_ROOT}
-    -DSOURCE_RELEASE=${RIFFRA_SONALLOY_RELEASE_TAG}
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/stage_builtin_resources.cmake"
+  "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/instruments/builtin")
+add_custom_target(riffra-builtin-resource-stage
+  COMMAND "${RIFFRA_NODE_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/resources/prepare-builtin.mjs"
+    --destination "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}"
+    --source-root "${sonalloy_SOURCE_DIR}"
+    --release-tag "${RIFFRA_SONALLOY_RELEASE_TAG}"
   VERBATIM
 )
 
@@ -131,6 +134,10 @@ juce_add_console_app(riffra-render
   PRODUCT_NAME "Riffra Offline Renderer"
   COMPANY_NAME "Riffra"
   VERSION "${PROJECT_VERSION}"
+)
+
+add_custom_target(riffra-runtime-sidecars
+  DEPENDS riffra-audio riffra-plugin-scan riffra-render
 )
 
 add_library(riffra-render-core STATIC)
@@ -546,17 +553,17 @@ if(RIFFRA_HEADLESS_RESOURCES_DESTINATION)
   )
 endif()
 install(FILES
-    "${sonalloy_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
-    "${sonalloy_SOURCE_DIR}/LICENSE-MIT"
-    "${sonalloy_SOURCE_DIR}/LICENSE-APACHE"
+    "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/THIRD_PARTY_NOTICES.md"
+    "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/LICENSE-MIT"
+    "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/LICENSE-APACHE"
     DESTINATION "apps/desktop/src-tauri/resources"
     COMPONENT riffra-sidecars
 )
 if(RIFFRA_HEADLESS_RESOURCES_DESTINATION)
   install(FILES
-      "${sonalloy_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
-      "${sonalloy_SOURCE_DIR}/LICENSE-MIT"
-      "${sonalloy_SOURCE_DIR}/LICENSE-APACHE"
+      "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/THIRD_PARTY_NOTICES.md"
+      "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/LICENSE-MIT"
+      "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}/LICENSE-APACHE"
       DESTINATION "${RIFFRA_HEADLESS_RESOURCES_DESTINATION}/riffra-resources"
       COMPONENT riffra-sidecars
   )
