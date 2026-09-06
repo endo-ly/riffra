@@ -49,56 +49,60 @@ done
 
 test -f "$data_root/control/host.json"
 
-"$binary" --data-root "$data_root" --attach session get \
+"$binary" host list >"$data_root/host-list.json"
+jq -e --arg data_root "$data_root" \
+    'length == 1 and .[0].dataRoot == $data_root' "$data_root/host-list.json" >/dev/null
+
+"$binary" --attach session get \
     >"$data_root/session.json"
 jq -e '.ok == true and .result.type == "session" and .sequence == 0' \
     "$data_root/session.json" >/dev/null
 printf '%s\n' '{"requestId":"bootstrap","command":"host.bootstrap","params":{}}' |
-    "$binary" --data-root "$data_root" --attach --interactive \
+    "$binary" --attach --interactive \
     >"$data_root/bootstrap.json"
 jq -e '.ok == true and .result.type == "hostBootstrap" and .result.value.canonical.sequence == 0' \
     "$data_root/bootstrap.json" >/dev/null
-"$binary" --data-root "$data_root" --attach --expected-sequence 0 track add \
+"$binary" --attach --expected-sequence 0 track add \
     --name "Process Test" --kind instrument >"$data_root/track.json"
 jq -e '.ok == true and .result.type == "mutation" and .sequence == 1 and (.result.value.entityIds.tracks | length) == 1 and (.result.value | has("canonical") | not)' \
     "$data_root/track.json" >/dev/null
-"$binary" --data-root "$data_root" --attach --expected-sequence 1 undo >"$data_root/undo.json"
+"$binary" --attach --expected-sequence 1 undo >"$data_root/undo.json"
 jq -e '.ok == true and .result.type == "mutation" and .sequence == 2 and (.result.value | has("canonical") | not)' \
     "$data_root/undo.json" >/dev/null
 
 if [[ "$safe_mode" == 1 ]]; then
-    "$binary" --data-root "$data_root" --attach audio status >"$data_root/safe-audio.json"
+    "$binary" --attach audio status >"$data_root/safe-audio.json"
     jq -e '.ok == true and .result.type == "audioStatus"' \
         "$data_root/safe-audio.json" >/dev/null
 
-    if "$binary" --data-root "$data_root" --attach transport play \
+    if "$binary" --attach transport play \
         --transport-sequence 1 >"$data_root/transport.stdout.log" 2>"$data_root/transport.stderr.log"; then
         echo 'transport play unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
     grep -q 'runtimeUnavailable' "$data_root/transport.stderr.log"
 
-    if "$binary" --data-root "$data_root" --attach audio probe \
+    if "$binary" --attach audio probe \
         >"$data_root/probe.stdout.log" 2>"$data_root/probe.stderr.log"; then
         echo 'audio probe unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
     grep -q 'runtimeUnavailable' "$data_root/probe.stderr.log"
 
-    if "$binary" --data-root "$data_root" --attach plugin scan \
+    if "$binary" --attach plugin scan \
         --path "$data_root" >"$data_root/plugin.stdout.log" 2>"$data_root/plugin.stderr.log"; then
         echo 'plugin scan unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi
     grep -q 'runtimeUnavailable' "$data_root/plugin.stderr.log"
 else
-    "$binary" --data-root "$data_root" --attach host status >"$data_root/host.json"
+    "$binary" --attach host status >"$data_root/host.json"
     jq -e '.ok == true and .result.type == "hostStatus"' "$data_root/host.json" >/dev/null
-    "$binary" --data-root "$data_root" --attach audio status >"$data_root/audio.json"
+    "$binary" --attach audio status >"$data_root/audio.json"
     jq -e '.ok == true and .result.type == "audioStatus"' "$data_root/audio.json" >/dev/null
 fi
 
-"$binary" --data-root "$data_root" --attach host shutdown \
+"$binary" --attach host shutdown \
     >"$data_root/shutdown.json"
 jq -e '.ok == true and .result.type == "ok"' "$data_root/shutdown.json" >/dev/null
 for _ in $(seq 1 200); do
