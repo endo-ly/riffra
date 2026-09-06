@@ -200,7 +200,7 @@ impl AudioSupervisor {
             });
         }
 
-        let result = response
+        response
             .results
             .remove(&request_id)
             .flatten()
@@ -208,8 +208,7 @@ impl AudioSupervisor {
                 Err(NativeAudioError::protocol(
                     "Native audio returned no command result.",
                 ))
-            });
-        result
+            })
     }
 }
 

@@ -308,7 +308,15 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
                 detail,
             })
         }
-        _ if request_id.is_some() => Some(ParsedNativeLine::Response { request_id }),
+        Some(
+            "audioDeviceProbe"
+            | "deviceChannels"
+            | "trackDeviceStatus"
+            | "trackDeviceParameters"
+            | "trackDevicePrograms"
+            | "trackPluginState"
+            | "trackDeviceProgramChanged",
+        ) => Some(ParsedNativeLine::Response { request_id }),
         _ => None,
     }
 }
@@ -592,6 +600,31 @@ mod tests {
                 panic!("expected an error line")
             }
         }
+    }
+
+    #[test]
+    fn recognizes_known_plugin_response_types() {
+        for message_type in [
+            "trackDeviceStatus",
+            "trackDeviceParameters",
+            "trackDevicePrograms",
+            "trackPluginState",
+            "trackDeviceProgramChanged",
+        ] {
+            let line = format!(r#"{{"type":"{message_type}","requestId":11}}"#);
+            let parsed = parse_native_line(line.as_bytes()).expect("known response line");
+            assert!(matches!(
+                parsed,
+                ParsedNativeLine::Response {
+                    request_id: Some(11)
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_response_types_even_with_request_ids() {
+        assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
     }
 
     #[test]
