@@ -76,4 +76,12 @@ This directory can be built independently of npm. The Tauri application expects
 the target-triple-named sidecars under `apps/desktop/src-tauri/binaries/`, while
 `riffra serve` resolves the unsuffixed copies beside the `riffra` executable.
 Set `RIFFRA_HEADLESS_BINARIES_DESTINATION` to override the headless install
-destination when producing a distribution artifact.
+destination when producing a distribution artifact. The same wrapper run also
+installs the built-in instrument resource bundle under
+`apps/desktop/src-tauri/resources/instruments/builtin/` and beside the headless
+executable at `riffra-resources/instruments/builtin/`; set
+`RIFFRA_HEADLESS_RESOURCES_DESTINATION` to override the latter destination.
+
+Standalone `riffra` commands resolve the same bundle beside the executable. When
+using a resource bundle staged elsewhere, set
+`RIFFRA_BUILTIN_INSTRUMENTS_ROOT` to its `instruments/builtin` directory.

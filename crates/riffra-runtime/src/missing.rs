@@ -1,5 +1,5 @@
 use crate::asset;
-use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice};
+use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice, TrackInstrument};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use ts_rs::TS;
@@ -50,6 +50,27 @@ fn collect_missing_plugin(
     }
 }
 
+fn collect_missing_instrument(
+    missing: &mut Vec<MissingDependency>,
+    instrument: &TrackInstrument,
+    used_by: String,
+) {
+    let Some(vst3) = instrument.as_vst3() else {
+        return;
+    };
+    if vst3.disabled_placeholder || Path::new(vst3.path).exists() {
+        return;
+    }
+    missing.push(MissingDependency {
+        kind: "plugin".into(),
+        id: instrument.id.clone(),
+        name: instrument.name.clone(),
+        path: vst3.path.to_owned(),
+        asset_id: None,
+        used_by: vec![used_by],
+    });
+}
+
 /// Collects every referenced audio asset or plugin binary whose content is not
 /// present on disk. The session is still safe to open; this list is surfaced so
 /// the user can relink, replace, ignore, or keep the reference as a disabled
@@ -84,7 +105,7 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
 
     for track in &session.arrangement.tracks {
         if let Some(instrument) = &track.instrument {
-            collect_missing_plugin(
+            collect_missing_instrument(
                 &mut missing,
                 instrument,
                 format!("track:{}:instrument", track.id),
@@ -198,7 +219,14 @@ mod tests {
             state_data: None,
             disabled_placeholder: false,
         };
-        track.instrument = Some(missing_device("instrument:gone", "Lost Synth"));
+        track.instrument = Some(
+            riffra_core::TrackInstrument::vst3(
+                "instrument:gone".into(),
+                "Lost Synth".into(),
+                r"C:\gone\Lost Synth.vst3".into(),
+            )
+            .unwrap(),
+        );
         track
             .rack
             .devices

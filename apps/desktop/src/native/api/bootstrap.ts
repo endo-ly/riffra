@@ -24,6 +24,7 @@ export async function bootstrap(): Promise<BootstrapState> {
       },
       projectState: defaultProjectState(),
       pluginCatalog: [],
+      builtInInstruments: [],
       runtimeStarted: false,
       runtimeStartupFinished: false,
       recovery: { recoveredFromGeneration: false, recoveryCandidates: [] as RecoveryCandidate[] },

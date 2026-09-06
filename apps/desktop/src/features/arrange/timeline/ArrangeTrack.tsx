@@ -176,9 +176,23 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
 
   const closeMenu = () => detailsRef.current?.removeAttribute('open');
   const availableDevices = [
-    ...(props.track.instrument ? [props.track.instrument] : []),
-    ...props.track.rack.devices,
-  ].filter((device) => !device.disabledPlaceholder && !props.missingDeviceIds.includes(device.id));
+    ...(props.track.instrument?.source.type === 'vst3'
+      ? [
+          {
+            id: props.track.instrument.id,
+            name: props.track.instrument.name,
+            unavailable:
+              props.track.instrument.source.disabledPlaceholder ||
+              props.missingDeviceIds.includes(props.track.instrument.id),
+          },
+        ]
+      : []),
+    ...props.track.rack.devices.map((device) => ({
+      id: device.id,
+      name: device.name,
+      unavailable: device.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+    })),
+  ].filter((device) => !device.unavailable);
   const trackMenuItems: ReactNode[] = [];
   if (availableDevices.length > 0) {
     for (const device of availableDevices) {

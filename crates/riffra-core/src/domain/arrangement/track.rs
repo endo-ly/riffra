@@ -1,4 +1,5 @@
-use crate::domain::rack::{self, RackDevice, RackInstance};
+use crate::domain::instrument::{self, TrackInstrument};
+use crate::domain::rack::{self, RackInstance};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -60,7 +61,7 @@ pub struct Track {
     pub midi_input: MidiInputRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub instrument: Option<RackDevice>,
+    pub instrument: Option<TrackInstrument>,
     pub rack: RackInstance,
 }
 
@@ -163,7 +164,7 @@ impl Track {
             ));
         }
         if let Some(instrument) = &mut self.instrument {
-            rack::validate_and_normalize_device(instrument)?;
+            instrument::validate_and_normalize(instrument)?;
         }
         rack::validate_and_normalize(&mut self.rack)?;
         Ok(())
@@ -171,6 +172,7 @@ impl Track {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::domain::arrangement::{Arrangement, AudioClip, Track};
     use crate::domain::asset::{AssetId, mint_asset_id};
     use crate::domain::timeline::{ProjectTimebase, TimelineLoopRange, TimelineTick};
@@ -216,6 +218,38 @@ mod tests {
             .add_audio_clip(clip, |_| true)
             .expect("seed clip is valid");
         arrangement
+    }
+
+    #[test]
+    fn instrument_track_accepts_a_built_in_instrument() {
+        let mut track = Track::instrument("track:keys".into(), "Keys".into());
+        track.instrument = Some(
+            TrackInstrument::built_in(
+                "device:instrument".into(),
+                "Clean Sub Bass".into(),
+                "01-clean-sub-bass".into(),
+                r#"{"schemaVersion":1}"#.into(),
+            )
+            .unwrap(),
+        );
+
+        assert!(track.validate_and_normalize().is_ok());
+    }
+
+    #[test]
+    fn audio_track_rejects_a_built_in_instrument() {
+        let mut track = Track::audio("track:audio".into(), "Audio".into());
+        track.instrument = Some(
+            TrackInstrument::built_in(
+                "device:instrument".into(),
+                "Clean Sub Bass".into(),
+                "01-clean-sub-bass".into(),
+                r#"{"schemaVersion":1}"#.into(),
+            )
+            .unwrap(),
+        );
+
+        assert!(track.validate_and_normalize().is_err());
     }
 
     #[test]

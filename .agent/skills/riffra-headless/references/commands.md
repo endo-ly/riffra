@@ -221,17 +221,21 @@ Automation の points 配列は既存ポイントを置き換える。各要素�
 
 ### Rack 状態(Instrument / Effect / Device)
 
-| コマンド               | 主要引数                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------- |
-| `plugin instrument`    | `--track-id` `--plugin-path`(VST3 パス)                                                        |
-| `plugin effect`        | `--track-id` `--plugin-path`                                                                   |
-| `instrument clear`     | `--track-id`                                                                                   |
-| `effect remove`        | `--track-id` `--device-id`                                                                     |
-| `effect reorder`       | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
-| `device bypass`        | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
-| `device parameter-set` | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
+| コマンド                  | 主要引数                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `instrument builtin list` | -                                                                                              |
+| `instrument builtin set`  | `<track-id>` `<preset-id>`（Riffraに同梱されたBuilt-in instrument）                            |
+| `plugin instrument`       | `--track-id` `--plugin-path`(VST3 パス)                                                        |
+| `plugin effect`           | `--track-id` `--plugin-path`                                                                   |
+| `instrument clear`        | `--track-id`                                                                                   |
+| `effect remove`           | `--track-id` `--device-id`                                                                     |
+| `effect reorder`          | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
+| `device bypass`           | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
+| `device parameter-set`    | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
 
 パスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。
+
+`instrument builtin list`はHostのresource catalogを返す。`instrument builtin set`はcatalogに存在するpreset IDをTrackへ割り当て、definition本文をCanonical Sessionへ保存する。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
 ### Missing 復旧
 

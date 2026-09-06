@@ -998,7 +998,25 @@ pub struct ProjectExportArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum InstrumentCommand {
+    #[command(name = "builtin")]
+    BuiltIn {
+        #[command(subcommand)]
+        command: BuiltInInstrumentCommand,
+    },
     Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BuiltInInstrumentCommand {
+    List,
+    Set(BuiltInInstrumentSetArgs),
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltInInstrumentSetArgs {
+    pub track_id: String,
+    pub preset_id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1561,6 +1579,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             ProjectCommand::Import(args) => value("project.import", json!({"path":args.path})),
         },
         CliCommand::Instrument { command } => match command {
+            InstrumentCommand::BuiltIn { command } => match command {
+                BuiltInInstrumentCommand::List => simple("instrument.builtin.list"),
+                BuiltInInstrumentCommand::Set(args) => value("instrument.builtin.set", args),
+            },
             InstrumentCommand::Clear(args) => {
                 value("instrument.clear", json!({"trackId": args.track_id}))
             }
@@ -1625,7 +1647,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             PluginCommand::Catalog { command } => match command {
                 PluginCatalogCommand::List => simple("plugin.catalog.list"),
             },
-            PluginCommand::Instrument(args) => value("instrument.set", args),
+            PluginCommand::Instrument(args) => value("instrument.vst3.set", args),
             PluginCommand::Effect(args) => value("effect.add", args),
             PluginCommand::Scan(args) => value("plugin.scan", args),
             PluginCommand::ScanStart(args) => value("plugin.scan.start", args),
@@ -1932,6 +1954,52 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "timebase.update");
         assert_eq!(request.params, json!({"bpm": 140.0}));
+    }
+
+    #[test]
+    fn instrument_commands_keep_built_in_and_vst3_sources_distinct() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "instrument",
+            "builtin",
+            "list",
+        ])
+        .unwrap();
+        assert_eq!(cli.request().unwrap().name, "instrument.builtin.list");
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "instrument",
+            "builtin",
+            "set",
+            "track:keys",
+            "01-clean-sub-bass",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "instrument.builtin.set");
+        assert_eq!(
+            request.params,
+            json!({"trackId":"track:keys","presetId":"01-clean-sub-bass"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "plugin",
+            "instrument",
+            "--track-id",
+            "track:keys",
+            "--plugin-path",
+            "C:\\Plugins\\Keys.vst3",
+        ])
+        .unwrap();
+        assert_eq!(cli.request().unwrap().name, "instrument.vst3.set");
     }
 
     #[test]

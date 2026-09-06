@@ -46,7 +46,7 @@ juce::var makeSnapshot(const juce::String& effectPath, const juce::String& instr
 
     auto* instrument = new juce::DynamicObject();
     instrument->setProperty("id", "device:instrument");
-    instrument->setProperty("kind", "plugin");
+    instrument->setProperty("type", "vst3");
     instrument->setProperty("path", instrumentPath);
     instrument->setProperty("disabledPlaceholder", false);
     instrument->setProperty("bypassed", false);

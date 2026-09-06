@@ -278,7 +278,11 @@ mod tests {
     #[test]
     fn musical_commands_create_canonical_notes_and_regions() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-music-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let track = dispatcher
             .dispatch(request(
                 "track.add",
@@ -346,7 +350,11 @@ mod tests {
     #[test]
     fn harmony_and_phrase_commands_use_music_level_contracts() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-harmony-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let track = dispatcher
             .dispatch(request(
                 "track.add",

@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 #include "ArrangementGraph.h"
+#include "instrument/SonalloyInstrumentRuntime.h"
+#include "instrument/Vst3InstrumentRuntime.h"
 
 namespace riffra {
 namespace {
@@ -19,6 +22,11 @@ juce::String pluginTopologySignature(const juce::var& values) {
         device->setProperty("id", value.getProperty("id", {}));
         device->setProperty("kind", value.getProperty("kind", {}));
         device->setProperty("path", value.getProperty("path", {}));
+        device->setProperty("type", value.getProperty("type", {}));
+        device->setProperty("resourceType", value.getProperty("resourceType", {}));
+        device->setProperty("presetId", value.getProperty("presetId", {}));
+        device->setProperty("definitionJson", value.getProperty("definitionJson", {}));
+        device->setProperty("definitionBaseDir", value.getProperty("definitionBaseDir", {}));
         device->setProperty("disabledPlaceholder", value.getProperty("disabledPlaceholder", false));
         topology.add(juce::var(device));
     };
@@ -81,16 +89,28 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
     prepared->timebase.ppq = static_cast<std::uint32_t>(ppq);
     prepared->outputSampleRate = outputSampleRate;
     prepared->preparedBlockSize = maximumBlockSize;
-    const auto denominator = static_cast<int>(timebase.getProperty("timeSignatureDenominator", 4));
-    const auto numerator = static_cast<int>(timebase.getProperty("timeSignatureNumerator", 4));
-    if (denominator <= 0 || numerator <= 0) {
+    double denominatorValue = 4.0;
+    double numeratorValue = 4.0;
+    const auto maximumTimeSignatureValue =
+        static_cast<double>(std::numeric_limits<std::uint16_t>::max());
+    if (!requiredNumber(timebase, "timeSignatureDenominator", denominatorValue) ||
+        !requiredNumber(timebase, "timeSignatureNumerator", numeratorValue) ||
+        denominatorValue <= 0.0 || numeratorValue <= 0.0 ||
+        denominatorValue > maximumTimeSignatureValue ||
+        numeratorValue > maximumTimeSignatureValue ||
+        std::floor(denominatorValue) != denominatorValue ||
+        std::floor(numeratorValue) != numeratorValue) {
         error = "Timeline snapshot has an invalid time signature.";
         return false;
     }
+    const auto denominator = static_cast<std::uint16_t>(denominatorValue);
+    const auto numerator = static_cast<std::uint16_t>(numeratorValue);
     const auto beatTicks = static_cast<double>(prepared->timebase.ppq) * 4.0 / denominator;
     prepared->beatSamples = prepared->timebase.tickToSample(
         static_cast<std::uint64_t>(std::llround(beatTicks)), outputSampleRate);
     prepared->beatsPerBar = numerator;
+    prepared->timeSignatureNumerator = numerator;
+    prepared->timeSignatureDenominator = denominator;
     prepared->metronomeEnabled = static_cast<bool>(snapshot.getProperty("metronomeEnabled", false));
 
     const auto loopRange = snapshot.getProperty("loopRange", {});
@@ -137,6 +157,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         auto track = std::make_unique<Track>();
         track->id = trackValue.getProperty("id", {}).toString();
         track->outputSampleRate = outputSampleRate;
+        track->preparedBlockSize = maximumBlockSize;
         track->instrument = trackValue.getProperty("kind", {}).toString() == "instrument";
         track->armed = static_cast<bool>(trackValue.getProperty("armed", false));
         const auto midiInput = trackValue.getProperty("midiInput", {});
@@ -233,7 +254,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                         track->instrumentTopologySignature &&
                     (*existing)->liveEffectRuntimeRequired == track->liveEffectRuntimeRequired &&
                     (*existing)->recordingEffectRuntimeRequired ==
-                        track->recordingEffectRuntimeRequired) {
+                        track->recordingEffectRuntimeRequired &&
+                    (*existing)->outputSampleRate == track->outputSampleRate &&
+                    (*existing)->preparedBlockSize == track->preparedBlockSize) {
                     sameRuntimeTopology = true;
                     existingEffectState = (*existing)->effectState;
                     existingInstrumentState = (*existing)->instrumentState;
@@ -263,36 +286,60 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                                                           track->id + "/recording-effect"))
                 return false;
         }
-        if (instrument.isObject() &&
-            !static_cast<bool>(instrument.getProperty("disabledPlaceholder", false)) &&
-            !track->reuseRuntimeDevices) {
-            const auto path = instrument.getProperty("path", {}).toString();
-            const auto loadInstrumentRack = [&](std::unique_ptr<PluginRack>& rack,
-                                                const juce::String& runtimeRole) {
-                rack = std::make_unique<PluginRack>();
-                if (const auto loadError = rack->load(path, outputSampleRate, maximumBlockSize)) {
-                    error = track->id + " device " + track->instrumentDeviceId + " failed at " +
-                            runtimeRole + "/" + loadError->scope + ": " + loadError->message;
-                    return false;
-                }
-                if (!rack->applyPersistedState(instrument, error)) {
-                    error = track->id + " device " + track->instrumentDeviceId + " failed at " +
-                            runtimeRole + "/stateApply: " + error;
-                    return false;
-                }
-                return true;
-            };
-            if (!loadInstrumentRack(track->instrumentRack, "timeline-instrument") ||
-                !loadInstrumentRack(track->liveInstrumentRack, "live-instrument"))
+        if (instrument.isObject() && !track->reuseRuntimeDevices) {
+            const auto type = instrument.getProperty("type", {}).toString();
+            const auto disabled =
+                static_cast<bool>(instrument.getProperty("disabledPlaceholder", false));
+            const auto roleError = [&track, &error](const juce::String& role,
+                                                    const juce::String& detail) {
+                error = track->id + " device " + track->instrumentDeviceId + " failed at " + role +
+                        ": " + detail;
                 return false;
+            };
+            if (type == "vst3") {
+                if (!disabled) {
+                    const auto path = instrument.getProperty("path", {}).toString();
+                    juce::String runtimeError;
+                    track->instrumentRuntime = Vst3InstrumentRuntime::create(
+                        path, outputSampleRate, maximumBlockSize, instrument, runtimeError);
+                    if (track->instrumentRuntime == nullptr)
+                        return roleError("timeline-instrument", runtimeError);
+                    track->liveInstrumentRuntime = Vst3InstrumentRuntime::create(
+                        path, outputSampleRate, maximumBlockSize, instrument, runtimeError);
+                    if (track->liveInstrumentRuntime == nullptr)
+                        return roleError("live-instrument", runtimeError);
+                }
+            } else if (type == "internal" &&
+                       instrument.getProperty("resourceType", {}).toString() == "builtInPreset") {
+                const auto definitionJson = instrument.getProperty("definitionJson", {}).toString();
+                const auto definitionBaseDir =
+                    instrument.getProperty("definitionBaseDir", {}).toString();
+                juce::String runtimeError;
+                track->instrumentRuntime = SonalloyInstrumentRuntime::create(
+                    definitionJson, definitionBaseDir, outputSampleRate, maximumBlockSize,
+                    runtimeError);
+                if (track->instrumentRuntime == nullptr)
+                    return roleError("timeline-instrument", runtimeError);
+                track->liveInstrumentRuntime = SonalloyInstrumentRuntime::create(
+                    definitionJson, definitionBaseDir, outputSampleRate, maximumBlockSize,
+                    runtimeError);
+                if (track->liveInstrumentRuntime == nullptr)
+                    return roleError("live-instrument", runtimeError);
+                const auto bypassed = static_cast<bool>(instrument.getProperty("bypassed", false));
+                track->instrumentRuntime->setBypassed(bypassed);
+                track->liveInstrumentRuntime->setBypassed(bypassed);
+            } else {
+                return roleError("instrument", "Instrument source is invalid.");
+            }
         }
         if (!track->reuseRuntimeDevices) {
             track->pluginDelaySamples =
                 track->effectChain.latencySamples() +
-                (track->instrumentRack != nullptr ? track->instrumentRack->latencySamples() : 0);
+                (track->instrumentRuntime != nullptr ? track->instrumentRuntime->latencySamples()
+                                                     : 0);
             track->pluginTailSamples =
                 track->effectChain.tailSamples() +
-                (track->instrumentRack != nullptr ? track->instrumentRack->tailSamples() : 0);
+                (track->instrumentRuntime != nullptr ? track->instrumentRuntime->tailSamples() : 0);
         }
         maximumPluginDelay = std::max(maximumPluginDelay, track->pluginDelaySamples);
 

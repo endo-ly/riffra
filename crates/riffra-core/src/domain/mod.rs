@@ -2,6 +2,7 @@
 
 pub mod arrangement;
 pub mod asset;
+pub mod instrument;
 pub mod music;
 pub mod rack;
 pub mod recording;
@@ -10,6 +11,7 @@ pub mod timeline;
 
 pub use arrangement::*;
 pub use asset::*;
+pub use instrument::*;
 pub use music::*;
 pub use rack::*;
 pub use recording::*;

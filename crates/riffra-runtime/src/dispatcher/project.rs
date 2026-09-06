@@ -120,7 +120,11 @@ mod tests {
             "riffra-dispatcher-projects-{}",
             riffra_control::new_instance_id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
 
         let initial = dispatcher
             .dispatch(request("project.list", json!({})))
@@ -172,7 +176,11 @@ mod tests {
             "riffra-dispatcher-import-{}",
             riffra_control::new_instance_id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let initial_id = dispatcher
             .dispatch(request("project.list", json!({})))
             .unwrap()
@@ -244,7 +252,11 @@ mod tests {
             "riffra-dispatcher-recovery-{}",
             riffra_control::new_instance_id()
         ));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let initial_id = dispatcher
             .dispatch(request("project.list", json!({})))
             .unwrap()

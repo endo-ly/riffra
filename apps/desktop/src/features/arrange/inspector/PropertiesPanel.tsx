@@ -4,6 +4,7 @@ import type {
   CreativeSession,
   MissingDependency,
   PluginEntry,
+  BuiltInInstrumentSummary,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
@@ -25,6 +26,7 @@ interface PropertiesPanelProps {
   setArrangeSelection: (selection: ArrangeSelection) => void;
   missingDependencies: MissingDependency[];
   plugins: PluginEntry[];
+  builtInInstruments?: BuiltInInstrumentSummary[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -67,6 +69,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               onReplaceMissingPlugin={props.onReplaceMissingPlugin}
               onRescanMissingPlugins={props.onRescanMissingPlugins}
               plugins={props.plugins}
+              builtInInstruments={props.builtInInstruments ?? []}
               api={props.api}
             />
             <TakeInspector

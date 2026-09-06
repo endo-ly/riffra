@@ -386,6 +386,7 @@ pub struct HostConnectionManager {
 #[derive(Clone)]
 pub struct EmbeddedHostSettings {
     pub data_root: PathBuf,
+    pub built_in_instruments_root: PathBuf,
     pub safe_mode: bool,
     pub binaries: RuntimeBinaries,
 }
@@ -593,6 +594,7 @@ impl HostConnectionManager {
         let host = DawHost::open(
             HostConfig {
                 data_root: self.settings.data_root.clone(),
+                built_in_instruments_root: self.settings.built_in_instruments_root.clone(),
                 safe_mode: self.settings.safe_mode,
                 binaries: self.settings.binaries.clone(),
             },
@@ -1073,6 +1075,7 @@ impl HostConnectionManager {
             canonical: bootstrap.canonical.clone(),
             project_state: bootstrap.project_state.clone(),
             plugin_catalog: bootstrap.plugin_catalog.clone(),
+            built_in_instruments: bootstrap.built_in_instruments.clone(),
             runtime_started: bootstrap.runtime_started,
             runtime_startup_finished: bootstrap.runtime_startup_finished,
             recovery: ProjectRecoveryState {
@@ -1389,13 +1392,24 @@ mod tests {
         )
     }
 
+    fn prepare_built_in_resource_root(root: &Path) {
+        std::fs::create_dir_all(root).expect("the test resource root should be created");
+        std::fs::write(
+            root.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[]}"#,
+        )
+        .expect("the test resource manifest should be written");
+    }
+
     fn test_manager(tag: &str) -> (Arc<HostConnectionManager>, Arc<RecordedOutlet>) {
         let outlet = Arc::new(RecordedOutlet::default());
         let data_root = temp_root(&format!("{tag}-embedded"));
+        prepare_built_in_resource_root(&data_root);
         let binaries = offline_binaries(&data_root);
         let manager = HostConnectionManager::start(
             Arc::clone(&outlet) as Arc<dyn ConnectionEventOutlet>,
             EmbeddedHostSettings {
+                built_in_instruments_root: data_root.clone(),
                 data_root,
                 safe_mode: true,
                 binaries,
@@ -1408,10 +1422,12 @@ mod tests {
 
     fn standalone_host(tag: &str) -> DawHost {
         let root = temp_root(tag);
+        prepare_built_in_resource_root(&root);
         let binaries = offline_binaries(&root);
         DawHost::open(
             HostConfig {
-                data_root: root,
+                data_root: root.clone(),
+                built_in_instruments_root: root.clone(),
                 safe_mode: true,
                 binaries,
             },
@@ -1727,6 +1743,7 @@ mod tests {
         let reopened = DawHost::open(
             HostConfig {
                 data_root: root.clone(),
+                built_in_instruments_root: root.clone(),
                 safe_mode: true,
                 binaries: offline_binaries(&root),
             },

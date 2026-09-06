@@ -1,5 +1,6 @@
 //! Shared wiring for the Core canonical commit boundary.
 
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, RuntimeProjectionState,
 };
@@ -30,6 +31,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     canonical: riffra_core::CanonicalState,
     runtime: &RuntimeReconciler<D>,
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     safe_mode: bool,
     effect: CanonicalMutationEffect,
 ) -> Result<ArrangementMutationResult, String> {
@@ -41,7 +43,11 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     }
 
     let status = runtime.submit_nonblocking(
-        crate::runtime_snapshot::runtime_timeline_snapshot(data_root, &canonical.session),
+        crate::runtime_snapshot::runtime_timeline_snapshot(
+            data_root,
+            built_in_instruments,
+            &canonical.session,
+        ),
         riffra_core::ProjectionKey {
             sequence: canonical.sequence,
             session_revision: canonical.session.arrangement.revision,
@@ -100,6 +106,7 @@ pub fn arrangement_mutation_result<D: RuntimeDriver>(
         canonical,
         context.runtime,
         context.data_root,
+        context.built_in_instruments,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )
@@ -114,6 +121,7 @@ pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
         canonical,
         context.runtime,
         context.data_root,
+        context.built_in_instruments,
         context.safe_mode,
         CanonicalMutationEffect::CanonicalOnly,
     )

@@ -562,7 +562,11 @@ mod tests {
     #[test]
     fn clearing_midi_notes_preserves_clip_and_is_undoable() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-clear-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let track = dispatcher
             .dispatch(request(
                 "track.add",

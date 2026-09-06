@@ -1,3 +1,4 @@
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::{AudioSupervisor, HostEventSink, RuntimeDriver, RuntimeReconciler};
 use riffra_core::{AppCore, CreativeSession};
 use riffra_host::{ProjectStore, SessionStore};
@@ -17,6 +18,7 @@ pub struct SessionContext<'a, D: RuntimeDriver = AudioSupervisor> {
     pub runtime: &'a RuntimeReconciler<D>,
     pub storage: SessionStore,
     pub data_root: &'a Path,
+    pub built_in_instruments: &'a BuiltInInstrumentCatalog,
     pub safe_mode: bool,
     pub events: &'a dyn HostEventSink,
     pub(crate) project_commit: Option<ProjectCommitContext<'a>>,

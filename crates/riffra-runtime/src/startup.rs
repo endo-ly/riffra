@@ -8,6 +8,7 @@
 use crate::audio::{
     AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
 };
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
 use crate::runtime_snapshot::runtime_timeline_snapshot;
@@ -147,6 +148,7 @@ pub(crate) fn initialize_runtime(
     core: &AppCore<AudioSupervisor>,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     shutting_down: &AtomicBool,
 ) -> Result<StartupInitialization, String> {
     'generation: for _ in 0..STARTUP_RUNTIME_GENERATION_RETRY_LIMIT {
@@ -179,7 +181,13 @@ pub(crate) fn initialize_runtime(
                 core.audio().mark_startup_failed();
                 return Err(NativeAudioError::ShuttingDown.to_string());
             }
-            match restore_startup_runtime(core, runtime, data_root, generation) {
+            match restore_startup_runtime(
+                core,
+                runtime,
+                data_root,
+                built_in_instruments,
+                generation,
+            ) {
                 Ok(()) => {
                     let status = match release_startup_mute(core.audio(), generation, &status) {
                         Ok(status) => status,
@@ -334,6 +342,7 @@ fn restore_startup_runtime(
     core: &AppCore<AudioSupervisor>,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
     generation: u64,
 ) -> Result<(), StartupRuntimeError> {
     if sidecar_transitioned(core.audio(), generation) {
@@ -347,7 +356,7 @@ fn restore_startup_runtime(
     })?;
     runtime
         .apply_and_wait(
-            runtime_timeline_snapshot(data_root, &target.session),
+            runtime_timeline_snapshot(data_root, built_in_instruments, &target.session),
             riffra_core::ProjectionKey {
                 sequence: target.sequence,
                 session_revision: target.session.arrangement.revision,

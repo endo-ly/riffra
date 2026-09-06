@@ -33,6 +33,7 @@ import type {
   AutomationParameter,
   AutomationPoint,
   TrackKind,
+  BuiltInInstrumentSummary,
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
@@ -277,7 +278,9 @@ export interface ArrangeApi {
     channelIndex: number | null,
   ): Promise<ArrangementMutationResult>;
   setTrackMidiInput(trackId: string, route: MidiInputRoute): Promise<ArrangementMutationResult>;
-  setTrackInstrument(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
+  listBuiltInInstruments(): Promise<BuiltInInstrumentSummary[]>;
+  setTrackBuiltInInstrument(trackId: string, presetId: string): Promise<ArrangementMutationResult>;
+  setTrackVst3Instrument(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
   clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult>;
   addTrackEffect(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
   removeTrackEffect(trackId: string, deviceId: string): Promise<ArrangementMutationResult>;

@@ -1,3 +1,4 @@
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
 };
@@ -22,7 +23,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 mod asset;
 mod clips;
@@ -217,6 +218,7 @@ pub struct HostDispatcher<'a, A> {
     storage: StorageRef<'a>,
     project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
+    built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     allow_runtime_commands: bool,
 }
 
@@ -245,9 +247,14 @@ impl DispatchResult {
 
 impl HostDispatcher<'static, ()> {
     /// Opens the standalone canonical editing dispatcher.
-    pub fn open(data_root: PathBuf) -> Result<Self, String> {
+    pub fn open(data_root: PathBuf, built_in_instruments_root: PathBuf) -> Result<Self, String> {
         let lease = DataRootLease::acquire(&data_root)
             .map_err(|error| format!("data root could not be opened: {error}"))?;
+        let built_in_instruments = Arc::new(
+            BuiltInInstrumentCatalog::load(built_in_instruments_root).map_err(|error| {
+                format!("built-in instrument catalog could not be opened: {error}")
+            })?,
+        );
         let project_store = ProjectStore::new(&data_root);
         let loaded = project_store
             .initialize()
@@ -269,6 +276,7 @@ impl HostDispatcher<'static, ()> {
             storage: StorageRef::Owned(Mutex::new(storage)),
             project_store: ProjectStoreRef::Owned(project_store),
             data_root,
+            built_in_instruments,
             allow_runtime_commands: false,
         })
     }
@@ -281,6 +289,7 @@ impl<'a, A> HostDispatcher<'a, A> {
         storage: &'a SessionStore,
         project_store: &'a ProjectStore,
         data_root: &'a Path,
+        built_in_instruments: &'a Arc<BuiltInInstrumentCatalog>,
     ) -> Self {
         Self {
             _lease: None,
@@ -288,6 +297,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             storage: StorageRef::Borrowed(storage),
             project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
+            built_in_instruments: Arc::clone(built_in_instruments),
             allow_runtime_commands: true,
         }
     }
@@ -510,6 +520,7 @@ fn is_read_command(command: &str) -> bool {
             | "music.region.list"
             | "project.export"
             | "project.list"
+            | "instrument.builtin.list"
     )
 }
 
@@ -548,6 +559,7 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "host.bootstrap"
             | "host.shutdown"
             | "project.list"
+            | "instrument.builtin.list"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
             | "midi.listening.enable"
@@ -580,7 +592,8 @@ fn is_arrangement_mutation_command(command: &str) -> bool {
             | "track.audio-input.clear"
             | "track.midi-input.set"
             | "track.midi-input.clear"
-            | "instrument.set"
+            | "instrument.builtin.set"
+            | "instrument.vst3.set"
             | "instrument.clear"
             | "effect.add"
             | "effect.remove"
@@ -724,6 +737,7 @@ mod tests {
             "audio.driver.get",
             "plugin.catalog.list",
             "plugin.scan",
+            "instrument.builtin.list",
         ] {
             assert!(!super::command_requires_project_id(command), "{command}");
         }
@@ -741,7 +755,8 @@ mod tests {
             "render.start",
             "plugin.editor.open",
             "take.comparison.start",
-            "instrument.set",
+            "instrument.vst3.set",
+            "instrument.builtin.set",
             "missing.disable-plugin",
             "undo",
             "redo",
@@ -759,7 +774,11 @@ mod tests {
     #[test]
     fn track_and_midi_note_edits_share_core_and_persist() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let track = dispatcher
             .dispatch(request(
                 "track.add",
@@ -776,7 +795,11 @@ mod tests {
             .unwrap();
         drop(dispatcher);
 
-        let reopened = Dispatcher::open(root.clone()).unwrap();
+        let reopened = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let result = reopened
             .dispatch(request("session.get", json!({})))
             .unwrap();
@@ -789,7 +812,11 @@ mod tests {
     fn invalid_command_does_not_change_current_session() {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-invalid-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
         let project_id = dispatcher
             .dispatch(ControlCommand::new("project.list", serde_json::json!({})))
             .unwrap()
@@ -811,7 +838,11 @@ mod tests {
     #[test]
     fn metadata_mutations_report_when_runtime_projection_is_unnecessary() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-effect-{}", now_ms()));
-        let dispatcher = Dispatcher::open(root.clone()).unwrap();
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
 
         let settings = dispatcher
             .dispatch(request(

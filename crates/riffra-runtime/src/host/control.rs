@@ -35,6 +35,7 @@ impl HostState {
             runtime: self.runtime.as_ref(),
             storage,
             data_root: &self.data_root,
+            built_in_instruments: self.built_in_instruments.as_ref(),
             safe_mode: self.core.safe_mode(),
             events: self.events.as_ref(),
             project_commit: None,
@@ -97,6 +98,7 @@ impl HostState {
             runtime: self.runtime.as_ref(),
             storage,
             data_root: &self.data_root,
+            built_in_instruments: self.built_in_instruments.as_ref(),
             safe_mode: self.core.safe_mode(),
             events: self.events.as_ref(),
             project_commit: expected_project_id.map(|expected_project_id| {
@@ -234,6 +236,7 @@ impl HostState {
                 &storage,
                 &self.project_store,
                 &self.data_root,
+                &self.built_in_instruments,
             )
             .dispatch_with_canonical(
                 riffra_control::ControlCommand::new(command, params),
@@ -286,6 +289,12 @@ impl HostState {
                         .map_err(|error| command_error(error.to_string()))?,
                 )
                 .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "instrument.builtin.list" => Ok((
+                "builtInInstruments",
+                serde_json::to_value(self.built_in_instruments.summaries())
+                    .map_err(serialize_error)?,
                 current.sequence,
             )),
             "host.shutdown" => {
@@ -425,6 +434,7 @@ impl HostState {
                         params.transport_sequence,
                         crate::runtime_snapshot::runtime_timeline_snapshot(
                             &self.data_root,
+                            self.built_in_instruments.as_ref(),
                             &current.session,
                         ),
                         riffra_core::ProjectionKey {
@@ -718,6 +728,7 @@ impl HostState {
                         .active_session_store()
                         .map_err(|error| command_error(error.to_string()))?,
                     data_root: &self.data_root,
+                    built_in_instruments: self.built_in_instruments.as_ref(),
                     safe_mode: self.core.safe_mode(),
                 };
                 let mut sequence = current.sequence;
@@ -811,6 +822,7 @@ impl HostState {
                 let options = params.options.unwrap_or_default();
                 let session = current.session.clone();
                 let data_root = self.data_root.clone();
+                let built_in_instruments = Arc::clone(&self.built_in_instruments);
                 let worker = self.render_worker.clone();
                 let jobs = self.jobs.clone();
                 let (id, status) = jobs.start(JobKind::Render);
@@ -824,6 +836,7 @@ impl HostState {
                     match render::render_timeline_with_cancellation(
                         &worker,
                         &data_root,
+                        built_in_instruments.as_ref(),
                         &session,
                         riffra_host::now_ms(),
                         options,
@@ -980,10 +993,22 @@ impl HostState {
                     .map_err(|error| error.protocol_error())?,
                 )
             }
-            "instrument.set" => {
+            "instrument.builtin.set" => {
+                let params: BuiltInInstrumentParams = decode(params)?;
+                Some(
+                    session_adapter::set_track_builtin_instrument_with_expected_sequence(
+                        &context,
+                        &params.track_id,
+                        &params.preset_id,
+                        Some(current_sequence),
+                    )
+                    .map_err(|error| error.protocol_error())?,
+                )
+            }
+            "instrument.vst3.set" => {
                 let params: PluginPathParams = decode(params)?;
                 Some(
-                    session_adapter::set_track_instrument_with_expected_sequence(
+                    session_adapter::set_track_vst3_instrument_with_expected_sequence(
                         &context,
                         &params.track_id,
                         &params.plugin_path,
@@ -1187,6 +1212,7 @@ impl HostState {
             canonical,
             self.runtime.as_ref(),
             &self.data_root,
+            self.built_in_instruments.as_ref(),
             self.core.safe_mode(),
             effect,
         )
@@ -1239,7 +1265,7 @@ fn requires_command_gate(command: &str) -> bool {
 fn is_long_project_operation(command: &str) -> bool {
     matches!(
         command,
-        "instrument.set" | "effect.add" | "missing.replace-plugin"
+        "instrument.builtin.set" | "instrument.vst3.set" | "effect.add" | "missing.replace-plugin"
     )
 }
 
@@ -1250,6 +1276,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "host.info"
             | "host.bootstrap"
             | "host.shutdown"
+            | "instrument.builtin.list"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
             | "midi.listening.enable"
@@ -1303,6 +1330,13 @@ fn is_host_runtime_command(command: &str) -> bool {
 #[serde(rename_all = "camelCase")]
 struct TrackIdParams {
     track_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuiltInInstrumentParams {
+    track_id: String,
+    preset_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1520,7 +1554,7 @@ mod tests {
         for command in [
             "host.status",
             "project.list",
-            "instrument.set",
+            "instrument.vst3.set",
             "effect.add",
         ] {
             assert!(!super::requires_command_gate(command), "{command}");
@@ -1536,6 +1570,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1585,6 +1622,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1657,6 +1697,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1723,6 +1766,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1764,6 +1810,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1843,6 +1892,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: true,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
@@ -1904,6 +1956,9 @@ mod tests {
         ));
         let config = HostConfig {
             data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
             safe_mode: false,
             binaries: RuntimeBinaries::new(
                 data_root.join("missing-riffra-audio"),

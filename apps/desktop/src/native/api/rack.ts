@@ -1,15 +1,26 @@
-import type { ArrangementMutationResult } from '@/model/domain';
+import type { ArrangementMutationResult, BuiltInInstrumentSummary } from '@/model/domain';
 import { invokeHost } from '../invoke';
 
 async function invokeRack(command: string, args: Record<string, unknown>) {
   return invokeHost<ArrangementMutationResult>(command, args);
 }
 
-export async function setTrackInstrument(
+export async function listBuiltInInstruments(): Promise<BuiltInInstrumentSummary[]> {
+  return await invokeHost<BuiltInInstrumentSummary[]>('list_built_in_instruments', {});
+}
+
+export async function setTrackBuiltInInstrument(
+  trackId: string,
+  presetId: string,
+): Promise<ArrangementMutationResult> {
+  return await invokeRack('set_track_built_in_instrument', { trackId, presetId });
+}
+
+export async function setTrackVst3Instrument(
   trackId: string,
   pluginPath: string,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('set_track_instrument', { trackId, pluginPath });
+  return await invokeRack('set_track_vst3_instrument', { trackId, pluginPath });
 }
 
 export async function clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult> {

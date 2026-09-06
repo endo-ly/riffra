@@ -43,13 +43,13 @@ Desktop版RiffraはTauriシェルプロセスと複数の子プロセスで構�
 └───────────────────────┘  └─────────────────────┘  └─────────────────┘
 ```
 
-| プロセス            | 役割                                                        | 所有状態                                   |
-| ------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| Tauri シェル        | DesktopのUI、Host接続、Tauri event bridge                   | UI接続、window、dialog、Host選択           |
-| `riffra serve` Host | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督 | DataRootLease、AppCore、Runtime状態        |
-| riffra-audio        | リアルタイム音声。デバイス、VST3グラフ、演奏・録音・監視    | ランタイムグラフ（投影される一時状態のみ） |
-| riffra-plugin-scan  | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）  | なし                                       |
-| riffra-render       | タイムラインのオフラインレンダリング                        | なし                                       |
+| プロセス            | 役割                                                                | 所有状態                                   |
+| ------------------- | ------------------------------------------------------------------- | ------------------------------------------ |
+| Tauri シェル        | DesktopのUI、Host接続、Tauri event bridge                           | UI接続、window、dialog、Host選択           |
+| `riffra serve` Host | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督         | DataRootLease、AppCore、Runtime状態        |
+| riffra-audio        | リアルタイム音声。デバイス、Built-in / VST3グラフ、演奏・録音・監視 | ランタイムグラフ（投影される一時状態のみ） |
+| riffra-plugin-scan  | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）          | なし                                       |
+| riffra-render       | タイムラインのオフラインレンダリング                                | なし                                       |
 
 Tauriシェルはセーフモード（§7）で起動するとサイドカーの起動を省略し、外部デバイス・プラグインを一切触らない。
 
@@ -81,7 +81,8 @@ Desktop adapter (apps/desktop/src-tauri/src)
 
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
   ├─ DawHost / HostConfig / DataRootLeaseを含むHost composition
-  ├─ AudioSupervisor / RuntimeReconciler / Transport ordering
+  ├─ AudioSupervisor / Instrument Runtime / RuntimeReconciler / Transport ordering
+  ├─ 同梱Built-in instrument catalog（composition rootから注入）
   ├─ Offline render process adapter（`riffra-render` executable）
   ├─ HostEventSink / HostEventHub / Host bootstrap
   └─ Local Control Server（command connection / events connection）

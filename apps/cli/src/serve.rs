@@ -1,4 +1,5 @@
 use crate::args::ServeArgs;
+use crate::resources;
 use riffra_control::read_endpoint;
 use riffra_runtime::{DawHost, HostConfig, NoopHostEventSink};
 use signal_hook::consts::SIGINT;
@@ -13,7 +14,7 @@ use std::time::Duration;
 /// Runs the foreground live Host until the process receives a termination
 /// signal.
 pub fn run(data_root: PathBuf, args: ServeArgs) -> Result<(), String> {
-    let mut config = HostConfig::new(data_root.clone())
+    let mut config = HostConfig::new(data_root.clone(), resources::built_in_instruments_root()?)
         .map_err(|error| format!("serve configuration could not be created: {error}"))?;
     config.safe_mode = args.safe_mode;
     let host =

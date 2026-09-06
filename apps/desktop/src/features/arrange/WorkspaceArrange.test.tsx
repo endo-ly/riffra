@@ -755,11 +755,13 @@ describe('WorkspaceArrange', () => {
       instrument: {
         id: 'device:audition',
         name: 'Fake Synth',
-        kind: 'plugin',
         bypassed: false,
-        gainDb: 0,
-        parameterValues: [],
-        disabledPlaceholder: false,
+        source: {
+          type: 'vst3',
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
       },
       rack: { devices: [], macros: [] },
     });
@@ -1306,6 +1308,7 @@ describe('WorkspaceArrange', () => {
       discontinuity: 1,
       unavailableClipIds: ['clip:missing'],
       missingDeviceIds: [],
+      instrumentFaults: [],
     };
     api.onTransportStatus = (callback) => {
       queueMicrotask(() => callback(status));
@@ -1857,11 +1860,13 @@ describe('WorkspaceArrange', () => {
       instrument: {
         id: 'device:velocity',
         name: 'Fake Synth',
-        kind: 'plugin',
         bypassed: false,
-        gainDb: 0,
-        parameterValues: [],
-        disabledPlaceholder: false,
+        source: {
+          type: 'vst3',
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
       },
       rack: { devices: [], macros: [] },
     });

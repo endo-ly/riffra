@@ -24,6 +24,11 @@ export interface TransportStatus {
   discontinuity: number;
   unavailableClipIds: string[];
   missingDeviceIds: string[];
+  instrumentFaults: {
+    trackId: string;
+    faultCode: number;
+    droppedMidiEvents: number;
+  }[];
 }
 
 export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;

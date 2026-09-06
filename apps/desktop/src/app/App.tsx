@@ -493,6 +493,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 setArrangeSelection={arrange.setSelection}
                 missingDependencies={missingDependencies}
                 plugins={plugins}
+                builtInInstruments={boot?.builtInInstruments ?? []}
                 onDisableMissingPlugin={disableMissingPluginDevice}
                 onReplaceMissingPlugin={replaceMissingPluginDevice}
                 onRescanMissingPlugins={rescanMissingPlugins}
@@ -530,6 +531,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               audio={audio}
               onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
               plugins={plugins}
+              builtInInstruments={boot?.builtInInstruments ?? []}
               focusedTrackId={arrange.focusedTrackId}
               onFocusTrack={arrange.setFocusedTrackId}
               missingDeviceIds={missingDependencies

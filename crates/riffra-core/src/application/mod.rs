@@ -16,7 +16,7 @@ use crate::domain::{
     Arrangement, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute, AudioTakeVariant,
     AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange,
     Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
-    ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackKind, TrackPatch,
+    ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackInstrument, TrackKind, TrackPatch,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
@@ -28,9 +28,9 @@ pub use music::{
     MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalRegionView,
 };
 pub use session::{
-    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, MusicalMarkerView,
-    MusicalRangeInspection, ProjectInspection, SessionInspection, SessionInspectionQuery,
-    TrackInspection, inspect_canonical_state,
+    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
+    InstrumentSourceKind, MusicalMarkerView, MusicalRangeInspection, ProjectInspection,
+    SessionInspection, SessionInspectionQuery, TrackInspection, inspect_canonical_state,
 };
 
 /// Partial update for session-wide production settings.
@@ -218,11 +218,16 @@ fn merge_recording_session(
     merged
 }
 
+enum TrackDeviceMut<'a> {
+    Instrument(&'a mut TrackInstrument),
+    Effect(&'a mut RackDevice),
+}
+
 fn find_track_device_mut<'a>(
     session: &'a mut CreativeSession,
     track_id: &str,
     device_id: &str,
-) -> Result<&'a mut RackDevice, ApplicationError> {
+) -> Result<TrackDeviceMut<'a>, ApplicationError> {
     let track = session
         .arrangement
         .tracks
@@ -234,22 +239,27 @@ fn find_track_device_mut<'a>(
         .as_ref()
         .is_some_and(|device| device.id == device_id)
     {
-        return track.instrument.as_mut().ok_or_else(|| {
-            ApplicationError::InvalidCommand("track device is not registered".into())
-        });
+        return track
+            .instrument
+            .as_mut()
+            .map(TrackDeviceMut::Instrument)
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand("track device is not registered".into())
+            });
     }
     track
         .rack
         .devices
         .iter_mut()
         .find(|device| device.id == device_id)
+        .map(TrackDeviceMut::Effect)
         .ok_or_else(|| ApplicationError::InvalidCommand("track device is not registered".into()))
 }
 
 fn find_any_track_device_mut<'a>(
     session: &'a mut CreativeSession,
     device_id: &str,
-) -> Result<&'a mut RackDevice, ApplicationError> {
+) -> Result<TrackDeviceMut<'a>, ApplicationError> {
     session
         .arrangement
         .tracks
@@ -260,13 +270,14 @@ fn find_any_track_device_mut<'a>(
                 .as_ref()
                 .is_some_and(|device| device.id == device_id)
             {
-                track.instrument.as_mut()
+                track.instrument.as_mut().map(TrackDeviceMut::Instrument)
             } else {
                 track
                     .rack
                     .devices
                     .iter_mut()
                     .find(|device| device.id == device_id)
+                    .map(TrackDeviceMut::Effect)
             }
         })
         .ok_or_else(|| ApplicationError::InvalidCommand("track device is not registered".into()))

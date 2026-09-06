@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioStatus,
+  BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
   PluginEntry,
@@ -13,6 +14,7 @@ import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor, TRACK_COLOR_PALETTE } from './track-colors';
 import { TrackPluginChainEditor } from './TrackPluginChainEditor';
 import { PluginPicker } from './PluginPicker';
+import { InstrumentPicker } from './InstrumentPicker';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -24,6 +26,7 @@ interface TrackInspectorProps {
   audio: AudioStatus;
   missingDeviceIds: string[];
   plugins: PluginEntry[];
+  builtInInstruments?: BuiltInInstrumentSummary[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -56,13 +59,20 @@ export function TrackInspector(props: TrackInspectorProps) {
     },
     [props.applyCanonicalState, runOperation, setOperationMessage],
   );
-  const setInstrument = (plugin: PluginEntry) => {
-    commit(props.api.setTrackInstrument(props.track.id, plugin.path));
+  const setBuiltInInstrument = (presetId: string) => {
+    commit(props.api.setTrackBuiltInInstrument(props.track.id, presetId));
   };
-  const instrumentUnavailable =
-    props.track.instrument?.disabledPlaceholder ||
-    (props.track.instrument ? props.missingDeviceIds.includes(props.track.instrument.id) : false);
+  const setVst3Instrument = (plugin: PluginEntry) => {
+    commit(props.api.setTrackVst3Instrument(props.track.id, plugin.path));
+  };
   const instrument = props.track.instrument;
+  const instrumentId = instrument?.id ?? '';
+  const instrumentVst3Source = instrument?.source.type === 'vst3' ? instrument.source : undefined;
+  const instrumentIsVst3 = instrumentVst3Source !== undefined;
+  const instrumentIsDisabled = instrumentVst3Source?.disabledPlaceholder ?? false;
+  const instrumentUnavailable = Boolean(
+    instrumentVst3Source && (instrumentIsDisabled || props.missingDeviceIds.includes(instrumentId)),
+  );
   const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
   const displayColor = resolveTrackColor(props.track, trackIndex);
   return (
@@ -347,12 +357,16 @@ export function TrackInspector(props: TrackInspectorProps) {
               <strong>INSTRUMENT</strong>
             </header>
             {instrumentPickerOpen && (
-              <PluginPicker
+              <InstrumentPicker
                 api={props.api}
+                builtInInstruments={props.builtInInstruments ?? []}
                 plugins={props.plugins}
-                title="Choose Instrument"
-                onSelect={(plugin) => {
-                  setInstrument(plugin);
+                onSelectBuiltIn={(presetId) => {
+                  setBuiltInInstrument(presetId);
+                  setInstrumentPickerOpen(false);
+                }}
+                onSelectVst3={(plugin) => {
+                  setVst3Instrument(plugin);
                   setInstrumentPickerOpen(false);
                 }}
                 onClose={() => setInstrumentPickerOpen(false)}
@@ -377,32 +391,48 @@ export function TrackInspector(props: TrackInspectorProps) {
                   </button>
                 )}
                 {instrument && !instrumentUnavailable && (
-                  <>
-                    <button
-                      type="button"
-                      className={clsx(styles.textButton, styles.plain)}
-                      onClick={() =>
-                        runOperation(props.api.openTrackPluginEditor(props.track.id, instrument.id))
-                      }
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className={clsx(styles.textButton, styles.plain)}
-                      onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}
-                    >
-                      Clear
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className={clsx(styles.textButton, styles.plain)}
+                    aria-pressed={instrument.bypassed}
+                    onClick={() =>
+                      commit(
+                        props.api.setTrackDeviceBypassed(
+                          props.track.id,
+                          instrument.id,
+                          !instrument.bypassed,
+                        ),
+                      )
+                    }
+                  >
+                    {instrument.bypassed ? 'Enable' : 'Bypass'}
+                  </button>
+                )}
+                {instrumentIsVst3 && !instrumentUnavailable && (
+                  <button
+                    type="button"
+                    className={clsx(styles.textButton, styles.plain)}
+                    onClick={() =>
+                      runOperation(props.api.openTrackPluginEditor(props.track.id, instrumentId))
+                    }
+                  >
+                    Edit
+                  </button>
+                )}
+                {instrument && !instrumentUnavailable && (
+                  <button
+                    type="button"
+                    className={clsx(styles.textButton, styles.plain)}
+                    onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}
+                  >
+                    Clear
+                  </button>
                 )}
               </div>
             </div>
             {instrumentUnavailable && (
               <div className={styles.missingState}>
-                <strong>
-                  {instrument?.disabledPlaceholder ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}
-                </strong>
+                <strong>{instrumentIsDisabled ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}</strong>
                 <button
                   type="button"
                   className={styles.smallButton}
@@ -417,7 +447,7 @@ export function TrackInspector(props: TrackInspectorProps) {
                 >
                   Replace
                 </button>
-                {!instrument?.disabledPlaceholder && (
+                {!instrumentIsDisabled && (
                   <button
                     type="button"
                     className={styles.smallButton}

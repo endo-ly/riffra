@@ -70,6 +70,7 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 - Node.js と npm
 - Rust toolchain（`Cargo.toml` の `rust-version` を確認）
 - ネイティブ音声エンジンのビルド済みサイドカー（`native/audio-engine/` 参照。ビルドはDesktop用に `apps/desktop/src-tauri/binaries/`、Headless用に `target/debug/` または `target/release/` へ配置される）
+- CLIまたはHeadless Hostを起動するには、同梱Built-in instrument resourceも必要。`./native/audio-engine/build.sh Debug` がサイドカーとともに配置する。別の場所へstagingしたresourceを使う場合は `RIFFRA_BUILTIN_INSTRUMENTS_ROOT` に `instruments/builtin` のパスを指定する
 
 ### コマンド
 

@@ -57,6 +57,8 @@ use thiserror::Error;
 pub struct HostConfig {
     /// Data Root owned by the Host.
     pub data_root: PathBuf,
+    /// Resource root containing the shipped built-in instrument presets.
+    pub built_in_instruments_root: PathBuf,
     /// Whether external audio, MIDI, and plugin processes remain offline.
     pub safe_mode: bool,
     /// Explicit native executable paths.
@@ -65,9 +67,10 @@ pub struct HostConfig {
 
 impl HostConfig {
     /// Creates a normal-mode configuration using executables beside `riffra`.
-    pub fn new(data_root: PathBuf) -> Result<Self, String> {
+    pub fn new(data_root: PathBuf, built_in_instruments_root: PathBuf) -> Result<Self, String> {
         Ok(Self {
             data_root,
+            built_in_instruments_root,
             safe_mode: false,
             binaries: RuntimeBinaries::beside_current_executable()?,
         })
@@ -245,6 +248,7 @@ impl DawHost {
         render::render_timeline_with_options(
             &self.state.render_worker,
             &self.state.data_root,
+            &self.state.built_in_instruments,
             &snapshot.session,
             now_ms(),
             options,

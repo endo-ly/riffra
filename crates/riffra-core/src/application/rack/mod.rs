@@ -67,7 +67,7 @@ where
     pub fn set_track_instrument(
         &self,
         track_id: &str,
-        instrument: Option<RackDevice>,
+        instrument: Option<TrackInstrument>,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
             let track = session
@@ -87,16 +87,15 @@ where
         })
     }
 
-    /// Builds an Instrument Track plugin assignment for host runtime
-    /// validation without changing canonical state.
+    /// Builds an Instrument Track assignment for host runtime validation
+    /// without changing canonical state.
     ///
     /// # Errors
     /// Returns an error when the Track or plugin descriptor is invalid.
     pub fn prepare_track_instrument(
         &self,
         track_id: &str,
-        name: String,
-        path: String,
+        instrument: TrackInstrument,
     ) -> Result<crate::PreparedSession, ApplicationError> {
         self.core.prepare(|session| {
             let track = session
@@ -110,12 +109,7 @@ where
                     "only instrument tracks can host an instrument".into(),
                 ));
             }
-            let id = track
-                .instrument
-                .as_ref()
-                .map(|device| device.id.clone())
-                .unwrap_or_else(|| next_id("device:instrument"));
-            track.instrument = Some(plugin_device(id, name, path)?);
+            track.instrument = Some(instrument);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -244,8 +238,10 @@ where
         bypassed: bool,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
-            let device = find_track_device_mut(session, track_id, device_id)?;
-            device.bypassed = bypassed;
+            match find_track_device_mut(session, track_id, device_id)? {
+                TrackDeviceMut::Instrument(instrument) => instrument.set_bypassed(bypassed),
+                TrackDeviceMut::Effect(device) => device.bypassed = bypassed,
+            }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -266,10 +262,23 @@ where
         }
         self.core.commit(self.storage, |session| {
             let device = find_track_device_mut(session, track_id, device_id)?;
-            if device.parameter_values.len() <= parameter_index {
-                device.parameter_values.resize(parameter_index + 1, 0.0);
+            let parameter_values = match device {
+                TrackDeviceMut::Instrument(instrument) => {
+                    instrument
+                        .as_vst3_mut()
+                        .ok_or_else(|| {
+                            ApplicationError::InvalidCommand(
+                                "built-in instruments do not expose parameters".into(),
+                            )
+                        })?
+                        .parameter_values
+                }
+                TrackDeviceMut::Effect(device) => &mut device.parameter_values,
+            };
+            if parameter_values.len() <= parameter_index {
+                parameter_values.resize(parameter_index + 1, 0.0);
             }
-            device.parameter_values[parameter_index] = value.clamp(0.0, 1.0);
+            parameter_values[parameter_index] = value.clamp(0.0, 1.0);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -328,10 +337,23 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            let device = find_track_device_mut(session, track_id, device_id)?;
-            device.parameter_values = parameter_values;
-            device.state_data = state_data.filter(|value| !value.is_empty());
-            device.bypassed = bypassed;
+            match find_track_device_mut(session, track_id, device_id)? {
+                TrackDeviceMut::Instrument(instrument) => {
+                    let vst3 = instrument.as_vst3_mut().ok_or_else(|| {
+                        ApplicationError::InvalidCommand(
+                            "built-in instruments do not expose plugin state".into(),
+                        )
+                    })?;
+                    *vst3.parameter_values = parameter_values;
+                    *vst3.state_data = state_data.filter(|value| !value.is_empty());
+                    instrument.set_bypassed(bypassed);
+                }
+                TrackDeviceMut::Effect(device) => {
+                    device.parameter_values = parameter_values;
+                    device.state_data = state_data.filter(|value| !value.is_empty());
+                    device.bypassed = bypassed;
+                }
+            }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -352,10 +374,23 @@ where
         }
         self.core.commit(self.storage, |session| {
             let device = find_track_device_mut(session, track_id, device_id)?;
-            if device.parameter_values.len() <= parameter_index {
-                device.parameter_values.resize(parameter_index + 1, 0.0);
+            let parameter_values = match device {
+                TrackDeviceMut::Instrument(instrument) => {
+                    instrument
+                        .as_vst3_mut()
+                        .ok_or_else(|| {
+                            ApplicationError::InvalidCommand(
+                                "built-in instruments do not expose parameters".into(),
+                            )
+                        })?
+                        .parameter_values
+                }
+                TrackDeviceMut::Effect(device) => &mut device.parameter_values,
+            };
+            if parameter_values.len() <= parameter_index {
+                parameter_values.resize(parameter_index + 1, 0.0);
             }
-            device.parameter_values[parameter_index] = value.clamp(0.0, 1.0);
+            parameter_values[parameter_index] = value.clamp(0.0, 1.0);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -367,36 +402,29 @@ where
         device_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
-            let device = session
-                .arrangement
-                .tracks
-                .iter_mut()
-                .find_map(|track| {
-                    if track
-                        .instrument
-                        .as_ref()
-                        .is_some_and(|device| device.id == device_id)
-                    {
-                        track.instrument.as_mut()
-                    } else {
-                        track
-                            .rack
-                            .devices
-                            .iter_mut()
-                            .find(|device| device.id == device_id)
+            match find_any_track_device_mut(session, device_id)? {
+                TrackDeviceMut::Instrument(instrument) => {
+                    let vst3 = instrument.as_vst3_mut().ok_or_else(|| {
+                        ApplicationError::InvalidCommand(
+                            "built-in instruments cannot be disabled as missing plugins".into(),
+                        )
+                    })?;
+                    if *vst3.disabled_placeholder {
+                        return Err(ApplicationError::InvalidCommand(format!(
+                            "track device is already disabled: {device_id}"
+                        )));
                     }
-                })
-                .ok_or_else(|| {
-                    ApplicationError::InvalidCommand(format!(
-                        "track device is not registered: {device_id}"
-                    ))
-                })?;
-            if device.disabled_placeholder {
-                return Err(ApplicationError::InvalidCommand(format!(
-                    "track device is already disabled: {device_id}"
-                )));
+                    *vst3.disabled_placeholder = true;
+                }
+                TrackDeviceMut::Effect(device) => {
+                    if device.disabled_placeholder {
+                        return Err(ApplicationError::InvalidCommand(format!(
+                            "track device is already disabled: {device_id}"
+                        )));
+                    }
+                    device.disabled_placeholder = true;
+                }
             }
-            device.disabled_placeholder = true;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -414,8 +442,46 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            let current = find_any_track_device_mut(session, device_id)?;
-            *current = device;
+            match find_any_track_device_mut(session, device_id)? {
+                TrackDeviceMut::Instrument(_) => {
+                    return Err(ApplicationError::InvalidCommand(
+                        "VST3 instrument replacement must use an instrument source".into(),
+                    ));
+                }
+                TrackDeviceMut::Effect(current) => *current = device,
+            }
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
+    }
+
+    /// Replaces a VST3 Instrument while preserving its slot identity.
+    pub fn replace_track_instrument(
+        &self,
+        device_id: &str,
+        instrument: TrackInstrument,
+    ) -> Result<CreativeSession, ApplicationError> {
+        if instrument.id != device_id || instrument.as_vst3().is_none() {
+            return Err(ApplicationError::InvalidCommand(
+                "replacement instrument must be a VST3 instrument with the existing id".into(),
+            ));
+        }
+        self.core.commit(self.storage, |session| {
+            match find_any_track_device_mut(session, device_id)? {
+                TrackDeviceMut::Instrument(current) => {
+                    if current.as_vst3().is_none() {
+                        return Err(ApplicationError::InvalidCommand(
+                            "built-in instruments cannot be replaced as missing plugins".into(),
+                        ));
+                    }
+                    *current = instrument;
+                }
+                TrackDeviceMut::Effect(_) => {
+                    return Err(ApplicationError::InvalidCommand(
+                        "replacement device is not an instrument".into(),
+                    ));
+                }
+            }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -433,8 +499,21 @@ where
         path: String,
     ) -> Result<crate::PreparedSession, ApplicationError> {
         self.core.prepare(|session| {
-            let current = find_any_track_device_mut(session, device_id)?;
-            *current = plugin_device(device_id.to_owned(), name, path)?;
+            match find_any_track_device_mut(session, device_id)? {
+                TrackDeviceMut::Instrument(current) => {
+                    if current.as_vst3().is_none() {
+                        return Err(ApplicationError::InvalidCommand(
+                            "built-in instruments cannot be replaced as missing plugins".into(),
+                        ));
+                    }
+                    *current =
+                        TrackInstrument::vst3(device_id.to_owned(), name.clone(), path.clone())
+                            .map_err(ApplicationError::InvalidCommand)?;
+                }
+                TrackDeviceMut::Effect(current) => {
+                    *current = plugin_device(device_id.to_owned(), name, path)?;
+                }
+            }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })

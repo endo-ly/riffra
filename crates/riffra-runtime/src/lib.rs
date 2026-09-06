@@ -11,6 +11,7 @@ mod binaries;
 mod control;
 mod dispatcher;
 mod host;
+pub mod instrument;
 pub mod jobs;
 pub mod library;
 pub mod missing;
@@ -24,6 +25,8 @@ mod runtime;
 pub mod runtime_snapshot;
 pub mod session;
 mod startup;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use audio::{
     AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
@@ -35,13 +38,17 @@ pub use host::{
     DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventHub, HostEventSink,
     HostEventSubscription, NoopHostEventSink, RecordingHostEventSink, SharedHostEventSink,
 };
+pub use instrument::{
+    BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
+};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
     AudioStatus, DeviceChannels, MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState,
     ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
     RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
-    SessionAudioPair, TrackDeviceSummary, TrackRackSummary, TrackSummary,
+    SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary, TrackInstrumentSummarySource,
+    TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,

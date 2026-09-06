@@ -102,11 +102,18 @@ pub fn run() {
                 .audio_dir()
                 .map_err(|error| format!("User Music folder is unavailable: {error}"))?
                 .join("Riffra");
+            let built_in_instruments_root = app
+                .path()
+                .resource_dir()
+                .map_err(|error| format!("Application resources are unavailable: {error}"))?
+                .join("instruments")
+                .join("builtin");
             let binaries = RuntimeBinaries::beside_current_executable()?;
             let host_connection = HostConnectionManager::open(
                 app.handle().clone(),
                 EmbeddedHostSettings {
                     data_root,
+                    built_in_instruments_root,
                     safe_mode,
                     binaries,
                 },
@@ -177,7 +184,9 @@ pub fn run() {
             session::commands::set_track_automation,
             session::commands::set_track_audio_input,
             session::commands::set_track_midi_input,
-            session::commands::set_track_instrument,
+            session::commands::list_built_in_instruments,
+            session::commands::set_track_built_in_instrument,
+            session::commands::set_track_vst3_instrument,
             session::commands::clear_track_instrument,
             session::commands::add_track_effect,
             session::commands::remove_track_effect,
