@@ -49,6 +49,7 @@ public:
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
     [[nodiscard]] juce::var programStatus() const;
+    [[nodiscard]] bool hasPrograms() const noexcept;
     [[nodiscard]] bool hasEditor() const;
     [[nodiscard]] std::size_t parameterCount() const noexcept;
     void addProcessorListener(juce::AudioProcessorListener& listener) noexcept;
@@ -119,6 +120,7 @@ private:
     std::atomic<int> preparedBlockSize{0};
     std::atomic<int> pluginInputChannels{0};
     std::atomic<int> pluginOutputChannels{0};
+    std::atomic<int> cachedProgramCount{0};
     std::atomic<bool> loaded{false};
     std::atomic<bool> mutationInProgress{false};
     std::atomic<std::uint64_t> bypassedBlocks{0};

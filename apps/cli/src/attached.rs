@@ -120,11 +120,6 @@ mod tests {
 
     #[test]
     fn attached_backend_discovers_endpoint_and_completes_handshake() {
-        let registry_root = std::env::temp_dir().join(format!(
-            "riffra-cli-attached-{}-{}",
-            std::process::id(),
-            riffra_control::new_instance_id()
-        ));
         let descriptor =
             EndpointDescriptor::new(riffra_control::new_instance_id(), std::process::id());
         let mut listener =
@@ -205,6 +200,5 @@ mod tests {
         assert_eq!(response.result.unwrap().value["sequence"], 12);
 
         server.join().unwrap();
-        let _ = std::fs::remove_dir_all(registry_root);
     }
 }

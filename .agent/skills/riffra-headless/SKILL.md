@@ -72,7 +72,7 @@ description: >-
 - クリップ開始位置を使った相対tickの計算
 - Node.js / Python / PowerShellでのMIDI note JSON生成
 
-通常の作曲では、対応する `music.*` 操作がある場合はそれを優先する。`midi-note` は、既存NoteのIDを指定した更新・削除・量子化・変形・複製など、MIDI Noteを直接編集する必要がある操作で使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。tickやMIDI pitch番号を自分で計算して新しいNoteを組み立てる用途には `music.*` を使う。
+通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
@@ -113,16 +113,6 @@ riffra --attach --host <instance-id> session inspect
 ```
 
 `host list`はcurrent-user registryのローカル操作である。各Hostへ接続して`host.status`を確認し、DataRoot、PID、instance ID、起動時刻を表示する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
-
-### Desktop アプリの DataRoot
-
-Desktop Embedded HostはユーザーのMusic directory配下をDataRootとして使い、位置は常に一定である。
-
-| OS      | DataRoot                     |
-| ------- | ---------------------------- |
-| Windows | `%USERPROFILE%\Music\Riffra` |
-| Linux   | `~/Music/Riffra`             |
-| macOS   | `~/Music/Riffra`             |
 
 ```powershell
 cargo run -p riffra-cli -- --attach host status

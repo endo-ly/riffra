@@ -275,18 +275,17 @@ fn apply_emergency_mute_state(current: &mut AudioStatus, emergency_muted: bool) 
     true
 }
 
-/// Parses one JSON line from the sidecar into a typed reply. Returns `None` for
-/// non-JSON or unrecognized message types so the caller can ignore them.
-fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
-    let payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+/// Classifies one parsed sidecar payload. Returns `None` for unrecognized
+/// message types so the caller can ignore them.
+fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
     let request_id = payload.get("requestId").and_then(serde_json::Value::as_u64);
     match payload.get("type").and_then(serde_json::Value::as_str) {
         Some("audioStatus") => {
-            let status = serde_json::from_value::<NativeStatus>(payload).ok()?;
+            let status = serde_json::from_value::<NativeStatus>(payload.clone()).ok()?;
             Some(ParsedNativeLine::Status { request_id, status })
         }
         Some("audioMeters") => {
-            let meters = serde_json::from_value::<NativeMeters>(payload).ok()?;
+            let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
         Some("transportStatus" | "timelineAck") => {
@@ -321,12 +320,18 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
     }
 }
 
+#[cfg(test)]
+fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
+    let payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    parse_native_value(&payload)
+}
+
 pub(super) fn handle_native_stdout(
     status: &Arc<Mutex<AudioStatus>>,
     bytes: &[u8],
 ) -> Option<NativeReply> {
     let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
-    let parsed = parse_native_line(bytes)?;
+    let parsed = parse_native_value(&value)?;
     match parsed {
         ParsedNativeLine::Status {
             request_id,

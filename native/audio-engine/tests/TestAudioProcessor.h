@@ -2,8 +2,10 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "PluginRack.h"
@@ -14,6 +16,7 @@ struct ProcessorTrace final {
     bool prepared = false;
     bool processed = false;
     bool released = false;
+    bool failProgramChange = false;
     int currentProgram = 0;
     double sampleRate = 0.0;
     int blockSize = 0;
@@ -50,7 +53,10 @@ public:
     double getTailLengthSeconds() const override { return 0.0; }
     int getNumPrograms() override { return 2; }
     int getCurrentProgram() override { return trace.currentProgram; }
-    void setCurrentProgram(const int index) override { trace.currentProgram = index; }
+    void setCurrentProgram(const int index) override {
+        if (trace.failProgramChange) throw std::runtime_error("test program change failure");
+        trace.currentProgram = index;
+    }
     const juce::String getProgramName(const int index) override {
         return "Program " + juce::String(index);
     }
@@ -249,6 +255,8 @@ public:
                                         std::memory_order_release);
         rack->pluginOutputChannels.store(processor->getMainBusNumOutputChannels(),
                                          std::memory_order_release);
+        rack->cachedProgramCount.store(std::max(0, processor->getNumPrograms()),
+                                       std::memory_order_release);
         rack->plugin = std::move(processor);
         rack->loaded.store(true, std::memory_order_release);
         rack->loadCount.store(1, std::memory_order_release);

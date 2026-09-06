@@ -680,10 +680,6 @@ juce::var TimelineEngine::deviceStatus(const juce::String& trackId, const juce::
         error = "Plugin status was not an object.";
         return {};
     }
-    const auto programs = rack->programStatus();
-    const auto programCount = programs.getProperty("programs", {}).isArray()
-                                  ? programs.getProperty("programs", {}).size()
-                                  : 0;
     auto* object = result.getDynamicObject();
     object->setProperty("type", "trackDeviceStatus");
     object->setProperty("id", deviceId);
@@ -693,7 +689,7 @@ juce::var TimelineEngine::deviceStatus(const juce::String& trackId, const juce::
     auto* capabilities = new juce::DynamicObject();
     capabilities->setProperty("parameters", rack->parameterCount() > 0);
     capabilities->setProperty("state", true);
-    capabilities->setProperty("presets", programCount > 0);
+    capabilities->setProperty("presets", rack->hasPrograms());
     capabilities->setProperty("editor", rack->hasEditor());
     object->setProperty("capabilities", juce::var(capabilities));
     return result;
@@ -1029,9 +1025,9 @@ bool TimelineEngine::setDevicePersistedState(const juce::String& trackId,
     std::vector<std::pair<PluginRack*, juce::var>> previous;
     previous.reserve(targets.size());
     const auto rollback = [&previous] {
-        for (const auto& [rack, state] : previous) {
+        for (const auto& [rack, savedState] : previous) {
             juce::String rollbackError;
-            (void)rack->applyPersistedState(state, rollbackError);
+            (void)rack->applyPersistedState(savedState, rollbackError);
         }
     };
     for (auto* target : targets) {
@@ -1089,14 +1085,37 @@ bool TimelineEngine::setDeviceProgram(const juce::String& trackId, const juce::S
     previous.reserve(targets.size());
     for (auto* target : targets) {
         const auto status = target->programStatus();
+        if (!status.isObject()) {
+            error = "Plugin program status was not an object.";
+            return false;
+        }
+        const auto enumerationError = status.getProperty("error", {});
+        if (!enumerationError.isVoid()) {
+            error = enumerationError.toString();
+            return false;
+        }
+        const auto programs = status.getProperty("programs", {});
         const auto currentIndex = static_cast<int>(status.getProperty("currentIndex", -1));
+        if (!programs.isArray() || currentIndex < 0 || currentIndex >= programs.size()) {
+            error = "Plugin program state could not be captured for rollback.";
+            return false;
+        }
+        if (programIndex < 0 || programIndex >= programs.size()) {
+            error = "Plugin program index is out of range.";
+            return false;
+        }
         previous.emplace_back(target, currentIndex);
-        if (target->setProgram(programIndex, error)) continue;
+    }
+
+    const auto rollback = [&previous] {
         for (const auto& [rack, index] : previous) {
-            if (index < 0) continue;
             juce::String rollbackError;
             (void)rack->setProgram(index, rollbackError);
         }
+    };
+    for (auto* target : targets) {
+        if (target->setProgram(programIndex, error)) continue;
+        rollback();
         return false;
     }
     sequence.fetch_add(1, std::memory_order_relaxed);

@@ -184,6 +184,14 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     if (auto configurationError = configureProcessor(*candidate, sampleRate, blockSize))
         return configurationError;
 
+    auto candidateProgramCount = 0;
+    try {
+        candidateProgramCount = std::max(0, candidate->getNumPrograms());
+    } catch (...) {
+        // Program enumeration remains available through programStatus(), which
+        // reports the plugin error. A failed capability probe must not prevent
+        // the plugin from loading.
+    }
     updateParameterCache(*candidate);
     const auto candidateParameterCount =
         static_cast<std::size_t>(candidate->getParameters().size());
@@ -216,6 +224,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     preparedBlockSize.store(blockSize, std::memory_order_release);
     pluginInputChannels.store(inputChannels, std::memory_order_release);
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
+    cachedProgramCount.store(candidateProgramCount, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -317,6 +326,7 @@ void PluginRack::clear() noexcept {
     loaded.store(false, std::memory_order_release);
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
+    cachedProgramCount.store(0, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -382,6 +392,10 @@ void PluginRack::enqueueParameterChange(const int index, const float value) noex
 std::size_t PluginRack::parameterCount() const noexcept {
     const juce::ScopedLock statusGuard(statusLock);
     return cachedParameters.size();
+}
+
+bool PluginRack::hasPrograms() const noexcept {
+    return cachedProgramCount.load(std::memory_order_acquire) > 0;
 }
 
 bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& error) noexcept {
