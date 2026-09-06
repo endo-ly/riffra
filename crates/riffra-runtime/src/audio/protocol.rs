@@ -14,6 +14,7 @@ pub(super) struct NativeReply {
     pub(super) request_id: Option<u64>,
     pub(super) result: NativeAudioResult<()>,
     pub(super) event: NativeEvent,
+    pub(super) value: serde_json::Value,
 }
 
 /// JSON message body for the audio sidecar IPC.
@@ -228,6 +229,9 @@ enum ParsedNativeLine {
     Acknowledgement {
         request_id: Option<u64>,
     },
+    Response {
+        request_id: Option<u64>,
+    },
     Error {
         request_id: Option<u64>,
         fault: bool,
@@ -304,6 +308,7 @@ fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
                 detail,
             })
         }
+        _ if request_id.is_some() => Some(ParsedNativeLine::Response { request_id }),
         _ => None,
     }
 }
@@ -312,6 +317,7 @@ pub(super) fn handle_native_stdout(
     status: &Arc<Mutex<AudioStatus>>,
     bytes: &[u8],
 ) -> Option<NativeReply> {
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
     let parsed = parse_native_line(bytes)?;
     match parsed {
         ParsedNativeLine::Status {
@@ -325,6 +331,7 @@ pub(super) fn handle_native_stdout(
                 request_id,
                 result: Ok(()),
                 event: NativeEvent::AudioStatus,
+                value,
             })
         }
         ParsedNativeLine::Meters { request_id, meters } => {
@@ -352,12 +359,20 @@ pub(super) fn handle_native_stdout(
                 } else {
                     NativeEvent::AudioMeters
                 },
+                value,
             })
         }
         ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
             request_id,
             result: Ok(()),
             event: NativeEvent::None,
+            value,
+        }),
+        ParsedNativeLine::Response { request_id } => Some(NativeReply {
+            request_id,
+            result: Ok(()),
+            event: NativeEvent::None,
+            value,
         }),
         ParsedNativeLine::Error {
             request_id,
@@ -373,6 +388,7 @@ pub(super) fn handle_native_stdout(
                 request_id,
                 result: Err(NativeAudioError::native_rejected(detail)),
                 event: NativeEvent::AudioStatus,
+                value,
             })
         }
     }
@@ -537,6 +553,7 @@ mod tests {
             }
             ParsedNativeLine::Meters { .. }
             | ParsedNativeLine::Acknowledgement { .. }
+            | ParsedNativeLine::Response { .. }
             | ParsedNativeLine::Error { .. } => {
                 panic!("expected a status line")
             }
@@ -570,7 +587,8 @@ mod tests {
             }
             ParsedNativeLine::Status { .. }
             | ParsedNativeLine::Meters { .. }
-            | ParsedNativeLine::Acknowledgement { .. } => {
+            | ParsedNativeLine::Acknowledgement { .. }
+            | ParsedNativeLine::Response { .. } => {
                 panic!("expected an error line")
             }
         }

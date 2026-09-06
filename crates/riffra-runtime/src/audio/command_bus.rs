@@ -10,7 +10,7 @@ use super::{AudioSupervisor, COMMAND_ACK_TIMEOUT, SIDECAR_READY_TIMEOUT};
 
 #[derive(Default)]
 pub(crate) struct CommandResponse {
-    pub(crate) results: HashMap<u64, Option<NativeAudioResult<()>>>,
+    pub(crate) results: HashMap<u64, Option<NativeAudioResult<Value>>>,
 }
 
 /// Owns request ids and acknowledgement waiters for the sidecar command bus.
@@ -61,6 +61,14 @@ impl AudioSupervisor {
         Ok(status.clone())
     }
 
+    pub(super) fn send_command_value(
+        &self,
+        command: Value,
+        timeout: Duration,
+    ) -> NativeAudioResult<Value> {
+        self.wait_for_command_value(command, timeout)
+    }
+
     /// Waits for a sidecar acknowledgement without cloning the full
     /// [`AudioStatus`]. High-rate realtime commands such as MIDI only need an
     /// acknowledgement; cloning plugin state data for every note can otherwise
@@ -86,9 +94,17 @@ impl AudioSupervisor {
 
     pub(super) fn wait_for_command(
         &self,
-        mut command: Value,
+        command: Value,
         timeout: Duration,
     ) -> NativeAudioResult<()> {
+        self.wait_for_command_value(command, timeout).map(|_| ())
+    }
+
+    pub(super) fn wait_for_command_value(
+        &self,
+        mut command: Value,
+        timeout: Duration,
+    ) -> NativeAudioResult<Value> {
         let request_id = self.command_bus.next_request_id();
         command["requestId"] = serde_json::json!(request_id);
         let payload = serde_json::to_string(&command).map_err(|error| {
@@ -193,8 +209,7 @@ impl AudioSupervisor {
                     "Native audio returned no command result.",
                 ))
             });
-        result?;
-        Ok(())
+        result
     }
 }
 
@@ -202,6 +217,7 @@ pub(super) fn record_command_response(
     responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
     request_id: u64,
     error: Option<NativeAudioError>,
+    value: Value,
 ) {
     let (response_lock, response_ready) = &**responses;
     if let Ok(mut response) = response_lock.lock()
@@ -210,7 +226,7 @@ pub(super) fn record_command_response(
     {
         *result = Some(match error {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => Ok(value),
         });
         response_ready.notify_all();
     }
@@ -286,7 +302,7 @@ mod tests {
             Some(Err(NativeAudioError::transport_lost("sidecar restarted"))),
         );
 
-        record_command_response(&responses, 42, None);
+        record_command_response(&responses, 42, None, Value::Null);
 
         let response = responses.0.lock().unwrap();
         assert!(matches!(

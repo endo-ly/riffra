@@ -20,9 +20,11 @@ use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::control::ControlServer;
 use crate::dispatcher::{
-    AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceParameterParams,
-    EffectRemoveParams, EffectReorderParams, HostDispatcher, MidiInputParams,
-    MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+    AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceInspectParams,
+    DeviceParameterGetParams, DeviceParameterListParams, DeviceParameterParams, EffectRemoveParams,
+    EffectReorderParams, HostDispatcher, MidiInputParams, MissingPluginReplaceParams,
+    MissingRelinkParams, PluginDeviceParams, PluginPathParams, PluginPresetSetParams,
+    PluginStateSetParams,
 };
 use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
 use crate::model::{AudioStatus, RuntimeProjectionStatus};

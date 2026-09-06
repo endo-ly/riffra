@@ -450,6 +450,29 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
     return true;
 }
 
+bool PluginRack::setProgram(const int index, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "No VST3 plugin is loaded.";
+        return false;
+    }
+    try {
+        const auto programCount = plugin->getNumPrograms();
+        if (index < 0 || index >= programCount) {
+            error = "Plugin program index is out of range.";
+            return false;
+        }
+        plugin->setCurrentProgram(index);
+        updateParameterCache(*plugin);
+        return true;
+    } catch (const std::exception& exception) {
+        error = "VST3 program change raised an exception: " + juce::String(exception.what());
+    } catch (...) {
+        error = "VST3 program change failed with an unknown exception.";
+    }
+    return false;
+}
+
 bool PluginRack::applyStateData(const juce::String& base64, juce::String& error) noexcept {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
@@ -726,5 +749,50 @@ juce::var PluginRack::cachedStatus(const bool includeParameters) const {
 juce::var PluginRack::status() const { return cachedStatus(false); }
 
 juce::var PluginRack::parameterStatus() const { return cachedStatus(true); }
+
+juce::var PluginRack::programStatus() const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    auto* result = new juce::DynamicObject();
+    result->setProperty("supported", false);
+    result->setProperty("currentIndex", -1);
+    result->setProperty("currentName", juce::String());
+    result->setProperty("programs", juce::Array<juce::var>{});
+    if (plugin == nullptr) return juce::var(result);
+
+    try {
+        const auto programCount = plugin->getNumPrograms();
+        juce::Array<juce::var> programs;
+        for (int index = 0; index < programCount; ++index) {
+            auto* program = new juce::DynamicObject();
+            program->setProperty("index", index);
+            program->setProperty("name", plugin->getProgramName(index));
+            programs.add(juce::var(program));
+        }
+        const auto currentIndex = plugin->getCurrentProgram();
+        result->setProperty("supported", programCount > 0);
+        result->setProperty("currentIndex", currentIndex);
+        result->setProperty(
+            "currentName",
+            currentIndex >= 0 && currentIndex < programCount ? plugin->getProgramName(currentIndex)
+                                                              : juce::String());
+        result->setProperty("programs", programs);
+    } catch (const std::exception& exception) {
+        result->setProperty("error", "VST3 program enumeration failed: " +
+                                         juce::String(exception.what()));
+    } catch (...) {
+        result->setProperty("error", "VST3 program enumeration failed.");
+    }
+    return juce::var(result);
+}
+
+bool PluginRack::hasEditor() const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) return false;
+    try {
+        return plugin->hasEditor();
+    } catch (...) {
+        return false;
+    }
+}
 
 }  // namespace riffra

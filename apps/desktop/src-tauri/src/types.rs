@@ -34,8 +34,9 @@ use riffra_runtime::jobs::{BackgroundJobStatus, JobKind, JobState};
 use riffra_runtime::missing::MissingDependency;
 use riffra_runtime::projects::ProjectExport;
 use riffra_runtime::{
-    ArrangementProjectionOutcome, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
-    TrackSummary,
+    ArrangementProjectionOutcome, DeviceCapabilities, DeviceInspection, DeviceParameterInfo,
+    PluginPresetInfo, PluginStateSnapshot, RuntimeProjectionState, TrackDeviceSummary,
+    TrackRackSummary, TrackSummary,
 };
 use ts_rs::{Config, TS};
 
@@ -108,6 +109,11 @@ fn export_types() {
     TrackDeviceSummary::export_all(&cfg).expect("TrackDeviceSummary bindings");
     TrackRackSummary::export_all(&cfg).expect("TrackRackSummary bindings");
     TrackSummary::export_all(&cfg).expect("TrackSummary bindings");
+    DeviceCapabilities::export_all(&cfg).expect("DeviceCapabilities bindings");
+    DeviceInspection::export_all(&cfg).expect("DeviceInspection bindings");
+    DeviceParameterInfo::export_all(&cfg).expect("DeviceParameterInfo bindings");
+    PluginPresetInfo::export_all(&cfg).expect("PluginPresetInfo bindings");
+    PluginStateSnapshot::export_all(&cfg).expect("PluginStateSnapshot bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");
     ProjectState::export_all(&cfg).expect("ProjectState bindings");
     ProjectActivationResult::export_all(&cfg).expect("ProjectActivationResult bindings");

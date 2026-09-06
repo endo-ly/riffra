@@ -256,6 +256,273 @@ impl HostState {
         }
 
         match command {
+            "device.inspect" => {
+                let params: DeviceInspectParams = decode(params)?;
+                if let Some(inspection) = canonical_non_plugin_device_inspection(
+                    &current,
+                    &params.track_id,
+                    &params.device_id,
+                )? {
+                    return Ok((
+                        "deviceInspection",
+                        serde_json::to_value(inspection).map_err(serialize_error)?,
+                        current.sequence,
+                    ));
+                }
+                let value = self
+                    .core
+                    .audio()
+                    .inspect_track_device(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let inspection: crate::model::DeviceInspection =
+                    serde_json::from_value(value).map_err(serialize_error)?;
+                Ok((
+                    "deviceInspection",
+                    serde_json::to_value(inspection).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "device.parameter.list" => {
+                let params: DeviceParameterListParams = decode(params)?;
+                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let value = self
+                    .core
+                    .audio()
+                    .list_track_device_parameters(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let parameters = value
+                    .get("parameters")
+                    .cloned()
+                    .ok_or_else(|| command_error("Native plugin response omitted parameters"))?;
+                let parameters: Vec<crate::model::DeviceParameterInfo> =
+                    serde_json::from_value(parameters).map_err(serialize_error)?;
+                Ok((
+                    "deviceParameters",
+                    serde_json::to_value(parameters).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "device.parameter.get" => {
+                let params: DeviceParameterGetParams = decode(params)?;
+                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let value = self
+                    .core
+                    .audio()
+                    .list_track_device_parameters(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let parameters = value
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| command_error("Native plugin response omitted parameters"))?;
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| {
+                        parameter
+                            .get("index")
+                            .and_then(Value::as_u64)
+                            .and_then(|index| u32::try_from(index).ok())
+                            == Some(params.parameter_index)
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        command_error(format!(
+                            "plugin parameter is not registered: {}",
+                            params.parameter_index
+                        ))
+                    })?;
+                let parameter: crate::model::DeviceParameterInfo =
+                    serde_json::from_value(parameter).map_err(serialize_error)?;
+                Ok((
+                    "deviceParameter",
+                    serde_json::to_value(parameter).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.state.get" => {
+                let params: PluginDeviceParams = decode(params)?;
+                let (plugin_path, _) =
+                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let value = self
+                    .core
+                    .audio()
+                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let state = native_plugin_state_value(&value)?;
+                let snapshot = plugin_state_snapshot(&plugin_path, state)?;
+                Ok((
+                    "pluginState",
+                    serde_json::to_value(snapshot).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.preset.list" => {
+                let params: PluginDeviceParams = decode(params)?;
+                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let value = self
+                    .core
+                    .audio()
+                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let presets = plugin_presets(&value)?;
+                if presets.is_empty() {
+                    return Err(command_error(
+                        "plugin does not expose host-visible programs",
+                    ));
+                }
+                Ok((
+                    "pluginPresets",
+                    serde_json::to_value(presets).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.preset.get" => {
+                let params: PluginDeviceParams = decode(params)?;
+                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let value = self
+                    .core
+                    .audio()
+                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let presets = plugin_presets(&value)?;
+                let current_index = native_current_program(&value).ok_or_else(|| {
+                    command_error("plugin does not expose a current host-visible program")
+                })?;
+                let preset = presets
+                    .into_iter()
+                    .find(|preset| preset.index == current_index)
+                    .ok_or_else(|| command_error("plugin current program is not registered"))?;
+                Ok((
+                    "pluginPreset",
+                    serde_json::to_value(preset).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "plugin.state.set" => {
+                let params: PluginStateSetParams = decode(params)?;
+                let (plugin_path, bypassed) =
+                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                validate_plugin_state(&params.state, &plugin_path)?;
+                let previous = self
+                    .core
+                    .audio()
+                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let previous_state = native_plugin_state_value(&previous)?;
+                let native_state = plugin_state_value(&params.state, bypassed)?;
+                let context =
+                    self.session_context_with_project_commit(expected_project_id.clone())?;
+                self.core
+                    .audio()
+                    .set_track_plugin_state(&params.track_id, &params.device_id, native_state)
+                    .map_err(audio_error)?;
+                let commit = session_adapter::commit_core_application(&context, |core, store| {
+                    core.application(store).persist_track_plugin_state(
+                        &params.track_id,
+                        &params.device_id,
+                        params.state.parameter_values.clone(),
+                        params.state.state_data.clone(),
+                        bypassed,
+                    )
+                });
+                if let Err(error) = commit {
+                    let _ = self.core.audio().set_track_plugin_state(
+                        &params.track_id,
+                        &params.device_id,
+                        previous_state,
+                    );
+                    return Err(error.protocol_error());
+                }
+                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                    .map_err(|error| error.protocol_error())?;
+                let sequence = mutation.canonical.sequence;
+                Ok((
+                    "arrangementMutation",
+                    serde_json::to_value(mutation).map_err(serialize_error)?,
+                    sequence,
+                ))
+            }
+            "plugin.preset.set" => {
+                let params: PluginPresetSetParams = decode(params)?;
+                if params.preset.is_some() == params.preset_index.is_some() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "exactly one of preset or presetIndex is required",
+                    ));
+                }
+                let (plugin_path, bypassed) =
+                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let programs = self
+                    .core
+                    .audio()
+                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let presets = plugin_presets(&programs)?;
+                let program_index =
+                    resolve_plugin_preset(&presets, params.preset.as_deref(), params.preset_index)?;
+                let previous_program = native_current_program(&programs);
+                let previous = self
+                    .core
+                    .audio()
+                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .map_err(audio_error)?;
+                let previous_state = native_plugin_state_value(&previous)?;
+                let context =
+                    self.session_context_with_project_commit(expected_project_id.clone())?;
+                let rollback = || {
+                    if let Some(previous_program) = previous_program {
+                        let _ = self.core.audio().set_track_plugin_program(
+                            &params.track_id,
+                            &params.device_id,
+                            previous_program,
+                        );
+                    }
+                    let _ = self.core.audio().set_track_plugin_state(
+                        &params.track_id,
+                        &params.device_id,
+                        previous_state.clone(),
+                    );
+                };
+                let changed = self
+                    .core
+                    .audio()
+                    .set_track_plugin_program(&params.track_id, &params.device_id, program_index)
+                    .map_err(audio_error)?;
+                let state = match native_plugin_state_value(&changed) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        rollback();
+                        return Err(error);
+                    }
+                };
+                let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        rollback();
+                        return Err(error);
+                    }
+                };
+                let commit = session_adapter::commit_core_application(&context, |core, store| {
+                    core.application(store).persist_track_plugin_state(
+                        &params.track_id,
+                        &params.device_id,
+                        state_snapshot.parameter_values.clone(),
+                        state_snapshot.state_data.clone(),
+                        bypassed,
+                    )
+                });
+                if let Err(error) = commit {
+                    rollback();
+                    return Err(error.protocol_error());
+                }
+                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                    .map_err(|error| error.protocol_error())?;
+                let sequence = mutation.canonical.sequence;
+                Ok((
+                    "arrangementMutation",
+                    serde_json::to_value(mutation).map_err(serialize_error)?,
+                    sequence,
+                ))
+            }
             "host.status" => Ok((
                 "hostStatus",
                 serde_json::json!({
@@ -1254,6 +1521,223 @@ fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
 }
 
+fn canonical_plugin_device(
+    canonical: &CanonicalState,
+    track_id: &str,
+    device_id: &str,
+) -> Result<(String, bool), ProtocolError> {
+    let track = canonical
+        .session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| command_error(format!("track is not registered: {track_id}")))?;
+    if let Some(instrument) = track
+        .instrument
+        .as_ref()
+        .filter(|instrument| instrument.id == device_id)
+    {
+        let Some(vst3) = instrument.as_vst3() else {
+            return Err(command_error(
+                "built-in instruments do not expose VST3 plugin controls",
+            ));
+        };
+        return Ok((vst3.path.to_owned(), instrument.bypassed));
+    }
+    let device = track
+        .rack
+        .devices
+        .iter()
+        .find(|device| device.id == device_id)
+        .ok_or_else(|| command_error(format!("track device is not registered: {device_id}")))?;
+    if device.kind != riffra_core::DeviceKind::Plugin {
+        return Err(command_error(
+            "non-plugin devices do not expose VST3 plugin controls",
+        ));
+    }
+    let path = device
+        .path
+        .clone()
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| command_error("plugin device has no VST3 path"))?;
+    Ok((path, device.bypassed))
+}
+
+fn canonical_non_plugin_device_inspection(
+    canonical: &CanonicalState,
+    track_id: &str,
+    device_id: &str,
+) -> Result<Option<crate::model::DeviceInspection>, ProtocolError> {
+    let track = canonical
+        .session
+        .arrangement
+        .tracks
+        .iter()
+        .find(|track| track.id == track_id)
+        .ok_or_else(|| command_error(format!("track is not registered: {track_id}")))?;
+    if let Some(instrument) = track
+        .instrument
+        .as_ref()
+        .filter(|instrument| instrument.id == device_id)
+    {
+        if instrument.as_vst3().is_some() {
+            return Ok(None);
+        }
+        return Ok(Some(crate::model::DeviceInspection {
+            id: instrument.id.clone(),
+            name: instrument.name.clone(),
+            source: "builtin".into(),
+            bypassed: instrument.bypassed,
+            capabilities: crate::model::DeviceCapabilities::default(),
+            parameter_count: 0,
+            state_persisted: false,
+        }));
+    }
+    let device = track
+        .rack
+        .devices
+        .iter()
+        .find(|device| device.id == device_id)
+        .ok_or_else(|| command_error(format!("track device is not registered: {device_id}")))?;
+    if device.kind == riffra_core::DeviceKind::Plugin {
+        return Ok(None);
+    }
+    Ok(Some(crate::model::DeviceInspection {
+        id: device.id.clone(),
+        name: device.name.clone(),
+        source: "rack".into(),
+        bypassed: device.bypassed,
+        capabilities: crate::model::DeviceCapabilities::default(),
+        parameter_count: 0,
+        state_persisted: false,
+    }))
+}
+
+fn native_plugin_state_value(value: &Value) -> Result<Value, ProtocolError> {
+    let state = value.get("state").cloned().unwrap_or_else(|| value.clone());
+    if !state.is_object() {
+        return Err(command_error("Native plugin response omitted state"));
+    }
+    Ok(state)
+}
+
+fn plugin_state_snapshot(
+    plugin_path: &str,
+    state: Value,
+) -> Result<crate::model::PluginStateSnapshot, ProtocolError> {
+    let object = state
+        .as_object()
+        .ok_or_else(|| command_error("Native plugin state was not an object"))?;
+    let parameter_values = object
+        .get("parameterValues")
+        .cloned()
+        .ok_or_else(|| command_error("Native plugin state omitted parameterValues"))?;
+    let state_data = object.get("stateData").cloned().unwrap_or(Value::Null);
+    let snapshot: crate::model::PluginStateSnapshot = serde_json::from_value(serde_json::json!({
+        "schemaVersion": 1,
+        "pluginPath": plugin_path,
+        "parameterValues": parameter_values,
+        "stateData": state_data,
+    }))
+    .map_err(serialize_error)?;
+    if snapshot
+        .parameter_values
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        return Err(command_error(
+            "Native plugin state contained a non-finite parameter value",
+        ));
+    }
+    Ok(snapshot)
+}
+
+fn plugin_state_value(
+    state: &crate::model::PluginStateSnapshot,
+    bypassed: bool,
+) -> Result<Value, ProtocolError> {
+    let mut value = serde_json::to_value(state).map_err(serialize_error)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| command_error("plugin state did not form an object"))?;
+    object.remove("schemaVersion");
+    object.remove("pluginPath");
+    object.insert("bypassed".into(), Value::Bool(bypassed));
+    Ok(value)
+}
+
+fn validate_plugin_state(
+    state: &crate::model::PluginStateSnapshot,
+    plugin_path: &str,
+) -> Result<(), ProtocolError> {
+    if state.schema_version != 1 {
+        return Err(ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "plugin state schemaVersion must be 1",
+        ));
+    }
+    if state.plugin_path != plugin_path {
+        return Err(command_error("plugin state belongs to a different VST3"));
+    }
+    if state
+        .parameter_values
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        return Err(ProtocolError::new(
+            ErrorCode::InvalidRequest,
+            "plugin state parameter values must be finite",
+        ));
+    }
+    Ok(())
+}
+
+fn plugin_presets(value: &Value) -> Result<Vec<crate::model::PluginPresetInfo>, ProtocolError> {
+    let programs = value
+        .get("programs")
+        .cloned()
+        .ok_or_else(|| command_error("Native plugin response omitted programs"))?;
+    serde_json::from_value(programs).map_err(serialize_error)
+}
+
+fn native_current_program(value: &Value) -> Option<u32> {
+    value
+        .get("currentIndex")
+        .and_then(Value::as_i64)
+        .filter(|index| *index >= 0)
+        .and_then(|index| u32::try_from(index).ok())
+}
+
+fn resolve_plugin_preset(
+    presets: &[crate::model::PluginPresetInfo],
+    name: Option<&str>,
+    index: Option<u32>,
+) -> Result<u32, ProtocolError> {
+    if let Some(index) = index {
+        if presets.iter().any(|preset| preset.index == index) {
+            return Ok(index);
+        }
+        return Err(command_error(format!(
+            "plugin preset is not registered: {index}"
+        )));
+    }
+    let name = name.expect("preset name or index was validated");
+    let matches = presets
+        .iter()
+        .filter(|preset| preset.name == name)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [preset] => Ok(preset.index),
+        [] => Err(command_error(format!(
+            "plugin preset is not registered: {name}"
+        ))),
+        _ => Err(command_error(format!(
+            "plugin preset name is ambiguous: {name}"
+        ))),
+    }
+}
+
 fn serialize_error(error: serde_json::Error) -> ProtocolError {
     command_error(error.to_string())
 }
@@ -1320,6 +1804,14 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "library.related"
             | "analysis.start"
             | "plugin.editor.open"
+            | "device.inspect"
+            | "device.parameter.list"
+            | "device.parameter.get"
+            | "plugin.preset.list"
+            | "plugin.preset.get"
+            | "plugin.preset.set"
+            | "plugin.state.get"
+            | "plugin.state.set"
             | "take.comparison.start"
             | "take.comparison.switch"
             | "take.comparison.stop"

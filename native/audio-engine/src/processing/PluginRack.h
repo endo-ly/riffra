@@ -34,6 +34,7 @@ public:
     void reset() noexcept;
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
+    bool setProgram(int index, juce::String& error);
     bool applyPersistedState(const juce::var& state, juce::String& error) noexcept;
     [[nodiscard]] juce::var persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
@@ -47,6 +48,8 @@ public:
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
+    [[nodiscard]] juce::var programStatus() const;
+    [[nodiscard]] bool hasEditor() const;
     [[nodiscard]] std::size_t parameterCount() const noexcept;
     void addProcessorListener(juce::AudioProcessorListener& listener) noexcept;
     void removeProcessorListener(juce::AudioProcessorListener& listener) noexcept;
