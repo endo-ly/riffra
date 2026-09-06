@@ -192,6 +192,14 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         // reports the plugin error. A failed capability probe must not prevent
         // the plugin from loading.
     }
+    auto candidateHasEditor = false;
+    try {
+        candidateHasEditor = candidate->hasEditor();
+    } catch (...) {
+        // Editor creation remains available through createEditor(), which
+        // reports the plugin error. A failed capability probe must not prevent
+        // the plugin from loading.
+    }
     updateParameterCache(*candidate);
     const auto candidateParameterCount =
         static_cast<std::size_t>(candidate->getParameters().size());
@@ -225,6 +233,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     pluginInputChannels.store(inputChannels, std::memory_order_release);
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
     cachedProgramCount.store(candidateProgramCount, std::memory_order_release);
+    cachedHasEditor.store(candidateHasEditor, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -327,6 +336,7 @@ void PluginRack::clear() noexcept {
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
     cachedProgramCount.store(0, std::memory_order_release);
+    cachedHasEditor.store(false, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
@@ -798,14 +808,8 @@ juce::var PluginRack::programStatus() const {
     return juce::var(result);
 }
 
-bool PluginRack::hasEditor() const {
-    const juce::SpinLock::ScopedLockType lock(pluginLock);
-    if (plugin == nullptr) return false;
-    try {
-        return plugin->hasEditor();
-    } catch (...) {
-        return false;
-    }
+bool PluginRack::hasEditor() const noexcept {
+    return cachedHasEditor.load(std::memory_order_acquire);
 }
 
 }  // namespace riffra

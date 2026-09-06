@@ -257,6 +257,7 @@ public:
                                          std::memory_order_release);
         rack->cachedProgramCount.store(std::max(0, processor->getNumPrograms()),
                                        std::memory_order_release);
+        rack->cachedHasEditor.store(processor->hasEditor(), std::memory_order_release);
         rack->plugin = std::move(processor);
         rack->loaded.store(true, std::memory_order_release);
         rack->loadCount.store(1, std::memory_order_release);

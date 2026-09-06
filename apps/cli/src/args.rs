@@ -1449,8 +1449,6 @@ pub enum PluginPresetCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum PluginStateCommand {
-    Get(PluginDeviceArgs),
-    Set(PluginStateSetArgs),
     Save(PluginStateSaveArgs),
     Load(PluginStateLoadArgs),
 }
@@ -1475,17 +1473,6 @@ pub struct PluginPresetSetArgs {
     pub preset: Option<String>,
     #[arg(long)]
     pub preset_index: Option<u32>,
-}
-
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginStateSetArgs {
-    #[arg(long)]
-    pub track_id: String,
-    #[arg(long)]
-    pub device_id: String,
-    #[arg(long)]
-    pub state_json: String,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -1902,8 +1889,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 PluginPresetCommand::Set(args) => plugin_preset_set(args)?,
             },
             PluginCommand::State { command } => match command {
-                PluginStateCommand::Get(args) => value("plugin.state.get", args),
-                PluginStateCommand::Set(args) => plugin_state_set(args)?,
                 PluginStateCommand::Save(args) => value(
                     "plugin.state.get",
                     json!({
@@ -2024,19 +2009,6 @@ fn note_source_command(
         return Err("note input must be a JSON array".into());
     }
     Ok(value(command, json!({"clipId": clip_id, "notes": notes})))
-}
-
-fn plugin_state_set(args: PluginStateSetArgs) -> Result<ControlCommand, String> {
-    let state = serde_json::from_str::<Value>(&args.state_json)
-        .map_err(|error| format!("--state-json is invalid JSON: {error}"))?;
-    Ok(value(
-        "plugin.state.set",
-        json!({
-            "trackId": args.track_id,
-            "deviceId": args.device_id,
-            "state": state,
-        }),
-    ))
 }
 
 fn plugin_preset_set(args: PluginPresetSetArgs) -> Result<ControlCommand, String> {

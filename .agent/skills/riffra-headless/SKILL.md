@@ -112,7 +112,7 @@ riffra host list
 riffra --attach --host <instance-id> session inspect
 ```
 
-`host list`はcurrent-user registryのローカル操作である。各Hostへ接続して`host.status`を確認し、DataRoot、PID、instance ID、起動時刻を表示する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
+`host list`はcurrent-user registryのローカル操作である。registryの各候補をhandshakeで検証し、稼働HostのDataRoot、PID、instance ID、起動時刻を表示する。登録を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
 
 ```powershell
 cargo run -p riffra-cli -- --attach host status
