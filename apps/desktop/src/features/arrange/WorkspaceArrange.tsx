@@ -121,6 +121,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
+  const targetedMidiSequenceRef = useRef(0);
+  const targetedMidiQueueRef = useRef(Promise.resolve());
   const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
     props.api,
     timebase,
@@ -277,13 +279,31 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       ? focusedTrack.id
       : null;
   useEffect(() => {
-    let cancelled = false;
-    void api.setTargetedMidiTrack(playSurfaceTargetId).catch((error) => {
-      if (!cancelled) setMessage(String(error));
-    });
+    const sequence = ++targetedMidiSequenceRef.current;
+    if (playSurfaceTargetId !== null) {
+      targetedMidiQueueRef.current = targetedMidiQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (sequence !== targetedMidiSequenceRef.current) return;
+          try {
+            await api.setTargetedMidiTrack(playSurfaceTargetId);
+          } catch (error) {
+            if (sequence === targetedMidiSequenceRef.current) setMessage(String(error));
+          }
+        });
+    }
     return () => {
-      cancelled = true;
-      if (playSurfaceTargetId !== null) void api.setTargetedMidiTrack(null).catch(() => undefined);
+      if (playSurfaceTargetId === null) return;
+      targetedMidiSequenceRef.current = sequence + 1;
+      targetedMidiQueueRef.current = targetedMidiQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            await api.setTargetedMidiTrack(null);
+          } catch {
+            // The next lifecycle transition owns the latest target state.
+          }
+        });
     };
   }, [
     api,
