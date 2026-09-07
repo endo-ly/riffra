@@ -92,7 +92,7 @@ public:
         devices.recordingEffects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);
         sustain.store(false, std::memory_order_release);
-        liveTailRemainingSamples.store(std::max(1, totalPluginTailSamples()),
+        liveTailRemainingSamples.store(std::max<std::int64_t>(1, pluginTailSamples),
                                        std::memory_order_release);
         liveMidiActiveState.store(false, std::memory_order_release);
     }
@@ -161,11 +161,6 @@ public:
     bool armed = false;
     int audioInputChannel = -1;
     bool monitorInput = false;
-    bool baseLowLatencyMonitoring = false;
-    // Timeline compensation is applied before live input is added, so this
-    // policy does not bypass the Timeline path. It records which Track
-    // currently owns explicit low-latency MIDI focus for the live boundary.
-    bool lowLatencyMonitoring = false;
     juce::String midiDeviceId;
     int midiChannel = 0;
     juce::MidiBuffer midiBuffer;
@@ -188,7 +183,7 @@ private:
                    !heldNotes.compare_exchange_weak(held, held - 1, std::memory_order_relaxed)) {
             }
             if (held <= 1 && !sustain.load(std::memory_order_relaxed))
-                liveTailRemainingSamples.store(std::max(1, totalPluginTailSamples()),
+                liveTailRemainingSamples.store(std::max<std::int64_t>(1, pluginTailSamples),
                                                std::memory_order_release);
             return;
         }
@@ -196,14 +191,14 @@ private:
             const auto isDown = message.getControllerValue() >= 64;
             sustain.store(isDown, std::memory_order_release);
             if (!isDown && heldNotes.load(std::memory_order_relaxed) == 0)
-                liveTailRemainingSamples.store(std::max(1, totalPluginTailSamples()),
+                liveTailRemainingSamples.store(std::max<std::int64_t>(1, pluginTailSamples),
                                                std::memory_order_release);
             return;
         }
         if (message.isAllNotesOff() || message.isAllSoundOff()) {
             heldNotes.store(0, std::memory_order_release);
             sustain.store(false, std::memory_order_release);
-            liveTailRemainingSamples.store(std::max(1, totalPluginTailSamples()),
+            liveTailRemainingSamples.store(std::max<std::int64_t>(1, pluginTailSamples),
                                            std::memory_order_release);
         }
     }

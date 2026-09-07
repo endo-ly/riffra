@@ -295,15 +295,16 @@ public:
         return true;
     }
 
-    static bool trackUsesLowLatencyMonitoring(const TimelineEngine& engine,
-                                              const juce::String& trackId) {
-        const juce::SpinLock::ScopedTryLockType lock(engine.timelineLock);
-        if (!lock.isLocked() || engine.timeline == nullptr) return false;
+    static bool cachePluginTailForTest(TimelineEngine& engine, const juce::String& trackId) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr) return false;
         const auto found =
             std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        return found != engine.timeline->tracks.end() && (*found)->runtime != nullptr &&
-               (*found)->runtime->lowLatencyMonitoring;
+        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        auto& runtime = *(*found)->runtime;
+        runtime.pluginTailSamples = runtime.totalPluginTailSamples();
+        return true;
     }
 
     static bool trackEffectChainProcessesOnce() {
@@ -547,20 +548,15 @@ public:
             liveTrack.runtime->setInstrument(
                 Vst3InstrumentRuntime::fromRack(std::move(instrumentRack)));
             // Simulate a Project where another Track's plugin is the latency
-            // leader. The live instrument track would normally be delayed by
-            // this compensation on the timeline path.
+            // leader. Live MIDI remains immediate even when Timeline MIDI is
+            // compensated on the same Track.
             liveTrack.runtime->pluginDelaySamples = 0;
             liveTrack.runtime->compensationDelaySamples = 4;
-            liveTrack.runtime->delayBuffer.setSize(
-                2, static_cast<int>(liveTrack.runtime->compensationDelaySamples + 33), false, true,
-                false);
-            liveTrack.runtime->delayBuffer.clear();
         }
 
         if (!engine.enqueueTargetedMidi("track:live-instrument",
                                         juce::MidiMessage::noteOn(1, 60, 0.8f), error))
             return false;
-        if (!engine.setTargetedMidiTarget("track:live-instrument", error)) return false;
 
         std::array<float, 32> left{};
         std::array<float, 32> right{};
@@ -1857,34 +1853,6 @@ TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender) {
     EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
 }
 
-TEST(TimelineEngineTest, TargetedMidiLowLatencyFollowsTheExplicitSurfaceTarget) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:target"), formats, 48'000.0, 32, error));
-    InstrumentTrace trace;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            48'000.0, 32, error);
-    ASSERT_NE(rack, nullptr) << error.toStdString();
-    ASSERT_TRUE(
-        TimelineEngineTestPeer::installTrackInstrument(engine, "track:target", std::move(rack)));
-
-    // Act
-    ASSERT_TRUE(engine.setTargetedMidiTarget("track:target", error)) << error.toStdString();
-
-    // Assert
-    EXPECT_TRUE(TimelineEngineTestPeer::trackUsesLowLatencyMonitoring(engine, "track:target"));
-
-    // Act
-    ASSERT_TRUE(engine.setTargetedMidiTarget({}, error)) << error.toStdString();
-
-    // Assert
-    EXPECT_FALSE(TimelineEngineTestPeer::trackUsesLowLatencyMonitoring(engine, "track:target"));
-}
-
 TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     // Arrange
     juce::AudioFormatManager formats;
@@ -1904,6 +1872,7 @@ TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
         engine, "track:tail", "effect:tail",
         std::make_unique<TestChainProcessor>(1, 1.0f, 0, effectCalls, 0.25), 48'000.0, 32, error))
         << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::cachePluginTailForTest(engine, "track:tail"));
 
     std::array<float, 32> left{};
     std::array<float, 32> right{};

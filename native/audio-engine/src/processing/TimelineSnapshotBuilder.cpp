@@ -184,9 +184,6 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->runtime->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             monitoring, track->runtime->armed, track->runtime->instrumentTrack);
-        track->runtime->baseLowLatencyMonitoring =
-            track->runtime->instrumentTrack ? track->runtime->armed : track->runtime->monitorInput;
-        track->runtime->lowLatencyMonitoring = track->runtime->baseLowLatencyMonitoring;
         track->recordingEffectRuntimeRequired =
             !track->runtime->instrumentTrack && track->runtime->armed;
         if (track->runtime->monitorInput) monitorLiveInputState = true;
@@ -523,10 +520,13 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
     for (auto& track : prepared->tracks) {
         track->runtime->compensationDelaySamples = ArrangementGraph::compensationDelay(
             maximumPluginDelay, track->runtime->pluginDelaySamples);
-        track->runtime->delayBuffer.setSize(
-            2, static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
-            false, true, false);
-        track->runtime->delayBuffer.clear();
+        if (!track->runtime->instrumentTrack) {
+            track->runtime->delayBuffer.setSize(
+                2,
+                static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
+                false, true, false);
+            track->runtime->delayBuffer.clear();
+        }
         track->runtime->postEffectCompensationDelaySamples = maximumPluginDelay;
         track->runtime->postEffectDelayBuffer.setSize(
             2,

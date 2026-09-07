@@ -61,8 +61,6 @@ public:
     [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
                                            const juce::MidiMessage& message,
                                            juce::String& error) noexcept;
-    [[nodiscard]] bool setTargetedMidiTarget(const juce::String& trackId,
-                                             juce::String& error) noexcept;
     [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences

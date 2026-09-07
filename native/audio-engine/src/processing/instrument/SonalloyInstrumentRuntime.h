@@ -68,9 +68,13 @@ private:
         std::uint32_t startedSampleOffset = 0;
     };
 
+    // The Sonalloy callback accepts at most 1024 events. Reserve the full
+    // live queue headroom so Timeline and live MIDI can share one callback.
     static constexpr std::size_t kMaximumEventsPerBlock = 1024;
     static constexpr std::size_t kMaximumActiveNotes = 4096;
     static constexpr std::size_t kMaximumPendingMidi = 256;
+    static constexpr std::size_t kMaximumTimelineEventsPerBlock =
+        kMaximumEventsPerBlock - kMaximumPendingMidi;
 
     SonalloyInstrumentRuntime(CompiledPtr compiled, RuntimePtr runtime, int blockSize,
                               int latencySamples) noexcept;

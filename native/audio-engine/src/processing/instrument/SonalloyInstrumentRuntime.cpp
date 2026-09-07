@@ -378,7 +378,7 @@ bool SonalloyInstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) no
 
 bool SonalloyInstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
                                                             juce::String& error) noexcept {
-    if (eventCapacity <= kMaximumEventsPerBlock) return true;
+    if (eventCapacity <= kMaximumTimelineEventsPerBlock) return true;
     error = "Timeline MIDI requires more events per block than the built-in instrument supports.";
     return false;
 }
@@ -427,12 +427,17 @@ void SonalloyInstrumentRuntime::process(float* const* outputChannels, const int 
             return;
         }
     }
+    const auto liveEventCount = eventCount;
     if (midi != nullptr) {
         for (const auto metadata : *midi) {
             if (metadata.data == nullptr || metadata.numBytes <= 0 || metadata.samplePosition < 0 ||
                 metadata.samplePosition >= numSamples ||
                 !appendMidiBytes(metadata.data, static_cast<std::size_t>(metadata.numBytes),
                                  static_cast<std::uint32_t>(metadata.samplePosition), eventCount)) {
+                failBlock(SONALLOY_INTERNAL_PANIC, outputChannels, outputChannelCount, numSamples);
+                return;
+            }
+            if (eventCount - liveEventCount > kMaximumTimelineEventsPerBlock) {
                 failBlock(SONALLOY_INTERNAL_PANIC, outputChannels, outputChannelCount, numSamples);
                 return;
             }

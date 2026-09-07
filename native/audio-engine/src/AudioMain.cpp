@@ -911,23 +911,6 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 writeJson(AudioDeviceService::currentMeters(callback));
                 continue;
             }
-            if (type == "setTargetedMidiTarget") {
-                if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError("timelineBusy",
-                                        "The Arrangement Graph is still changing; the MIDI target "
-                                        "can be updated shortly."));
-                    continue;
-                }
-                const auto trackId = command.getProperty("trackId", {}).toString();
-                juce::String timelineError;
-                if (!timelineEngine.setTargetedMidiTarget(trackId, timelineError)) {
-                    writeJson(makeError("targetedMidi", timelineError, "liveMidi.target.set"));
-                    continue;
-                }
-                writeJson(AudioDeviceService::currentStatus(
-                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
-                continue;
-            }
             if (type == "recoverAudioDevice") {
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
                 manager.getAudioDeviceSetup(recoverySetup);

@@ -607,36 +607,6 @@ bool TimelineEngine::enqueueTargetedMidi(const juce::String& trackId,
     return true;
 }
 
-bool TimelineEngine::setTargetedMidiTarget(const juce::String& trackId,
-                                           juce::String& error) noexcept {
-    if (publishInProgress.load(std::memory_order_acquire)) {
-        error = "The Arrangement Graph is changing; the MIDI target can be updated shortly.";
-        return false;
-    }
-    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire) ||
-        timeline == nullptr) {
-        error = "The Arrangement Graph is unavailable for the MIDI target.";
-        return false;
-    }
-    if (trackId.isNotEmpty()) {
-        const auto found = std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
-                                        [&](const auto& track) { return track->id == trackId; });
-        if (found == timeline->tracks.end() || (*found)->runtime == nullptr ||
-            !(*found)->runtime->instrumentTrack || !(*found)->runtime->hasLoadedInstrument()) {
-            error = "The target Instrument Track has no loaded instrument.";
-            return false;
-        }
-    }
-    for (auto& trackPtr : timeline->tracks) {
-        auto& track = *trackPtr;
-        if (track.runtime == nullptr) continue;
-        track.runtime->lowLatencyMonitoring = track.runtime->baseLowLatencyMonitoring;
-        if (track.id == trackId) track.runtime->lowLatencyMonitoring = true;
-    }
-    return true;
-}
-
 bool TimelineEngine::panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept {
     if (trackId.isEmpty()) {
         error = "A target track is required for MIDI panic.";
