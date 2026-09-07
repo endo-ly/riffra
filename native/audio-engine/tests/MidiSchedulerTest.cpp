@@ -68,7 +68,7 @@ TEST(MidiSchedulerTest, EmitsLoopBoundaryOffBeforeTheNextLoopOn) {
     EXPECT_TRUE(messages[1].isNoteOn());
 }
 
-TEST(MidiSchedulerTest, BoundsDenseBlocksWithoutGrowingTheRealtimeEventCount) {
+TEST(MidiSchedulerTest, PreservesDenseBlocksAfterPrepareCapacityIsCalculated) {
     CompiledMidiClip compiled;
     compiled.startSample = 0;
     compiled.lengthSamples = 512;
@@ -77,12 +77,13 @@ TEST(MidiSchedulerTest, BoundsDenseBlocksWithoutGrowingTheRealtimeEventCount) {
             {offset, 0, juce::MidiMessage::controllerEvent(1, 1, static_cast<int>(offset % 127))});
 
     juce::MidiBuffer buffer;
-    MidiScheduler::prepareBuffer(buffer);
+    const auto capacity = MidiScheduler::maximumEventsPerBlock({compiled}, 512);
+    ASSERT_TRUE(MidiScheduler::prepareBuffer(buffer, capacity));
     MidiScheduler::schedule({compiled}, 0, 512, buffer);
 
     std::size_t eventCount = 0;
     for (const auto metadata : buffer) ++eventCount;
-    EXPECT_EQ(eventCount, MidiScheduler::kMaximumEventsPerBlock);
+    EXPECT_EQ(eventCount, 300u);
 }
 
 }  // namespace

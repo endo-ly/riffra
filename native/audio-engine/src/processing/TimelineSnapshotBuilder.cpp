@@ -289,9 +289,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                                                 track->id + "/track-effect"))
                 return false;
             if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
-                !track->runtime->recordingCapture.effectChain.load(devices, outputSampleRate,
-                                                                   maximumBlockSize, error,
-                                                                   track->id + "/recording-effect"))
+                !track->runtime->recordingEffects().load(devices, outputSampleRate,
+                                                         maximumBlockSize, error,
+                                                         track->id + "/recording-effect"))
                 return false;
         }
         if (instrument.isObject() && !track->reuseRuntimeDevices) {
@@ -503,7 +503,15 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 return false;
             track->runtime->midiClips.push_back(std::move(compiled));
         }
-        MidiScheduler::prepareBuffer(track->runtime->midiBuffer);
+        track->runtime->midiEventCapacity =
+            MidiScheduler::maximumEventsPerBlock(track->runtime->midiClips, maximumBlockSize);
+        if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
+                                          track->runtime->midiEventCapacity)) {
+            error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
+            return false;
+        }
+        if (!track->runtime->prepareTimelineMidiCapacity(track->runtime->midiEventCapacity, error))
+            return false;
         track->runtime->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);

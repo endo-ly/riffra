@@ -11,7 +11,6 @@ namespace riffra {
 enum class RecordingCaptureState { idle, capturing, drainingTail, completed };
 
 struct RecordingCaptureTrackState final {
-    PluginChain effectChain;
     juce::AudioBuffer<float> processedBuffer;
     std::uint64_t endAudioSample = 0;
     std::uint64_t endTimelineSample = 0;
@@ -20,7 +19,6 @@ struct RecordingCaptureTrackState final {
     int tailRemainingSamples = 0;
 
     void reset() noexcept {
-        effectChain.allNotesOff();
         endAudioSample = 0;
         endTimelineSample = 0;
         latencyToDiscard = 0;
@@ -76,7 +74,8 @@ public:
                                       std::int64_t pluginDelaySamples,
                                       std::int64_t pluginTailSamples) noexcept;
     [[nodiscard]] bool drainTail(const juce::String& trackId, RecordingCaptureTrackState& track,
-                                 juce::AudioBuffer<float>& silentInput, int sampleCount) noexcept;
+                                 PluginChain& effectChain, juce::AudioBuffer<float>& silentInput,
+                                 int sampleCount) noexcept;
 
     void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
                          const float* const* processed, int processedSampleCount) noexcept;

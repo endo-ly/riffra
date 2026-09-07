@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace riffra {
@@ -28,6 +29,9 @@ public:
                          const juce::MidiBuffer* midi,
                          const InstrumentProcessContext& context) noexcept = 0;
     [[nodiscard]] virtual bool enqueueMidi(const juce::MidiMessage& message) noexcept = 0;
+    /// Reserves callback MIDI storage for prepared timeline events.
+    [[nodiscard]] virtual bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
+                                                           juce::String& error) noexcept = 0;
     virtual void allNotesOff() noexcept = 0;
     virtual void resetForTransportDiscontinuity() noexcept = 0;
     [[nodiscard]] virtual int latencySamples() const noexcept = 0;

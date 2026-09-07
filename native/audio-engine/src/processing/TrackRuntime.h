@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "AutomationRuntime.h"
@@ -25,6 +26,23 @@ enum class ProcessingStage { PreEffects, PostEffects };
 /// the state that must move with one Track through preparation, playback, live
 /// MIDI, latency compensation, automation, and recording capture.
 class TrackRuntime final {
+    /// Owns plugin instances that can move between prepared graph generations
+    /// when their topology and persisted state are unchanged.
+    class TrackDeviceRuntime final {
+    public:
+        TrackDeviceRuntime() = default;
+        ~TrackDeviceRuntime() = default;
+
+        TrackDeviceRuntime(const TrackDeviceRuntime&) = delete;
+        TrackDeviceRuntime& operator=(const TrackDeviceRuntime&) = delete;
+        TrackDeviceRuntime(TrackDeviceRuntime&&) noexcept = default;
+        TrackDeviceRuntime& operator=(TrackDeviceRuntime&&) noexcept = default;
+
+        std::unique_ptr<InstrumentRuntime> instrument;
+        PluginChain effects;
+        PluginChain recordingEffects;
+    };
+
 public:
     TrackRuntime() = default;
     ~TrackRuntime() = default;
@@ -34,31 +52,44 @@ public:
     TrackRuntime(TrackRuntime&&) noexcept = delete;
     TrackRuntime& operator=(TrackRuntime&&) noexcept = delete;
 
-    [[nodiscard]] InstrumentRuntime* instrument() noexcept { return instrumentRuntime.get(); }
+    [[nodiscard]] InstrumentRuntime* instrument() noexcept { return devices.instrument.get(); }
     [[nodiscard]] const InstrumentRuntime* instrument() const noexcept {
-        return instrumentRuntime.get();
+        return devices.instrument.get();
     }
-    [[nodiscard]] PluginChain& effects() noexcept { return effectChain; }
-    [[nodiscard]] const PluginChain& effects() const noexcept { return effectChain; }
+    [[nodiscard]] PluginChain& effects() noexcept { return devices.effects; }
+    [[nodiscard]] const PluginChain& effects() const noexcept { return devices.effects; }
+    [[nodiscard]] PluginChain& recordingEffects() noexcept { return devices.recordingEffects; }
+    [[nodiscard]] const PluginChain& recordingEffects() const noexcept {
+        return devices.recordingEffects;
+    }
 
     void setInstrument(std::unique_ptr<InstrumentRuntime> runtime) noexcept {
-        instrumentRuntime = std::move(runtime);
+        devices.instrument = std::move(runtime);
     }
 
     [[nodiscard]] bool hasLoadedInstrument() const noexcept {
-        return instrumentRuntime != nullptr && instrumentRuntime->isLoaded();
+        return devices.instrument != nullptr && devices.instrument->isLoaded();
+    }
+
+    /// Reserves the timeline MIDI storage owned by the instrument runtime.
+    [[nodiscard]] bool prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                                   juce::String& error) noexcept {
+        return devices.instrument == nullptr ||
+               devices.instrument->prepareTimelineMidiCapacity(eventCapacity, error);
     }
 
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept {
-        if (instrumentRuntime == nullptr || !instrumentRuntime->enqueueMidi(message)) return false;
+        if (devices.instrument == nullptr || !devices.instrument->enqueueMidi(message))
+            return false;
         updateLiveActivity(message);
         liveMidiActiveState.store(true, std::memory_order_release);
         return true;
     }
 
     void panic() noexcept {
-        if (instrumentRuntime != nullptr) instrumentRuntime->allNotesOff();
-        effectChain.allNotesOff();
+        if (devices.instrument != nullptr) devices.instrument->allNotesOff();
+        devices.effects.allNotesOff();
+        devices.recordingEffects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);
         sustain.store(false, std::memory_order_release);
         liveTailRemainingSamples.store(std::max(1, totalPluginTailSamples()),
@@ -67,8 +98,9 @@ public:
     }
 
     void resetForTransportDiscontinuity() noexcept {
-        if (instrumentRuntime != nullptr) instrumentRuntime->resetForTransportDiscontinuity();
-        effectChain.allNotesOff();
+        if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();
+        devices.effects.allNotesOff();
+        devices.recordingEffects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);
         sustain.store(false, std::memory_order_release);
         liveTailRemainingSamples.store(0, std::memory_order_release);
@@ -91,13 +123,13 @@ public:
     }
 
     [[nodiscard]] int pluginLatencySamples() const noexcept {
-        return effectChain.latencySamples() +
-               (instrumentRuntime != nullptr ? instrumentRuntime->latencySamples() : 0);
+        return devices.effects.latencySamples() +
+               (devices.instrument != nullptr ? devices.instrument->latencySamples() : 0);
     }
 
     [[nodiscard]] int totalPluginTailSamples() const noexcept {
-        return effectChain.tailSamples() +
-               (instrumentRuntime != nullptr ? instrumentRuntime->tailSamples() : 0);
+        return devices.effects.tailSamples() +
+               (devices.instrument != nullptr ? devices.instrument->tailSamples() : 0);
     }
 
     // Prepared timeline state. The snapshot builder allocates these buffers;
@@ -116,6 +148,7 @@ public:
     std::int64_t postEffectCompensationDelaySamples = 0;
     std::int64_t pluginDelaySamples = 0;
     std::int64_t pluginTailSamples = 0;
+    std::size_t midiEventCapacity = 0;
     double outputSampleRate = 0.0;
     int preparedBlockSize = 0;
     float gainDb = 0.0f;
@@ -129,12 +162,21 @@ public:
     int audioInputChannel = -1;
     bool monitorInput = false;
     bool baseLowLatencyMonitoring = false;
+    // Timeline compensation is applied before live input is added, so this
+    // policy does not bypass the Timeline path. It records which Track
+    // currently owns explicit low-latency MIDI focus for the live boundary.
     bool lowLatencyMonitoring = false;
     juce::String midiDeviceId;
     int midiChannel = 0;
     juce::MidiBuffer midiBuffer;
 
 private:
+    friend class TimelineEngine;
+
+    void replaceDeviceRuntimeFrom(TrackRuntime& source) noexcept {
+        devices = std::move(source.devices);
+    }
+
     void updateLiveActivity(const juce::MidiMessage& message) noexcept {
         if (message.isNoteOn()) {
             heldNotes.fetch_add(1, std::memory_order_relaxed);
@@ -166,8 +208,7 @@ private:
         }
     }
 
-    std::unique_ptr<InstrumentRuntime> instrumentRuntime;
-    PluginChain effectChain;
+    TrackDeviceRuntime devices;
     std::atomic<bool> liveMidiActiveState{false};
     std::atomic<int> heldNotes{0};
     std::atomic<bool> sustain{false};

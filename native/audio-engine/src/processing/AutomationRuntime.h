@@ -16,6 +16,12 @@ public:
         float value = 0.0f;
     };
 
+    struct Segment final {
+        std::int64_t endSample = 0;
+        float startValue = 0.0f;
+        float endValue = 0.0f;
+    };
+
     class Cursor final {
     public:
         Cursor(const AutomationRuntime& lane, const std::int64_t sample) noexcept
@@ -37,6 +43,31 @@ public:
             const auto amount =
                 static_cast<float>(sample - left.sample) / static_cast<float>(distance);
             return left.value + (right.value - left.value) * amount;
+        }
+
+        [[nodiscard]] Segment segmentAt(const std::int64_t sample,
+                                        const std::int64_t blockEnd,
+                                        const float fallback) noexcept {
+            if (sample < lastSample) index = lowerBound(sample);
+            while (index < points.size() && points[index].sample <= sample) ++index;
+            lastSample = sample;
+            const auto end = std::max(sample + 1, blockEnd);
+            if (points.empty()) return {end, fallback, fallback};
+            if (index == 0) return {std::min(end, points.front().sample), points.front().value,
+                                    points.front().value};
+            if (index >= points.size()) return {end, points.back().value, points.back().value};
+
+            const auto& left = points[index - 1];
+            const auto& right = points[index];
+            const auto distance = right.sample - left.sample;
+            if (distance <= 0) return {std::min(end, sample + 1), right.value, right.value};
+            const auto segmentEnd = std::min(end, right.sample);
+            const auto startAmount =
+                static_cast<float>(sample - left.sample) / static_cast<float>(distance);
+            const auto endAmount =
+                static_cast<float>(segmentEnd - left.sample) / static_cast<float>(distance);
+            return {segmentEnd, left.value + (right.value - left.value) * startAmount,
+                    left.value + (right.value - left.value) * endAmount};
         }
 
     private:

@@ -31,6 +31,9 @@ public:
     void clear() noexcept;
     void release() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
+    /// Reserves callback MIDI storage for prepared timeline events.
+    [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
+                                                   juce::String& error) noexcept;
     void reset() noexcept;
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
@@ -64,7 +67,6 @@ private:
     friend class PluginRackTestPeer;
 
     static constexpr std::size_t kMaximumPanicMidiEvents = 16 * 3;
-    static constexpr std::size_t kMaximumTimelineMidiEvents = 256;
     static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
 
     struct CachedParameter {

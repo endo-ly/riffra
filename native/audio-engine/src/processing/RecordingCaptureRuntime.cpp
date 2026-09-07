@@ -113,7 +113,7 @@ bool RecordingCaptureRuntime::beginTailDrain(const juce::String& trackId,
 }
 
 bool RecordingCaptureRuntime::drainTail(const juce::String& trackId,
-                                        RecordingCaptureTrackState& track,
+                                        RecordingCaptureTrackState& track, PluginChain& effectChain,
                                         juce::AudioBuffer<float>& silentInput,
                                         const int sampleCount) noexcept {
     if (track.state != RecordingCaptureState::drainingTail) return true;
@@ -142,8 +142,8 @@ bool RecordingCaptureRuntime::drainTail(const juce::String& trackId,
     silentInput.clear(1, 0, count);
     track.processedBuffer.clear(0, 0, count);
     track.processedBuffer.clear(1, 0, count);
-    track.effectChain.process(silentInput.getArrayOfReadPointers(), 2,
-                              track.processedBuffer.getArrayOfWritePointers(), 2, count);
+    effectChain.process(silentInput.getArrayOfReadPointers(), 2,
+                        track.processedBuffer.getArrayOfWritePointers(), 2, count);
 
     const auto discard = std::min(track.latencyToDiscard, count);
     track.latencyToDiscard -= discard;

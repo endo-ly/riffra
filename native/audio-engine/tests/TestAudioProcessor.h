@@ -75,6 +75,7 @@ struct InstrumentTrace final {
     bool noteHeld = false;
     juce::MidiMessage lastMidiMessage;
     std::vector<juce::MidiMessage> midiMessages;
+    std::vector<int> midiSamplePositions;
     int midiMessageCount = 0;
 };
 
@@ -98,6 +99,7 @@ public:
         for (const auto metadata : midi) {
             trace.lastMidiMessage = metadata.getMessage();
             trace.midiMessages.push_back(trace.lastMidiMessage);
+            trace.midiSamplePositions.push_back(metadata.samplePosition);
             ++trace.midiMessageCount;
             if (trace.lastMidiMessage.isNoteOn())
                 trace.noteHeld = true;

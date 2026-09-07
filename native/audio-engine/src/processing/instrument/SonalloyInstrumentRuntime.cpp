@@ -376,6 +376,13 @@ bool SonalloyInstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) no
     return pendingMidi.tryPush(pending);
 }
 
+bool SonalloyInstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                                            juce::String& error) noexcept {
+    if (eventCapacity <= kMaximumEventsPerBlock) return true;
+    error = "Timeline MIDI requires more events per block than the built-in instrument supports.";
+    return false;
+}
+
 void SonalloyInstrumentRuntime::allNotesOff() noexcept {
     midiGeneration.fetch_add(1, std::memory_order_acq_rel);
     resetPending.store(true, std::memory_order_release);

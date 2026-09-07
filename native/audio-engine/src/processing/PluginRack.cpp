@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -17,8 +18,7 @@ PluginRack::PluginRack() {
     // JUCE stores each event as timestamp (int32), payload length (uint16), and
     // payload bytes. Reserve the sum of the per-source event limits up front so
     // process() never grows this buffer on the audio callback.
-    constexpr auto maximumMidiEvents =
-        PendingMidi::kCapacity + kMaximumPanicMidiEvents + kMaximumTimelineMidiEvents;
+    constexpr auto maximumMidiEvents = PendingMidi::kCapacity + kMaximumPanicMidiEvents;
     processMidi.ensureSize(maximumMidiEvents *
                            (PendingMidi::kMaximumMessageBytes + kMidiEventOverhead));
 }
@@ -589,6 +589,19 @@ bool PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
     return pendingMidi.add(message);
 }
 
+bool PluginRack::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                             juce::String& error) noexcept {
+    constexpr auto bytesPerEvent = PendingMidi::kMaximumMessageBytes + kMidiEventOverhead;
+    if (eventCapacity > (std::numeric_limits<int>::max() / bytesPerEvent) - PendingMidi::kCapacity -
+                            kMaximumPanicMidiEvents) {
+        error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
+        return false;
+    }
+    processMidi.ensureSize(static_cast<int>(
+        (eventCapacity + PendingMidi::kCapacity + kMaximumPanicMidiEvents) * bytesPerEvent));
+    return true;
+}
+
 void PluginRack::allNotesOff() noexcept { panicPending.store(true, std::memory_order_release); }
 
 bool PluginRack::isLoaded() const noexcept { return loaded.load(std::memory_order_acquire); }
@@ -676,10 +689,8 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         }
     }
     if (timelineMidi != nullptr) {
-        std::size_t timelineEventCount = 0;
         for (const auto metadata : *timelineMidi) {
-            if (timelineEventCount >= kMaximumTimelineMidiEvents || metadata.data == nullptr ||
-                metadata.numBytes <= 0 ||
+            if (metadata.data == nullptr || metadata.numBytes <= 0 ||
                 static_cast<std::size_t>(metadata.numBytes) > PendingMidi::kMaximumMessageBytes) {
                 pendingMidi.recordDropped();
                 continue;
@@ -688,7 +699,6 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
                 pendingMidi.recordDropped();
                 continue;
             }
-            ++timelineEventCount;
         }
     }
     pendingMidi.appendTo(processMidi, numSamples);

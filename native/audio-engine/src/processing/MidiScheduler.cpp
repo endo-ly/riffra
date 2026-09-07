@@ -1,6 +1,7 @@
 #include "MidiScheduler.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace riffra {
 namespace {
@@ -14,6 +15,39 @@ void appendEvent(CompiledMidiClip& destination, const juce::MidiMessage& message
 }
 
 }  // namespace
+
+std::size_t MidiScheduler::maximumEventsPerBlock(const std::vector<CompiledMidiClip>& clips,
+                                                 const int blockSize) noexcept {
+    if (blockSize <= 0) return 0;
+    std::size_t maximum = 0;
+    for (const auto& clip : clips) {
+        if (clip.muted || clip.events.empty() || clip.lengthSamples <= 0) continue;
+        const auto iterations =
+            clip.loop
+                ? static_cast<std::size_t>((static_cast<std::uint64_t>(blockSize) +
+                                            static_cast<std::uint64_t>(clip.lengthSamples) - 1) /
+                                               static_cast<std::uint64_t>(clip.lengthSamples) +
+                                           2)
+                : 1;
+        const auto eventCount = clip.events.size();
+        if (eventCount > std::numeric_limits<std::size_t>::max() / iterations)
+            return std::numeric_limits<std::size_t>::max();
+        const auto clipMaximum = eventCount * iterations;
+        if (clipMaximum > std::numeric_limits<std::size_t>::max() - maximum)
+            return std::numeric_limits<std::size_t>::max();
+        maximum += clipMaximum;
+    }
+    return maximum;
+}
+
+bool MidiScheduler::prepareBuffer(juce::MidiBuffer& buffer,
+                                  const std::size_t eventCapacity) noexcept {
+    constexpr auto bytesPerEvent = kMaximumMessageBytes + kMidiEventOverhead;
+    if (eventCapacity > static_cast<std::size_t>(std::numeric_limits<int>::max()) / bytesPerEvent)
+        return false;
+    buffer.ensureSize(static_cast<int>(eventCapacity * bytesPerEvent));
+    return true;
+}
 
 bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& timebase,
                             const double sampleRate, CompiledMidiClip& destination,
@@ -81,10 +115,11 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
 
 void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
-                             juce::MidiBuffer& destination) noexcept {
+                             juce::MidiBuffer& destination,
+                             const std::int64_t timelineDelaySamples) noexcept {
     if (sampleCount <= 0) return;
-    std::size_t scheduledEvents = 0;
-    const auto rangeEnd = rangeStart + sampleCount;
+    const auto sourceRangeStart = rangeStart - std::max<std::int64_t>(0, timelineDelaySamples);
+    const auto rangeEnd = sourceRangeStart + sampleCount;
     for (const auto& clip : clips) {
         if (clip.muted || clip.lengthSamples <= 0) continue;
         const auto firstIteration =
@@ -119,11 +154,9 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                     (event->sampleOffset == clip.lengthSamples && localEnd == clip.lengthSamples);
                 if (!inRange) break;
                 const auto absoluteSample = iterationStart + event->sampleOffset;
-                const auto offset = static_cast<int>(absoluteSample - rangeStart);
-                if (offset >= 0 && offset < sampleCount) {
-                    if (scheduledEvents >= kMaximumEventsPerBlock) return;
-                    if (destination.addEvent(event->message, offset)) ++scheduledEvents;
-                }
+                const auto offset = static_cast<int>(absoluteSample - sourceRangeStart);
+                if (offset >= 0 && offset < sampleCount)
+                    (void)destination.addEvent(event->message, offset);
             }
             if (!clip.loop) break;
         }

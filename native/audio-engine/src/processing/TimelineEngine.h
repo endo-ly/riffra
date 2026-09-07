@@ -194,6 +194,7 @@ private:
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
                                 int sampleCount, bool renderOutput = false) noexcept;
+    void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
     void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
                                 const juce::MidiBuffer* timelineMidi,
                                 std::int64_t rangeStart) noexcept;

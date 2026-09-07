@@ -52,6 +52,15 @@ bool Vst3InstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) noexce
     return rack->enqueueMidi(message);
 }
 
+bool Vst3InstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                                        juce::String& error) noexcept {
+    if (rack == nullptr) {
+        error = "VST3 instrument runtime is not loaded.";
+        return false;
+    }
+    return rack->prepareTimelineMidiCapacity(eventCapacity, error);
+}
+
 void Vst3InstrumentRuntime::allNotesOff() noexcept {
     if (rack != nullptr) rack->allNotesOff();
 }

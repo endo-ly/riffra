@@ -229,12 +229,13 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 60);
 }
 
-TEST(PluginRackTest, BoundsTimelineMidiAndReportsDroppedEvents) {
+TEST(PluginRackTest, PreservesPreparedTimelineMidiWithoutARealtimeCap) {
     InstrumentTrace trace;
     juce::String error;
     auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
                                             kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(rack->prepareTimelineMidiCapacity(257, error)) << error;
 
     juce::MidiBuffer timeline;
     for (int index = 0; index < 257; ++index)
@@ -246,8 +247,8 @@ TEST(PluginRackTest, BoundsTimelineMidiAndReportsDroppedEvents) {
 
     rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
-    EXPECT_EQ(trace.midiMessageCount, 256);
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
+    EXPECT_EQ(trace.midiMessageCount, 257);
+    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
 }
 
 TEST(PluginRackTest, RejectsOversizedTimelineMidi) {

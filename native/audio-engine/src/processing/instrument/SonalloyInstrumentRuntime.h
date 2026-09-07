@@ -27,6 +27,8 @@ public:
                  const juce::MidiBuffer* midi,
                  const InstrumentProcessContext& context) noexcept override;
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept override;
+    [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
+                                                   juce::String& error) noexcept override;
     void allNotesOff() noexcept override;
     void resetForTransportDiscontinuity() noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;

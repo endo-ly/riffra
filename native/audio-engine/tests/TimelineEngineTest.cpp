@@ -341,6 +341,82 @@ public:
         return processOrder == std::vector<int>{1, 2};
     }
 
+    static bool canonicalTrackStateSurvivesReusableDeviceCommit() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        const auto first = makeInstrumentSnapshot("track:state", "instrument:state");
+        if (!engine.loadSnapshot(first, formats, 48'000.0, 32, error)) return false;
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
+        if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:state", std::move(rack)))
+            return false;
+
+        auto second = makeInstrumentSnapshot("track:state", "instrument:state");
+        auto* secondObject = second.getDynamicObject();
+        if (secondObject == nullptr) return false;
+        auto tracks = secondObject->getProperty("tracks");
+        if (!tracks.isArray() || tracks.size() != 1) return false;
+        auto* track = tracks[0].getDynamicObject();
+        if (track == nullptr) return false;
+        track->setProperty("gainDb", -6.0);
+        track->setProperty("pan", 0.5);
+        track->setProperty("muted", true);
+        track->setProperty("solo", true);
+        track->setProperty("armed", true);
+
+        auto* note = new juce::DynamicObject();
+        note->setProperty("startTick", 0);
+        note->setProperty("durationTicks", 120);
+        note->setProperty("note", 64);
+        note->setProperty("velocity", 100);
+        note->setProperty("channel", 1);
+        juce::Array<juce::var> notes;
+        notes.add(juce::var(note));
+        auto* midiClip = new juce::DynamicObject();
+        midiClip->setProperty("startTick", 0);
+        midiClip->setProperty("durationTicks", 960);
+        midiClip->setProperty("loopEnabled", false);
+        midiClip->setProperty("muted", false);
+        midiClip->setProperty("notes", notes);
+        midiClip->setProperty("events", juce::Array<juce::var>{});
+        juce::Array<juce::var> midiClips;
+        midiClips.add(juce::var(midiClip));
+        track->setProperty("midiClips", midiClips);
+
+        auto* point = new juce::DynamicObject();
+        point->setProperty("tick", 480);
+        point->setProperty("value", -3.0);
+        juce::Array<juce::var> points;
+        points.add(juce::var(point));
+        auto* lane = new juce::DynamicObject();
+        lane->setProperty("parameter", "volume");
+        lane->setProperty("points", points);
+        juce::Array<juce::var> automation;
+        automation.add(juce::var(lane));
+        track->setProperty("automation", automation);
+        secondObject->setProperty("revision", 2);
+
+        // Act
+        if (!engine.loadSnapshot(second, formats, 48'000.0, 32, error, false) ||
+            !engine.preparedTrackReusesRuntimeDevices("track:state") ||
+            !engine.commitPreparedSnapshot(error))
+            return false;
+
+        // Assert
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
+        const auto& runtime = *engine.timeline->tracks.front()->runtime;
+        return runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() == rackPointer &&
+               runtime.gainDb == -6.0f && runtime.pan == 0.5f && runtime.muted && runtime.solo &&
+               runtime.armed && runtime.midiClips.size() == 1 && !runtime.volumeAutomation.empty();
+    }
+
     static bool editorParameterUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
@@ -497,6 +573,65 @@ public:
         const auto immediate = std::max(left[0], right[0]);
         return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f &&
                immediate > 0.0f;
+    }
+
+    static bool timelineMidiKeepsPdcWhenLiveMidiIsImmediate() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        auto snapshot = makeInstrumentSnapshot("track:pdc", "instrument:pdc");
+        auto* snapshotObject = snapshot.getDynamicObject();
+        if (snapshotObject == nullptr) return false;
+        auto tracks = snapshotObject->getProperty("tracks");
+        if (!tracks.isArray() || tracks.size() != 1) return false;
+        auto* track = tracks[0].getDynamicObject();
+        if (track == nullptr) return false;
+        auto* note = new juce::DynamicObject();
+        note->setProperty("startTick", 0);
+        note->setProperty("durationTicks", 120);
+        note->setProperty("note", 60);
+        note->setProperty("velocity", 100);
+        note->setProperty("channel", 1);
+        juce::Array<juce::var> notes;
+        notes.add(juce::var(note));
+        auto* midiClip = new juce::DynamicObject();
+        midiClip->setProperty("startTick", 0);
+        midiClip->setProperty("durationTicks", 960);
+        midiClip->setProperty("loopEnabled", false);
+        midiClip->setProperty("muted", false);
+        midiClip->setProperty("notes", notes);
+        midiClip->setProperty("events", juce::Array<juce::var>{});
+        juce::Array<juce::var> midiClips;
+        midiClips.add(juce::var(midiClip));
+        track->setProperty("midiClips", midiClips);
+        if (!engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) return false;
+
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr || !rack->prepareTimelineMidiCapacity(2, error)) return false;
+        if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:pdc", std::move(rack)))
+            return false;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.empty()) return false;
+            engine.timeline->tracks.front()->runtime->compensationDelaySamples = 4;
+        }
+        if (!engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f), error))
+            return false;
+
+        // Act
+        engine.play();
+        std::array<float, 32> left{};
+        std::array<float, 32> right{};
+        const std::array<float*, 2> outputs{left.data(), right.data()};
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+        // Assert
+        return trace.midiSamplePositions.size() >= 2 && trace.midiSamplePositions[0] == 0 &&
+               trace.midiSamplePositions[1] == 4;
     }
 
     static bool panicClosesInstrumentRuntime() {
@@ -1863,6 +1998,52 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[4], expected, 0.002f);
 }
 
+TEST(TimelineEngineTest, CompensatesTimelineAudioBeforeMergingMonitoredInput) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("raw-monitor.wav");
+    const auto processedFile = directory.get().getChildFile("processed-monitor.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    track->setProperty("monitoring", "on");
+    auto* input = new juce::DynamicObject();
+    input->setProperty("channelIndex", 0);
+    track->setProperty("audioInput", juce::var(input));
+
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
+
+    std::array<float, 32> inputSamples{};
+    inputSamples.fill(0.25f);
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<const float*, 1> inputs{inputSamples.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert
+    const auto gain = std::sqrt(0.5f);
+    EXPECT_NEAR(left[0], 0.25f * gain, 0.002f);
+    EXPECT_NEAR(right[0], 0.25f * gain, 0.002f);
+    EXPECT_GT(left[4], left[0] + 0.07f);
+    EXPECT_NEAR(right[4], left[4], 0.002f);
+}
+
 TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
     // Arrange
     // Act
@@ -1870,6 +2051,14 @@ TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
 
     // Assert
     EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
+    EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
+}
+
+TEST(TimelineEngineTest, KeepsTimelineMidiCompensatedWhileLiveMidiStartsImmediately) {
+    EXPECT_TRUE(TimelineEngineTestPeer::timelineMidiKeepsPdcWhenLiveMidiIsImmediate());
 }
 
 TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
