@@ -17,7 +17,9 @@ async fn dispatch<T: serde::de::DeserializeOwned + Send + 'static>(
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Library operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Library operation failed: {error}"))
+    })?
 }
 
 #[tauri::command]

@@ -668,6 +668,10 @@ mod tests {
     }
 
     impl crate::TransportDriver for CandidateRuntimeDriver {
+        fn set_transport_starting(&self) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
+
         fn play_timeline(&self) -> Result<(), crate::RuntimeError> {
             Ok(())
         }

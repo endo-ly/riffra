@@ -87,10 +87,16 @@ impl<D: TransportDriver> TransportExecutor<D> {
     }
 
     pub(crate) fn fail_play_for_projection(&self, projection: ProjectionKey) {
-        let _ = self
+        let Ok(lease) = self.acquire() else {
+            return;
+        };
+        let should_stop = self
             .controller
             .lock()
             .is_ok_and(|mut controller| controller.record_projection_failure(projection));
+        if should_stop && let Err(error) = lease.stop() {
+            tracing::warn!(error = ?error, "Native transport could not return to stopped state after projection failure");
+        }
     }
 
     pub(crate) fn stop_for_audio_environment(&self) -> Result<(), RuntimeError> {
@@ -159,15 +165,20 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
         match self.executor.driver.play_timeline() {
             Ok(()) => Ok(true),
             Err(error) => {
-                if let Some(sequence) = sequence {
-                    let failed_current_play = self
-                        .executor
+                let failed_current_play = sequence.is_none_or(|sequence| {
+                    self.executor
                         .controller
                         .lock()
-                        .is_ok_and(|mut controller| controller.record_play_failure(sequence));
-                    if !failed_current_play {
-                        return Ok(false);
-                    }
+                        .is_ok_and(|mut controller| controller.record_play_failure(sequence))
+                });
+                if !failed_current_play {
+                    return Ok(false);
+                }
+                if let Err(stop_error) = self.executor.driver.stop_timeline() {
+                    tracing::warn!(
+                        error = ?stop_error,
+                        "Native transport could not return to stopped state after Play failed"
+                    );
                 }
                 Err(error)
             }
@@ -233,6 +244,10 @@ mod tests {
     }
 
     impl TransportDriver for FakeTransportDriver {
+        fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
         fn play_timeline(&self) -> Result<(), RuntimeError> {
             self.played.fetch_add(1, Ordering::Relaxed);
             if let Some(play_probe) = self.play_probe.lock().unwrap().clone() {

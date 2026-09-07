@@ -89,8 +89,9 @@ pub async fn relink_missing_dependency(
     new_path: String,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, NativeCommandError> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+    let asset_id = AssetId::from_normalized(asset_id).map_err(|error| {
+        NativeCommandError::invalid_request(format!("Asset id is invalid: {error}"))
+    })?;
     dispatch(
         app,
         "missing.relink",

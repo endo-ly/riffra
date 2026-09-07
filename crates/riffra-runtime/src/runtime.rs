@@ -298,6 +298,7 @@ mod tests {
         transport_failure_once: AtomicU64,
         play_failure_once: AtomicU64,
         played: AtomicU64,
+        starting: AtomicU64,
         stopped: AtomicU64,
     }
 
@@ -316,6 +317,7 @@ mod tests {
                 transport_failure_once: AtomicU64::new(0),
                 play_failure_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
+                starting: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
             }
         }
@@ -380,6 +382,11 @@ mod tests {
     }
 
     impl TransportDriver for FakeDriver {
+        fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+            self.starting.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
         fn play_timeline(&self) -> Result<(), RuntimeError> {
             self.played.fetch_add(1, Ordering::Relaxed);
             if self
@@ -497,6 +504,27 @@ mod tests {
     }
 
     #[test]
+    fn projection_failure_after_starting_returns_native_transport_to_stopped() {
+        // Arrange
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver.transport_failure_once.store(1, Ordering::Release);
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+
+        // Act
+        assert!(
+            reconciler
+                .apply_and_play(1, snapshot(13), key(13, 13), Duration::from_secs(1))
+                .is_ok()
+        );
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+
+        // Assert
+        assert_eq!(driver.starting.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn stop_does_not_wait_for_runtime_preparation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
@@ -554,7 +582,7 @@ mod tests {
         reconciler.stop(2).unwrap();
 
         assert!(play.join().unwrap().is_ok());
-        thread::sleep(Duration::from_millis(140));
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Active));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
@@ -596,10 +624,10 @@ mod tests {
         let _ = reconciler.apply_and_play(1, snapshot(30), key(30, 30), Duration::from_secs(1));
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
 
         reconciler.submit_nonblocking(snapshot(31), key(31, 31));
         wait_until(|| reconciler.status().active_session_revision == Some(31));
-        thread::sleep(Duration::from_millis(20));
 
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
     }
@@ -685,7 +713,6 @@ mod tests {
             .apply_and_play(1, snapshot(20), key(20, 20), Duration::from_secs(1))
             .unwrap();
         assert!(played);
-        thread::sleep(Duration::from_millis(20));
 
         assert_eq!(
             driver.prepare_started.load(Ordering::Acquire),

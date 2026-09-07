@@ -13,9 +13,12 @@ pub async fn set_audio_driver(
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>().host_connection.dispatch(
             "audio.driver.set",
-            serde_json::to_value(config).map_err(|e| e.to_string())?,
+            serde_json::to_value(config)
+                .map_err(|error| NativeCommandError::invalid_request(error.to_string()))?,
         )
     })
     .await
-    .map_err(|error| format!("Audio driver operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Audio driver operation failed: {error}"))
+    })?
 }

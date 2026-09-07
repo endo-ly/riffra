@@ -474,6 +474,21 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_targeted_midi_track(
+        &self,
+        track_id: Option<&str>,
+    ) -> NativeAudioResult<AudioStatus> {
+        let target = track_id.unwrap_or_default();
+        self.send_command(
+            serde_json::json!({"type": "setTargetedMidiTarget", "trackId": target}),
+            if target.is_empty() {
+                "Play Surface MIDI target cleared."
+            } else {
+                "Play Surface MIDI target updated."
+            },
+        )
+    }
+
     pub fn recover_audio_device(&self) -> NativeAudioResult<AudioDeviceReopenOutcome> {
         let command = serde_json::json!({"type": "recoverAudioDevice"});
         let expected_generation = self.sidecar_generation();
@@ -551,6 +566,25 @@ impl AudioSupervisor {
                 }
             })?;
             update_mute_controls_after_command(&mut controls, muted, &status);
+            Ok(status)
+        })
+    }
+
+    /// Explicitly releases the feedback detector's safety latch while
+    /// preserving every other mute owner.
+    pub fn reset_feedback_protection(&self) -> NativeAudioResult<AudioStatus> {
+        self.with_mute_gate(|audio| {
+            let status = audio.send_command(
+                serde_json::json!({"type": "setFeedbackProtection", "active": false}),
+                "Feedback protection was released through the safety control.",
+            )?;
+            let mut controls = audio.recovery.runtime_controls.lock().map_err(|_| {
+                NativeAudioError::LockPoisoned {
+                    resource: "Runtime control",
+                }
+            })?;
+            controls.mute_reasons =
+                status.mute_reasons & !mute_reason_bit(MuteReason::FeedbackProtection);
             Ok(status)
         })
     }
@@ -709,8 +743,8 @@ mod tests {
     use super::super::protocol::handle_native_stdout;
     use super::*;
 
-    const DEVICE_FAULT_MUTE_REASON: u32 = 1 << 3;
-    const FEEDBACK_PROTECTION_MUTE_REASON: u32 = 1 << 4;
+    const DEVICE_FAULT_MUTE_REASON: u32 = mute_reason_bit(MuteReason::DeviceFault);
+    const FEEDBACK_PROTECTION_MUTE_REASON: u32 = mute_reason_bit(MuteReason::FeedbackProtection);
 
     #[test]
     fn track_device_parameter_command_uses_the_native_parameter_field() {

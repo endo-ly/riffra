@@ -19,7 +19,9 @@ async fn dispatch<T: serde::de::DeserializeOwned + Send + 'static>(
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Recording operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Recording operation failed: {error}"))
+    })?
 }
 
 #[tauri::command]

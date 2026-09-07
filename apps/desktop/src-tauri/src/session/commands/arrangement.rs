@@ -300,7 +300,8 @@ pub async fn update_track(
     patch: riffra_core::TrackPatch,
     app: AppHandle,
 ) -> Result<ArrangementMutationResult, NativeCommandError> {
-    let mut params = serde_json::to_value(patch).map_err(|error| error.to_string())?;
+    let mut params = serde_json::to_value(patch)
+        .map_err(|error| NativeCommandError::invalid_request(error.to_string()))?;
     params["trackId"] = Value::String(track_id);
     dispatch_json(app, "track.update", params).await
 }

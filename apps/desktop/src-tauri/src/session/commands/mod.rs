@@ -27,14 +27,17 @@ where
     T: DeserializeOwned + Send + 'static,
     P: Serialize + Send + 'static,
 {
-    let params = serde_json::to_value(params).map_err(|error| error.to_string())?;
+    let params = serde_json::to_value(params)
+        .map_err(|error| NativeCommandError::invalid_request(error.to_string()))?;
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .host_connection
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Host operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Host operation failed: {error}"))
+    })?
 }
 
 pub(super) async fn dispatch_json<T: DeserializeOwned + Send + 'static>(
@@ -48,7 +51,9 @@ pub(super) async fn dispatch_json<T: DeserializeOwned + Send + 'static>(
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Host operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Host operation failed: {error}"))
+    })?
 }
 
 mod arrangement;

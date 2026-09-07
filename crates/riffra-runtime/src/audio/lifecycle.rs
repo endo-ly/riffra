@@ -3,7 +3,7 @@ use super::StartupState;
 use super::command_bus::{CommandBus, fail_pending_requests, record_command_response};
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::protocol::{NativeEvent, handle_native_stdout, set_faulted, set_starting};
-use super::recovery::RecoveryState;
+use super::recovery::{MuteReason, RecoveryState, mute_reason_bit};
 use super::sidecar_process::{ChildProcess, SidecarProcess};
 use crate::model::{AudioState, AudioStatus, RecordingStatus};
 use crate::preferences::AudioPreferences;
@@ -58,7 +58,7 @@ impl AudioSupervisor {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
-                mute_reasons: 1 << 3,
+                mute_reasons: mute_reason_bit(MuteReason::DeviceFault),
                 diagnostics: Default::default(),
                 message: message.into(),
             })),
@@ -109,7 +109,7 @@ impl AudioSupervisor {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
-            mute_reasons: 1 << 1,
+            mute_reasons: mute_reason_bit(MuteReason::StartupGuard),
             diagnostics: Default::default(),
             message: "Native audio sidecar is starting with the startup guard active.".into(),
         }));

@@ -21,9 +21,7 @@ pub trait ProjectionDriver: Send + Sync + 'static {
 
 /// Port used by the Transport executor. It contains no projection operations.
 pub trait TransportDriver: Send + Sync + 'static {
-    fn set_transport_starting(&self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
+    fn set_transport_starting(&self) -> Result<(), RuntimeError>;
     fn play_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
 }

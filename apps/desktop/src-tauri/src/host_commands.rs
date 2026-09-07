@@ -11,7 +11,9 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || operation(&app.state::<AppState>()))
         .await
-        .map_err(|error| format!("Native blocking operation failed: {error}"))?
+        .map_err(|error| {
+            NativeCommandError::command_failed(format!("Native blocking operation failed: {error}"))
+        })?
 }
 
 #[tauri::command]
@@ -22,7 +24,7 @@ pub(crate) async fn get_bootstrap_state(
         state
             .host_connection
             .desktop_bootstrap()
-            .map_err(NativeCommandError::from)
+            .map_err(NativeCommandError::command_failed)
     })
     .await
 }
@@ -104,7 +106,9 @@ pub(crate) async fn preview_master_gain_db(
     app: AppHandle,
 ) -> Result<(), NativeCommandError> {
     if !gain_db.is_finite() {
-        return Err("Master gain must be finite.".into());
+        return Err(NativeCommandError::invalid_request(
+            "Master gain must be finite.",
+        ));
     }
     run_blocking(app, move |state| {
         state
@@ -123,6 +127,18 @@ pub(crate) async fn set_emergency_mute(
         state
             .host_connection
             .dispatch("audio.emergency-mute", json!({ "muted": muted }))
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn reset_feedback_protection(
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
+    run_blocking(app, |state| {
+        state
+            .host_connection
+            .dispatch("audio.feedback-protection.reset", json!({}))
     })
     .await
 }
@@ -169,6 +185,19 @@ pub(crate) async fn disable_midi_listening(
         state
             .host_connection
             .dispatch("midi.listening.disable", json!({}))
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn set_targeted_midi_track(
+    track_id: Option<String>,
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
+    run_blocking(app, move |state| {
+        state
+            .host_connection
+            .dispatch("midi.target.set", json!({ "trackId": track_id }))
     })
     .await
 }

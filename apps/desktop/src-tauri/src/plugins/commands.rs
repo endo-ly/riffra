@@ -19,7 +19,9 @@ pub async fn scan_vst3_folder(
             .dispatch("plugin.scan", json!({ "path": path.map(PathBuf::from) }))
     })
     .await
-    .map_err(|error| format!("Plugin scan operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Plugin scan operation failed: {error}"))
+    })?
 }
 
 #[tauri::command]

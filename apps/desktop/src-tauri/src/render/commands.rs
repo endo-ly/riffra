@@ -20,7 +20,7 @@ pub async fn render_timeline(
         let job_id = match queued {
             BackgroundJobStatus::Render { id, .. } => id,
             BackgroundJobStatus::Scan { .. } => {
-                return Err(NativeCommandError::from(
+                return Err(NativeCommandError::command_failed(
                     "Host returned a non-render job for render.start",
                 ));
             }
@@ -31,7 +31,7 @@ pub async fn render_timeline(
                 .host_connection
                 .dispatch("job.get", json!({ "id": job_id }))?;
             let Some(status) = status else {
-                return Err(NativeCommandError::from(
+                return Err(NativeCommandError::command_failed(
                     "Host render job disappeared before it reported a result",
                 ));
             };
@@ -50,10 +50,10 @@ pub async fn render_timeline(
                     state: JobState::Cancelled,
                     message,
                     ..
-                } => return Err(NativeCommandError::from(message)),
+                } => return Err(NativeCommandError::command_failed(message)),
                 BackgroundJobStatus::Render { .. } => {}
                 BackgroundJobStatus::Scan { .. } => {
-                    return Err(NativeCommandError::from(
+                    return Err(NativeCommandError::command_failed(
                         "Host returned a non-render job while polling render",
                     ));
                 }
@@ -61,5 +61,7 @@ pub async fn render_timeline(
         }
     })
     .await
-    .map_err(|error| format!("Render operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Render operation failed: {error}"))
+    })?
 }

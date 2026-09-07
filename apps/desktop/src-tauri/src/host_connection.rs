@@ -55,9 +55,33 @@ pub struct NativeCommandError {
 }
 
 impl NativeCommandError {
-    fn message(message: impl Into<String>) -> Self {
+    pub(crate) fn host_unavailable(message: impl Into<String>) -> Self {
         Self {
             code: "hostUnavailable".into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub(crate) fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            code: "invalidRequest".into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub(crate) fn command_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "commandFailed".into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub(crate) fn protocol_violation(message: impl Into<String>) -> Self {
+        Self {
+            code: "protocolViolation".into(),
             message: message.into(),
             details: None,
         }
@@ -71,18 +95,6 @@ impl std::fmt::Display for NativeCommandError {
 }
 
 impl std::error::Error for NativeCommandError {}
-
-impl From<String> for NativeCommandError {
-    fn from(message: String) -> Self {
-        Self::message(message)
-    }
-}
-
-impl From<&str> for NativeCommandError {
-    fn from(message: &str) -> Self {
-        Self::message(message)
-    }
-}
 
 impl From<NativeCommandError> for String {
     fn from(error: NativeCommandError) -> Self {
@@ -962,10 +974,9 @@ impl HostConnectionManager {
         command: &str,
         params: Value,
     ) -> Result<T, NativeCommandError> {
-        let _read = self
-            .operation_barrier
-            .read()
-            .map_err(|_| "Host operation barrier was poisoned".to_string())?;
+        let _read = self.operation_barrier.read().map_err(|_| {
+            NativeCommandError::command_failed("Host operation barrier was poisoned")
+        })?;
         let request = ControlRequest::new(
             format!("desktop-command-{}", new_instance_id()),
             ControlCommand::new(command, params),
@@ -975,18 +986,21 @@ impl HostConnectionManager {
             let project_id = self
                 .active_project_id
                 .read()
-                .map_err(|_| "active Project lock was poisoned".to_string())?
+                .map_err(|_| {
+                    NativeCommandError::command_failed("active Project lock was poisoned")
+                })?
                 .clone()
-                .ok_or_else(|| "active Project is not available".to_string())?;
+                .ok_or_else(|| {
+                    NativeCommandError::invalid_request("active Project is not available")
+                })?;
             request.with_expected_project_id(project_id)
         } else {
             request
         };
         let (response, attached_generation) = {
-            let active = self
-                .active
-                .read()
-                .map_err(|_| "Host connection lock was poisoned".to_string())?;
+            let active = self.active.read().map_err(|_| {
+                NativeCommandError::command_failed("Host connection lock was poisoned")
+            })?;
             match &*active {
                 ActiveHost::Embedded { host, .. } => (Ok(host.dispatch_control(request)), None),
                 ActiveHost::Attached {
@@ -1009,7 +1023,7 @@ impl HostConnectionManager {
                         reason: error.clone(),
                     });
                 }
-                return Err(error.into());
+                return Err(NativeCommandError::host_unavailable(error));
             }
         };
         if response.ok
@@ -1018,11 +1032,9 @@ impl HostConnectionManager {
                 .as_ref()
                 .and_then(|result| result.value["projectState"]["activeProjectId"].as_str())
         {
-            *self
-                .active_project_id
-                .write()
-                .map_err(|_| "active Project lock was poisoned".to_string())? =
-                Some(project_id.to_owned());
+            *self.active_project_id.write().map_err(|_| {
+                NativeCommandError::command_failed("active Project lock was poisoned")
+            })? = Some(project_id.to_owned());
         }
         response_value(response)
     }
@@ -1146,7 +1158,7 @@ impl HostConnectionManager {
 fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, NativeCommandError> {
     if !response.ok {
         let error = response.error.map_or_else(
-            || NativeCommandError::message("Host command failed"),
+            || NativeCommandError::command_failed("Host command failed"),
             |error| NativeCommandError {
                 code: error.code.to_string(),
                 message: error.message,
@@ -1160,7 +1172,9 @@ fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, N
         .map(|result| result.value)
         .unwrap_or(Value::Null);
     serde_json::from_value(value).map_err(|error| {
-        NativeCommandError::message(format!("Host response could not be decoded: {error}"))
+        NativeCommandError::protocol_violation(format!(
+            "Host response could not be decoded: {error}"
+        ))
     })
 }
 
@@ -1346,8 +1360,10 @@ pub(crate) async fn list_local_hosts(
             .list_local_hosts()
     })
     .await
-    .map_err(|error| NativeCommandError::message(format!("Local Host discovery failed: {error}")))?
-    .map_err(NativeCommandError::from)
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Local Host discovery failed: {error}"))
+    })?
+    .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
 }
 
 #[tauri::command]
@@ -1358,8 +1374,10 @@ pub(crate) async fn switch_host(
     let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
     tauri::async_runtime::spawn_blocking(move || manager.switch(target))
         .await
-        .map_err(|error| NativeCommandError::message(format!("Host switch failed: {error}")))?
-        .map_err(NativeCommandError::from)
+        .map_err(|error| {
+            NativeCommandError::command_failed(format!("Host switch failed: {error}"))
+        })?
+        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
 }
 
 #[tauri::command]
@@ -1369,8 +1387,10 @@ pub(crate) async fn reconnect_host(
     let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
     tauri::async_runtime::spawn_blocking(move || manager.reconnect())
         .await
-        .map_err(|error| NativeCommandError::message(format!("Host reconnect failed: {error}")))?
-        .map_err(NativeCommandError::from)
+        .map_err(|error| {
+            NativeCommandError::command_failed(format!("Host reconnect failed: {error}"))
+        })?
+        .map_err(|error| NativeCommandError::host_unavailable(error.to_string()))
 }
 
 #[cfg(test)]

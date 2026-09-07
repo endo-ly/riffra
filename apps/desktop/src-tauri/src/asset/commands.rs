@@ -29,7 +29,9 @@ pub async fn preview_asset(
         )
     })
     .await
-    .map_err(|error| format!("Asset operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Asset operation failed: {error}"))
+    })?
 }
 
 #[tauri::command]
@@ -44,7 +46,9 @@ pub async fn import_midi_file(
             .dispatch("asset.import-midi", json!({ "path": path, "name": name }))
     })
     .await
-    .map_err(|error| format!("MIDI import task failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("MIDI import task failed: {error}"))
+    })?
 }
 
 #[tauri::command]
@@ -62,7 +66,7 @@ pub async fn import_midi_bytes(
             .and_then(|mut file| file.write_all(&bytes));
         if let Err(error) = write_result {
             let _ = std::fs::remove_file(&staging);
-            return Err(NativeCommandError::from(format!(
+            return Err(NativeCommandError::command_failed(format!(
                 "MIDI staging file could not be written: {error}"
             )));
         }
@@ -74,5 +78,7 @@ pub async fn import_midi_bytes(
         result
     })
     .await
-    .map_err(|error| format!("MIDI import task failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("MIDI import task failed: {error}"))
+    })?
 }

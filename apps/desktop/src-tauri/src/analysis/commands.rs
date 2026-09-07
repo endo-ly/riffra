@@ -17,5 +17,7 @@ pub async fn analyze_asset(
             .dispatch("analysis.start", json!({ "assetId": asset_id }))
     })
     .await
-    .map_err(|error| format!("Audio analysis task failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Audio analysis task failed: {error}"))
+    })?
 }

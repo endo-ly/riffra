@@ -17,11 +17,6 @@ impl HostState {
         }
         .validate_and_normalize()
         .map_err(|error| ProtocolError::new(ErrorCode::InvalidRequest, error))?;
-        let previous = self
-            .audio_preferences
-            .lock()
-            .map_err(|_| command_error("audio preferences lock was poisoned"))?
-            .clone();
         self.prepare_runtime_for_audio_device_change()
             .map_err(command_error)?;
         let outcome = match self
@@ -31,8 +26,15 @@ impl HostState {
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                let restoration = self.restore_previous_audio_device(&previous, error.to_string());
-                return Err(native_audio_error_with_restoration(error, restoration));
+                if native_restored_previous_device(&error) {
+                    self.core
+                        .audio()
+                        .mark_runtime_recovery_mute()
+                        .map_err(command_error)?;
+                    self.reproject_after_audio_device_change()
+                        .map_err(command_error)?;
+                }
+                return Err(native_audio_error(error));
             }
         };
         let mut status = match outcome {
@@ -44,16 +46,12 @@ impl HostState {
                 "requested audio device was not activated: {}",
                 status.message
             );
-            let restoration = self.restore_previous_audio_device(&previous, reason.clone());
-            return Err(native_audio_error_with_restoration(
-                NativeAudioError::structured(
-                    "deviceRejected",
-                    reason,
-                    "audioDevice.activate",
-                    None,
-                ),
-                restoration,
-            ));
+            return Err(native_audio_error(NativeAudioError::structured(
+                "deviceRejected",
+                reason,
+                "audioDevice.activate",
+                None,
+            )));
         }
         let effective = match AudioPreferences::from_effective_status(&status) {
             Ok(effective) => effective,
@@ -127,31 +125,6 @@ impl HostState {
             },
         );
         Ok(())
-    }
-
-    fn restore_previous_audio_device(&self, previous: &AudioPreferences, reason: String) -> String {
-        match self
-            .core
-            .audio()
-            .set_audio_driver(&previous.as_driver_config())
-        {
-            Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)) => {
-                if !active_device_matches_preferences(&status, previous) {
-                    return format!(
-                        "{reason}; the previous audio device could not be restored: {}",
-                        status.message
-                    );
-                }
-                format!("{reason}; the previous audio device was restored")
-            }
-            Ok(AudioDeviceReopenOutcome::SidecarRestarted(_)) => {
-                format!("{reason}; the previous audio device was restored after restarting audio")
-            }
-            Err(error) => {
-                let error = error.to_string();
-                format!("{reason}; the previous audio device could not be restored: {error}")
-            }
-        }
     }
 
     pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
@@ -228,24 +201,31 @@ impl HostState {
     }
 }
 
-fn native_audio_error_with_restoration(
-    error: NativeAudioError,
-    restoration: String,
-) -> ProtocolError {
+fn native_restored_previous_device(error: &NativeAudioError) -> bool {
     let descriptor = error.descriptor();
+    descriptor
+        .details
+        .as_ref()
+        .and_then(|details| details.get("restoredPreviousDevice"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+fn native_audio_error(error: NativeAudioError) -> ProtocolError {
+    let descriptor = error.descriptor();
+    let restored_previous_device = native_restored_previous_device(&error);
     let code = match descriptor.kind.as_str() {
-        "deviceLost" | "transportLost" | "process" | "safeMode" => ErrorCode::RuntimeUnavailable,
+        "deviceLost" | "transportLost" | "process" | "safeMode" | "deviceRejected"
+            if !restored_previous_device =>
+        {
+            ErrorCode::RuntimeUnavailable
+        }
         _ => ErrorCode::CommandFailed,
     };
-    ProtocolError::new(code, format!("{}; {}", descriptor.message, restoration)).with_details(
-        serde_json::json!({
-            "domain": "nativeAudio",
-            "kind": descriptor.kind,
-            "operation": descriptor.operation,
-            "details": {
-                "native": descriptor.details,
-                "restoration": restoration,
-            },
-        }),
-    )
+    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
+        "domain": "nativeAudio",
+        "kind": descriptor.kind,
+        "operation": descriptor.operation,
+        "details": descriptor.details,
+    }))
 }

@@ -17,6 +17,8 @@ pub(crate) enum MuteReason {
     UserEmergency = 1 << 0,
     StartupGuard = 1 << 1,
     RuntimeRecovery = 1 << 2,
+    DeviceFault = 1 << 3,
+    FeedbackProtection = 1 << 4,
 }
 
 pub(crate) const fn mute_reason_bit(reason: MuteReason) -> u32 {
@@ -268,7 +270,7 @@ impl AudioSupervisor {
 mod tests {
     use super::*;
 
-    const FEEDBACK_PROTECTION_MUTE_REASON: u32 = 1 << 4;
+    const FEEDBACK_PROTECTION_MUTE_REASON: u32 = mute_reason_bit(MuteReason::FeedbackProtection);
 
     #[test]
     fn restart_coordinator_reuses_the_result_for_a_stale_generation() {

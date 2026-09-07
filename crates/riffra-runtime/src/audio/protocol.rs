@@ -293,10 +293,19 @@ enum ParsedNativeLine {
 }
 
 fn native_error_is_device_fault(error: &NativeAudioError) -> bool {
-    matches!(
-        error.descriptor().kind.as_str(),
-        "deviceFault" | "deviceRejected" | "deviceLost"
-    )
+    let descriptor = error.descriptor();
+    match descriptor.kind.as_str() {
+        "deviceFault" | "deviceLost" => true,
+        "deviceRejected" => {
+            descriptor
+                .details
+                .as_ref()
+                .and_then(|details| details.get("restoredPreviousDevice"))
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        }
+        _ => false,
+    }
 }
 
 fn apply_mute_reasons(current: &mut AudioStatus, mute_reasons: u32) -> bool {
@@ -631,6 +640,25 @@ mod tests {
         );
         assert!(native_error_is_device_fault(&error));
         assert!(error.to_string().contains("device missing"));
+    }
+
+    #[test]
+    fn restored_device_rejection_does_not_fault_the_audio_runtime() {
+        let restored = NativeAudioError::structured(
+            "deviceRejected",
+            "requested device was rejected",
+            "audioDevice.activate",
+            Some(serde_json::json!({"restoredPreviousDevice": true})),
+        );
+        let unrecovered = NativeAudioError::structured(
+            "deviceRejected",
+            "previous device could not be restored",
+            "audioDevice.activate",
+            Some(serde_json::json!({"restoredPreviousDevice": false})),
+        );
+
+        assert!(!native_error_is_device_fault(&restored));
+        assert!(native_error_is_device_fault(&unrecovered));
     }
 
     #[test]

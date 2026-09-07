@@ -597,6 +597,17 @@ impl HostState {
                     current.sequence,
                 ))
             }
+            "audio.feedback-protection.reset" => Ok((
+                "audioStatus",
+                serde_json::to_value(
+                    self.core
+                        .audio()
+                        .reset_feedback_protection()
+                        .map_err(audio_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
             "midi.listening.enable" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable(
@@ -920,6 +931,22 @@ impl HostState {
                     .panic_track_midi(&params.track_id)
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
+            }
+            "midi.target.set" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
+                }
+                let params: MidiTargetParams = decode(params)?;
+                let status = self
+                    .core
+                    .audio()
+                    .set_targeted_midi_track(params.track_id.as_deref())
+                    .map_err(audio_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
             }
             "plugin.catalog.list" => {
                 let catalog = plugins::load(&self.data_root).map_err(|error| {
@@ -1860,6 +1887,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "instrument.builtin.list"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
+            | "audio.feedback-protection.reset"
             | "midi.listening.enable"
             | "midi.listening.disable"
             | "runtime.projection.get"
@@ -1879,6 +1907,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "asset.preview.stop"
             | "midi.send"
             | "midi.panic"
+            | "midi.target.set"
             | "plugin.catalog.list"
             | "plugin.scan"
             | "plugin.scan.start"
@@ -2015,6 +2044,12 @@ struct TakeComparisonParams {
 struct MidiSendParams {
     track_id: String,
     bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiTargetParams {
+    track_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
