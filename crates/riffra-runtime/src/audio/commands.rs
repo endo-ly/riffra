@@ -474,21 +474,6 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn set_targeted_midi_track(
-        &self,
-        track_id: Option<&str>,
-    ) -> NativeAudioResult<AudioStatus> {
-        let target = track_id.unwrap_or_default();
-        self.send_command(
-            serde_json::json!({"type": "setTargetedMidiTarget", "trackId": target}),
-            if target.is_empty() {
-                "Play Surface MIDI target cleared."
-            } else {
-                "Play Surface MIDI target updated."
-            },
-        )
-    }
-
     pub fn recover_audio_device(&self) -> NativeAudioResult<AudioDeviceReopenOutcome> {
         let command = serde_json::json!({"type": "recoverAudioDevice"});
         let expected_generation = self.sidecar_generation();

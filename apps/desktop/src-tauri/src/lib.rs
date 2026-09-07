@@ -141,7 +141,6 @@ pub fn run() {
             retry_startup_runtime,
             enable_midi_listening,
             disable_midi_listening,
-            set_targeted_midi_track,
             session::commands::send_midi_to_track,
             session::commands::panic_midi_track,
             stop_preview,

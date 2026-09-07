@@ -121,8 +121,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
-  const targetedMidiSequenceRef = useRef(0);
-  const targetedMidiQueueRef = useRef(Promise.resolve());
   const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
     props.api,
     timebase,
@@ -274,44 +272,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.audio.state !== 'starting' &&
     props.audio.state !== 'faulted' &&
     props.audio.state !== 'offline';
-  const playSurfaceTargetId =
-    playSurfaceMode !== 'closed' && runtimeReady && focusedTrack?.kind === 'instrument'
-      ? focusedTrack.id
-      : null;
-  useEffect(() => {
-    const sequence = ++targetedMidiSequenceRef.current;
-    if (playSurfaceTargetId !== null) {
-      targetedMidiQueueRef.current = targetedMidiQueueRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          if (sequence !== targetedMidiSequenceRef.current) return;
-          try {
-            await api.setTargetedMidiTrack(playSurfaceTargetId);
-          } catch (error) {
-            if (sequence === targetedMidiSequenceRef.current) setMessage(String(error));
-          }
-        });
-    }
-    return () => {
-      if (playSurfaceTargetId === null) return;
-      targetedMidiSequenceRef.current = sequence + 1;
-      targetedMidiQueueRef.current = targetedMidiQueueRef.current
-        .catch(() => undefined)
-        .then(async () => {
-          try {
-            await api.setTargetedMidiTrack(null);
-          } catch {
-            // The next lifecycle transition owns the latest target state.
-          }
-        });
-    };
-  }, [
-    api,
-    playSurfaceTargetId,
-    props.runtimeProjectionStatus.activeAudioEnvironmentRevision,
-    props.runtimeProjectionStatus.activeProjectionSequence,
-    setMessage,
-  ]);
   const activeInstrumentUnavailable = Boolean(
     activeMidiTrack?.instrument?.source.type === 'vst3' &&
     (activeMidiTrack.instrument.source.disabledPlaceholder ||

@@ -190,19 +190,6 @@ pub(crate) async fn disable_midi_listening(
 }
 
 #[tauri::command]
-pub(crate) async fn set_targeted_midi_track(
-    track_id: Option<String>,
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, move |state| {
-        state
-            .host_connection
-            .dispatch("midi.target.set", json!({ "trackId": track_id }))
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state

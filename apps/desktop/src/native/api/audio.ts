@@ -142,7 +142,3 @@ export async function panicMidiTrack(trackId: string): Promise<AudioStatus | nul
     return await audioCommandError('Panic MIDI Track', error);
   }
 }
-
-export async function setTargetedMidiTrack(trackId: string | null): Promise<AudioStatus> {
-  return await invokeHost<AudioStatus>('set_targeted_midi_track', { trackId });
-}

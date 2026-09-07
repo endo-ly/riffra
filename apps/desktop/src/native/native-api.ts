@@ -201,8 +201,6 @@ export interface AudioApi {
   sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
   /** Sends the targeted Instrument Track panic messages without changing the session. */
   panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
-  /** Sets or clears the runtime-only Play Surface MIDI target. */
-  setTargetedMidiTrack(trackId: string | null): Promise<AudioStatus>;
 }
 
 export interface RecordingApi {
