@@ -78,14 +78,6 @@ impl NativeCommandError {
             details: None,
         }
     }
-
-    pub(crate) fn protocol_violation(message: impl Into<String>) -> Self {
-        Self {
-            code: "protocolViolation".into(),
-            message: message.into(),
-            details: None,
-        }
-    }
 }
 
 impl std::fmt::Display for NativeCommandError {
@@ -1171,10 +1163,10 @@ fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, N
         .result
         .map(|result| result.value)
         .unwrap_or(Value::Null);
-    serde_json::from_value(value).map_err(|error| {
-        NativeCommandError::protocol_violation(format!(
-            "Host response could not be decoded: {error}"
-        ))
+    serde_json::from_value(value).map_err(|error| NativeCommandError {
+        code: "commandFailed".into(),
+        message: format!("Host response could not be decoded: {error}"),
+        details: Some(json!({"kind": "protocolViolation"})),
     })
 }
 
