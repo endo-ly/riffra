@@ -45,16 +45,16 @@ public:
             return left.value + (right.value - left.value) * amount;
         }
 
-        [[nodiscard]] Segment segmentAt(const std::int64_t sample,
-                                        const std::int64_t blockEnd,
+        [[nodiscard]] Segment segmentAt(const std::int64_t sample, const std::int64_t blockEnd,
                                         const float fallback) noexcept {
             if (sample < lastSample) index = lowerBound(sample);
             while (index < points.size() && points[index].sample <= sample) ++index;
             lastSample = sample;
             const auto end = std::max(sample + 1, blockEnd);
             if (points.empty()) return {end, fallback, fallback};
-            if (index == 0) return {std::min(end, points.front().sample), points.front().value,
-                                    points.front().value};
+            if (index == 0)
+                return {std::min(end, points.front().sample), points.front().value,
+                        points.front().value};
             if (index >= points.size()) return {end, points.back().value, points.back().value};
 
             const auto& left = points[index - 1];
