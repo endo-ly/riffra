@@ -174,10 +174,11 @@ Coreの `RuntimeProjection` Portは、正準スナップショットとその確
 | `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                  |
 | `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                              |
 
-音声投影は Track ごとに独立した `TrackRuntime` を持つ。1つの `TrackRuntime` が Track の
-Instrument Runtime、Effect Chain、MIDI Scheduler、ライブ入力キュー、Automation、PDC 用の
-バッファ、録音状態を所有する。Arrangement の MIDI と Play Surface / 外部 MIDI の入力は同じ
-Instrument Runtime へ合流し、ライブ入力専用の音源やエフェクト経路は存在しない。
+音声投影は Track ごとに独立した `TrackRuntime` を持つ。1つの `TrackRuntime` が Instrument
+Runtime、Effect Chain、MIDI Scheduler、ライブ MIDI のノート・サステイン・テール状態、
+Automation、PDC 用バッファ、録音キャプチャ状態を所有する。`TimelineEngine` はグラフの
+公開、処理順序、Transport、ループ、クロックを調停する。Arrangement の MIDI と Play Surface /
+外部 MIDI の入力は同じ Instrument Runtime へ合流し、ライブ入力専用の音源やエフェクト経路は存在しない。
 
 音声の基本経路は次のとおりである。
 
@@ -233,6 +234,10 @@ Audio Status にはコールバック回数、平均・最大処理時間、オ�
 ライブ MIDI のドロップ数、Track / Instrument Runtime / Plugin 数、最大レイテンシ、投影時間、
 音声環境 revision を含む。これらは障害の有無を推測するためではなく、音声処理の状態を同じ
 世代の診断値として確認するために使う。
+
+フィードバック保護が検知された場合は `FeedbackProtection` ミュートを保持する。保護の解除は
+ユーザーが安全状態を確認した後に明示的なリセット操作で行い、ユーザー緊急ミュート、デバイス障害、
+ランタイム復旧など他の所有者のミュートは変更しない。
 
 ---
 

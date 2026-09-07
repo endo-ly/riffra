@@ -86,14 +86,14 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 **起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
 
-| 命令                                                                   | 責務                                                                                              |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `get_bootstrap_state`                                                  | CanonicalState・ProjectState・Built-in instrument catalog・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status`                                                     | 音声状態の照会                                                                                    |
-| `probe_audio_devices` / `probe_device_channels`                        | オーディオデバイス・チャンネル列挙（境界E経由）                                                   |
-| `set_emergency_mute` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                                          |
-| `recover_audio_device` / `retry_startup_runtime`                       | デバイス回復・スタートアップ再試行                                                                |
-| `restore_recovery_generation`                                          | 世代からの回復                                                                                    |
+| 命令                                                                                                 | 責務                                                                                              |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `get_bootstrap_state`                                                                                | CanonicalState・ProjectState・Built-in instrument catalog・セーフモード・回復候補の初期状態を返す |
+| `get_audio_status`                                                                                   | 音声状態の照会                                                                                    |
+| `probe_audio_devices` / `probe_device_channels`                                                      | オーディオデバイス・チャンネル列挙（境界E経由）                                                   |
+| `set_emergency_mute` / `reset_feedback_protection` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                                          |
+| `recover_audio_device` / `retry_startup_runtime`                                                     | デバイス回復・スタートアップ再試行                                                                |
+| `restore_recovery_generation`                                                                        | 世代からの回復                                                                                    |
 
 **セッション・アレンジ（session/commands/）**
 
@@ -138,7 +138,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 **ランタイム投影**: `get_runtime_projection_status`、`retry_runtime_projection`
 
-**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
+**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`panic_midi_track`、`set_targeted_midi_track`、`enable_midi_listening`、`disable_midi_listening`
 
 ### 3.3 エラー規約
 
@@ -201,24 +201,25 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ### 5.2 コマンド分類
 
-| 分類                | コマンド                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 状態照会            | `status`、`meterStatus`                                                                                                    |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                             |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                             |
-| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setStartupGuard`、`setRuntimeRecoveryMute`、`setMasterGainDb` |
-| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                               |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す）                                |
-| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                        |
-| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                 |
-| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                           |
-| トランスポート準備  | `setTransportStarting`                                                                                                     |
+| 分類                | コマンド                                                                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 状態照会            | `status`、`meterStatus`                                                                                                                             |
+| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                                                      |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                                      |
+| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setStartupGuard`、`setRuntimeRecoveryMute`、`setMasterGainDb` |
+| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                                        |
+| 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す）                                                         |
+| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                                                 |
+| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                                          |
+| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`、`setTargetedMidiTarget`                                           |
+| トランスポート準備  | `setTransportStarting`                                                                                                                              |
 
 ### 5.3 応答とエラー
 
 - 成功応答: `{"type":"audioStatus","requestId":N, ...}`（状態スナップショット）または `{"type":"audioMeters","requestId":N, ...}`
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
-- `setAudioDriver` はデバイスを有効化してから応答する。デバイス有効化の失敗は以前のデバイスだけを復元し、投影グラフの失敗は現在のデバイスを維持したまま `RuntimeRecovery` のミュートと投影失敗を返す
+- `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
+- `setTargetedMidiTarget` は Play Surface の表示ライフサイクルに対応するランタイム限定の低遅延対象を設定し、空の対象で基準のPDCへ戻す。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
