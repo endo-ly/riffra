@@ -6,7 +6,7 @@
 
 use crate::model::AudioStatus;
 use crate::{RuntimeBinaries, SharedHostEventSink};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,7 +24,8 @@ use command_bus::CommandBus;
 pub use error::{NativeAudioError, NativeAudioResult};
 use probe::ProbeCoordinator;
 use recovery::RecoveryState;
-pub use recovery::{AudioDeviceReopenOutcome, MuteCause, RuntimeRestartHandler};
+pub use recovery::{AudioDeviceReopenOutcome, RuntimeRestartHandler};
+pub(crate) use recovery::{MuteReason, mute_reason_bit};
 use sidecar_process::SidecarProcess;
 
 pub(crate) const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -59,17 +60,22 @@ pub struct AudioSupervisor {
     probe_coordinator: Arc<ProbeCoordinator>,
     binaries: Arc<RuntimeBinaries>,
     events: SharedHostEventSink,
+    audio_environment_revision: Arc<AtomicU64>,
+    projection_duration_ms: Arc<AtomicU64>,
 }
 
 impl AudioSupervisor {
     /// Returns the latest native audio status snapshot.
     pub fn status(&self) -> NativeAudioResult<AudioStatus> {
-        self.status
+        let mut status = self
+            .status
             .lock()
             .map(|status| status.clone())
             .map_err(|_| NativeAudioError::LockPoisoned {
                 resource: "Audio status",
-            })
+            })?;
+        self.overlay_diagnostics(&mut status);
+        Ok(status)
     }
 
     /// Returns the current native process generation.
@@ -122,6 +128,35 @@ impl AudioSupervisor {
 
     pub fn startup_state(&self) -> StartupState {
         StartupState::from_raw(self.startup_state.load(Ordering::Acquire))
+    }
+
+    pub fn audio_environment_revision(&self) -> u64 {
+        self.audio_environment_revision.load(Ordering::Acquire)
+    }
+
+    pub fn advance_audio_environment(&self) -> u64 {
+        let revision = self
+            .audio_environment_revision
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        if let Ok(mut status) = self.status.lock() {
+            self.overlay_diagnostics(&mut status);
+        }
+        revision
+    }
+
+    pub(crate) fn record_projection_duration(&self, duration_ms: u64) {
+        self.projection_duration_ms
+            .store(duration_ms, Ordering::Release);
+        if let Ok(mut status) = self.status.lock() {
+            self.overlay_diagnostics(&mut status);
+        }
+    }
+
+    pub(crate) fn overlay_diagnostics(&self, status: &mut AudioStatus) {
+        status.diagnostics.audio_environment_revision = self.audio_environment_revision();
+        status.diagnostics.projection_duration_ms =
+            self.projection_duration_ms.load(Ordering::Acquire);
     }
 }
 

@@ -55,6 +55,7 @@ impl<D: TransportDriver> TransportExecutor<D> {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn is_play_requested(&self, sequence: TransportSequence) -> bool {
         self.controller
             .lock()
@@ -83,6 +84,19 @@ impl<D: TransportDriver> TransportExecutor<D> {
             sequence,
             armed: true,
         }
+    }
+
+    pub(crate) fn fail_play_for_projection(&self, projection: ProjectionKey) {
+        let _ = self
+            .controller
+            .lock()
+            .is_ok_and(|mut controller| controller.record_projection_failure(projection));
+    }
+
+    pub(crate) fn stop_for_audio_environment(&self) -> Result<(), RuntimeError> {
+        let lease = self.acquire()?;
+        lease.invalidate_play_intent()?;
+        lease.stop()
     }
 }
 
@@ -116,6 +130,18 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
             .controller
             .lock()
             .is_ok_and(|controller| controller.can_execute_play(sequence, active_projection))
+    }
+
+    pub(crate) fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+        self.executor.driver.set_transport_starting()
+    }
+
+    pub(crate) fn invalidate_play_intent(&self) -> Result<(), RuntimeError> {
+        self.executor
+            .controller
+            .lock()
+            .map(|mut controller| controller.invalidate_for_audio_environment())
+            .map_err(|_| RuntimeError::Internal("Runtime transport state was poisoned.".into()))
     }
 
     pub(crate) fn play_if_current(

@@ -44,6 +44,52 @@ pub struct HostConnectionState {
     pub reason: Option<String>,
 }
 
+/// Structured error exposed by the Desktop command boundary.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCommandError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl NativeCommandError {
+    fn message(message: impl Into<String>) -> Self {
+        Self {
+            code: "hostUnavailable".into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+}
+
+impl std::fmt::Display for NativeCommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NativeCommandError {}
+
+impl From<String> for NativeCommandError {
+    fn from(message: String) -> Self {
+        Self::message(message)
+    }
+}
+
+impl From<&str> for NativeCommandError {
+    fn from(message: &str) -> Self {
+        Self::message(message)
+    }
+}
+
+impl From<NativeCommandError> for String {
+    fn from(error: NativeCommandError) -> Self {
+        error.to_string()
+    }
+}
+
 /// A Host target selected by the Desktop Host Selector.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -725,7 +771,7 @@ impl HostConnectionManager {
                 None,
             ))
             .map_err(|error| BootstrapRequestError::Connection(error.to_string()))?;
-        response_value(response).map_err(BootstrapRequestError::Response)
+        response_value(response).map_err(|error| BootstrapRequestError::Response(error.to_string()))
     }
 
     fn prepare_target(
@@ -911,7 +957,11 @@ impl HostConnectionManager {
     }
 
     /// Runs one Host-owned operation through the current Host.
-    pub fn dispatch<T: DeserializeOwned>(&self, command: &str, params: Value) -> Result<T, String> {
+    pub fn dispatch<T: DeserializeOwned>(
+        &self,
+        command: &str,
+        params: Value,
+    ) -> Result<T, NativeCommandError> {
         let _read = self
             .operation_barrier
             .read()
@@ -959,7 +1009,7 @@ impl HostConnectionManager {
                         reason: error.clone(),
                     });
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         if response.ok
@@ -1093,20 +1143,25 @@ impl HostConnectionManager {
     }
 }
 
-fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, String> {
+fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, NativeCommandError> {
     if !response.ok {
-        let error = response
-            .error
-            .map(|error| format!("{}: {}", error.code, error.message))
-            .unwrap_or_else(|| "Host command failed".into());
+        let error = response.error.map_or_else(
+            || NativeCommandError::message("Host command failed"),
+            |error| NativeCommandError {
+                code: error.code.to_string(),
+                message: error.message,
+                details: error.details,
+            },
+        );
         return Err(error);
     }
     let value = response
         .result
         .map(|result| result.value)
         .unwrap_or(Value::Null);
-    serde_json::from_value(value)
-        .map_err(|error| format!("Host response could not be decoded: {error}"))
+    serde_json::from_value(value).map_err(|error| {
+        NativeCommandError::message(format!("Host response could not be decoded: {error}"))
+    })
 }
 
 fn shutdown_old(active: ActiveHost) {
@@ -1277,38 +1332,45 @@ fn default_vst3_root() -> String {
 #[tauri::command]
 pub(crate) fn get_host_connection_state(
     state: State<'_, crate::AppState>,
-) -> Result<HostConnectionState, String> {
+) -> Result<HostConnectionState, NativeCommandError> {
     Ok(state.host_connection.state())
 }
 
 #[tauri::command]
-pub(crate) async fn list_local_hosts(app: AppHandle) -> Result<Vec<LocalHostInfo>, String> {
+pub(crate) async fn list_local_hosts(
+    app: AppHandle,
+) -> Result<Vec<LocalHostInfo>, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<crate::AppState>()
             .host_connection
             .list_local_hosts()
     })
     .await
-    .map_err(|error| format!("Local Host discovery failed: {error}"))?
+    .map_err(|error| NativeCommandError::message(format!("Local Host discovery failed: {error}")))?
+    .map_err(NativeCommandError::from)
 }
 
 #[tauri::command]
 pub(crate) async fn switch_host(
     target: HostTarget,
     app: AppHandle,
-) -> Result<HostConnectionBootstrap, String> {
+) -> Result<HostConnectionBootstrap, NativeCommandError> {
     let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
     tauri::async_runtime::spawn_blocking(move || manager.switch(target))
         .await
-        .map_err(|error| format!("Host switch failed: {error}"))?
+        .map_err(|error| NativeCommandError::message(format!("Host switch failed: {error}")))?
+        .map_err(NativeCommandError::from)
 }
 
 #[tauri::command]
-pub(crate) async fn reconnect_host(app: AppHandle) -> Result<HostConnectionBootstrap, String> {
+pub(crate) async fn reconnect_host(
+    app: AppHandle,
+) -> Result<HostConnectionBootstrap, NativeCommandError> {
     let manager = Arc::clone(&app.state::<crate::AppState>().host_connection);
     tauri::async_runtime::spawn_blocking(move || manager.reconnect())
         .await
-        .map_err(|error| format!("Host reconnect failed: {error}"))?
+        .map_err(|error| NativeCommandError::message(format!("Host reconnect failed: {error}")))?
+        .map_err(NativeCommandError::from)
 }
 
 #[cfg(test)]

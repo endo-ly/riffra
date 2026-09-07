@@ -6,7 +6,8 @@
 //! change never exposes partially restored audio.
 
 use crate::audio::{
-    AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
+    AudioSupervisor, MuteReason, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
+    mute_reason_bit,
 };
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
@@ -411,11 +412,12 @@ fn release_startup_mute(
     }
 
     if released.is_none()
-        && audio.current_mute_cause().map_err(|error| {
+        && audio.current_mute_reasons().map_err(|error| {
             StartupRuntimeError::Safety(format!(
-                "startup emergency mute cause could not be read: {error}"
+                "startup mute ownership could not be read: {error}"
             ))
-        })? != Some(MuteCause::User)
+        })? & mute_reason_bit(MuteReason::UserEmergency)
+            == 0
     {
         return Err(StartupRuntimeError::Safety(
             "startup emergency mute remains engaged because the audio status is unsafe".into(),
@@ -502,6 +504,8 @@ mod tests {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
+                mute_reasons: 0,
+                diagnostics: Default::default(),
                 message: "fake".into(),
             }
         }

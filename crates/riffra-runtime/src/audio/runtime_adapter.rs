@@ -16,6 +16,29 @@ impl From<NativeAudioError> for RuntimeError {
                 message: error.to_string(),
             },
             NativeAudioError::ShuttingDown => Self::ShuttingDown,
+            NativeAudioError::Structured {
+                kind,
+                message,
+                operation,
+                details,
+            } => Self::Native {
+                kind,
+                message,
+                operation,
+                details,
+            },
+            NativeAudioError::Process { message } => Self::Native {
+                kind: "process".into(),
+                message,
+                operation: "audio.process".into(),
+                details: None,
+            },
+            NativeAudioError::Protocol { message } => Self::Native {
+                kind: "protocolViolation".into(),
+                message,
+                operation: "audio.protocol".into(),
+                details: None,
+            },
             error => Self::NativeRejected(error.to_string()),
         }
     }
@@ -53,6 +76,10 @@ impl ProjectionDriver for AudioSupervisor {
 }
 
 impl TransportDriver for AudioSupervisor {
+    fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+        AudioSupervisor::set_transport_starting(self).map_err(RuntimeError::from)
+    }
+
     fn play_timeline(&self) -> Result<(), RuntimeError> {
         AudioSupervisor::play_timeline(self)
             .map(|_| ())

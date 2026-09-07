@@ -1,6 +1,6 @@
 //! Tauri boundary for the shared Host audio-preference workflow.
 
-use crate::{AppState, model::AudioStatus};
+use crate::{AppState, NativeCommandError, model::AudioStatus};
 use tauri::{AppHandle, Manager};
 
 pub(crate) use riffra_runtime::AudioDriverConfig;
@@ -9,7 +9,7 @@ pub(crate) use riffra_runtime::AudioDriverConfig;
 pub async fn set_audio_driver(
     config: AudioDriverConfig,
     app: AppHandle,
-) -> Result<AudioStatus, String> {
+) -> Result<AudioStatus, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>().host_connection.dispatch(
             "audio.driver.set",

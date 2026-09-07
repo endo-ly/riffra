@@ -38,6 +38,7 @@ impl DawHost {
         };
         let audio = Arc::new(audio);
         let runtime_events = Arc::clone(&events);
+        let projection_audio = Arc::clone(&audio);
         let runtime_recovery: Option<RuntimeRecovery> = if config.safe_mode {
             None
         } else {
@@ -52,6 +53,11 @@ impl DawHost {
             Arc::clone(&audio),
             runtime_recovery,
             Arc::new(move |status| {
+                if let (Some(started), Some(completed)) =
+                    (status.started_at_ms, status.completed_at_ms)
+                {
+                    projection_audio.record_projection_duration(completed.saturating_sub(started));
+                }
                 runtime_events.emit(HostEvent::RuntimeProjectionStatus(status));
             }),
         ) {

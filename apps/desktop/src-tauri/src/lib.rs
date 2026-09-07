@@ -28,7 +28,7 @@ mod session;
 mod types;
 
 use host_commands::*;
-use host_connection::{EmbeddedHostSettings, HostConnectionManager};
+use host_connection::{EmbeddedHostSettings, HostConnectionManager, NativeCommandError};
 use model::{AudioDeviceProbe, AudioStatus, BootstrapState};
 use riffra_runtime::RuntimeBinaries;
 use std::sync::Arc;

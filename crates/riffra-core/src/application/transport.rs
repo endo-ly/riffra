@@ -118,6 +118,22 @@ impl TransportController {
         true
     }
 
+    pub fn record_projection_failure(&mut self, projection: ProjectionKey) -> bool {
+        let TransportIntent::PlayRequested {
+            sequence,
+            required_projection: Some(required_projection),
+        } = self.intent
+        else {
+            return false;
+        };
+        (required_projection == projection) && self.record_play_failure(sequence)
+    }
+
+    pub fn invalidate_for_audio_environment(&mut self) {
+        self.sequence = TransportSequence::new(self.sequence.0.saturating_add(1));
+        self.intent = TransportIntent::Stopped;
+    }
+
     pub fn is_play_requested(&self, sequence: TransportSequence) -> bool {
         matches!(
             self.intent,
@@ -188,5 +204,25 @@ mod tests {
         // Assert
         assert_eq!(wrong_projection, None);
         assert_eq!(required_projection, Some(sequence));
+    }
+
+    #[test]
+    fn audio_environment_change_clears_the_current_play_intent() {
+        // Arrange
+        let mut controller = TransportController::default();
+        controller.request_play(4, None);
+
+        // Act
+        controller.invalidate_for_audio_environment();
+
+        // Assert
+        assert!(!controller.is_play_requested(TransportSequence::new(4)));
+        assert_eq!(controller.request_play(4, None), PlayDecision::Rejected);
+        assert_eq!(
+            controller.request_play(5, None),
+            PlayDecision::Accepted {
+                sequence: TransportSequence::new(5)
+            }
+        );
     }
 }

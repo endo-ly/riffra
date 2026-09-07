@@ -1,5 +1,6 @@
 use super::control::command_error;
 use super::*;
+use crate::NativeAudioError;
 
 impl HostState {
     pub(super) fn set_audio_driver(
@@ -21,6 +22,8 @@ impl HostState {
             .lock()
             .map_err(|_| command_error("audio preferences lock was poisoned"))?
             .clone();
+        self.prepare_runtime_for_audio_device_change()
+            .map_err(command_error)?;
         let outcome = match self
             .core
             .audio()
@@ -28,11 +31,10 @@ impl HostState {
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                let reason = error.to_string();
-                return Err(command_error(self.rollback_audio_change(&previous, reason)));
+                let restoration = self.restore_previous_audio_device(&previous, error.to_string());
+                return Err(native_audio_error_with_restoration(error, restoration));
             }
         };
-        let restarted = matches!(&outcome, AudioDeviceReopenOutcome::SidecarRestarted(_));
         let mut status = match outcome {
             AudioDeviceReopenOutcome::ReopenedInPlace(status) => status,
             AudioDeviceReopenOutcome::SidecarRestarted(status) => status,
@@ -42,33 +44,36 @@ impl HostState {
                 "requested audio device was not activated: {}",
                 status.message
             );
-            return Err(command_error(if restarted {
-                self.restore_previous_audio_preferences(&previous)
-                        .map(|()| format!("{reason}; the previous audio device and dependent Runtime were restored"))
-                        .unwrap_or_else(|error| format!("{reason}; the previous audio device and dependent Runtime could not be restored: {error}"))
-            } else {
-                self.rollback_audio_change(&previous, reason)
-            }));
+            let restoration = self.restore_previous_audio_device(&previous, reason.clone());
+            return Err(native_audio_error_with_restoration(
+                NativeAudioError::structured(
+                    "deviceRejected",
+                    reason,
+                    "audioDevice.activate",
+                    None,
+                ),
+                restoration,
+            ));
         }
         let effective = match AudioPreferences::from_effective_status(&status) {
             Ok(effective) => effective,
             Err(error) => {
-                return Err(command_error(self.rollback_audio_change(&previous, error)));
+                return Err(command_error(error));
             }
         };
         if let Err(error) = self.core.audio().set_restart_preferences(effective.clone()) {
-            return Err(command_error(self.rollback_audio_change(
-                &previous,
-                format!("audio runtime restart preferences could not be updated: {error}"),
+            return Err(command_error(format!(
+                "audio runtime restart preferences could not be updated: {error}"
             )));
         }
-        if !restarted && let Err(error) = self.reconcile_runtime_after_audio_device_change() {
-            return Err(command_error(self.rollback_audio_change(&previous, error)));
+        if let Err(error) = self.reproject_after_audio_device_change() {
+            return Err(command_error(error));
         }
+        status.diagnostics.audio_environment_revision =
+            self.core.audio().audio_environment_revision();
         if let Err(error) = AudioPreferencesStore::new(&self.data_root).save(&effective) {
-            return Err(command_error(self.rollback_audio_change(
-                &previous,
-                format!("audio preferences could not be saved: {error}"),
+            return Err(command_error(format!(
+                "audio preferences could not be saved: {error}"
             )));
         }
         *self
@@ -96,70 +101,35 @@ impl HostState {
         Ok(status)
     }
 
-    fn reconcile_runtime_after_audio_device_change(&self) -> Result<(), String> {
+    fn prepare_runtime_for_audio_device_change(&self) -> Result<(), String> {
         self.core
             .audio()
             .mark_runtime_recovery_mute()
             .map_err(|error| format!("runtime recovery mute could not be recorded: {error}"))?;
-        if !self.runtime.invalidate_for_audio_device_change() {
-            return Err(
-                "audio runtime graph is busy; the audio device change can be retried shortly"
-                    .into(),
-            );
-        }
+        self.runtime.stop_for_audio_environment().map_err(|error| {
+            format!("transport could not be stopped for the new audio environment: {error}")
+        })
+    }
+
+    fn reproject_after_audio_device_change(&self) -> Result<(), String> {
+        self.core.audio().advance_audio_environment();
+        self.runtime.advance_audio_environment();
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
-        self.runtime
-            .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
-                    &self.data_root,
-                    self.built_in_instruments.as_ref(),
-                    &snapshot.session,
-                ),
-                riffra_core::ProjectionKey {
-                    sequence: snapshot.sequence,
-                    session_revision: snapshot.session.arrangement.revision,
-                },
-                std::time::Duration::from_secs(60),
-            )
-            .map_err(|error| {
-                format!(
-                    "arrangement runtime restoration failed after the audio device change: {error}"
-                )
-            })?;
-        self.core
-            .audio()
-            .release_runtime_mute_if_allowed()
-            .map_err(|error| error.to_string())?;
+        let _ = self.runtime.submit_nonblocking(
+            crate::runtime_snapshot::runtime_timeline_snapshot(
+                &self.data_root,
+                self.built_in_instruments.as_ref(),
+                &snapshot.session,
+            ),
+            riffra_core::ProjectionKey {
+                sequence: snapshot.sequence,
+                session_revision: snapshot.session.arrangement.revision,
+            },
+        );
         Ok(())
     }
 
-    fn confirm_restored_previous_device(&self, previous: &AudioPreferences) -> Result<(), String> {
-        self.core
-            .audio()
-            .set_restart_preferences(previous.clone())
-            .map_err(|error| error.to_string())?;
-        let status = self
-            .core
-            .audio()
-            .refresh_status()
-            .map_err(|error| error.to_string())?;
-        if !active_device_matches_preferences(&status, previous) {
-            return Err(format!(
-                "the previous audio device was not confirmed: {}",
-                status.message
-            ));
-        }
-        Ok(())
-    }
-
-    fn restore_previous_audio_preferences(
-        &self,
-        previous: &AudioPreferences,
-    ) -> Result<(), String> {
-        self.core
-            .audio()
-            .set_restart_preferences(previous.clone())
-            .map_err(|error| error.to_string())?;
+    fn restore_previous_audio_device(&self, previous: &AudioPreferences, reason: String) -> String {
         match self
             .core
             .audio()
@@ -167,32 +137,20 @@ impl HostState {
         {
             Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)) => {
                 if !active_device_matches_preferences(&status, previous) {
-                    return Err(format!(
-                        "the previous audio device was not confirmed: {}",
+                    return format!(
+                        "{reason}; the previous audio device could not be restored: {}",
                         status.message
-                    ));
+                    );
                 }
-                self.reconcile_runtime_after_audio_device_change()
+                format!("{reason}; the previous audio device was restored")
             }
             Ok(AudioDeviceReopenOutcome::SidecarRestarted(_)) => {
-                self.confirm_restored_previous_device(previous)
+                format!("{reason}; the previous audio device was restored after restarting audio")
             }
             Err(error) => {
                 let error = error.to_string();
-                self.confirm_restored_previous_device(previous)
-                    .map_err(|restore_error| format!("{error}; {restore_error}"))
+                format!("{reason}; the previous audio device could not be restored: {error}")
             }
-        }
-    }
-
-    fn rollback_audio_change(&self, previous: &AudioPreferences, reason: String) -> String {
-        match self.restore_previous_audio_preferences(previous) {
-            Ok(()) => {
-                format!("{reason}; the previous audio device and dependent Runtime were restored")
-            }
-            Err(error) => format!(
-                "{reason}; the previous audio device and dependent Runtime could not be restored: {error}"
-            ),
         }
     }
 
@@ -202,38 +160,27 @@ impl HostState {
                 "Safe Mode keeps external audio devices isolated".into(),
             ));
         }
-        let outcome = self
+        self.prepare_runtime_for_audio_device_change()
+            .map_err(HostError::State)?;
+        let _outcome = self
             .core
             .audio()
             .recover_audio_device()
             .map_err(|error| HostError::State(error.to_string()))?;
-        if matches!(outcome, AudioDeviceReopenOutcome::SidecarRestarted(_)) {
-            return self
-                .core
-                .audio()
-                .refresh_status()
-                .map_err(|error| HostError::State(error.to_string()));
-        }
+        self.core.audio().advance_audio_environment();
         let snapshot = self.canonical()?;
-        self.runtime.invalidate_for_audio_device_change();
-        self.runtime
-            .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
-                    &self.data_root,
-                    self.built_in_instruments.as_ref(),
-                    &snapshot.session,
-                ),
-                riffra_core::ProjectionKey {
-                    sequence: snapshot.sequence,
-                    session_revision: snapshot.session.arrangement.revision,
-                },
-                std::time::Duration::from_secs(60),
-            )
-            .map_err(|error| HostError::State(error.to_string()))?;
-        self.core
-            .audio()
-            .release_runtime_mute_if_allowed()
-            .map_err(|error| HostError::State(error.to_string()))?;
+        self.runtime.advance_audio_environment();
+        let _ = self.runtime.submit_nonblocking(
+            crate::runtime_snapshot::runtime_timeline_snapshot(
+                &self.data_root,
+                self.built_in_instruments.as_ref(),
+                &snapshot.session,
+            ),
+            riffra_core::ProjectionKey {
+                sequence: snapshot.sequence,
+                session_revision: snapshot.session.arrangement.revision,
+            },
+        );
         self.core
             .audio()
             .refresh_status()
@@ -279,4 +226,26 @@ impl HostState {
             Err(error) => Err(HostError::State(error)),
         }
     }
+}
+
+fn native_audio_error_with_restoration(
+    error: NativeAudioError,
+    restoration: String,
+) -> ProtocolError {
+    let descriptor = error.descriptor();
+    let code = match descriptor.kind.as_str() {
+        "deviceLost" | "transportLost" | "process" | "safeMode" => ErrorCode::RuntimeUnavailable,
+        _ => ErrorCode::CommandFailed,
+    };
+    ProtocolError::new(code, format!("{}; {}", descriptor.message, restoration)).with_details(
+        serde_json::json!({
+            "domain": "nativeAudio",
+            "kind": descriptor.kind,
+            "operation": descriptor.operation,
+            "details": {
+                "native": descriptor.details,
+                "restoration": restoration,
+            },
+        }),
+    )
 }

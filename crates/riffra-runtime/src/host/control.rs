@@ -1508,17 +1508,114 @@ fn runtime_unavailable(message: impl Into<String>) -> ProtocolError {
 fn runtime_error(error: RuntimeError) -> ProtocolError {
     match error {
         RuntimeError::RuntimeUnavailable(message) => {
-            ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
+            ProtocolError::new(ErrorCode::RuntimeUnavailable, message).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "runtimeUnavailable",
+                    "operation": "runtime",
+                }),
+            )
         }
         RuntimeError::ShuttingDown => {
             ProtocolError::new(ErrorCode::RuntimeUnavailable, "runtime is shutting down")
+                .with_details(serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "shuttingDown",
+                    "operation": "runtime.shutdown",
+                }))
         }
-        error => ProtocolError::new(ErrorCode::CommandFailed, error.to_string()),
+        RuntimeError::Native {
+            kind,
+            message,
+            operation,
+            details,
+        } => {
+            let code = match kind.as_str() {
+                "deviceLost" | "transportLost" | "process" | "safeMode" => {
+                    ErrorCode::RuntimeUnavailable
+                }
+                _ => ErrorCode::CommandFailed,
+            };
+            ProtocolError::new(code, message).with_details(serde_json::json!({
+                "domain": "nativeAudio",
+                "kind": kind,
+                "operation": operation,
+                "details": details,
+            }))
+        }
+        RuntimeError::Timeout { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message.clone()).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "projectionTimeout",
+                    "operation": "runtime.projection.prepare",
+                }),
+            )
+        }
+        RuntimeError::TransportLost { message } => {
+            ProtocolError::new(ErrorCode::RuntimeUnavailable, message.clone()).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "transportLost",
+                    "operation": "runtime.transport",
+                }),
+            )
+        }
+        RuntimeError::GenerationChanged { expected, actual } => ProtocolError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!("runtime generation changed (expected {expected}, actual {actual})"),
+        )
+        .with_details(serde_json::json!({
+            "domain": "runtime",
+            "kind": "generationChanged",
+            "operation": "runtime.generation",
+            "expected": expected,
+            "actual": actual,
+        })),
+        RuntimeError::Superseded { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "superseded",
+                "operation": "runtime.projection",
+            }))
+        }
+        RuntimeError::Cancelled { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "cancelled",
+                "operation": "runtime.transport",
+            }))
+        }
+        RuntimeError::NativeRejected(message) => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "projectionRejected",
+                "operation": "runtime.projection.prepare",
+            }))
+        }
+        RuntimeError::Internal(message) => ProtocolError::new(ErrorCode::CommandFailed, message)
+            .with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "internal",
+                "operation": "runtime",
+            })),
     }
 }
 
 fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
+    let descriptor = error.descriptor();
+    let code = match descriptor.kind.as_str() {
+        "deviceLost" | "transportLost" | "generationChanged" | "process" | "safeMode" => {
+            ErrorCode::RuntimeUnavailable
+        }
+        _ => ErrorCode::CommandFailed,
+    };
+    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
+        "domain": "nativeAudio",
+        "kind": descriptor.kind,
+        "operation": descriptor.operation,
+        "details": descriptor.details,
+    }))
 }
 
 fn canonical_plugin_device(

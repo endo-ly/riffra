@@ -58,6 +58,8 @@ impl AudioSupervisor {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
+                mute_reasons: 1 << 3,
+                diagnostics: Default::default(),
                 message: message.into(),
             })),
             command_bus: Arc::new(CommandBus::new()),
@@ -74,6 +76,8 @@ impl AudioSupervisor {
                 std::path::PathBuf::new(),
             )),
             events,
+            audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -105,7 +109,9 @@ impl AudioSupervisor {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
-            message: "Native audio sidecar is starting in emergency-mute state.".into(),
+            mute_reasons: 1 << 1,
+            diagnostics: Default::default(),
+            message: "Native audio sidecar is starting with the startup guard active.".into(),
         }));
         let process = Arc::new(SidecarProcess::new(false));
         let startup_transition_gate = Arc::clone(&process.startup_transition_gate);
@@ -121,6 +127,8 @@ impl AudioSupervisor {
             probe_coordinator: Arc::new(super::probe::ProbeCoordinator::default()),
             binaries: Arc::new(binaries.clone()),
             events,
+            audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(generation) {
@@ -141,6 +149,7 @@ impl AudioSupervisor {
     }
 
     fn next_sidecar_generation(&self) -> u64 {
+        self.advance_audio_environment();
         self.process.next_generation()
     }
 
@@ -300,7 +309,10 @@ impl AudioSupervisor {
                         }
                     }
                     if let Some(response) = handle_native_stdout(&event_status, bytes) {
-                        event_supervisor.synchronize_mute_cause_from_status();
+                        if let Ok(mut status) = event_supervisor.status.lock() {
+                            event_supervisor.overlay_diagnostics(&mut status);
+                        }
+                        event_supervisor.synchronize_mute_reasons_from_status();
                         if let Some(request_id) = response.request_id {
                             record_command_response(
                                 &event_responses,

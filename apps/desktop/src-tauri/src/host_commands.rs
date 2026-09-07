@@ -4,10 +4,10 @@ use riffra_runtime::projects::ProjectExport;
 use serde_json::json;
 
 /// Runs a synchronous Host operation without blocking the async worker pool.
-async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, String>
+async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, NativeCommandError>
 where
     T: Send + 'static,
-    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, NativeCommandError> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || operation(&app.state::<AppState>()))
         .await
@@ -15,12 +15,23 @@ where
 }
 
 #[tauri::command]
-pub(crate) async fn get_bootstrap_state(app: AppHandle) -> Result<BootstrapState, String> {
-    run_blocking(app, |state| state.host_connection.desktop_bootstrap()).await
+pub(crate) async fn get_bootstrap_state(
+    app: AppHandle,
+) -> Result<BootstrapState, NativeCommandError> {
+    run_blocking(app, |state| {
+        state
+            .host_connection
+            .desktop_bootstrap()
+            .map_err(NativeCommandError::from)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn export_project(path: String, app: AppHandle) -> Result<ProjectExport, String> {
+pub(crate) async fn export_project(
+    path: String,
+    app: AppHandle,
+) -> Result<ProjectExport, NativeCommandError> {
     run_blocking(app, move |state| {
         state
             .host_connection
@@ -33,7 +44,7 @@ pub(crate) async fn export_project(path: String, app: AppHandle) -> Result<Proje
 pub(crate) fn get_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<BackgroundJobStatus>, String> {
+) -> Result<Option<BackgroundJobStatus>, NativeCommandError> {
     state
         .host_connection
         .dispatch("job.get", json!({ "id": id }))
@@ -43,14 +54,16 @@ pub(crate) fn get_background_job(
 pub(crate) fn cancel_background_job(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Option<BackgroundJobStatus>, String> {
+) -> Result<Option<BackgroundJobStatus>, NativeCommandError> {
     state
         .host_connection
         .dispatch("job.cancel", json!({ "id": id }))
 }
 
 #[tauri::command]
-pub(crate) async fn probe_audio_devices(app: AppHandle) -> Result<AudioDeviceProbe, String> {
+pub(crate) async fn probe_audio_devices(
+    app: AppHandle,
+) -> Result<AudioDeviceProbe, NativeCommandError> {
     run_blocking(app, |state| {
         state.host_connection.dispatch("audio.probe", json!({}))
     })
@@ -63,7 +76,7 @@ pub(crate) async fn probe_device_channels(
     driver: String,
     input_device: String,
     output_device: String,
-) -> Result<model::DeviceChannels, String> {
+) -> Result<model::DeviceChannels, NativeCommandError> {
     run_blocking(app, move |state| {
         state.host_connection.dispatch(
             "audio.channels.probe",
@@ -78,7 +91,7 @@ pub(crate) async fn probe_device_channels(
 }
 
 #[tauri::command]
-pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state.host_connection.dispatch("audio.status", json!({}))
     })
@@ -86,7 +99,10 @@ pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, Stri
 }
 
 #[tauri::command]
-pub(crate) async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Result<(), String> {
+pub(crate) async fn preview_master_gain_db(
+    gain_db: f64,
+    app: AppHandle,
+) -> Result<(), NativeCommandError> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }
@@ -99,7 +115,10 @@ pub(crate) async fn preview_master_gain_db(gain_db: f64, app: AppHandle) -> Resu
 }
 
 #[tauri::command]
-pub(crate) async fn set_emergency_mute(muted: bool, app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn set_emergency_mute(
+    muted: bool,
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, move |state| {
         state
             .host_connection
@@ -109,7 +128,9 @@ pub(crate) async fn set_emergency_mute(muted: bool, app: AppHandle) -> Result<Au
 }
 
 #[tauri::command]
-pub(crate) async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn recover_audio_device(
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state.host_connection.dispatch("audio.recover", json!({}))
     })
@@ -117,7 +138,9 @@ pub(crate) async fn recover_audio_device(app: AppHandle) -> Result<AudioStatus, 
 }
 
 #[tauri::command]
-pub(crate) async fn retry_startup_runtime(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn retry_startup_runtime(
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state
             .host_connection
@@ -127,7 +150,9 @@ pub(crate) async fn retry_startup_runtime(app: AppHandle) -> Result<AudioStatus,
 }
 
 #[tauri::command]
-pub(crate) async fn enable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn enable_midi_listening(
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state
             .host_connection
@@ -137,7 +162,9 @@ pub(crate) async fn enable_midi_listening(app: AppHandle) -> Result<AudioStatus,
 }
 
 #[tauri::command]
-pub(crate) async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn disable_midi_listening(
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state
             .host_connection
@@ -147,7 +174,7 @@ pub(crate) async fn disable_midi_listening(app: AppHandle) -> Result<AudioStatus
 }
 
 #[tauri::command]
-pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, String> {
+pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {
         state
             .host_connection

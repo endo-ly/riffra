@@ -30,6 +30,13 @@ pub enum RuntimeError {
     Cancelled { message: String },
     #[error("native runtime rejected the operation: {0}")]
     NativeRejected(String),
+    #[error("native runtime rejected operation `{operation}`: {message}")]
+    Native {
+        kind: String,
+        message: String,
+        operation: String,
+        details: Option<Value>,
+    },
     #[error("runtime is shutting down")]
     ShuttingDown,
     #[error("runtime state is unavailable: {0}")]
@@ -51,7 +58,7 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-use self::projection_coordinator::ProjectionCoordinator;
+use self::projection_coordinator::{ProjectionCoordinator, ProjectionFailureHook};
 use self::transport_executor::TransportExecutor;
 use crate::model::RuntimeProjectionStatus;
 use riffra_core::ProjectionKey;
@@ -78,11 +85,16 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         let transport = Arc::new(TransportExecutor::new(Arc::clone(&driver)));
         let activation_transport = Arc::clone(&transport);
         let on_activated = Arc::new(move |key| activation_transport.play_after_projection(key));
+        let failure_transport = Arc::clone(&transport);
+        let on_failed: ProjectionFailureHook = Arc::new(move |key| {
+            failure_transport.fail_play_for_projection(key);
+        });
         let projection = ProjectionCoordinator::new_with_status_hook(
             driver,
             recovery,
             on_activated,
             status_listener,
+            on_failed,
         )?;
         Ok(Self {
             projection,
@@ -115,8 +127,23 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// Invalidates the active graph after the native audio device environment
     /// changes, so the canonical Session is prepared with the new sample rate
     /// and block size.
-    pub fn invalidate_for_audio_device_change(&self) -> bool {
-        self.projection.invalidate_for_audio_device_change()
+    pub fn advance_audio_environment(&self) -> u64 {
+        self.projection.advance_audio_environment()
+    }
+
+    /// Stops transport and clears the pending Play intent before an audio
+    /// device environment is changed.
+    pub fn stop_for_audio_environment(&self) -> Result<(), RuntimeError> {
+        self.transport.stop_for_audio_environment()
+    }
+
+    /// Invalidates the prepared graph after stopping transport for a changed
+    /// audio environment.
+    pub fn invalidate_for_audio_environment(&self) -> Result<u64, RuntimeError> {
+        let stop_result = self.stop_for_audio_environment();
+        self.projection.notify();
+        let revision = self.projection.advance_audio_environment();
+        stop_result.map(|()| revision)
     }
 
     /// Requeues the last active projection when a sidecar restart occurred
@@ -184,6 +211,15 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
         let transport_sequence = TransportSequence::new(sequence);
         let mut rollback = self.transport.play_intent_rollback(transport_sequence);
+        let mut transport_starting = false;
+        if !self.projection.is_ready_for(key) {
+            if let Err(error) = lease.set_transport_starting() {
+                let _ = lease.stop();
+                drop(lease);
+                return Err(error);
+            }
+            transport_starting = true;
+        }
         let deadline = Instant::now() + timeout;
         let operation = match self
             .projection
@@ -191,6 +227,9 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         {
             Ok(operation) => operation,
             Err(error) => {
+                if transport_starting {
+                    let _ = lease.stop();
+                }
                 drop(lease);
                 return Err(error);
             }
@@ -206,21 +245,8 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         }
         drop(lease);
 
-        let is_current = || self.transport.is_play_requested(transport_sequence);
-        match self.projection.wait_for_operation(
-            operation.operation_id,
-            operation.key,
-            deadline,
-            timeout,
-            Some(sequence),
-            Some(&is_current),
-        ) {
-            Ok(_) => {
-                rollback.disarm();
-                Ok(true)
-            }
-            Err(error) => Err(error),
-        }
+        rollback.disarm();
+        Ok(true)
     }
 
     pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
@@ -255,7 +281,7 @@ mod tests {
     use crate::model::RuntimeProjectionState;
     use crate::runtime::ports::{ProjectionDriver, TransportDriver};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -266,10 +292,10 @@ mod tests {
         prepare_delay: Duration,
         prepare_timeout_ms: AtomicU64,
         minimum_prepare_timeout_ms: AtomicU64,
-        emergency_muted: AtomicBool,
         prepare_started: AtomicU64,
         discarded: AtomicU64,
         timeout_once: AtomicU64,
+        transport_failure_once: AtomicU64,
         play_failure_once: AtomicU64,
         played: AtomicU64,
         stopped: AtomicU64,
@@ -284,10 +310,10 @@ mod tests {
                 prepare_delay: load_delay,
                 prepare_timeout_ms: AtomicU64::new(0),
                 minimum_prepare_timeout_ms: AtomicU64::new(0),
-                emergency_muted: AtomicBool::new(false),
                 prepare_started: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
                 timeout_once: AtomicU64::new(0),
+                transport_failure_once: AtomicU64::new(0),
                 play_failure_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
@@ -319,6 +345,15 @@ mod tests {
                 return Err(RuntimeError::Timeout {
                     message: "Native audio did not acknowledge the command within 30 seconds."
                         .into(),
+                });
+            }
+            if self
+                .transport_failure_once
+                .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Err(RuntimeError::TransportLost {
+                    message: "Native audio transport was lost.".into(),
                 });
             }
             *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
@@ -424,15 +459,15 @@ mod tests {
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         driver.generation.store(2, Ordering::Release);
 
-        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+        wait_until(|| {
+            matches!(
+                reconciler.status().state,
+                RuntimeProjectionState::Idle | RuntimeProjectionState::Failed
+            )
+        });
         assert!(driver.loaded.lock().unwrap().is_empty());
-        assert!(
-            reconciler
-                .status()
-                .last_error
-                .as_deref()
-                .is_some_and(|error| error.contains("generation"))
-        );
+        assert_eq!(reconciler.status().active_projection_sequence, None);
+        assert!(reconciler.status().audio_environment_revision > 0);
     }
 
     #[test]
@@ -503,7 +538,7 @@ mod tests {
         ));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert!(play.join().unwrap().unwrap());
-        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
     }
 
     #[test]
@@ -518,7 +553,8 @@ mod tests {
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         reconciler.stop(2).unwrap();
 
-        assert!(play.join().unwrap().is_err());
+        assert!(play.join().unwrap().is_ok());
+        thread::sleep(Duration::from_millis(140));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
@@ -582,16 +618,16 @@ mod tests {
         let new_play =
             reconciler.apply_and_play(3, snapshot(73), key(73, 73), Duration::from_secs(1));
 
-        assert!(old_play.join().unwrap().is_err());
+        assert!(old_play.join().unwrap().is_ok());
         assert!(new_play.is_ok());
-        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
 
     #[test]
-    fn retries_once_after_native_deadline_through_recovery_callback() {
+    fn recovers_once_after_transport_loss_through_recovery_callback() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        driver.timeout_once.store(1, Ordering::Release);
+        driver.transport_failure_once.store(1, Ordering::Release);
         let recoveries = Arc::new(AtomicU64::new(0));
         let recovery_count = Arc::clone(&recoveries);
         let recovery_driver = Arc::clone(&driver);
@@ -679,12 +715,8 @@ mod tests {
             .store(15_000, Ordering::Release);
         let recovery_calls = Arc::new(AtomicU64::new(0));
         let recovery_count = Arc::clone(&recovery_calls);
-        let recovery_driver = Arc::clone(&driver);
         let recovery: RuntimeRecovery = Arc::new(move |_generation, _timeout| {
             recovery_count.fetch_add(1, Ordering::Release);
-            recovery_driver
-                .emergency_muted
-                .store(true, Ordering::Release);
             Err(RuntimeError::NativeRejected(
                 "recovery was not expected".into(),
             ))
@@ -699,6 +731,5 @@ mod tests {
         assert!(driver.prepare_timeout_ms.load(Ordering::Acquire) > 15_000);
         assert_eq!(driver.runtime_generation(), 1);
         assert_eq!(recovery_calls.load(Ordering::Acquire), 0);
-        assert!(!driver.emergency_muted.load(Ordering::Acquire));
     }
 }

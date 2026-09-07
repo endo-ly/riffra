@@ -3,14 +3,14 @@
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
-use crate::AppState;
 use crate::library::LibraryAsset;
+use crate::{AppState, NativeCommandError};
 
 async fn dispatch<T: serde::de::DeserializeOwned + Send + 'static>(
     app: AppHandle,
     command: &'static str,
     params: serde_json::Value,
-) -> Result<T, String> {
+) -> Result<T, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .host_connection
@@ -21,7 +21,10 @@ async fn dispatch<T: serde::de::DeserializeOwned + Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn search_library(query: String, app: AppHandle) -> Result<Vec<LibraryAsset>, String> {
+pub async fn search_library(
+    query: String,
+    app: AppHandle,
+) -> Result<Vec<LibraryAsset>, NativeCommandError> {
     dispatch(app, "library.search", json!({ "query": query })).await
 }
 
@@ -31,7 +34,7 @@ pub async fn update_library_asset(
     tag: Option<String>,
     note: Option<String>,
     app: AppHandle,
-) -> Result<LibraryAsset, String> {
+) -> Result<LibraryAsset, NativeCommandError> {
     dispatch(
         app,
         "library.asset.update",
@@ -44,6 +47,6 @@ pub async fn update_library_asset(
 pub async fn related_library_assets(
     id: String,
     app: AppHandle,
-) -> Result<Vec<LibraryAsset>, String> {
+) -> Result<Vec<LibraryAsset>, NativeCommandError> {
     dispatch(app, "library.related", json!({ "id": id })).await
 }

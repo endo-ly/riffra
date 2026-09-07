@@ -53,6 +53,11 @@ impl ProtocolError {
         }
     }
 
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+
     /// Creates a conflict with the revisions used for the failed precondition.
     pub fn conflict(expected_sequence: u64, current_sequence: u64) -> Self {
         Self {

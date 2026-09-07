@@ -420,7 +420,29 @@ pub struct AudioStatus {
     pub invalid_samples: u64,
     pub feedback_suspected: bool,
     pub previewing: bool,
+    /// Bitmask owned by the Native safety callback. Each bit identifies the
+    /// owner that currently keeps the output muted.
+    pub mute_reasons: u32,
+    pub diagnostics: AudioDiagnostics,
     pub message: String,
+}
+
+/// Realtime counters exposed for diagnosing an unsafe or overloaded callback.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnostics {
+    pub callback_count: u64,
+    pub average_callback_duration_us: u64,
+    pub maximum_callback_duration_us: u64,
+    pub callback_overruns: u64,
+    pub callback_lock_misses: u64,
+    pub live_midi_drops: u64,
+    pub track_count: u64,
+    pub instrument_runtime_count: u64,
+    pub plugin_count: u64,
+    pub maximum_latency_samples: u64,
+    pub projection_duration_ms: u64,
+    pub audio_environment_revision: u64,
 }
 
 /// Latest-wins state of canonical arrangement projection.
@@ -448,6 +470,10 @@ pub struct RuntimeProjectionStatus {
     pub active_projection_sequence: Option<u64>,
     pub active_session_revision: Option<u64>,
     pub runtime_generation: u64,
+    pub audio_environment_revision: u64,
+    pub target_audio_environment_revision: Option<u64>,
+    pub prepared_audio_environment_revision: Option<u64>,
+    pub active_audio_environment_revision: Option<u64>,
     pub queued_at_ms: Option<u64>,
     pub started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,

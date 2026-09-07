@@ -29,7 +29,7 @@ mod startup;
 pub(crate) mod test_support;
 
 pub use audio::{
-    AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
+    AudioDeviceReopenOutcome, AudioSupervisor, NativeAudioError, NativeAudioResult,
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;

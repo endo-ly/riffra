@@ -13,6 +13,7 @@ pub type RuntimeRecovery = Arc<dyn Fn(u64, Duration) -> Result<(), RuntimeError>
 
 pub(crate) type ProjectionActivationHook =
     Arc<dyn Fn(ProjectionKey) -> Result<(), RuntimeError> + Send + Sync>;
+pub(crate) type ProjectionFailureHook = Arc<dyn Fn(ProjectionKey) + Send + Sync>;
 
 pub type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Sync>;
 
@@ -25,6 +26,8 @@ pub(crate) struct ProjectionOperation {
 struct RuntimeTarget {
     operation_id: u64,
     key: ProjectionKey,
+    runtime_generation: u64,
+    audio_environment_revision: u64,
     snapshot: Value,
     canonical: bool,
     recovery_attempts: u8,
@@ -57,6 +60,7 @@ enum SubmissionResult {
 #[derive(Clone, Copy)]
 struct ActiveProjection {
     runtime_generation: u64,
+    audio_environment_revision: u64,
     key: ProjectionKey,
 }
 
@@ -69,6 +73,7 @@ struct ProjectionState {
     last_active_key: Option<ProjectionKey>,
     last_active_snapshot: Option<Value>,
     stop_requested: bool,
+    audio_environment_revision: u64,
     status: RuntimeProjectionStatus,
 }
 
@@ -86,7 +91,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         recovery: Option<RuntimeRecovery>,
         on_activated: ProjectionActivationHook,
     ) -> Result<Self, RuntimeError> {
-        Self::new_with_status_hook(driver, recovery, on_activated, Arc::new(|_| {}))
+        Self::new_with_status_hook(
+            driver,
+            recovery,
+            on_activated,
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
     }
 
     pub(crate) fn new_with_status_hook(
@@ -94,6 +105,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         recovery: Option<RuntimeRecovery>,
         on_activated: ProjectionActivationHook,
         status_hook: ProjectionStatusHook,
+        on_failed: ProjectionFailureHook,
     ) -> Result<Self, RuntimeError> {
         let generation = driver.runtime_generation();
         let state = Arc::new((
@@ -106,8 +118,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 last_active_key: None,
                 last_active_snapshot: None,
                 stop_requested: false,
+                audio_environment_revision: 0,
                 status: RuntimeProjectionStatus {
                     runtime_generation: generation,
+                    audio_environment_revision: 0,
                     ..RuntimeProjectionStatus::default()
                 },
             }),
@@ -117,6 +131,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let worker_driver = Arc::clone(&driver);
         let worker_recovery = recovery;
         let worker_activation = Arc::clone(&on_activated);
+        let worker_failure = Arc::clone(&on_failed);
         let worker_status = Arc::clone(&status_hook);
         let worker = thread::Builder::new()
             .name("riffra-runtime-projection".into())
@@ -126,6 +141,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     worker_state,
                     worker_recovery,
                     worker_activation,
+                    worker_failure,
                     worker_status,
                 )
             })
@@ -162,6 +178,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let mut state = lock.lock().expect("runtime projection lock poisoned");
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
+        let audio_environment_revision = state.audio_environment_revision;
         if let Some(desired) = state.desired_key
             && key.sequence < desired.sequence
         {
@@ -173,9 +190,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         if state.desired_key == Some(key)
             && state.latest_target.is_none()
             && state.running_operation_id.is_none()
-            && state
-                .active_projection
-                .is_some_and(|active| active.runtime_generation == generation && active.key == key)
+            && state.active_projection.is_some_and(|active| {
+                active.runtime_generation == generation
+                    && active.audio_environment_revision == audio_environment_revision
+                    && active.key == key
+            })
         {
             if canonical {
                 state.last_active_key = Some(key);
@@ -216,6 +235,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.latest_target = Some(RuntimeTarget {
             operation_id,
             key,
+            runtime_generation: generation,
+            audio_environment_revision,
             snapshot,
             canonical,
             recovery_attempts: 0,
@@ -233,6 +254,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .active_projection
                 .map(|active| active.key.session_revision),
             runtime_generation: generation,
+            audio_environment_revision,
+            target_audio_environment_revision: Some(audio_environment_revision),
+            prepared_audio_environment_revision: None,
+            active_audio_environment_revision: state
+                .active_projection
+                .map(|active| active.audio_environment_revision),
             queued_at_ms: Some(queued_at_ms),
             started_at_ms: None,
             completed_at_ms: None,
@@ -294,6 +321,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             && state
                 .active_projection
                 .is_some_and(|active| active.runtime_generation == generation && active.key == key)
+            && state.active_projection.is_some_and(|active| {
+                active.audio_environment_revision == state.audio_environment_revision
+            })
     }
 
     pub(crate) fn wait_for_operation(
@@ -398,13 +428,17 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.desired_key = None;
         state.active_projection = None;
         state.status.state = RuntimeProjectionState::Idle;
-        state.status.running_operation_id = None;
+        state.status.running_operation_id = state.running_operation_id;
         state.status.target_projection_sequence = None;
         state.status.target_session_revision = None;
         state.status.prepared_session_revision = None;
         state.status.active_projection_sequence = None;
         state.status.active_session_revision = None;
+        state.status.target_audio_environment_revision = None;
+        state.status.prepared_audio_environment_revision = None;
+        state.status.active_audio_environment_revision = None;
         state.status.runtime_generation = generation;
+        state.status.audio_environment_revision = state.audio_environment_revision;
         state.status.last_error = None;
         let status = state.status.clone();
         wake.notify_all();
@@ -426,38 +460,46 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         (self.status_hook)(status);
     }
 
-    /// Invalidates the active graph after the native audio device environment
-    /// changes. The next canonical projection is deliberately allowed to use
-    /// the same key because its native preparation inputs now differ.
-    pub(crate) fn invalidate_for_audio_device_change(&self) -> bool {
+    /// Advances the native audio environment identity and invalidates every
+    /// graph prepared for the previous device configuration. A worker that is
+    /// already preparing may finish, but its result is discarded by the
+    /// identity check before it can be committed as active.
+    pub(crate) fn advance_audio_environment(&self) -> u64 {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().expect("runtime projection lock poisoned");
-        if state.running_operation_id.is_some() {
-            return false;
-        }
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
         state.latest_target = None;
         state.desired_key = None;
         state.active_projection = None;
-        state.status.state = RuntimeProjectionState::Idle;
-        state.status.running_operation_id = None;
+        state.audio_environment_revision = state.audio_environment_revision.saturating_add(1);
+        state.status.state = if state.running_operation_id.is_some() {
+            RuntimeProjectionState::Preparing
+        } else {
+            RuntimeProjectionState::Idle
+        };
+        state.status.running_operation_id = state.running_operation_id;
         state.status.target_projection_sequence = None;
         state.status.target_session_revision = None;
         state.status.prepared_session_revision = None;
         state.status.active_projection_sequence = None;
         state.status.active_session_revision = None;
         state.status.runtime_generation = generation;
+        state.status.audio_environment_revision = state.audio_environment_revision;
+        state.status.target_audio_environment_revision = None;
+        state.status.prepared_audio_environment_revision = None;
+        state.status.active_audio_environment_revision = None;
         state.status.queued_at_ms = None;
         state.status.started_at_ms = None;
         state.status.completed_at_ms = None;
         state.status.last_native_response_at_ms = None;
         state.status.last_error = None;
+        let audio_environment_revision = state.audio_environment_revision;
         let status = state.status.clone();
         wake.notify_all();
         drop(state);
         (self.status_hook)(status);
-        true
+        audio_environment_revision
     }
 
     /// Requeues the last successfully activated graph after the native
@@ -532,6 +574,7 @@ fn worker_loop<D: ProjectionDriver>(
     state: Arc<(Mutex<ProjectionState>, Condvar)>,
     recovery: Option<RuntimeRecovery>,
     on_activated: ProjectionActivationHook,
+    on_failed: ProjectionFailureHook,
     status_hook: ProjectionStatusHook,
 ) {
     loop {
@@ -549,6 +592,7 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.running_operation_id = Some(target.operation_id);
                         state.status.started_at_ms = Some(now_ms());
                         state.status.runtime_generation = driver.runtime_generation();
+                        state.status.audio_environment_revision = state.audio_environment_revision;
                     }
                     break target;
                 }
@@ -570,6 +614,8 @@ fn worker_loop<D: ProjectionDriver>(
             state.status.last_native_response_at_ms = Some(now_ms());
             if result.is_ok() && state.status.operation_id == target.operation_id {
                 state.status.prepared_session_revision = Some(target.key.session_revision);
+                state.status.prepared_audio_environment_revision =
+                    Some(target.audio_environment_revision);
             }
         }
         publish_current_status(&state, &status_hook);
@@ -581,6 +627,8 @@ fn worker_loop<D: ProjectionDriver>(
                     state.status.operation_id == target.operation_id
                         && state.latest_target.is_none()
                         && !state.stop_requested
+                        && target.runtime_generation == generation
+                        && target.audio_environment_revision == state.audio_environment_revision
                         && state
                             .active_projection
                             .is_none_or(|active| target.key.sequence >= active.key.sequence)
@@ -645,8 +693,10 @@ fn worker_loop<D: ProjectionDriver>(
                             state.status.completed_at_ms = Some(now_ms());
                             state.status.state = if state.latest_target.is_some() {
                                 RuntimeProjectionState::Queued
-                            } else {
+                            } else if state.active_projection.is_some() {
                                 RuntimeProjectionState::Active
+                            } else {
+                                RuntimeProjectionState::Idle
                             };
                         }
                         state.running_operation_id = None;
@@ -678,12 +728,16 @@ fn worker_loop<D: ProjectionDriver>(
                     if guard.status.operation_id == target.operation_id
                         && guard.latest_target.is_none()
                     {
-                        guard.latest_target = Some(RuntimeTarget {
-                            recovery_attempts: 1,
-                            ..target
-                        });
+                        let mut retry = target;
+                        retry.recovery_attempts = 1;
+                        retry.runtime_generation = driver.runtime_generation();
+                        retry.audio_environment_revision = guard.audio_environment_revision;
+                        guard.latest_target = Some(retry);
                         guard.status.state = RuntimeProjectionState::Queued;
                         guard.status.runtime_generation = driver.runtime_generation();
+                        guard.status.audio_environment_revision = guard.audio_environment_revision;
+                        guard.status.target_audio_environment_revision =
+                            Some(guard.audio_environment_revision);
                         guard.status.started_at_ms = None;
                         guard.status.completed_at_ms = None;
                         guard.status.prepared_session_revision = None;
@@ -708,6 +762,12 @@ fn worker_loop<D: ProjectionDriver>(
         }
 
         let current_generation = driver.runtime_generation();
+        if current_generation != target.runtime_generation
+            && let Ok(mut guard) = state.0.lock()
+        {
+            observe_generation(&mut guard, current_generation);
+            state.1.notify_all();
+        }
         let result = if generation == current_generation {
             result
         } else {
@@ -729,13 +789,14 @@ fn worker_loop<D: ProjectionDriver>(
             );
         }
         let completed_at_ms = now_ms();
-        let should_autoplay = {
-            let lock = &state.0;
-            let mut state = lock.lock().expect("runtime projection lock poisoned");
+        let (should_autoplay, projection_ready, should_clear_play_intent) = {
+            let mut state = state.0.lock().expect("runtime projection lock poisoned");
+            let identity_is_current = target.runtime_generation == current_generation
+                && target.audio_environment_revision == state.audio_environment_revision;
             state.running_operation_id = None;
             state.status.running_operation_id = None;
             match result {
-                Ok(()) => {
+                Ok(()) if identity_is_current => {
                     if state
                         .active_projection
                         .is_none_or(|active| target.key.sequence >= active.key.sequence)
@@ -745,6 +806,7 @@ fn worker_loop<D: ProjectionDriver>(
                     {
                         state.active_projection = Some(ActiveProjection {
                             runtime_generation: current_generation,
+                            audio_environment_revision: target.audio_environment_revision,
                             key: target.key,
                         });
                         if target.canonical {
@@ -752,63 +814,96 @@ fn worker_loop<D: ProjectionDriver>(
                             state.last_active_snapshot = Some(target.snapshot.clone());
                         }
                     }
+                    let projection_ready = state.status.operation_id == target.operation_id
+                        && state.latest_target.is_none()
+                        && state.active_projection.is_some_and(|active| {
+                            active.runtime_generation == current_generation
+                                && active.audio_environment_revision
+                                    == state.audio_environment_revision
+                                && active.key == target.key
+                        });
                     if state.status.operation_id == target.operation_id {
                         state.status.active_projection_sequence =
                             state.active_projection.map(|active| active.key.sequence);
                         state.status.active_session_revision = state
                             .active_projection
                             .map(|active| active.key.session_revision);
+                        state.status.active_audio_environment_revision = state
+                            .active_projection
+                            .map(|active| active.audio_environment_revision);
                         state.status.runtime_generation = current_generation;
+                        state.status.audio_environment_revision = state.audio_environment_revision;
                         state.status.prepared_session_revision = None;
+                        state.status.prepared_audio_environment_revision = None;
                         state.status.completed_at_ms = Some(completed_at_ms);
                         state.status.last_error = None;
                         state.status.state = if state.latest_target.is_some() {
                             RuntimeProjectionState::Queued
-                        } else {
+                        } else if state.active_projection.is_some() {
                             RuntimeProjectionState::Active
+                        } else {
+                            RuntimeProjectionState::Idle
                         };
-                        state.latest_target.is_none()
-                    } else {
-                        false
                     }
+                    (projection_ready, projection_ready, false)
+                }
+                Ok(()) => {
+                    state.status.prepared_session_revision = None;
+                    state.status.prepared_audio_environment_revision = None;
+                    state.status.state = if state.latest_target.is_some() {
+                        RuntimeProjectionState::Queued
+                    } else if state.active_projection.is_some() {
+                        RuntimeProjectionState::Active
+                    } else {
+                        RuntimeProjectionState::Idle
+                    };
+                    (false, false, false)
                 }
                 Err(error) => {
-                    if state.status.operation_id == target.operation_id {
+                    let current_operation = state.status.operation_id == target.operation_id;
+                    if current_operation && identity_is_current {
                         state.status.state = RuntimeProjectionState::Failed;
                         state.status.runtime_generation = current_generation;
+                        state.status.audio_environment_revision = state.audio_environment_revision;
                         state.status.completed_at_ms = Some(completed_at_ms);
-                        state.status.running_operation_id = None;
                         state.status.prepared_session_revision = None;
+                        state.status.prepared_audio_environment_revision = None;
                         state.status.last_error = Some(error.to_string());
                     }
-                    false
+                    (false, false, current_operation && identity_is_current)
                 }
             }
         };
         publish_current_status(&state, &status_hook);
 
-        if let Err(error) = driver.release_runtime_mute_if_allowed() {
-            tracing::warn!(error = ?error, "Runtime graph recovery stayed muted");
-        }
-
-        if should_autoplay {
-            let activation_error = on_activated(target.key).err();
+        let activation_error = if should_autoplay {
+            on_activated(target.key).err()
+        } else {
+            None
+        };
+        if let Some(error) = activation_error.as_ref() {
+            on_failed(target.key);
             let (lock, wake) = &*state;
-            let mut guard = lock.lock().expect("runtime projection lock poisoned");
-            if let Some(error) = activation_error
+            if let Ok(mut guard) = lock.lock()
                 && guard.status.operation_id == target.operation_id
                 && guard.latest_target.is_none()
             {
                 guard.status.state = RuntimeProjectionState::Failed;
                 guard.status.last_error = Some(error.to_string());
                 guard.status.completed_at_ms = Some(now_ms());
+                wake.notify_all();
             }
-            wake.notify_all();
-            drop(guard);
-            publish_current_status(&state, &status_hook);
-        } else {
-            state.1.notify_one();
+        } else if should_clear_play_intent {
+            on_failed(target.key);
         }
+        if projection_ready
+            && activation_error.is_none()
+            && let Err(error) = driver.release_runtime_mute_if_allowed()
+        {
+            tracing::warn!(error = ?error, "Runtime graph recovery stayed muted");
+        }
+        publish_current_status(&state, &status_hook);
+        state.1.notify_one();
     }
 }
 
@@ -846,19 +941,32 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) {
     state.active_projection = None;
     state.status.active_projection_sequence = None;
     state.status.active_session_revision = None;
+    state.status.active_audio_environment_revision = None;
+    state.audio_environment_revision = state.audio_environment_revision.saturating_add(1);
     state.status.runtime_generation = generation;
+    state.status.audio_environment_revision = state.audio_environment_revision;
+    if state
+        .latest_target
+        .as_ref()
+        .is_some_and(|target| target.runtime_generation != generation)
+    {
+        state.latest_target = None;
+        state.desired_key = None;
+        state.status.target_projection_sequence = None;
+        state.status.target_session_revision = None;
+        state.status.target_audio_environment_revision = None;
+    }
     if state.running_operation_id.is_none() && state.latest_target.is_none() {
         state.status.state = RuntimeProjectionState::Idle;
     }
 }
 
 fn should_recover_runtime(error: &RuntimeError) -> bool {
-    matches!(
-        error,
-        RuntimeError::Timeout { .. }
-            | RuntimeError::TransportLost { .. }
-            | RuntimeError::GenerationChanged { .. }
-    )
+    matches!(error, RuntimeError::TransportLost { .. })
+        || matches!(
+            error,
+            RuntimeError::Native { kind, .. } if kind == "process"
+        )
 }
 
 #[cfg(test)]
@@ -1060,7 +1168,7 @@ mod tests {
         wait_until(|| coordinator.status().active_session_revision == Some(10));
 
         // Act
-        assert!(coordinator.invalidate_for_audio_device_change());
+        assert!(coordinator.advance_audio_environment() > 0);
         coordinator.submit_nonblocking(snapshot(10), key(1, 10));
 
         // Assert
