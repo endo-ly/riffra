@@ -176,28 +176,30 @@ Coreの `RuntimeProjection` Portは、正準スナップショットとその確
 
 音声投影は Track ごとに独立した `TrackRuntime` を持つ。1つの `TrackRuntime` が Instrument
 Runtime、Effect Chain、MIDI Scheduler、ライブ MIDI のノート・サステイン・テール状態、
-Automation、PDC 用バッファ、録音キャプチャ状態を所有する。`TimelineEngine` はグラフの
-公開、処理順序、Transport、ループ、クロックを調停する。Arrangement の MIDI と Play Surface /
-外部 MIDI の入力は同じ Instrument Runtime へ合流し、ライブ入力専用の音源やエフェクト経路は存在しない。
+Automation、PDC 用バッファ、録音キャプチャ状態を所有する。プラグインインスタンスは
+`TrackRuntime` 内の Device Runtime に属し、正準状態を保持するTrackの処理状態とは独立して
+投影間で再利用される。`TimelineEngine` はグラフの公開、処理順序、Transport、ループ、クロックを
+調停する。Arrangement の MIDI と Play Surface / 外部 MIDI の入力は同じ Instrument Runtime へ
+合流し、ライブ入力専用の音源やエフェクト経路は存在しない。
 
 音声の基本経路は次のとおりである。
 
 ```text
-Audio Clip / Audio Input ───────┐
-                                ├─ Pre-FX → 1つの Effect Chain → Post-FX / Processed Take
-Timeline MIDI + Live MIDI ─────┘                         │
-                                                        ▼
-                                         Gain / Pan / Automation
-                                                        │
-                                                        ▼
-                                           PDC → master mix
+Audio Track
+Timeline Audio ── Track compensation ─┐
+Live Audio ────────────────────────────┴─ Pre-FX → Effect Chain → Track strip → master mix
+
+Instrument Track
+Timeline MIDI ── Track compensation ──┐
+Live MIDI ─────────────────────────────┴─ Instrument Runtime → Effect Chain → Track strip → master mix
 ```
 
 MIDI のタイムラインイベントは投影時に時系列へ整列し、再生ブロックではカーソルから
 必要な範囲だけを取り出す。ループ範囲を事前に展開せず、境界で発生する Note Off と次の
-ループの Note On を同じスケジューラで処理する。ライブ MIDI は固定容量のキューへ受け、
-容量超過はイベントを捨てて診断値へ記録する。Audio Track の入力監視も、その Track の
-同じ Effect Chain を一度だけ通る。
+ループの Note On を同じスケジューラで処理する。タイムライン由来の音声とMIDIにはTrack間の
+同期に必要な補償をmerge前に適用し、ライブ入力は追加の補償を受けず即時経路へ送る。ライブ
+MIDIは固定容量のキューへ受け、容量超過はイベントを捨てて診断値へ記録する。Audio Trackの
+入力監視も、そのTrackの同じEffect Chainを一度だけ通る。
 
 ### 5.2 投影の整合性
 

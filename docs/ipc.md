@@ -219,7 +219,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 - 成功応答: `{"type":"audioStatus","requestId":N, ...}`（状態スナップショット）または `{"type":"audioMeters","requestId":N, ...}`
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
 - `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
-- `setTargetedMidiTarget` は Play Surface の表示ライフサイクルに対応するランタイム限定の低遅延対象を設定し、空の対象で基準のPDCへ戻す。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
+- `setTargetedMidiTarget` は Play Surface の表示ライフサイクルに対応するランタイム限定のMIDI対象を設定し、空の対象で明示的な対象を解除する。Timeline由来のPDCは対象の変更によって迂回せず、ライブ入力だけが即時経路を使う。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
