@@ -142,9 +142,24 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ### 3.3 エラー規約
 
-- 全命令は `Result<T, String>` を返す。失敗は人間可読な説明文字列となり、`dataSafe` 相当の保証（音声・保存データは安全）はメッセージに含める
+- Tauri command の失敗は `NativeCommandError` として `code`、`message`、`details` を返す。`message` は表示用、`code` と `details` は機械判定用であり、UI はメッセージ文字列を解析しない
+- Native 音声エラーは `kind`、`operation`、`details` を保ったまま `NativeAudioError`、Host の `ProtocolError`、Tauri の `NativeCommandError` へ渡される。境界ごとに情報を文字列へ潰さない
 - セーフモード中の音声系・プラグイン系命令は明示エラーを返す（`architecture.md §7`）
+- Native 実行時に音声デバイスやランタイムを別の既定値へ黙って切り替えない。要求された操作に失敗した場合は、エラーと現在の状態を返す
 - 制作状態を変更する命令の応答に含まれる `CanonicalState` は「その操作を含む最新の正準状態」であり、UI は `canonical.session` を表示状態へ反映する
+
+```json
+{
+  "code": "commandFailed",
+  "message": "requested audio device was rejected",
+  "details": {
+    "domain": "nativeAudio",
+    "kind": "deviceRejected",
+    "operation": "audio.setDriver",
+    "details": { "driver": "ASIO", "device": "Unavailable" }
+  }
+}
+```
 
 ### 3.4 UI呼び出しの順序
 
@@ -158,17 +173,17 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                    | ペイロード                | 意味                                                                                                                    |
-| --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `runtime-startup-finished`  | `{ succeeded }`           | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                        |
-| `audio-status`              | `AudioStatus`             | 音声状態の変更（ready / muted / starting / faulted / offline、緊急ミュート、フィードバック検知、Preview再生中かどうか） |
-| `audio-meters`              | `AudioMeters`             | 入力・出力ピーク、無効サンプル数（高頻度）                                                                              |
-| `transport-status`          | `TransportStatus`         | トランスポート状態（再生位置・再生中フラグ）                                                                            |
-| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態（queued / preparing / active / failed）                                                      |
-| `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                              |
-| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                           |
-| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                             |
-| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                  |
+| イベント                    | ペイロード                | 意味                                                                                        |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`  | `{ succeeded }`           | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                            |
+| `audio-status`              | `AudioStatus`             | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                     |
+| `audio-meters`              | `AudioMeters`             | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                    |
+| `transport-status`          | `TransportStatus`         | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                          |
+| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態と世代・音声環境 revision（queued / preparing / active / failed） |
+| `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                  |
+| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                               |
+| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                 |
+| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する      |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。
@@ -182,40 +197,42 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 - 起動: `riffra-audio.exe --serve`。`riffra-runtime::AudioSupervisor`が起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
 - 送受信: Rust は **1コマンド = 1行のJSON** を stdin に書き、サイドカーは **1行のJSON** で応答する（JSON Lines）
 - 相関: コマンドバス（`command_bus.rs`）が各コマンドに `requestId`（原子カウンタ）を付与する。応答は同一 `requestId` を返し、`Condvar` で待機側へ届く
-- タイムアウト: 通常コマンドは `COMMAND_ACK_TIMEOUT`。投影の `prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` に制限（遅いVSTはセッション操作をブロックしない）
+- 応答待ち: 通常コマンドには `COMMAND_ACK_TIMEOUT` を設ける。投影の `prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` を境界として失敗を報告するが、待ち時間を延ばすことや暗黙の再試行を成功条件にはしない
 
 ### 5.2 コマンド分類
 
-| 分類                | コマンド                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------- |
-| 状態照会            | `status`、`meterStatus`                                                                     |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`              |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                              |
-| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setMasterGainDb`               |
-| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す） |
-| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                         |
-| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                  |
-| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`            |
+| 分類                | コマンド                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 状態照会            | `status`、`meterStatus`                                                                                                    |
+| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                             |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                             |
+| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setStartupGuard`、`setRuntimeRecoveryMute`、`setMasterGainDb` |
+| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                               |
+| 録音                | `startArrangeRecording`、`stopArrangeRecording`（raw/processed のパスとフレーム範囲を渡す）                                |
+| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                        |
+| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                 |
+| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                           |
+| トランスポート準備  | `setTransportStarting`                                                                                                     |
 
 ### 5.3 応答とエラー
 
 - 成功応答: `{"type":"audioStatus","requestId":N, ...}`（状態スナップショット）または `{"type":"audioMeters","requestId":N, ...}`
-- 失敗応答: `{"type":"error","requestId":N,"scope":"...","message":"...","dataSafe":true}`。`scope` は `audioDevice` / `plugin` / `recording`、未指定は `protocol`。`dataSafe` は「保存済みデータは無事」の宣言
-- ack 待ちの間も状態イベントは流れ続ける。応答が届かない場合、Rust はタイムアウト後に世代跨ぎの再試行・再起動判断を行う（`recovery.rs`）
+- 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
+- `setAudioDriver` はデバイスを有効化してから応答する。デバイス有効化の失敗は以前のデバイスだけを復元し、投影グラフの失敗は現在のデバイスを維持したまま `RuntimeRecovery` のミュートと投影失敗を返す
+- ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
 
-| type                                                      | 内容                                                                                                 |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview再生状態の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）   |
-| `audioMeters`                                             | ピーク・無効サンプル・緊急ミュート・フィードバック検知。Preview状態の変化は `audioStatus` として通知 |
-| `transportStatus`                                         | トランスポート状態の変化                                                                             |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                             |
-| `keepAlive`                                               | 生存確認（Rustは無視）                                                                               |
-| `error`                                                   | scope 付き失敗通知                                                                                   |
+| type                                                      | 内容                                                                                                                       |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
+| `audioMeters`                                             | ピーク・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知                       |
+| `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                        |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                   |
+| `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
+| `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
 
-フィードバック検知（`feedbackSuspected`）は緊急ミュートと連動し、原因表示のために Rust 側の `MuteCause` と突き合わせられる。
+フィードバック検知（`feedbackSuspected`）は `FeedbackProtection` のミュート理由と連動する。ミュート理由は Native の bitmask を正本とし、ユーザー操作、起動保護、ランタイム復旧、デバイス障害、フィードバック保護を所有者ごとに解除する。
 
 ---
 
@@ -223,7 +240,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 - 起動: `render_timeline` 命令のたびに、`riffra-runtime::render` がComposition Rootから渡された `RuntimeBinaries` の `riffra-render` executableを1回起動する。DesktopとHeadlessで同じ配置規則を使う
 - 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
-- 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","message":...}`
+- 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","kind":"renderRejected","operation":"renderTimelineOffline","message":...,"details":{...}}`
 - プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
 - レンダー計画（開始・終了ティック、レンジ解決、出力パス `renders/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
 
@@ -237,7 +254,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                    |
 | `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化） |
 
-プローブは共有RuntimeのProbe Coordinatorを通して直列に起動し、コーディネータの待機とプロセス実行の双方にタイムアウトを適用する。タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。
+プローブは共有RuntimeのProbe Coordinatorを通して直列に起動し、コーディネータの待機とプロセス実行の双方にタイムアウトを適用する。タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。プラグインスキャンの失敗も `kind`、`operation`、`details` を持つ構造化応答として扱う。
 
 ---
 
@@ -426,4 +443,5 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 - 制作状態を変更するメソッドは `CanonicalState` を含む結果を返す
 - 起動時は `CanonicalState` を受け取り、履歴操作の可否はCoreのHistoryStateを参照する
 - 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
+- Tauri の失敗は `NativeCommandError` として受け取り、`code` と `details` で分岐する。Native の `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
 - テストでは `native-api-fake.ts` を注入し、呼び出し記録、設定済み応答・失敗、イベント発火だけを扱う。制作規則、履歴、validationはCoreのテストが担う
