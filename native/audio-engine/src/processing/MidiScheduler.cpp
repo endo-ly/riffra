@@ -83,6 +83,7 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
                              juce::MidiBuffer& destination) noexcept {
     if (sampleCount <= 0) return;
+    std::size_t scheduledEvents = 0;
     const auto rangeEnd = rangeStart + sampleCount;
     for (const auto& clip : clips) {
         if (clip.muted || clip.lengthSamples <= 0) continue;
@@ -119,8 +120,10 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                 if (!inRange) break;
                 const auto absoluteSample = iterationStart + event->sampleOffset;
                 const auto offset = static_cast<int>(absoluteSample - rangeStart);
-                if (offset >= 0 && offset < sampleCount)
-                    destination.addEvent(event->message, offset);
+                if (offset >= 0 && offset < sampleCount) {
+                    if (scheduledEvents >= kMaximumEventsPerBlock) return;
+                    if (destination.addEvent(event->message, offset)) ++scheduledEvents;
+                }
             }
             if (!clip.loop) break;
         }

@@ -68,5 +68,22 @@ TEST(MidiSchedulerTest, EmitsLoopBoundaryOffBeforeTheNextLoopOn) {
     EXPECT_TRUE(messages[1].isNoteOn());
 }
 
+TEST(MidiSchedulerTest, BoundsDenseBlocksWithoutGrowingTheRealtimeEventCount) {
+    CompiledMidiClip compiled;
+    compiled.startSample = 0;
+    compiled.lengthSamples = 512;
+    for (std::int64_t offset = 0; offset < 300; ++offset)
+        compiled.events.push_back(
+            {offset, 0, juce::MidiMessage::controllerEvent(1, 1, static_cast<int>(offset % 127))});
+
+    juce::MidiBuffer buffer;
+    MidiScheduler::prepareBuffer(buffer);
+    MidiScheduler::schedule({compiled}, 0, 512, buffer);
+
+    std::size_t eventCount = 0;
+    for (const auto metadata : buffer) ++eventCount;
+    EXPECT_EQ(eventCount, MidiScheduler::kMaximumEventsPerBlock);
+}
+
 }  // namespace
 }  // namespace riffra

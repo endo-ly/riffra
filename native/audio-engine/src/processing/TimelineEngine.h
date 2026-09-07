@@ -61,6 +61,8 @@ public:
     [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
                                            const juce::MidiMessage& message,
                                            juce::String& error) noexcept;
+    [[nodiscard]] bool setTargetedMidiTarget(const juce::String& trackId,
+                                             juce::String& error) noexcept;
     [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
@@ -145,7 +147,6 @@ private:
     struct Track final {
         juce::String id;
         std::vector<std::unique_ptr<Clip>> clips;
-        std::vector<MidiScheduler::CompiledMidiClip> midiClips;
         std::unique_ptr<TrackRuntime> runtime;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
@@ -157,35 +158,6 @@ private:
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
         bool reuseRuntimeDevices = false;
-        juce::AudioBuffer<float> mixBuffer;
-        juce::AudioBuffer<float> processedBuffer;
-        juce::AudioBuffer<float> postEffectClipBuffer;
-        juce::AudioBuffer<float> liveInputBuffer;
-        RecordingCaptureTrackState recordingCapture;
-        juce::AudioBuffer<float> delayBuffer;
-        juce::AudioBuffer<float> postEffectDelayBuffer;
-        std::int64_t delayWritePosition = 0;
-        std::int64_t postEffectDelayWritePosition = 0;
-        std::int64_t compensationDelaySamples = 0;
-        std::int64_t postEffectCompensationDelaySamples = 0;
-        std::int64_t pluginDelaySamples = 0;
-        std::int64_t pluginTailSamples = 0;
-        double outputSampleRate = 0.0;
-        int preparedBlockSize = 0;
-        float gainDb = 0.0f;
-        float pan = 0.0f;
-        AutomationRuntime volumeAutomation;
-        AutomationRuntime panAutomation;
-        bool muted = false;
-        bool solo = false;
-        bool instrument = false;
-        bool armed = false;
-        int audioInputChannel = -1;
-        bool monitorInput = false;
-        bool lowLatencyMonitoring = false;
-        juce::String midiDeviceId;
-        int midiChannel = 0;
-        juce::MidiBuffer midiBuffer;
     };
 
     struct PreparedTimeline final {

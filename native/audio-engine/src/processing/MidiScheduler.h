@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -54,6 +55,15 @@ struct CompiledMidiClip final {
 class MidiScheduler final {
 public:
     using CompiledMidiClip = riffra::CompiledMidiClip;
+
+    static constexpr std::size_t kMaximumEventsPerBlock = 256;
+    static constexpr std::size_t kMaximumMessageBytes = 3;
+    static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
+
+    static void prepareBuffer(juce::MidiBuffer& buffer) noexcept {
+        buffer.ensureSize(
+            static_cast<int>(kMaximumEventsPerBlock * (kMaximumMessageBytes + kMidiEventOverhead)));
+    }
 
     [[nodiscard]] static bool compile(const MidiClip& source, const TimelineTimebase& timebase,
                                       double sampleRate, CompiledMidiClip& destination,

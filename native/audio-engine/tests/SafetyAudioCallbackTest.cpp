@@ -201,12 +201,23 @@ TEST(SafetyAudioCallbackTest, DeviceFaultRemainsAfterUserMuteRelease) {
 }
 
 TEST(SafetyAudioCallbackTest, RequiresFaultWhenActiveDeviceDisappears) {
-    EXPECT_TRUE(deviceLossRequiresFault(false, true));
-    EXPECT_FALSE(deviceLossRequiresFault(true, true));
+    EXPECT_TRUE(deviceLossRequiresFault(false, false));
+    EXPECT_FALSE(deviceLossRequiresFault(true, false));
 }
 
-TEST(SafetyAudioCallbackTest, DoesNotFaultWhileMutedAndIdle) {
-    EXPECT_FALSE(deviceLossRequiresFault(false, false));
+TEST(SafetyAudioCallbackTest, DeviceTransitionSuppressesFault) {
+    EXPECT_FALSE(deviceLossRequiresFault(false, true));
+}
+
+TEST(SafetyAudioCallbackTest, DeviceTransitionSuppressesFaultWithoutInspectingMuteState) {
+    SafetyAudioCallback callback;
+    callback.setUserEmergencyMute(true);
+    callback.setDeviceTransitionActive(true);
+
+    EXPECT_FALSE(deviceLossRequiresFault(false, callback.isDeviceTransitionActive()));
+
+    callback.setDeviceTransitionActive(false);
+    EXPECT_TRUE(deviceLossRequiresFault(false, callback.isDeviceTransitionActive()));
 }
 
 TEST(SafetyAudioCallbackTest, ReportsDisconnectedDeviceAsFaultedStatus) {

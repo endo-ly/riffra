@@ -78,6 +78,14 @@ bool SafetyAudioCallback::isDeviceFaulted() const noexcept {
     return hasMuteReason(MuteReason::DeviceFault);
 }
 
+void SafetyAudioCallback::setDeviceTransitionActive(const bool active) noexcept {
+    deviceTransitionActive.store(active, std::memory_order_release);
+}
+
+bool SafetyAudioCallback::isDeviceTransitionActive() const noexcept {
+    return deviceTransitionActive.load(std::memory_order_acquire);
+}
+
 void SafetyAudioCallback::setMasterGainDb(const float gainDb) noexcept {
     const auto safeGain = juce::jlimit(kMinimumGainDb, kMaximumGainDb, gainDb);
     masterGainDb.store(safeGain, std::memory_order_release);

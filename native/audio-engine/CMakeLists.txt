@@ -156,7 +156,6 @@ target_sources(riffra-render-core PRIVATE
   src/processing/AutomationRuntime.h
   src/processing/MidiScheduler.cpp
   src/processing/MidiScheduler.h
-  src/processing/TrackRuntime.cpp
   src/processing/TrackRuntime.h
   src/processing/OfflineRenderer.cpp
   src/processing/OfflineRenderer.h
@@ -458,6 +457,7 @@ if(BUILD_TESTING)
     tests/PluginChainTest.cpp
     tests/RecordingSessionTest.cpp
     tests/ArrangeRecordingSessionTest.cpp
+    tests/AutomationRuntimeTest.cpp
     tests/BoundedMpmcQueueTest.cpp
     tests/MidiSchedulerTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp

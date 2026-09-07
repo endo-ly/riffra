@@ -215,6 +215,13 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
+            if (type == "setFeedbackProtection") {
+                const auto active = static_cast<bool>(command.getProperty("active", false));
+                callback.setFeedbackProtection(active);
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
+                continue;
+            }
             if (type == "setStartupGuard" || type == "setRuntimeRecoveryMute") {
                 const auto active = static_cast<bool>(command.getProperty("active", true));
                 if (type == "setStartupGuard")
@@ -904,19 +911,40 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 writeJson(AudioDeviceService::currentMeters(callback));
                 continue;
             }
+            if (type == "setTargetedMidiTarget") {
+                if (timelineOperationRunning.load(std::memory_order_acquire)) {
+                    writeJson(makeError("timelineBusy",
+                                        "The Arrangement Graph is still changing; the MIDI target "
+                                        "can be updated shortly."));
+                    continue;
+                }
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                juce::String timelineError;
+                if (!timelineEngine.setTargetedMidiTarget(trackId, timelineError)) {
+                    writeJson(makeError("targetedMidi", timelineError, "liveMidi.target.set"));
+                    continue;
+                }
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
+                continue;
+            }
             if (type == "recoverAudioDevice") {
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
                 manager.getAudioDeviceSetup(recoverySetup);
+                callback.setDeviceTransitionActive(true);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
                 callback.setRuntimeRecoveryMute(true);
                 const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
                 if (recoveryError.isNotEmpty()) {
-                    writeJson(makeError("deviceRejected", recoveryError, "audioDevice.recover"));
+                    callback.setDeviceTransitionActive(false);
+                    callback.setDeviceFaulted(true);
+                    writeJson(makeError("deviceLost", recoveryError, "audioDevice.recover"));
                     continue;
                 }
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
+                callback.setDeviceTransitionActive(false);
                 writeJson(AudioDeviceService::currentStatus(
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
@@ -946,9 +974,11 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 const auto previousInputChannel = callback.getInputChannel();
                 juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
                 manager.getAudioDeviceSetup(previousSetup);
+                callback.setDeviceTransitionActive(true);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
                 callback.setRuntimeRecoveryMute(true);
+                bool restoredPreviousDevice = false;
                 const auto restorePreviousDevice = [&]() {
                     manager.closeAudioDevice();
                     AudioConfiguration previous;
@@ -963,7 +993,11 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         callback.setInputChannel(previousInputChannel);
                         manager.addAudioCallback(&callback);
                         callback.setDeviceFaulted(false);
-                        callback.setRuntimeRecoveryMute(false);
+                        callback.setDeviceTransitionActive(false);
+                        restoredPreviousDevice = true;
+                    } else {
+                        callback.setDeviceTransitionActive(false);
+                        callback.setDeviceFaulted(true);
                     }
                     return restoreError;
                 };
@@ -974,8 +1008,9 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     details->setProperty("driver", requested.driver);
                     details->setProperty("inputDevice", requested.inputDevice);
                     details->setProperty("outputDevice", requested.outputDevice);
+                    details->setProperty("restoredPreviousDevice", restoredPreviousDevice);
                     writeJson(makeError(
-                        "deviceRejected",
+                        restoredPreviousDevice ? "deviceRejected" : "deviceLost",
                         setupError +
                             (restoreError.isEmpty()
                                  ? ". The previous device was restored."
@@ -990,17 +1025,24 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         : 0;
                 if (requested.inputChannel >= activeInputs) {
                     const auto restoreError = restorePreviousDevice();
+                    auto* details = new juce::DynamicObject();
+                    details->setProperty("driver", requested.driver);
+                    details->setProperty("inputDevice", requested.inputDevice);
+                    details->setProperty("outputDevice", requested.outputDevice);
+                    details->setProperty("restoredPreviousDevice", restoredPreviousDevice);
                     const auto message =
                         juce::String("The selected physical input channel is unavailable.") +
                         (restoreError.isEmpty()
                              ? " The previous device was restored."
                              : " The previous device could not be restored: " + restoreError);
-                    writeJson(makeError("deviceRejected", message, "audioDevice.activate"));
+                    writeJson(makeError(restoredPreviousDevice ? "deviceRejected" : "deviceLost",
+                                        message, "audioDevice.activate", juce::var(details)));
                     continue;
                 }
                 callback.setInputChannel(requested.inputChannel);
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
+                callback.setDeviceTransitionActive(false);
                 writeJson(AudioDeviceService::currentStatus(
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;

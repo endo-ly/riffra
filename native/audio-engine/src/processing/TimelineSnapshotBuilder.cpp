@@ -159,39 +159,45 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         auto track = std::make_unique<Track>();
         track->runtime = std::make_unique<TrackRuntime>();
         track->id = trackValue.getProperty("id", {}).toString();
-        track->outputSampleRate = outputSampleRate;
-        track->preparedBlockSize = maximumBlockSize;
-        track->instrument = trackValue.getProperty("kind", {}).toString() == "instrument";
-        track->armed = static_cast<bool>(trackValue.getProperty("armed", false));
+        track->runtime->outputSampleRate = outputSampleRate;
+        track->runtime->preparedBlockSize = maximumBlockSize;
+        track->runtime->instrumentTrack =
+            trackValue.getProperty("kind", {}).toString() == "instrument";
+        track->runtime->armed = static_cast<bool>(trackValue.getProperty("armed", false));
         const auto midiInput = trackValue.getProperty("midiInput", {});
         if (midiInput.isObject()) {
-            track->midiDeviceId = midiInput.getProperty("deviceId", {}).toString();
-            track->midiChannel = static_cast<int>(midiInput.getProperty("channel", 0));
+            track->runtime->midiDeviceId = midiInput.getProperty("deviceId", {}).toString();
+            track->runtime->midiChannel = static_cast<int>(midiInput.getProperty("channel", 0));
         }
-        armedInstrumentTrackState |= track->instrument && track->armed;
+        armedInstrumentTrackState |= track->runtime->instrumentTrack && track->runtime->armed;
         if (track->id.isEmpty()) {
             error = "Timeline track requires an id.";
             return false;
         }
-        track->gainDb =
+        track->runtime->gainDb =
             juce::jlimit(-90.0f, 24.0f, static_cast<float>(trackValue.getProperty("gainDb", 0.0)));
-        track->pan =
+        track->runtime->pan =
             juce::jlimit(-1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0)));
-        track->muted = static_cast<bool>(trackValue.getProperty("muted", false));
-        track->solo = static_cast<bool>(trackValue.getProperty("solo", false));
-        prepared->hasSolo = prepared->hasSolo || track->solo;
+        track->runtime->muted = static_cast<bool>(trackValue.getProperty("muted", false));
+        track->runtime->solo = static_cast<bool>(trackValue.getProperty("solo", false));
+        prepared->hasSolo = prepared->hasSolo || track->runtime->solo;
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
-        track->monitorInput =
-            ArrangementGraph::shouldMonitorAudioInput(monitoring, track->armed, track->instrument);
-        track->lowLatencyMonitoring = track->instrument ? track->armed : track->monitorInput;
-        track->recordingEffectRuntimeRequired = !track->instrument && track->armed;
-        if (track->monitorInput) monitorLiveInputState = true;
+        track->runtime->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
+            monitoring, track->runtime->armed, track->runtime->instrumentTrack);
+        track->runtime->baseLowLatencyMonitoring =
+            track->runtime->instrumentTrack ? track->runtime->armed : track->runtime->monitorInput;
+        track->runtime->lowLatencyMonitoring = track->runtime->baseLowLatencyMonitoring;
+        track->recordingEffectRuntimeRequired =
+            !track->runtime->instrumentTrack && track->runtime->armed;
+        if (track->runtime->monitorInput) monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
         if (audioInput.isObject())
-            track->audioInputChannel = static_cast<int>(audioInput.getProperty("channelIndex", -1));
-        if (track->monitorInput && track->audioInputChannel >= 0 && track->audioInputChannel < 32)
-            monitoringInputChannelsState |= std::uint32_t{1}
-                                            << static_cast<unsigned>(track->audioInputChannel);
+            track->runtime->audioInputChannel =
+                static_cast<int>(audioInput.getProperty("channelIndex", -1));
+        if (track->runtime->monitorInput && track->runtime->audioInputChannel >= 0 &&
+            track->runtime->audioInputChannel < 32)
+            monitoringInputChannelsState |=
+                std::uint32_t{1} << static_cast<unsigned>(track->runtime->audioInputChannel);
 
         const auto automation =
             trackValue.getProperty("automation", juce::var(juce::Array<juce::var>{}));
@@ -232,8 +238,8 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 });
             }
         }
-        track->volumeAutomation.setPoints(std::move(volumeAutomation));
-        track->panAutomation.setPoints(std::move(panAutomation));
+        track->runtime->volumeAutomation.setPoints(std::move(volumeAutomation));
+        track->runtime->panAutomation.setPoints(std::move(panAutomation));
 
         const auto rack = trackValue.getProperty("rack", {});
         const auto instrument = trackValue.getProperty("instrument", {});
@@ -261,13 +267,13 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                         track->instrumentTopologySignature &&
                     (*existing)->recordingEffectRuntimeRequired ==
                         track->recordingEffectRuntimeRequired &&
-                    (*existing)->outputSampleRate == track->outputSampleRate &&
-                    (*existing)->preparedBlockSize == track->preparedBlockSize) {
+                    (*existing)->runtime->outputSampleRate == track->runtime->outputSampleRate &&
+                    (*existing)->runtime->preparedBlockSize == track->runtime->preparedBlockSize) {
                     sameRuntimeTopology = true;
                     existingEffectState = (*existing)->effectState;
                     existingInstrumentState = (*existing)->instrumentState;
-                    track->pluginDelaySamples = (*existing)->pluginDelaySamples;
-                    track->pluginTailSamples = (*existing)->pluginTailSamples;
+                    track->runtime->pluginDelaySamples = (*existing)->runtime->pluginDelaySamples;
+                    track->runtime->pluginTailSamples = (*existing)->runtime->pluginTailSamples;
                 }
             }
         }
@@ -283,9 +289,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                                                 track->id + "/track-effect"))
                 return false;
             if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
-                !track->recordingCapture.effectChain.load(devices, outputSampleRate,
-                                                          maximumBlockSize, error,
-                                                          track->id + "/recording-effect"))
+                !track->runtime->recordingCapture.effectChain.load(devices, outputSampleRate,
+                                                                   maximumBlockSize, error,
+                                                                   track->id + "/recording-effect"))
                 return false;
         }
         if (instrument.isObject() && !track->reuseRuntimeDevices) {
@@ -325,10 +331,10 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             }
         }
         if (!track->reuseRuntimeDevices) {
-            track->pluginDelaySamples = track->runtime->pluginLatencySamples();
-            track->pluginTailSamples = track->runtime->pluginTailSamples();
+            track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
+            track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
         }
-        maximumPluginDelay = std::max(maximumPluginDelay, track->pluginDelaySamples);
+        maximumPluginDelay = std::max(maximumPluginDelay, track->runtime->pluginDelaySamples);
 
         const auto clips = trackValue.getProperty("audioClips", {});
         if (!clips.isArray()) {
@@ -495,27 +501,31 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate, compiled,
                                         error))
                 return false;
-            track->midiClips.push_back(std::move(compiled));
+            track->runtime->midiClips.push_back(std::move(compiled));
         }
-        track->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->recordingCapture.processedBuffer.setSize(2, maximumBlockSize, false, true, false);
+        MidiScheduler::prepareBuffer(track->runtime->midiBuffer);
+        track->runtime->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->recordingCapture.processedBuffer.setSize(2, maximumBlockSize, false, true,
+                                                                 false);
         prepared->tracks.push_back(std::move(track));
     }
     for (auto& track : prepared->tracks) {
-        track->compensationDelaySamples =
-            ArrangementGraph::compensationDelay(maximumPluginDelay, track->pluginDelaySamples);
-        track->delayBuffer.setSize(
-            2, static_cast<int>(track->compensationDelaySamples + maximumBlockSize + 1), false,
-            true, false);
-        track->delayBuffer.clear();
-        track->postEffectCompensationDelaySamples = maximumPluginDelay;
-        track->postEffectDelayBuffer.setSize(
-            2, static_cast<int>(track->postEffectCompensationDelaySamples + maximumBlockSize + 1),
+        track->runtime->compensationDelaySamples = ArrangementGraph::compensationDelay(
+            maximumPluginDelay, track->runtime->pluginDelaySamples);
+        track->runtime->delayBuffer.setSize(
+            2, static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
             false, true, false);
-        track->postEffectDelayBuffer.clear();
+        track->runtime->delayBuffer.clear();
+        track->runtime->postEffectCompensationDelaySamples = maximumPluginDelay;
+        track->runtime->postEffectDelayBuffer.setSize(
+            2,
+            static_cast<int>(track->runtime->postEffectCompensationDelaySamples + maximumBlockSize +
+                             1),
+            false, true, false);
+        track->runtime->postEffectDelayBuffer.clear();
     }
 
     return true;

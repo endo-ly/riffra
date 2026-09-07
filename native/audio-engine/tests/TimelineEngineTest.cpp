@@ -263,6 +263,18 @@ public:
                               blockSize, error);
     }
 
+    static bool installTrackInstrument(TimelineEngine& engine, const juce::String& trackId,
+                                       std::unique_ptr<PluginRack> rack) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr) return false;
+        const auto found =
+            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+                         [&trackId](const auto& item) { return item->id == trackId; });
+        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        (*found)->runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
+        return true;
+    }
+
     static bool setPlaybackCompensationForTest(TimelineEngine& engine, const juce::String& trackId,
                                                const std::int64_t samples) {
         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
@@ -272,14 +284,26 @@ public:
                          [&trackId](const auto& item) { return item->id == trackId; });
         if (found == engine.timeline->tracks.end()) return false;
         auto& track = *(*found);
-        track.compensationDelaySamples = samples;
-        track.postEffectCompensationDelaySamples = samples;
-        const auto bufferSize = static_cast<int>(samples + track.preparedBlockSize + 1);
-        track.delayBuffer.setSize(2, bufferSize, false, true, false);
-        track.delayBuffer.clear();
-        track.postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
-        track.postEffectDelayBuffer.clear();
+        if (track.runtime == nullptr) return false;
+        track.runtime->compensationDelaySamples = samples;
+        track.runtime->postEffectCompensationDelaySamples = samples;
+        const auto bufferSize = static_cast<int>(samples + track.runtime->preparedBlockSize + 1);
+        track.runtime->delayBuffer.setSize(2, bufferSize, false, true, false);
+        track.runtime->delayBuffer.clear();
+        track.runtime->postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
+        track.runtime->postEffectDelayBuffer.clear();
         return true;
+    }
+
+    static bool trackUsesLowLatencyMonitoring(const TimelineEngine& engine,
+                                              const juce::String& trackId) {
+        const juce::SpinLock::ScopedTryLockType lock(engine.timelineLock);
+        if (!lock.isLocked() || engine.timeline == nullptr) return false;
+        const auto found =
+            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+                         [&trackId](const auto& item) { return item->id == trackId; });
+        return found != engine.timeline->tracks.end() && (*found)->runtime != nullptr &&
+               (*found)->runtime->lowLatencyMonitoring;
     }
 
     static bool trackEffectChainProcessesOnce() {
@@ -449,16 +473,18 @@ public:
             // Simulate a Project where another Track's plugin is the latency
             // leader. The live instrument track would normally be delayed by
             // this compensation on the timeline path.
-            liveTrack.pluginDelaySamples = 0;
-            liveTrack.compensationDelaySamples = 4;
-            liveTrack.delayBuffer.setSize(
-                2, static_cast<int>(liveTrack.compensationDelaySamples + 33), false, true, false);
-            liveTrack.delayBuffer.clear();
+            liveTrack.runtime->pluginDelaySamples = 0;
+            liveTrack.runtime->compensationDelaySamples = 4;
+            liveTrack.runtime->delayBuffer.setSize(
+                2, static_cast<int>(liveTrack.runtime->compensationDelaySamples + 33), false, true,
+                false);
+            liveTrack.runtime->delayBuffer.clear();
         }
 
         if (!engine.enqueueTargetedMidi("track:live-instrument",
                                         juce::MidiMessage::noteOn(1, 60, 0.8f), error))
             return false;
+        if (!engine.setTargetedMidiTarget("track:live-instrument", error)) return false;
 
         std::array<float, 32> left{};
         std::array<float, 32> right{};
@@ -539,7 +565,7 @@ public:
                 return false;
             preparedSampleRate = engine.pendingTimeline->outputSampleRate;
             preparedBlockSize = engine.pendingTimeline->preparedBlockSize;
-            trackSampleRate = engine.pendingTimeline->tracks.front()->outputSampleRate;
+            trackSampleRate = engine.pendingTimeline->tracks.front()->runtime->outputSampleRate;
             reusesRuntimeDevices = engine.pendingTimeline->tracks.front()->reuseRuntimeDevices;
         }
         if (reusesRuntimeDevices || std::abs(preparedSampleRate - 44'100.0) > 0.1 ||
@@ -952,9 +978,11 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = kSynthDelay;
-                                    trackPtr->pluginTailSamples = kSynthTail;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack &&
+                                    trackPtr->runtime->armed) {
+                                    trackPtr->runtime->pluginDelaySamples = kSynthDelay;
+                                    trackPtr->runtime->pluginTailSamples = kSynthTail;
                                 }
                             }
                         }
@@ -1062,9 +1090,11 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = 0;
-                                    trackPtr->pluginTailSamples = 0;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack &&
+                                    trackPtr->runtime->armed) {
+                                    trackPtr->runtime->pluginDelaySamples = 0;
+                                    trackPtr->runtime->pluginTailSamples = 0;
                                 }
                             }
                         }
@@ -1144,8 +1174,9 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed)
-                                    trackPtr->pluginDelaySamples = kBsDelay;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack && trackPtr->runtime->armed)
+                                    trackPtr->runtime->pluginDelaySamples = kBsDelay;
                             }
                         }
                     }
@@ -1203,9 +1234,11 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = 0;
-                                    trackPtr->pluginTailSamples = 0;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack &&
+                                    trackPtr->runtime->armed) {
+                                    trackPtr->runtime->pluginDelaySamples = 0;
+                                    trackPtr->runtime->pluginTailSamples = 0;
                                 }
                             }
                         }
@@ -1689,6 +1722,74 @@ TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender) {
     EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
 }
 
+TEST(TimelineEngineTest, TargetedMidiLowLatencyFollowsTheExplicitSurfaceTarget) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:target"), formats, 48'000.0, 32, error));
+    InstrumentTrace trace;
+    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                            48'000.0, 32, error);
+    ASSERT_NE(rack, nullptr) << error.toStdString();
+    ASSERT_TRUE(
+        TimelineEngineTestPeer::installTrackInstrument(engine, "track:target", std::move(rack)));
+
+    // Act
+    ASSERT_TRUE(engine.setTargetedMidiTarget("track:target", error)) << error.toStdString();
+
+    // Assert
+    EXPECT_TRUE(TimelineEngineTestPeer::trackUsesLowLatencyMonitoring(engine, "track:target"));
+
+    // Act
+    ASSERT_TRUE(engine.setTargetedMidiTarget({}, error)) << error.toStdString();
+
+    // Assert
+    EXPECT_FALSE(TimelineEngineTestPeer::trackUsesLowLatencyMonitoring(engine, "track:target"));
+}
+
+TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:tail"), formats, 48'000.0, 32, error));
+    InstrumentTrace instrumentTrace;
+    auto instrument = PluginRackTestPeer::install(
+        std::make_unique<TestInstrumentProcessor>(instrumentTrace), 48'000.0, 32, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:tail",
+                                                               std::move(instrument)));
+    std::vector<int> effectCalls;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
+        engine, "track:tail", "effect:tail",
+        std::make_unique<TestChainProcessor>(1, 1.0f, 0, effectCalls, 0.25), 48'000.0, 32, error))
+        << error.toStdString();
+
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    ASSERT_TRUE(
+        engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+    const auto callsWithNoteHeld = effectCalls.size();
+
+    // Act
+    ASSERT_TRUE(engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOff(1, 60), error));
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+    const auto callsAtNoteOff = effectCalls.size();
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert
+    EXPECT_GT(callsWithNoteHeld, 0u);
+    EXPECT_GT(callsAtNoteOff, callsWithNoteHeld);
+    EXPECT_GT(effectCalls.size(), callsAtNoteOff);
+}
+
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
     // Arrange
     // Act / Assert
@@ -2079,7 +2180,7 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     EXPECT_EQ(captureSink.endCount, 1);
 }
 
-TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain) {
+TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();

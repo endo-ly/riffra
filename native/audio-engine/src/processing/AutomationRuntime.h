@@ -16,12 +16,6 @@ public:
         float value = 0.0f;
     };
 
-    struct Block final {
-        float start = 0.0f;
-        float increment = 0.0f;
-        bool automated = false;
-    };
-
     class Cursor final {
     public:
         Cursor(const AutomationRuntime& lane, const std::int64_t sample) noexcept
@@ -68,15 +62,6 @@ public:
 
     [[nodiscard]] Cursor cursorAt(const std::int64_t sample) const noexcept {
         return Cursor(*this, sample);
-    }
-
-    [[nodiscard]] Block block(const std::int64_t sample, const int sampleCount,
-                              const float fallback) const noexcept {
-        if (points.empty() || sampleCount <= 0) return {fallback, 0.0f, false};
-        auto cursor = cursorAt(sample);
-        const auto start = cursor.valueAt(sample, fallback);
-        const auto end = cursor.valueAt(sample + sampleCount, fallback);
-        return {start, (end - start) / static_cast<float>(sampleCount), true};
     }
 
 private:

@@ -36,6 +36,8 @@ public:
     [[nodiscard]] bool hasMuteReason(MuteReason reason) const noexcept;
     void setDeviceFaulted(bool faulted) noexcept;
     [[nodiscard]] bool isDeviceFaulted() const noexcept;
+    void setDeviceTransitionActive(bool active) noexcept;
+    [[nodiscard]] bool isDeviceTransitionActive() const noexcept;
     void setMasterGainDb(float gainDb) noexcept;
     void setInputChannel(int channel) noexcept;
     [[nodiscard]] int getInputChannel() const noexcept;
@@ -122,6 +124,7 @@ private:
     std::atomic<std::uint64_t> callbackOverruns{0};
     std::atomic<bool> resetGainOnNextCallback{true};
     std::atomic<bool> feedbackSuspected{false};
+    std::atomic<bool> deviceTransitionActive{false};
     std::atomic<double> activeSampleRate{0.0};
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;

@@ -371,9 +371,7 @@ DeviceFaultWatcher::DeviceFaultWatcher(juce::AudioDeviceManager& manager,
 
 void DeviceFaultWatcher::changeListenerCallback(juce::ChangeBroadcaster*) {
     const bool present = deviceManager.getCurrentAudioDevice() != nullptr;
-    const bool audioActive =
-        !audioCallback.isMuted() || audioCallback.recordingStatus().getProperty("active", false);
-    if (!riffra::deviceLossRequiresFault(present, audioActive)) return;
+    if (!riffra::deviceLossRequiresFault(present, audioCallback.isDeviceTransitionActive())) return;
     if (audioCallback.isDeviceFaulted()) return;
     audioCallback.setDeviceFaulted(true);
     juce::String ignored;
