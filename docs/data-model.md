@@ -111,6 +111,8 @@ Render結果は音声書き出しの成果物であり、DataRootの `renders/` 
 
 ディスク上の構成は `recordings/inbox|archive|library/<take>/`（manifest.json + raw/processed WAV + midi.json）。再生・編集に使うのはキャプチャから登録された正準 Asset であり、テイクディレクトリはリカバリ用の記録に留まる。
 
+`AudioClip.take_variant` は、録音テイクの音源だけでなくトラックエフェクトの適用位置も表す。`raw` は現在の Track Effect Chain を通り、`processed` は録音時の Track Effect Chain が適用済みの音源としてその Chain を通らない。どちらの音源にも、クリップのゲイン・パン・フェードと、トラックのゲイン・パン・オートメーション、ミュート・ソロ、遅延補正を共通で適用する。
+
 ### 4.5 素材（Asset）
 
 | エンティティ                         | 役割                                                                                                                                |

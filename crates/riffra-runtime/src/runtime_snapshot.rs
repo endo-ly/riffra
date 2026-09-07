@@ -93,6 +93,7 @@ pub fn runtime_timeline_snapshot(
                         "fadeShape": clip.fade_shape.as_code(),
                         "gainDb": clip.gain_db,
                         "pan": clip.pan,
+                        "takeVariant": clip.take_variant,
                         "loopEnabled": clip.loop_enabled,
                         "muted": clip.muted,
                     }))
@@ -147,4 +148,65 @@ pub fn runtime_timeline_snapshot(
         "unavailableClipIds": unavailable_clip_ids,
         "missingDeviceIds": missing_device_ids,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riffra_core::{AssetKind, AudioClip, AudioTakeVariant, TimelineTick, Track};
+    use std::fs;
+
+    #[test]
+    fn projects_audio_take_variants_to_the_native_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-runtime-snapshot-take-variant-{}-{}",
+            std::process::id(),
+            riffra_control::new_instance_id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("take.wav");
+        fs::write(&source, b"test audio").unwrap();
+        let asset_id = crate::asset::register(
+            &root,
+            AssetKind::Audio,
+            "take",
+            source.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        for (id, variant) in [
+            ("clip:raw", AudioTakeVariant::Raw),
+            ("clip:processed", AudioTakeVariant::Processed),
+        ] {
+            let mut clip = AudioClip::full_source(
+                id.into(),
+                id.into(),
+                "track:audio".into(),
+                asset_id.clone(),
+                TimelineTick(0),
+                48_000,
+                480,
+            );
+            clip.take_variant = variant;
+            session.arrangement.audio_clips.push(clip);
+        }
+
+        let snapshot = runtime_timeline_snapshot(
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+            &session,
+        );
+        let clips = snapshot["tracks"][0]["audioClips"].as_array().unwrap();
+
+        assert_eq!(clips[0]["takeVariant"], serde_json::json!("raw"));
+        assert_eq!(clips[1]["takeVariant"], serde_json::json!("processed"));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

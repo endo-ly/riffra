@@ -133,6 +133,7 @@ private:
         int fadeShape = 1;
         bool loop = false;
         bool muted = false;
+        bool trackEffectsAlreadyApplied = false;
     };
 
     struct MidiNote final {
@@ -184,12 +185,16 @@ private:
         PluginChain liveEffectChain;
         juce::AudioBuffer<float> mixBuffer;
         juce::AudioBuffer<float> processedBuffer;
+        juce::AudioBuffer<float> postEffectClipBuffer;
         juce::AudioBuffer<float> liveInputBuffer;
         juce::AudioBuffer<float> liveProcessedBuffer;
         RecordingCaptureTrackState recordingCapture;
         juce::AudioBuffer<float> delayBuffer;
+        juce::AudioBuffer<float> postEffectDelayBuffer;
         std::int64_t delayWritePosition = 0;
+        std::int64_t postEffectDelayWritePosition = 0;
         std::int64_t compensationDelaySamples = 0;
+        std::int64_t postEffectCompensationDelaySamples = 0;
         std::int64_t pluginDelaySamples = 0;
         std::int64_t pluginTailSamples = 0;
         double outputSampleRate = 0.0;
@@ -247,9 +252,8 @@ private:
                                 std::int64_t rangeStart) noexcept;
     void processLiveInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
                                     std::int64_t rangeStart, bool playing) noexcept;
-    void mixProcessedTrack(Track& track, bool audible, float* const* outputChannels,
-                           int channelCount, std::int64_t rangeStart, int destinationStart,
-                           int sampleCount) noexcept;
+    void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
+                        std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void mixLiveTrack(Track& track, bool audible, float* const* outputChannels, int channelCount,
                       std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
