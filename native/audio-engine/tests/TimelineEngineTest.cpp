@@ -246,33 +246,20 @@ public:
         return true;
     }
 
-    static bool installLiveChainDevice(TimelineEngine& engine, const juce::String& trackId,
-                                       const juce::String& deviceId,
-                                       std::unique_ptr<juce::AudioProcessor> processor,
-                                       const double sampleRate, const int blockSize,
-                                       juce::String& error) {
+    static bool installTrackChainDevice(TimelineEngine& engine, const juce::String& trackId,
+                                        const juce::String& deviceId,
+                                        std::unique_ptr<juce::AudioProcessor> processor,
+                                        const double sampleRate, const int blockSize,
+                                        juce::String& error) {
         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
         if (engine.timeline == nullptr) return false;
         const auto found =
             std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
         if (found == engine.timeline->tracks.end()) return false;
-        return addChainDevice((*found)->liveEffectChain, deviceId, std::move(processor), sampleRate,
-                              blockSize, error);
-    }
-
-    static bool installTimelineChainDevice(TimelineEngine& engine, const juce::String& trackId,
-                                           const juce::String& deviceId,
-                                           std::unique_ptr<juce::AudioProcessor> processor,
-                                           const double sampleRate, const int blockSize,
-                                           juce::String& error) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr) return false;
-        const auto found =
-            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
-                         [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end()) return false;
-        return addChainDevice((*found)->effectChain, deviceId, std::move(processor), sampleRate,
+        auto& track = *(*found);
+        return track.runtime != nullptr &&
+               addChainDevice(track.runtime->effects(), deviceId, std::move(processor), sampleRate,
                               blockSize, error);
     }
 
@@ -295,7 +282,7 @@ public:
         return true;
     }
 
-    static bool instrumentEffectChainsProcessOnce() {
+    static bool trackEffectChainProcessesOnce() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -309,10 +296,11 @@ public:
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            if (!addChainDevice(track.effectChain, "effect:timeline",
+            if (track.runtime == nullptr ||
+                !addChainDevice(track.runtime->effects(), "effect:first",
                                 std::make_unique<TestChainProcessor>(1, 1.0f, 0, processOrder),
                                 48'000.0, 32, error) ||
-                !addChainDevice(track.liveEffectChain, "effect:live",
+                !addChainDevice(track.runtime->effects(), "effect:second",
                                 std::make_unique<TestChainProcessor>(2, 1.0f, 0, processOrder),
                                 48'000.0, 32, error))
                 return false;
@@ -329,7 +317,7 @@ public:
         return processOrder == std::vector<int>{1, 2};
     }
 
-    static bool editorParameterMirrorsLiveInstrument() {
+    static bool editorParameterUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -339,21 +327,17 @@ public:
                 makeInstrumentSnapshot("track:editor-instrument", "instrument:editor"), formats,
                 48'000.0, 32, error))
             return false;
-        auto timelineRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                        48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
-        auto* timelineRackPointer = timelineRack.get();
-        auto* liveRackPointer = liveRack.get();
+        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
-        if (!timelineRackPointer->setParameter(0, 0.75f, error)) return false;
 
         // Act
         if (!engine.mirrorEditorDeviceParameter("track:editor-instrument", "instrument:editor", 0,
@@ -366,13 +350,13 @@ public:
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
         // Assert
-        const auto liveState = liveRackPointer->persistedState(error);
-        const auto liveValues = liveState.getProperty("parameterValues", {});
-        return liveValues.isArray() && liveValues.size() > 0 &&
-               std::abs(static_cast<float>(liveValues[0]) - 0.75f) <= 0.0001f;
+        const auto state = rackPointer->persistedState(error);
+        const auto values = state.getProperty("parameterValues", {});
+        return values.isArray() && values.size() > 0 &&
+               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
     }
 
-    static bool persistedStateRollsBackWhenRuntimeUnavailable() {
+    static bool persistedStateUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -383,42 +367,35 @@ public:
                 48'000.0, 32, error))
             return false;
 
-        auto timelineRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                        48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
-        auto* timelineRackPointer = timelineRack.get();
-        auto* liveRackPointer = liveRack.get();
+        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
-        if (!timelineRackPointer->setParameter(0, 0.25f, error) ||
-            !liveRackPointer->setParameter(0, 0.5f, error))
-            return false;
+        if (!rackPointer->setParameter(0, 0.25f, error)) return false;
 
         auto* desiredState = new juce::DynamicObject();
         desiredState->setProperty("parameterValues", juce::Array<juce::var>{0.75f});
         desiredState->setProperty("bypassed", false);
-        liveRackPointer->clear();
-
         // Act
         const auto changed = engine.setDevicePersistedState(
             "track:plugin-state", "instrument:plugin-state", juce::var(desiredState), error);
 
         // Assert
-        if (changed) return false;
-        const auto restored = timelineRackPointer->persistedState(error);
+        if (!changed) return false;
+        const auto restored = rackPointer->persistedState(error);
         const auto values = restored.getProperty("parameterValues", {});
         return values.isArray() && values.size() > 0 &&
-               std::abs(static_cast<float>(values[0]) - 0.25f) <= 0.0001f;
+               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
     }
 
-    static bool programChangeRollsBackWhenRuntimeFails() {
+    static bool programChangeUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -429,20 +406,16 @@ public:
                 formats, 48'000.0, 32, error))
             return false;
 
-        ProcessorTrace timelineTrace;
-        ProcessorTrace liveTrace;
-        liveTrace.failProgramChange = true;
-        auto timelineRack = PluginRackTestPeer::install(
-            std::make_unique<TestProcessor>(timelineTrace), 48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(liveTrace),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
+        ProcessorTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
 
         // Act
@@ -450,7 +423,7 @@ public:
             engine.setDeviceProgram("track:plugin-program", "instrument:plugin-program", 1, error);
 
         // Assert
-        return !changed && timelineTrace.currentProgram == 0 && liveTrace.currentProgram == 0;
+        return changed && trace.currentProgram == 1;
     }
 
     static bool liveInstrumentProcessesWhileStopped() {
@@ -470,8 +443,9 @@ public:
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& liveTrack = *engine.timeline->tracks.front();
-            liveTrack.liveInstrumentRuntime =
-                Vst3InstrumentRuntime::fromRack(std::move(instrumentRack));
+            if (liveTrack.runtime == nullptr) return false;
+            liveTrack.runtime->setInstrument(
+                Vst3InstrumentRuntime::fromRack(std::move(instrumentRack)));
             // Simulate a Project where another Track's plugin is the latency
             // leader. The live instrument track would normally be delayed by
             // this compensation on the timeline path.
@@ -499,7 +473,7 @@ public:
                immediate > 0.0f;
     }
 
-    static bool panicClosesEveryInstrumentRack() {
+    static bool panicClosesInstrumentRuntime() {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
         TimelineEngine engine;
@@ -508,19 +482,16 @@ public:
                                  48'000.0, 32, error))
             return false;
 
-        InstrumentTrace timelineTrace;
-        InstrumentTrace liveTrace;
-        auto timelineRack = PluginRackTestPeer::install(
-            std::make_unique<TestInstrumentProcessor>(timelineTrace), 48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(
-            std::make_unique<TestInstrumentProcessor>(liveTrace), 48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr) return false;
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& panicTrack = *engine.timeline->tracks.front();
-            panicTrack.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            panicTrack.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (panicTrack.runtime == nullptr) return false;
+            panicTrack.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
 
         // Act
@@ -538,7 +509,7 @@ public:
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
         // Assert
-        return timelineTrace.midiMessages.size() == 48u && liveTrace.midiMessages.size() == 48u;
+        return trace.midiMessages.size() == 48u;
     }
 
     static bool audioDeviceRestartRebuildsRuntimeFormat() {
@@ -616,7 +587,7 @@ public:
         bool productionWriterPassed = false;
         bool productionWriterPartialPassed = false;
         const auto liveInstrumentWhileStopped = liveInstrumentProcessesWhileStopped();
-        const auto panicClosesRacks = panicClosesEveryInstrumentRack();
+        const auto panicClosesRuntime = panicClosesInstrumentRuntime();
         int diagPartialSegments = 0;
         int diagPartialRaw = 0;
         int diagPartialProcessed = 0;
@@ -1657,7 +1628,7 @@ public:
             productionWriterPassed);
         addCheck("Production ThreadedWriter Partial Pass", productionWriterPartialPassed);
         addCheck("Stopped Transport processes live Instrument MIDI", liveInstrumentWhileStopped);
-        addCheck("Timeline panic closes arranged and live Instrument racks", panicClosesRacks);
+        addCheck("Timeline panic closes the Instrument runtime", panicClosesRuntime);
         result->setProperty("checks", checks);
         result->setProperty("message", error);
         result->setProperty("partialSegments", diagPartialSegments);
@@ -1695,7 +1666,7 @@ public:
                           recordingTapIsolated && loopCaptureSegments && syntheticLoopPassed &&
                           partialPassPassed && blockSizePassed && longRecordingPassed &&
                           productionWriterPassed && productionWriterPartialPassed &&
-                          liveInstrumentWhileStopped && panicClosesRacks);
+                          liveInstrumentWhileStopped && panicClosesRuntime);
         mono.deleteFile();
         stereo.deleteFile();
         directory.getChildFile("offline-selection.wav").deleteFile();
@@ -1747,7 +1718,7 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
                                     formats, 48'000.0, 32, error))
         << error.toStdString();
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTimelineChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:audio", "effect:double",
         std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 32, error))
         << error.toStdString();
@@ -1791,36 +1762,36 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[4], expected, 0.002f);
 }
 
-TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce) {
+TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::instrumentEffectChainsProcessOnce();
+    const auto passed = TimelineEngineTestPeer::trackEffectChainProcessesOnce();
 
     // Assert
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, MirrorsEditorParameterToLiveInstrument) {
+TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::editorParameterMirrorsLiveInstrument();
+    const auto passed = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
 
     // Assert
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, RollsBackPluginStateWhenOneRuntimeCannotBeUpdated) {
-    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateRollsBackWhenRuntimeUnavailable());
+TEST(TimelineEngineTest, AppliesPluginStateToTheInstrumentRuntime) {
+    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime());
 }
 
-TEST(TimelineEngineTest, RollsBackPluginProgramWhenOneRuntimeCannotBeUpdated) {
-    EXPECT_TRUE(TimelineEngineTestPeer::programChangeRollsBackWhenRuntimeFails());
+TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
+    EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
 }
 
-TEST(TimelineEngineTest, RetainsEmergencyPanicUntilAReadableGraphIsAvailable) {
+TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::panicClosesEveryInstrumentRack();
+    const auto passed = TimelineEngineTestPeer::panicClosesInstrumentRuntime();
 
     // Assert
     EXPECT_TRUE(passed);
@@ -1846,7 +1817,7 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
         << error.toStdString();
 
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTimelineChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:builtin", "effect:builtin",
         std::make_unique<TestChainProcessor>(7, 2.0f, 0, processOrder), 48'000.0, 512, error))
         << error.toStdString();
@@ -2149,7 +2120,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain) {
 
     ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installLiveChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:guitar", "device:amp",
         std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 512, error));
 

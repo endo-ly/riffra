@@ -10,9 +10,12 @@
 
 #include "ArrangementCaptureSink.h"
 #include "ArrangementGraph.h"
+#include "AutomationRuntime.h"
+#include "MidiScheduler.h"
 #include "PluginChain.h"
 #include "RecordingCaptureRuntime.h"
 #include "TimelineTimebase.h"
+#include "TrackRuntime.h"
 #include "instrument/InstrumentRuntime.h"
 
 namespace riffra {
@@ -41,6 +44,7 @@ public:
                       bool commitImmediately = true);
     bool commitPreparedSnapshot(juce::String& error) noexcept;
     void discardPreparedSnapshot() noexcept;
+    void startPreparing() noexcept;
     void play() noexcept;
     void stop() noexcept;
     void audioDeviceStarted() noexcept;
@@ -110,7 +114,7 @@ private:
     class AudioReadScope;
     class AudioPublishScope;
 
-    enum class State { stopped, playing, faulted };
+    enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
 
     struct Clip final {
@@ -128,66 +132,35 @@ private:
         double sourceSampleRate = 0.0;
         float gain = 1.0f;
         float pan = 0.0f;
+        float leftGain = 1.0f;
+        float rightGain = 1.0f;
         std::int64_t fadeInSamples = 0;
         std::int64_t fadeOutSamples = 0;
         int fadeShape = 1;
         bool loop = false;
         bool muted = false;
-        bool trackEffectsAlreadyApplied = false;
-    };
-
-    struct MidiNote final {
-        std::uint64_t startTick = 0;
-        std::uint64_t durationTicks = 1;
-        int note = 0;
-        int velocity = 0;
-        int channel = 1;
-    };
-
-    struct MidiEvent final {
-        juce::String kind;
-        std::uint64_t tick = 0;
-        int channel = 1;
-        int data1 = 0;
-        int data2 = 0;
-    };
-
-    struct MidiClip final {
-        std::uint64_t startTick = 0;
-        std::uint64_t durationTicks = 1;
-        bool loop = false;
-        bool muted = false;
-        std::vector<MidiNote> notes;
-        std::vector<MidiEvent> events;
+        ProcessingStage processingStage = ProcessingStage::PreEffects;
     };
 
     struct Track final {
         juce::String id;
         std::vector<std::unique_ptr<Clip>> clips;
-        std::vector<MidiClip> midiClips;
-        std::unique_ptr<InstrumentRuntime> instrumentRuntime;
-        // Timeline MIDI is rendered by instrumentRuntime; Play Surface and
-        // external-live MIDI is rendered by liveInstrumentRuntime so it reaches
-        // the output without the inter-track delay compensation line.
-        std::unique_ptr<InstrumentRuntime> liveInstrumentRuntime;
+        std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+        std::unique_ptr<TrackRuntime> runtime;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
-        bool liveEffectRuntimeRequired = false;
         bool recordingEffectRuntimeRequired = false;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
         bool reuseRuntimeDevices = false;
-        PluginChain effectChain;
-        PluginChain liveEffectChain;
         juce::AudioBuffer<float> mixBuffer;
         juce::AudioBuffer<float> processedBuffer;
         juce::AudioBuffer<float> postEffectClipBuffer;
         juce::AudioBuffer<float> liveInputBuffer;
-        juce::AudioBuffer<float> liveProcessedBuffer;
         RecordingCaptureTrackState recordingCapture;
         juce::AudioBuffer<float> delayBuffer;
         juce::AudioBuffer<float> postEffectDelayBuffer;
@@ -201,14 +174,15 @@ private:
         int preparedBlockSize = 0;
         float gainDb = 0.0f;
         float pan = 0.0f;
-        std::vector<ArrangementGraph::AutomationPoint> volumeAutomation;
-        std::vector<ArrangementGraph::AutomationPoint> panAutomation;
+        AutomationRuntime volumeAutomation;
+        AutomationRuntime panAutomation;
         bool muted = false;
         bool solo = false;
         bool instrument = false;
         bool armed = false;
         int audioInputChannel = -1;
         bool monitorInput = false;
+        bool lowLatencyMonitoring = false;
         juce::String midiDeviceId;
         int midiChannel = 0;
         juce::MidiBuffer midiBuffer;
@@ -226,6 +200,7 @@ private:
         std::int64_t punchStartSample = 0;
         std::int64_t punchEndSample = 0;
         bool metronomeEnabled = false;
+        bool hasSolo = false;
         std::int64_t beatSamples = 0;
         std::int64_t beatsPerBar = 4;
         std::uint16_t timeSignatureNumerator = 4;
@@ -246,7 +221,7 @@ private:
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
-                                int sampleCount) noexcept;
+                                int sampleCount, bool renderOutput = false) noexcept;
     void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
                                 const juce::MidiBuffer* timelineMidi,
                                 std::int64_t rangeStart) noexcept;
@@ -254,8 +229,6 @@ private:
                                     std::int64_t rangeStart, bool playing) noexcept;
     void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
                         std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
-    void mixLiveTrack(Track& track, bool audible, float* const* outputChannels, int channelCount,
-                      std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
                       int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;

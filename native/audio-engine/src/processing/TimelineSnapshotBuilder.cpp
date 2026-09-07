@@ -6,6 +6,8 @@
 #include <limits>
 
 #include "ArrangementGraph.h"
+#include "MidiScheduler.h"
+#include "TrackRuntime.h"
 #include "instrument/SonalloyInstrumentRuntime.h"
 #include "instrument/Vst3InstrumentRuntime.h"
 
@@ -57,9 +59,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                                     std::uint32_t& monitoringInputChannelsState,
                                     bool& armedInstrumentTrackState, juce::String& error) {
     using Clip = TimelineEngine::Clip;
-    using MidiClip = TimelineEngine::MidiClip;
-    using MidiEvent = TimelineEngine::MidiEvent;
-    using MidiNote = TimelineEngine::MidiNote;
+    using MidiClip = riffra::MidiClip;
+    using MidiEvent = riffra::MidiEvent;
+    using MidiNote = riffra::MidiNote;
     using PreparedTimeline = TimelineEngine::PreparedTimeline;
     using Track = TimelineEngine::Track;
 
@@ -155,6 +157,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             return false;
         }
         auto track = std::make_unique<Track>();
+        track->runtime = std::make_unique<TrackRuntime>();
         track->id = trackValue.getProperty("id", {}).toString();
         track->outputSampleRate = outputSampleRate;
         track->preparedBlockSize = maximumBlockSize;
@@ -176,10 +179,11 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             juce::jlimit(-1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0)));
         track->muted = static_cast<bool>(trackValue.getProperty("muted", false));
         track->solo = static_cast<bool>(trackValue.getProperty("solo", false));
+        prepared->hasSolo = prepared->hasSolo || track->solo;
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->monitorInput =
             ArrangementGraph::shouldMonitorAudioInput(monitoring, track->armed, track->instrument);
-        track->liveEffectRuntimeRequired = track->instrument || track->monitorInput;
+        track->lowLatencyMonitoring = track->instrument ? track->armed : track->monitorInput;
         track->recordingEffectRuntimeRequired = !track->instrument && track->armed;
         if (track->monitorInput) monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
@@ -195,6 +199,8 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             error = "Timeline track automation must be an array.";
             return false;
         }
+        std::vector<AutomationRuntime::Point> volumeAutomation;
+        std::vector<AutomationRuntime::Point> panAutomation;
         for (const auto& lane : *automation.getArray()) {
             if (!lane.isObject()) {
                 error = "Timeline Automation Lane must be an object.";
@@ -206,8 +212,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 error = "Timeline Automation Lane has an invalid parameter or point list.";
                 return false;
             }
-            auto& destination =
-                parameter == "volume" ? track->volumeAutomation : track->panAutomation;
+            auto& destination = parameter == "volume" ? volumeAutomation : panAutomation;
             for (const auto& pointValue : *pointValues.getArray()) {
                 if (!pointValue.isObject()) {
                     error = "Timeline Automation Point must be an object.";
@@ -227,6 +232,8 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 });
             }
         }
+        track->volumeAutomation.setPoints(std::move(volumeAutomation));
+        track->panAutomation.setPoints(std::move(panAutomation));
 
         const auto rack = trackValue.getProperty("rack", {});
         const auto instrument = trackValue.getProperty("instrument", {});
@@ -252,7 +259,6 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                     (*existing)->effectTopologySignature == track->effectTopologySignature &&
                     (*existing)->instrumentTopologySignature ==
                         track->instrumentTopologySignature &&
-                    (*existing)->liveEffectRuntimeRequired == track->liveEffectRuntimeRequired &&
                     (*existing)->recordingEffectRuntimeRequired ==
                         track->recordingEffectRuntimeRequired &&
                     (*existing)->outputSampleRate == track->outputSampleRate &&
@@ -273,12 +279,8 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         }
         if (rack.isObject()) {
             if (!track->reuseRuntimeDevices &&
-                !track->effectChain.load(devices, outputSampleRate, maximumBlockSize, error,
-                                         track->id + "/timeline-effect"))
-                return false;
-            if (!track->reuseRuntimeDevices && track->liveEffectRuntimeRequired &&
-                !track->liveEffectChain.load(devices, outputSampleRate, maximumBlockSize, error,
-                                             track->id + "/live-effect"))
+                !track->runtime->effects().load(devices, outputSampleRate, maximumBlockSize, error,
+                                                track->id + "/track-effect"))
                 return false;
             if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
                 !track->recordingCapture.effectChain.load(devices, outputSampleRate,
@@ -300,14 +302,10 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 if (!disabled) {
                     const auto path = instrument.getProperty("path", {}).toString();
                     juce::String runtimeError;
-                    track->instrumentRuntime = Vst3InstrumentRuntime::create(
-                        path, outputSampleRate, maximumBlockSize, instrument, runtimeError);
-                    if (track->instrumentRuntime == nullptr)
-                        return roleError("timeline-instrument", runtimeError);
-                    track->liveInstrumentRuntime = Vst3InstrumentRuntime::create(
-                        path, outputSampleRate, maximumBlockSize, instrument, runtimeError);
-                    if (track->liveInstrumentRuntime == nullptr)
-                        return roleError("live-instrument", runtimeError);
+                    track->runtime->setInstrument(Vst3InstrumentRuntime::create(
+                        path, outputSampleRate, maximumBlockSize, instrument, runtimeError));
+                    if (track->runtime->instrument() == nullptr)
+                        return roleError("instrument", runtimeError);
                 }
             } else if (type == "internal" &&
                        instrument.getProperty("resourceType", {}).toString() == "builtInPreset") {
@@ -315,31 +313,20 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 const auto definitionBaseDir =
                     instrument.getProperty("definitionBaseDir", {}).toString();
                 juce::String runtimeError;
-                track->instrumentRuntime = SonalloyInstrumentRuntime::create(
+                track->runtime->setInstrument(SonalloyInstrumentRuntime::create(
                     definitionJson, definitionBaseDir, outputSampleRate, maximumBlockSize,
-                    runtimeError);
-                if (track->instrumentRuntime == nullptr)
-                    return roleError("timeline-instrument", runtimeError);
-                track->liveInstrumentRuntime = SonalloyInstrumentRuntime::create(
-                    definitionJson, definitionBaseDir, outputSampleRate, maximumBlockSize,
-                    runtimeError);
-                if (track->liveInstrumentRuntime == nullptr)
-                    return roleError("live-instrument", runtimeError);
+                    runtimeError));
+                if (track->runtime->instrument() == nullptr)
+                    return roleError("instrument", runtimeError);
                 const auto bypassed = static_cast<bool>(instrument.getProperty("bypassed", false));
-                track->instrumentRuntime->setBypassed(bypassed);
-                track->liveInstrumentRuntime->setBypassed(bypassed);
+                track->runtime->instrument()->setBypassed(bypassed);
             } else {
                 return roleError("instrument", "Instrument source is invalid.");
             }
         }
         if (!track->reuseRuntimeDevices) {
-            track->pluginDelaySamples =
-                track->effectChain.latencySamples() +
-                (track->instrumentRuntime != nullptr ? track->instrumentRuntime->latencySamples()
-                                                     : 0);
-            track->pluginTailSamples =
-                track->effectChain.tailSamples() +
-                (track->instrumentRuntime != nullptr ? track->instrumentRuntime->tailSamples() : 0);
+            track->pluginDelaySamples = track->runtime->pluginLatencySamples();
+            track->pluginTailSamples = track->runtime->pluginTailSamples();
         }
         maximumPluginDelay = std::max(maximumPluginDelay, track->pluginDelaySamples);
 
@@ -355,8 +342,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             }
             const auto clipId = value.getProperty("clipId", {}).toString();
             const auto takeVariant = value.getProperty("takeVariant", {}).toString();
-            const bool trackEffectsAlreadyApplied = takeVariant == "processed";
-            if (takeVariant != "raw" && !trackEffectsAlreadyApplied) {
+            const auto processingStage = takeVariant == "processed" ? ProcessingStage::PostEffects
+                                                                    : ProcessingStage::PreEffects;
+            if (takeVariant != "raw" && takeVariant != "processed") {
                 error = "Timeline clip has an invalid takeVariant: " + clipId;
                 return false;
             }
@@ -369,7 +357,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             }
             auto clip = std::make_unique<Clip>();
             clip->id = clipId;
-            clip->trackEffectsAlreadyApplied = trackEffectsAlreadyApplied;
+            clip->processingStage = processingStage;
             const auto declaredSourceRate =
                 static_cast<double>(value.getProperty("sourceSampleRate", 0.0));
             clip->sourceSampleRate = reader->sampleRate;
@@ -407,6 +395,9 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 static_cast<float>(value.getProperty("gainDb", 0.0)));
             clip->pan =
                 juce::jlimit(-1.0f, 1.0f, static_cast<float>(value.getProperty("pan", 0.0)));
+            const auto panAngle = (clip->pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            clip->leftGain = clip->gain * std::cos(panAngle);
+            clip->rightGain = clip->gain * std::sin(panAngle);
             clip->loop = static_cast<bool>(value.getProperty("loopEnabled", false));
             clip->muted = static_cast<bool>(value.getProperty("muted", false));
             clip->readerSource =
@@ -500,13 +491,16 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 }
                 midiClip.events.push_back(event);
             }
-            track->midiClips.push_back(std::move(midiClip));
+            MidiScheduler::CompiledMidiClip compiled;
+            if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate, compiled,
+                                        error))
+                return false;
+            track->midiClips.push_back(std::move(compiled));
         }
         track->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->liveProcessedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->recordingCapture.processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         prepared->tracks.push_back(std::move(track));
     }

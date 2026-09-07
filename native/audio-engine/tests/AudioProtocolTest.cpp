@@ -43,9 +43,10 @@ TEST(AudioProtocolTest, CreatesSafeErrorPayload) {
 
     ASSERT_TRUE(error.isObject());
     EXPECT_EQ(error.getProperty("type", {}).toString(), "error");
-    EXPECT_EQ(error.getProperty("scope", {}).toString(), "protocol");
+    EXPECT_EQ(error.getProperty("kind", {}).toString(), "protocol");
     EXPECT_EQ(error.getProperty("message", {}).toString(), "invalid request");
-    EXPECT_TRUE(static_cast<bool>(error.getProperty("dataSafe", false)));
+    EXPECT_EQ(error.getProperty("operation", {}).toString(), "protocol");
+    EXPECT_TRUE(error.getProperty("details", {}).isObject());
 }
 
 TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
@@ -55,7 +56,7 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
 
     ASSERT_TRUE(meters.isObject());
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
-    EXPECT_TRUE(static_cast<bool>(meters.getProperty("emergencyMuted", false)));
+    EXPECT_EQ(meters.getProperty("muteReasons", 0).toString().getIntValue(), 0);
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
 }
 

@@ -11,8 +11,9 @@ namespace {
 juce::var makeError(const juce::String& message) {
     auto* value = new juce::DynamicObject();
     value->setProperty("type", "error");
-    value->setProperty("scope", "offlineRender");
+    value->setProperty("kind", "renderRejected");
     value->setProperty("message", message);
+    value->setProperty("operation", "renderTimelineOffline");
     return juce::var(value);
 }
 

@@ -29,16 +29,16 @@ void PluginRack::PendingMidi::reset() {
     }
 }
 
-void PluginRack::PendingMidi::add(const juce::MidiMessage& message) noexcept {
+bool PluginRack::PendingMidi::add(const juce::MidiMessage& message) noexcept {
     const auto size = message.getRawDataSize();
     if (size <= 0 || static_cast<std::size_t>(size) > kMaximumMessageBytes) {
         droppedEventsCount.fetch_add(1, std::memory_order_relaxed);
-        return;
+        return false;
     }
     Event event;
     event.size = static_cast<std::uint16_t>(size);
     std::copy_n(message.getRawData(), size, event.bytes.begin());
-    (void)messages.tryPush(event);
+    return messages.tryPush(event);
 }
 
 void PluginRack::PendingMidi::appendTo(juce::MidiBuffer& destination,
@@ -584,9 +584,9 @@ juce::var PluginRack::persistedState(juce::String& error) const {
     return juce::var(result);
 }
 
-void PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
-    if (!loaded.load(std::memory_order_acquire)) return;
-    pendingMidi.add(message);
+bool PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
+    if (!loaded.load(std::memory_order_acquire)) return false;
+    return pendingMidi.add(message);
 }
 
 void PluginRack::allNotesOff() noexcept { panicPending.store(true, std::memory_order_release); }
@@ -612,6 +612,8 @@ int PluginRack::tailSamples() const noexcept {
     if (!std::isfinite(seconds) || seconds <= 0.0 || sampleRate <= 0.0) return 0;
     return static_cast<int>(std::min(sampleRate * 30.0, std::ceil(seconds * sampleRate)));
 }
+
+std::uint64_t PluginRack::droppedMidiEvents() const noexcept { return pendingMidi.droppedEvents(); }
 
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,

@@ -14,9 +14,13 @@ void writeJson(const juce::var& value) {
 juce::var makeError(const juce::String& path, const juce::String& message) {
     auto* result = new juce::DynamicObject();
     result->setProperty("type", "pluginScanError");
+    result->setProperty("kind", "pluginScanRejected");
     result->setProperty("path", path);
     result->setProperty("message", message);
-    result->setProperty("dataSafe", true);
+    result->setProperty("operation", "plugin.scan");
+    auto* details = new juce::DynamicObject();
+    if (path.isNotEmpty()) details->setProperty("path", path);
+    result->setProperty("details", juce::var(details));
     return juce::var(result);
 }
 
@@ -51,7 +55,6 @@ juce::var makeLoadTestResult(const juce::String& path, bool success, const juce:
     result->setProperty("success", success);
     result->setProperty("message", message);
     result->setProperty("durationMs", durationMs);
-    result->setProperty("dataSafe", true);
     return juce::var(result);
 }
 

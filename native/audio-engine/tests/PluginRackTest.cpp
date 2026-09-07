@@ -282,7 +282,7 @@ TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock) {
     std::array<float, kBlockSize> outputLeft{};
     std::array<float, kBlockSize> outputRight{};
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f));
+    ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f)));
 
     // Act
     rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
@@ -300,8 +300,11 @@ TEST(PluginRackTest, ReportsQueuedMidiOverflow) {
                                             kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
 
-    for (int index = 0; index < 257; ++index)
-        rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
+    for (int index = 0; index < 257; ++index) {
+        const bool accepted =
+            rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
+        EXPECT_EQ(accepted, index < 256);
+    }
 
     EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
 }
@@ -317,7 +320,7 @@ TEST(PluginRackTest, DeliversMaximumSizedQueuedMidiPacket) {
     raw.front() = 0xf0;
     raw.back() = 0xf7;
     for (int index = 0; index < 256; ++index)
-        rack->enqueueMidi(juce::MidiMessage(raw.data(), static_cast<int>(raw.size())));
+        ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage(raw.data(), static_cast<int>(raw.size()))));
 
     std::array<float, kBlockSize> outputLeft{};
     std::array<float, kBlockSize> outputRight{};
@@ -375,7 +378,7 @@ TEST(PluginRackTest, DeliversQueuedNoteAfterResetControllers) {
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
 
     rack->allNotesOff();
-    rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
     rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
 
     ASSERT_EQ(trace.midiMessages.size(), 49u);

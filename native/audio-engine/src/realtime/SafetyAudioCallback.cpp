@@ -22,27 +22,60 @@ void SafetyAudioCallback::panicAll() noexcept {
     }
 }
 
-void SafetyAudioCallback::setEmergencyMuted(const bool shouldMute) noexcept {
-    if (!shouldMute && deviceFaulted.load(std::memory_order_acquire)) return;
-    if (shouldMute) panicAll();
-    emergencyMuted.store(shouldMute, std::memory_order_release);
-    if (!shouldMute) {
-        currentGainLinear = 0.0f;
-        feedbackDetector.reset();
-        feedbackSuspected.store(false, std::memory_order_release);
+namespace {
+
+constexpr std::uint32_t muteReasonBit(const MuteReason reason) noexcept {
+    return static_cast<std::uint32_t>(reason);
+}
+
+}  // namespace
+
+void SafetyAudioCallback::setMuteReason(const MuteReason reason, const bool active) noexcept {
+    const auto bit = muteReasonBit(reason);
+    if (active) {
+        muteReasons.fetch_or(bit, std::memory_order_acq_rel);
+        resetGainOnNextCallback.store(true, std::memory_order_release);
+        panicAll();
+    } else {
+        muteReasons.fetch_and(~bit, std::memory_order_acq_rel);
+        resetGainOnNextCallback.store(true, std::memory_order_release);
     }
 }
 
-bool SafetyAudioCallback::isEmergencyMuted() const noexcept {
-    return emergencyMuted.load(std::memory_order_acquire);
+void SafetyAudioCallback::setUserEmergencyMute(const bool shouldMute) noexcept {
+    setMuteReason(MuteReason::UserEmergency, shouldMute);
+}
+
+void SafetyAudioCallback::setStartupGuard(const bool active) noexcept {
+    setMuteReason(MuteReason::StartupGuard, active);
+}
+
+void SafetyAudioCallback::setRuntimeRecoveryMute(const bool active) noexcept {
+    setMuteReason(MuteReason::RuntimeRecovery, active);
+}
+
+void SafetyAudioCallback::setFeedbackProtection(const bool active) noexcept {
+    setMuteReason(MuteReason::FeedbackProtection, active);
+    feedbackSuspected.store(active, std::memory_order_release);
+    if (!active) feedbackDetector.reset();
+}
+
+std::uint32_t SafetyAudioCallback::getMuteReasons() const noexcept {
+    return muteReasons.load(std::memory_order_acquire);
+}
+
+bool SafetyAudioCallback::isMuted() const noexcept { return getMuteReasons() != 0; }
+
+bool SafetyAudioCallback::hasMuteReason(const MuteReason reason) const noexcept {
+    return (getMuteReasons() & muteReasonBit(reason)) != 0;
 }
 
 void SafetyAudioCallback::setDeviceFaulted(const bool faulted) noexcept {
-    deviceFaulted.store(faulted, std::memory_order_release);
+    setMuteReason(MuteReason::DeviceFault, faulted);
 }
 
 bool SafetyAudioCallback::isDeviceFaulted() const noexcept {
-    return deviceFaulted.load(std::memory_order_acquire);
+    return hasMuteReason(MuteReason::DeviceFault);
 }
 
 void SafetyAudioCallback::setMasterGainDb(const float gainDb) noexcept {
@@ -80,6 +113,43 @@ void SafetyAudioCallback::holdPeak(std::atomic<float>& peak, const float value) 
 
 std::uint64_t SafetyAudioCallback::getInvalidSampleCount() const noexcept {
     return invalidSamples.load(std::memory_order_acquire);
+}
+
+std::uint64_t SafetyAudioCallback::getCallbackCount() const noexcept {
+    return callbackCount.load(std::memory_order_acquire);
+}
+
+std::uint64_t SafetyAudioCallback::getAverageCallbackDurationUs() const noexcept {
+    const auto count = getCallbackCount();
+    return count == 0 ? 0 : callbackDurationUs.load(std::memory_order_acquire) / count;
+}
+
+std::uint64_t SafetyAudioCallback::getMaximumCallbackDurationUs() const noexcept {
+    return maximumCallbackDurationUs.load(std::memory_order_acquire);
+}
+
+std::uint64_t SafetyAudioCallback::getCallbackOverruns() const noexcept {
+    return callbackOverruns.load(std::memory_order_acquire);
+}
+
+void SafetyAudioCallback::recordCallbackDuration(
+    const std::chrono::steady_clock::time_point started, const int numSamples) noexcept {
+    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - started)
+                              .count();
+    const auto durationUs = static_cast<std::uint64_t>(std::max<std::int64_t>(0, duration));
+    callbackCount.fetch_add(1, std::memory_order_relaxed);
+    callbackDurationUs.fetch_add(durationUs, std::memory_order_relaxed);
+    auto maximum = maximumCallbackDurationUs.load(std::memory_order_relaxed);
+    while (durationUs > maximum &&
+           !maximumCallbackDurationUs.compare_exchange_weak(
+               maximum, durationUs, std::memory_order_release, std::memory_order_relaxed)) {
+    }
+    const auto sampleRate = activeSampleRate.load(std::memory_order_relaxed);
+    if (sampleRate > 0.0 && numSamples > 0 &&
+        static_cast<double>(durationUs) >
+            1'000'000.0 * static_cast<double>(numSamples) / sampleRate)
+        callbackOverruns.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool SafetyAudioCallback::isFeedbackSuspected() const noexcept {
@@ -352,6 +422,10 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const float* const* inputChannelData, const int numInputChannels,
     float* const* outputChannelData, const int numOutputChannels, const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    const auto callbackStarted = std::chrono::steady_clock::now();
+    const auto recordDuration = [this, callbackStarted, numSamples] {
+        recordCallbackDuration(callbackStarted, numSamples);
+    };
     if (timelineEngine != nullptr) timelineEngine->servicePendingPanic();
     if (timelineEngine != nullptr) {
         int recordingOffset = 0;
@@ -394,33 +468,37 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     if (invalidInputSamples > 0)
         invalidSamples.fetch_add(invalidInputSamples, std::memory_order_relaxed);
 
-    if (emergencyMuted.load(std::memory_order_acquire)) {
+    const auto activeMuteReasons = getMuteReasons();
+    if (activeMuteReasons != 0u) {
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr)
+        const auto graphMayRunWhileMuted =
+            (activeMuteReasons &
+             (muteReasonBit(MuteReason::RuntimeRecovery) | muteReasonBit(MuteReason::DeviceFault) |
+              muteReasonBit(MuteReason::FeedbackProtection))) == 0u;
+        if (graphMayRunWhileMuted && timelineEngine != nullptr)
             timelineEngine->mix(inputChannelData, numInputChannels, outputChannelData,
                                 numOutputChannels, numSamples);
         silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak);
+        recordDuration();
         return;
     }
 
     feedbackDetector.observe(monitoredInputPeak, numSamples, monitoringActive);
     if (feedbackDetector.consumeSuspected()) {
-        emergencyMuted.store(true, std::memory_order_release);
-        feedbackSuspected.store(true, std::memory_order_release);
-        panicAll();
+        setFeedbackProtection(true);
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        if (timelineEngine != nullptr)
-            timelineEngine->mix(inputChannelData, numInputChannels, outputChannelData,
-                                numOutputChannels, numSamples);
         silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak);
+        recordDuration();
         return;
     }
 
     const auto target = targetGainLinear.load(std::memory_order_acquire);
+    if (resetGainOnNextCallback.exchange(false, std::memory_order_acq_rel))
+        currentGainLinear = 0.0f;
     float blockOutputPeak = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
 
@@ -467,6 +545,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     holdPeak(outputPeak, blockOutputPeak);
     if (blockInvalidSamples > 0)
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
+    recordDuration();
 }
 
 void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const device) {
@@ -476,6 +555,7 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
     const auto sampleRate = device != nullptr ? device->getCurrentSampleRate() : 0.0;
     activeSampleRate.store(sampleRate, std::memory_order_release);
     currentGainLinear = 0.0f;
+    resetGainOnNextCallback.store(true, std::memory_order_release);
     fadeStep = sampleRate > 0.0 ? static_cast<float>(1.0 / (sampleRate * kFadeInSeconds)) : 0.0f;
     inputPeak.store(0.0f, std::memory_order_release);
     outputPeak.store(0.0f, std::memory_order_release);
@@ -504,8 +584,7 @@ void SafetyAudioCallback::audioDeviceStopped() {
 void SafetyAudioCallback::audioDeviceError(const juce::String& errorMessage) {
     const juce::ScopedLock lock(errorLock);
     lastDeviceError = errorMessage;
-    emergencyMuted.store(true, std::memory_order_release);
-    panicAll();
+    setMuteReason(MuteReason::DeviceFault, true);
 }
 
 juce::String SafetyAudioCallback::takeLastDeviceError() {

@@ -29,6 +29,7 @@ public:
     void resetForTransportDiscontinuity() noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;
     [[nodiscard]] int tailSamples() const noexcept override;
+    [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;
     void setBypassed(bool shouldBypass) noexcept override;
     [[nodiscard]] PluginRack* vst3Rack() noexcept override;
     [[nodiscard]] const PluginRack* vst3Rack() const noexcept override;

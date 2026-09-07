@@ -40,12 +40,13 @@ public:
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
                  const juce::MidiBuffer* timelineMidi = nullptr) noexcept;
-    void enqueueMidi(const juce::MidiMessage& message) noexcept;
+    [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isLoaded() const noexcept;
     [[nodiscard]] bool isInstrument() const noexcept;
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;
+    [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] juce::var parameterStatus() const;
     [[nodiscard]] juce::var programStatus() const;
@@ -92,7 +93,7 @@ private:
         static constexpr std::size_t kMaximumMessageBytes = 256;
 
         void reset();
-        void add(const juce::MidiMessage& message) noexcept;
+        [[nodiscard]] bool add(const juce::MidiMessage& message) noexcept;
         void appendTo(juce::MidiBuffer& destination, int sampleCount) noexcept;
         void recordDropped() noexcept;
         [[nodiscard]] std::uint64_t droppedEvents() const noexcept;

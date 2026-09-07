@@ -149,12 +149,15 @@ std::uint64_t droppedTelemetryCount() noexcept { return outputWriter.droppedTele
 
 std::uint64_t droppedStateCount() noexcept { return outputWriter.droppedStateCount(); }
 
-juce::var makeError(const juce::String& scope, const juce::String& message) {
+juce::var makeError(const juce::String& kind, const juce::String& message,
+                    const juce::String& operation, const juce::var& details) {
     auto* object = new juce::DynamicObject();
     object->setProperty("type", "error");
-    object->setProperty("scope", scope);
+    object->setProperty("kind", kind);
     object->setProperty("message", message);
-    object->setProperty("dataSafe", true);
+    object->setProperty("operation", operation.isEmpty() ? kind : operation);
+    object->setProperty("details",
+                        details.isVoid() ? juce::var(new juce::DynamicObject()) : details);
     return juce::var(object);
 }
 

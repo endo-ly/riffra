@@ -153,6 +153,11 @@ target_sources(riffra-render-core PRIVATE
   src/processing/RecordingCaptureRuntime.h
   src/processing/ArrangementGraph.cpp
   src/processing/ArrangementGraph.h
+  src/processing/AutomationRuntime.h
+  src/processing/MidiScheduler.cpp
+  src/processing/MidiScheduler.h
+  src/processing/TrackRuntime.cpp
+  src/processing/TrackRuntime.h
   src/processing/OfflineRenderer.cpp
   src/processing/OfflineRenderer.h
   src/processing/ArrangementCaptureSink.h
@@ -454,6 +459,7 @@ if(BUILD_TESTING)
     tests/RecordingSessionTest.cpp
     tests/ArrangeRecordingSessionTest.cpp
     tests/BoundedMpmcQueueTest.cpp
+    tests/MidiSchedulerTest.cpp
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
     tests/SonalloyInstrumentRuntimeTest.cpp

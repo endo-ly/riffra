@@ -85,33 +85,14 @@ int serve(const std::optional<std::uint32_t> parentPid,
     juce::AudioBuffer<float> comparisonProcessed;
     MidiInputService midiInputs(callback, timelineEngine);
     callback.setTimelineEngine(&timelineEngine);
-    callback.setEmergencyMuted(true);
+    callback.setStartupGuard(true);
 
     auto error = AudioDeviceService::initialise(manager, startupConfiguration);
     juce::String startupMessage;
     if (error.isNotEmpty()) {
-        const auto requestedError = error;
         manager.closeAudioDevice();
-#if JUCE_WINDOWS
-        AudioConfiguration sharedFallback;
-        sharedFallback.driver = "Windows Audio (Low Latency Mode)";
-        error = AudioDeviceService::initialise(manager, sharedFallback);
-        if (error.isNotEmpty()) {
-            manager.closeAudioDevice();
-            sharedFallback.driver = "Windows Audio";
-            error = AudioDeviceService::initialise(manager, sharedFallback);
-        }
-        if (error.isNotEmpty()) {
-            writeJson(makeError("audioDevice",
-                                requestedError + ". Shared Windows audio also failed: " + error));
-            return 2;
-        }
-        startupMessage =
-            "The saved audio device was unavailable, so Riffra started with shared Windows audio.";
-#else
-        writeJson(makeError("audioDevice", requestedError));
+        writeJson(makeError("deviceRejected", error, "audioDevice.activate"));
         return 2;
-#endif
     }
 
     auto startupInputChannel = startupMessage.isEmpty() ? startupConfiguration.inputChannel : 0;
@@ -119,16 +100,21 @@ int serve(const std::optional<std::uint32_t> parentPid,
         manager.getCurrentAudioDevice() != nullptr
             ? manager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
             : 0;
-    if (startupInputChannel >= startupInputChannels) {
-        startupInputChannel = 0;
-        startupMessage = "The saved input channel was unavailable, so Input 1 was selected.";
+    if (startupInputChannels > 0 && startupInputChannel >= startupInputChannels) {
+        auto* details = new juce::DynamicObject();
+        details->setProperty("inputChannel", startupInputChannel);
+        details->setProperty("availableInputChannels", startupInputChannels);
+        writeJson(makeError("deviceRejected", "The saved input channel is unavailable.",
+                            "audioDevice.activate", juce::var(details)));
+        manager.closeAudioDevice();
+        return 2;
     }
     callback.setInputChannel(startupInputChannel);
     manager.addAudioCallback(&callback);
     DeviceFaultWatcher deviceWatcher(manager, callback, timelineEngine);
     manager.addChangeListener(&deviceWatcher);
     writeJson(AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor(),
-                                                startupMessage));
+                                                startupMessage, &timelineEngine));
 
     std::atomic<bool> watchdogRunning{true};
     std::thread watchdog;
@@ -150,8 +136,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
             if (!midiInputs.isListening()) continue;
             if (midiInputs.deviceSetChanged()) {
                 midiInputs.reopenAll();
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
             }
         }
     });
@@ -206,7 +192,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
             setCurrentRequestId(command.getProperty("requestId", {}).toString());
             const auto type = command.getProperty("type", {}).toString();
             if (type == "shutdown") {
-                callback.setEmergencyMuted(true);
+                callback.setRuntimeRecoveryMute(true);
                 const auto submitted = runtimeLifecycle.submit(
                     [&] {
                         if (trackPluginEditor != nullptr) {
@@ -224,21 +210,26 @@ int serve(const std::optional<std::uint32_t> parentPid,
             }
             if (type == "setEmergencyMute") {
                 const auto muted = static_cast<bool>(command.getProperty("muted", true));
-                if (!muted && callback.isDeviceFaulted()) {
-                    writeJson(AudioDeviceService::currentStatus(manager, callback,
-                                                                &midiInputs.monitor()));
-                    continue;
-                }
-                callback.setEmergencyMuted(muted);
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                callback.setUserEmergencyMute(muted);
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
+                continue;
+            }
+            if (type == "setStartupGuard" || type == "setRuntimeRecoveryMute") {
+                const auto active = static_cast<bool>(command.getProperty("active", true));
+                if (type == "setStartupGuard")
+                    callback.setStartupGuard(active);
+                else
+                    callback.setRuntimeRecoveryMute(active);
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "setMasterGainDb") {
                 callback.setMasterGainDb(
                     static_cast<float>(command.getProperty("gainDb", callback.getMasterGainDb())));
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot") {
@@ -691,6 +682,11 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 writeJson(timelineEngine.status());
                 continue;
             }
+            if (type == "setTransportStarting") {
+                timelineEngine.startPreparing();
+                writeJson(timelineEngine.status());
+                continue;
+            }
             if (type == "stopTimeline") {
                 timelineEngine.stop();
                 if (static_cast<bool>(command.getProperty("reportStatus", true)))
@@ -708,8 +704,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 midiInputs.setListening(true);
                 midiInputs.reopenAll();
                 midiInputs.monitor().setActive(true);
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "disableMidiListening") {
@@ -718,8 +714,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 callback.stopPreview();
                 callback.allNotesOff();
                 midiInputs.reopenAll();
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "startTakeComparison") {
@@ -794,8 +790,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
                 }
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "switchTakeComparisonVariant") {
@@ -806,16 +802,16 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     writeJson(makeError("takeComparison", comparisonError));
                     continue;
                 }
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "stopTakeComparison") {
                 callback.stopPreviewForKey(1);
                 comparisonRaw.setSize(0, 0);
                 comparisonProcessed.setSize(0, 0);
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "previewSample") {
@@ -869,15 +865,15 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     writeJson(makeError("preview", previewError));
                     continue;
                 }
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "stopPreview") {
                 callback.stopPreview();
                 callback.allNotesOff();
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "sendTrackMidi" || type == "panicTrackMidi") {
@@ -909,38 +905,28 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 continue;
             }
             if (type == "recoverAudioDevice") {
-                if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError("timelineBusy",
-                                        "The Arrangement Graph is still loading a VST3. Audio "
-                                        "device recovery can be retried shortly."));
-                    continue;
-                }
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
                 manager.getAudioDeviceSetup(recoverySetup);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
-                callback.setEmergencyMuted(true);
+                callback.setRuntimeRecoveryMute(true);
                 const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
                 if (recoveryError.isNotEmpty()) {
-                    writeJson(makeError("audioDevice", recoveryError));
+                    writeJson(makeError("deviceRejected", recoveryError, "audioDevice.recover"));
                     continue;
                 }
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "setAudioDriver") {
-                if (timelineOperationRunning.load(std::memory_order_acquire)) {
-                    writeJson(makeError("timelineBusy",
-                                        "The Arrangement Graph is still loading a VST3. Audio "
-                                        "driver changes can be retried shortly."));
-                    continue;
-                }
                 const auto driver = command.getProperty("driver", {}).toString();
                 if (driver.isEmpty()) {
-                    writeJson(makeError("audioDevice", "An audio driver name is required."));
+                    writeJson(makeError("invalidAudioConfiguration",
+                                        "An audio driver name is required.",
+                                        "audioDevice.validate"));
                     continue;
                 }
                 AudioConfiguration requested;
@@ -949,7 +935,9 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 requested.outputDevice = command.getProperty("outputDevice", {}).toString();
                 requested.inputChannel = static_cast<int>(command.getProperty("inputChannel", 0));
                 if (requested.inputChannel < 0) {
-                    writeJson(makeError("audioDevice", "Input channel must be zero or greater."));
+                    writeJson(makeError("invalidAudioConfiguration",
+                                        "Input channel must be zero or greater.",
+                                        "audioDevice.validate"));
                     continue;
                 }
                 requested.sampleRate = static_cast<double>(command.getProperty("sampleRate", 0.0));
@@ -960,7 +948,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 manager.getAudioDeviceSetup(previousSetup);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
-                callback.setEmergencyMuted(true);
+                callback.setRuntimeRecoveryMute(true);
                 const auto restorePreviousDevice = [&]() {
                     manager.closeAudioDevice();
                     AudioConfiguration previous;
@@ -975,18 +963,24 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         callback.setInputChannel(previousInputChannel);
                         manager.addAudioCallback(&callback);
                         callback.setDeviceFaulted(false);
+                        callback.setRuntimeRecoveryMute(false);
                     }
                     return restoreError;
                 };
                 auto setupError = AudioDeviceService::initialise(manager, requested);
                 if (setupError.isNotEmpty()) {
                     const auto restoreError = restorePreviousDevice();
+                    auto* details = new juce::DynamicObject();
+                    details->setProperty("driver", requested.driver);
+                    details->setProperty("inputDevice", requested.inputDevice);
+                    details->setProperty("outputDevice", requested.outputDevice);
                     writeJson(makeError(
-                        "audioDevice",
-                        setupError + (restoreError.isEmpty()
-                                          ? ". The previous device was restored."
-                                          : ". The previous device could not be restored: " +
-                                                restoreError)));
+                        "deviceRejected",
+                        setupError +
+                            (restoreError.isEmpty()
+                                 ? ". The previous device was restored."
+                                 : ". The previous device could not be restored: " + restoreError),
+                        "audioDevice.activate", juce::var(details)));
                     continue;
                 }
                 auto* activeDevice = manager.getCurrentAudioDevice();
@@ -1001,14 +995,14 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         (restoreError.isEmpty()
                              ? " The previous device was restored."
                              : " The previous device could not be restored: " + restoreError);
-                    writeJson(makeError("audioDevice", message));
+                    writeJson(makeError("deviceRejected", message, "audioDevice.activate"));
                     continue;
                 }
                 callback.setInputChannel(requested.inputChannel);
                 manager.addAudioCallback(&callback);
                 callback.setDeviceFaulted(false);
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "startArrangeRecording") {
@@ -1059,8 +1053,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 continue;
             }
             if (type == "status") {
-                writeJson(
-                    AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor()));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "meterStatus") {
@@ -1093,7 +1087,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 
-    callback.setEmergencyMuted(true);
+    callback.setRuntimeRecoveryMute(true);
     midiInputs.monitor().setActive(false);
     midiInputs.setListening(false);
     midiInputs.reopenAll();
