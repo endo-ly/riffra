@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import {
   HostConnectionChangedError,
+  NativeCommandError,
   ProjectChangedError,
   advanceProjectEpoch,
   invoke,
@@ -66,6 +67,11 @@ describe('native invoke bridge', () => {
 
     releaseParameter(undefined);
     await expect(parameter).resolves.toEqual(undefined);
+  });
+
+  it('classifies unstructured Tauri failures as command failures', () => {
+    expect(new NativeCommandError('Host is unavailable').code).toBe('commandFailed');
+    expect(new NativeCommandError({ reason: 'unknown' }).code).toBe('commandFailed');
   });
 
   it('does not send a coalesced update to a newer Host generation', async () => {

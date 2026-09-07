@@ -344,6 +344,9 @@ export class FakeNativeApi implements NativeApi {
   setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
     return this.command('setEmergencyMute', args);
   }
+  resetFeedbackProtection(...args: Parameters<NativeApi['resetFeedbackProtection']>) {
+    return this.command('resetFeedbackProtection', args);
+  }
   setMasterGainDb(...args: Parameters<NativeApi['setMasterGainDb']>) {
     return this.command('setMasterGainDb', args);
   }
@@ -367,6 +370,9 @@ export class FakeNativeApi implements NativeApi {
   }
   panicMidiTrack(...args: Parameters<NativeApi['panicMidiTrack']>) {
     return this.command('panicMidiTrack', args);
+  }
+  setTargetedMidiTrack(...args: Parameters<NativeApi['setTargetedMidiTrack']>) {
+    return this.command('setTargetedMidiTrack', args);
   }
   startArrangeRecording(...args: Parameters<NativeApi['startArrangeRecording']>) {
     return this.command('startArrangeRecording', args);
@@ -811,6 +817,9 @@ export class FakeNativeApi implements NativeApi {
           state: arguments_[0] ? 'muted' : 'ready',
         };
         return Promise.resolve(this.audio);
+      case 'resetFeedbackProtection':
+        this.audio = { ...this.audio, feedbackSuspected: false, state: 'ready' };
+        return Promise.resolve(this.audio);
       case 'startScanJob':
         return Promise.resolve(this.completedJob('scan', { plugins: this.plugins, issues: [] }));
       case 'getBackgroundJob':
@@ -823,6 +832,7 @@ export class FakeNativeApi implements NativeApi {
       case 'analyzeAsset':
       case 'sendMidiToTrack':
       case 'panicMidiTrack':
+      case 'setTargetedMidiTrack':
       case 'updateLibraryAsset':
       case 'tagRecording':
         return Promise.resolve(null);

@@ -28,7 +28,7 @@ export class NativeCommandError extends Error {
     this.code =
       payload && typeof (payload as NativeCommandErrorPayload).code === 'string'
         ? ((payload as NativeCommandErrorPayload).code as string)
-        : 'hostUnavailable';
+        : 'commandFailed';
     this.details = payload ? (payload as NativeCommandErrorPayload).details : undefined;
   }
 

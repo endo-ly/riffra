@@ -272,6 +272,26 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.audio.state !== 'starting' &&
     props.audio.state !== 'faulted' &&
     props.audio.state !== 'offline';
+  const playSurfaceTargetId =
+    playSurfaceMode !== 'closed' && runtimeReady && focusedTrack?.kind === 'instrument'
+      ? focusedTrack.id
+      : null;
+  useEffect(() => {
+    let cancelled = false;
+    void api.setTargetedMidiTrack(playSurfaceTargetId).catch((error) => {
+      if (!cancelled) setMessage(String(error));
+    });
+    return () => {
+      cancelled = true;
+      if (playSurfaceTargetId !== null) void api.setTargetedMidiTrack(null).catch(() => undefined);
+    };
+  }, [
+    api,
+    playSurfaceTargetId,
+    props.runtimeProjectionStatus.activeAudioEnvironmentRevision,
+    props.runtimeProjectionStatus.activeProjectionSequence,
+    setMessage,
+  ]);
   const activeInstrumentUnavailable = Boolean(
     activeMidiTrack?.instrument?.source.type === 'vst3' &&
     (activeMidiTrack.instrument.source.disabledPlaceholder ||

@@ -2111,12 +2111,14 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const targetSpy = vi.spyOn(api, 'setTargetedMidiTrack');
     const { container } = render(<Harness api={api} initialSession={session} />);
 
     fireEvent.click(screen.getByText('Play Surface Instrument'));
     const playSurfaceToggle = screen.getByRole('button', { name: 'Play Surface' });
     await waitFor(() => expect(playSurfaceToggle).toBeEnabled());
     fireEvent.click(playSurfaceToggle);
+    await waitFor(() => expect(targetSpy).toHaveBeenLastCalledWith('track:play-surface'));
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Compact Play Surface' }));
     expect(screen.getByRole('button', { name: 'Expand Play Surface' })).toBeInTheDocument();
@@ -2133,6 +2135,7 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close Play Surface' }));
+    await waitFor(() => expect(targetSpy).toHaveBeenLastCalledWith(null));
     expect(screen.queryByRole('region', { name: 'Play Surface' })).not.toBeInTheDocument();
   });
 

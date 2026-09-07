@@ -76,6 +76,10 @@ export async function setEmergencyMute(muted: boolean): Promise<AudioStatus> {
   return await invokeHost<AudioStatus>('set_emergency_mute', { muted });
 }
 
+export async function resetFeedbackProtection(): Promise<AudioStatus> {
+  return await invokeHost<AudioStatus>('reset_feedback_protection');
+}
+
 export async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
   return invokeHost<SessionAudioPair>('set_master_gain_db', {
     gainDb,
@@ -137,4 +141,8 @@ export async function panicMidiTrack(trackId: string): Promise<AudioStatus | nul
   } catch (error) {
     return await audioCommandError('Panic MIDI Track', error);
   }
+}
+
+export async function setTargetedMidiTrack(trackId: string | null): Promise<AudioStatus> {
+  return await invokeHost<AudioStatus>('set_targeted_midi_track', { trackId });
 }

@@ -125,6 +125,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     selectAudioDriver,
     enableMidi,
     toggleMute,
+    resetFeedback,
   } = audioHook;
   const recording = useRecording(api, {
     hostGeneration: hostConnection.state.generation,
@@ -311,6 +312,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     updateSelectedLibraryAsset,
     previewSelectedLibraryAsset,
     toggleMute,
+    resetFeedback,
     toggleRecording,
     query,
     visiblePlugins,

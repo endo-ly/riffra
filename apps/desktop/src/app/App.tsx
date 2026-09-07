@@ -141,6 +141,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     undo,
     redo,
     toggleMute,
+    resetFeedback,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     updateSelectedLibraryAsset,
@@ -314,6 +315,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onOpenProject={openProject}
         onRenameProject={renameProject}
         onToggleMute={() => void toggleMute()}
+        onResetFeedback={() => void resetFeedback()}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}

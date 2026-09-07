@@ -27,6 +27,7 @@ interface GlobalControlBarProps {
   onExportProject: () => void;
   onImportProject: () => void;
   onToggleMute: () => void;
+  onResetFeedback: () => void;
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
@@ -193,6 +194,17 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         >
           <Icon name="stop" />
         </button>
+        {props.audio.feedbackSuspected && (
+          <button
+            type="button"
+            className={styles.emergencyButton}
+            onClick={props.onResetFeedback}
+            aria-label="Reset feedback protection"
+            title="Reset feedback protection"
+          >
+            RESET FEEDBACK
+          </button>
+        )}
       </fieldset>
     </header>
   );
