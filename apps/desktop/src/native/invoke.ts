@@ -4,6 +4,52 @@ let currentHostGeneration = 0;
 let currentProjectEpoch = 0;
 let hostConnected = true;
 
+export interface NativeCommandErrorPayload {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+}
+
+/** Structured error crossing the Tauri/native command boundary. */
+export class NativeCommandError extends Error {
+  readonly code: string;
+  readonly details: unknown;
+
+  constructor(error: NativeCommandErrorPayload | string | unknown) {
+    const payload = typeof error === 'object' && error !== null ? error : undefined;
+    const message =
+      payload && typeof (payload as NativeCommandErrorPayload).message === 'string'
+        ? ((payload as NativeCommandErrorPayload).message as string)
+        : typeof error === 'string'
+          ? error
+          : 'Native command failed';
+    super(message);
+    this.name = 'NativeCommandError';
+    this.code =
+      payload && typeof (payload as NativeCommandErrorPayload).code === 'string'
+        ? ((payload as NativeCommandErrorPayload).code as string)
+        : 'hostUnavailable';
+    this.details = payload ? (payload as NativeCommandErrorPayload).details : undefined;
+  }
+
+  get kind(): string | undefined {
+    if (typeof this.details !== 'object' || this.details === null) return undefined;
+    const kind = (this.details as { kind?: unknown }).kind;
+    return typeof kind === 'string' ? kind : undefined;
+  }
+}
+
+async function invokeNative<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  try {
+    return await tauriInvoke<T>(command, args);
+  } catch (error) {
+    if (error instanceof HostConnectionChangedError || error instanceof NativeCommandError) {
+      throw error;
+    }
+    throw new NativeCommandError(error);
+  }
+}
+
 /** Rejection used when a Host-bound response belongs to a previous connection. */
 export class HostConnectionChangedError extends Error {
   constructor() {
@@ -48,7 +94,7 @@ export function advanceProjectEpoch(): number {
  * coalesces high-frequency UI updates through invokeLatestHost below.
  */
 export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  return tauriInvoke<T>(command, args);
+  return invokeNative<T>(command, args);
 }
 
 /** Invokes a command and rejects a response that crossed a Host switch. */
@@ -61,7 +107,7 @@ export async function invokeHost<T>(
   }
   const generation = currentHostGeneration;
   const projectEpoch = currentProjectEpoch;
-  const value = await tauriInvoke<T>(command, args);
+  const value = await invokeNative<T>(command, args);
   if (generation !== currentHostGeneration) {
     throw new HostConnectionChangedError();
   }

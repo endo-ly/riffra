@@ -107,6 +107,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     query,
     recordings,
     transportPlaying,
+    transportStarting,
     recordingCommandPending,
     startRecordingNow,
     runtimeProjectionStatus,
@@ -319,6 +320,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         applyCanonicalState={applyCanonicalState}
         setAudio={setAudio}
         transportPlaying={transportPlaying}
+        transportStarting={transportStarting}
         onPlay={() => void playTransport()}
         onStop={() => void stopTransport()}
         onGoToStart={() => void goToStart()}
@@ -529,7 +531,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               setSelection={arrange.setSelection}
               api={nativeApi}
               audio={audio}
-              onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
+              onToggleTransport={() =>
+                void (transportPlaying || transportStarting ? stopTransport() : playTransport())
+              }
               plugins={plugins}
               builtInInstruments={boot?.builtInInstruments ?? []}
               focusedTrackId={arrange.focusedTrackId}

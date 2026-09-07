@@ -11,6 +11,7 @@ export type { AudioClipPatch } from './AudioClipPatch';
 export type { AudioDeviceInfo } from './AudioDeviceInfo';
 export type { AudioDevicePairing } from './AudioDevicePairing';
 export type { AudioDeviceProbe } from './AudioDeviceProbe';
+export type { AudioDiagnostics } from './AudioDiagnostics';
 export type { AudioDriverConfig } from './AudioDriverConfig';
 export type { AudioDriverInfo } from './AudioDriverInfo';
 export type { AudioInputRoute } from './AudioInputRoute';

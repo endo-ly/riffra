@@ -24,6 +24,7 @@ export function useTransportController({
   projectId = null,
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const [timelineStarting, setTimelineStarting] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   const sequenceRef = useRef(0);
   const currentHostGeneration = useRef(hostGeneration);
@@ -33,6 +34,7 @@ export function useTransportController({
     sequenceRef.current = 0;
     pendingPlayRef.current = null;
     setTimelinePlaying(false);
+    setTimelineStarting(false);
   }, [hostGeneration, projectId]);
 
   const nextTransportSequence = useCallback(() => {
@@ -122,11 +124,13 @@ export function useTransportController({
     return api.onTransportStatus((status) => {
       if (getHostGeneration() !== currentHostGeneration.current) return;
       setTimelinePlaying(status.state === 'playing');
+      setTimelineStarting(status.state === 'starting');
     });
   }, [api]);
 
   return {
     transportPlaying: timelinePlaying,
+    transportStarting: timelineStarting,
     playTransport,
     stopTransport,
     goToStart,

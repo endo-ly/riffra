@@ -8,7 +8,7 @@ export function toAssetId(value: string): AssetId {
 /** Live transport snapshot emitted by the audio sidecar over the status channel. */
 export interface TransportStatus {
   type: 'transportStatus';
-  state: 'stopped' | 'playing' | 'faulted';
+  state: 'stopped' | 'starting' | 'playing' | 'faulted';
   revision: number;
   timelineTick: number;
   timelineSample: number;

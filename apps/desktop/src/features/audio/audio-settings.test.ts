@@ -60,7 +60,22 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
-    message: 'Native audio is connected and emergency-muted.',
+    muteReasons: 0,
+    diagnostics: {
+      callbackCount: 0,
+      averageCallbackDurationUs: 0,
+      maximumCallbackDurationUs: 0,
+      callbackOverruns: 0,
+      callbackLockMisses: 0,
+      liveMidiDrops: 0,
+      trackCount: 0,
+      instrumentRuntimeCount: 0,
+      pluginCount: 0,
+      maximumLatencySamples: 0,
+      projectionDurationMs: 0,
+      audioEnvironmentRevision: 0,
+    },
+    message: 'Native audio is connected and muted.',
     ...overrides,
   };
 }

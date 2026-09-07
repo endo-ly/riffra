@@ -103,12 +103,13 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
   });
 
-  const { transportPlaying, playTransport, stopTransport, goToStart } = useTransportController({
-    api,
-    sessionRef,
-    hostGeneration: hostConnection.state.generation,
-    projectId,
-  });
+  const { transportPlaying, transportStarting, playTransport, stopTransport, goToStart } =
+    useTransportController({
+      api,
+      sessionRef,
+      hostGeneration: hostConnection.state.generation,
+      projectId,
+    });
 
   const audioHook = useAudioSettings(api, {
     audio,
@@ -272,6 +273,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     ignoreMissing,
     recordings,
     transportPlaying,
+    transportStarting,
     recordingCommandPending,
     exportMessage,
     deviceProbe,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession } from '@/native/browser-defaults';
@@ -18,12 +18,32 @@ function Harness({ api }: { api: FakeNativeApi }) {
       <button onClick={() => void transport.playTransport()}>Play</button>
       <button onClick={() => void transport.stopTransport()}>Stop</button>
       <button onClick={() => void transport.goToStart()}>Go to Start</button>
-      <output>{transport.transportPlaying ? 'transport-playing' : ''}</output>
+      <output>
+        {transport.transportStarting
+          ? 'transport-starting'
+          : transport.transportPlaying
+            ? 'transport-playing'
+            : ''}
+      </output>
     </>
   );
 }
 
 describe('useTransportController', () => {
+  it('reports Starting until the native Playing status arrives', async () => {
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('playTimeline'));
+
+    act(() => api.emitTransportStatus({ state: 'starting' }));
+    expect(screen.getByText('transport-starting')).toBeInTheDocument();
+
+    act(() => api.emitTransportStatus({ state: 'playing' }));
+    await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
+  });
+
   it('stops a timeline play request before the playing status arrives', async () => {
     const api = new FakeNativeApi();
     let playSequence = 0;

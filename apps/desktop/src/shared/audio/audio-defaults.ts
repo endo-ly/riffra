@@ -56,6 +56,21 @@ export function offlineAudioStatus(
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
+    muteReasons: 0,
+    diagnostics: {
+      callbackCount: 0,
+      averageCallbackDurationUs: 0,
+      maximumCallbackDurationUs: 0,
+      callbackOverruns: 0,
+      callbackLockMisses: 0,
+      liveMidiDrops: 0,
+      trackCount: 0,
+      instrumentRuntimeCount: 0,
+      pluginCount: 0,
+      maximumLatencySamples: 0,
+      projectionDurationMs: 0,
+      audioEnvironmentRevision: 0,
+    },
     message,
   };
 }
@@ -67,7 +82,7 @@ export function offlineAudioStatus(
  */
 export function startingAudioStatus(): AudioStatus {
   return {
-    ...offlineAudioStatus('Native audio sidecar is starting in emergency-mute state.'),
+    ...offlineAudioStatus('Native audio sidecar is starting with the startup guard active.'),
     state: 'starting',
   };
 }
