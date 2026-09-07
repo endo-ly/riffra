@@ -1256,6 +1256,8 @@ void TimelineEngine::mixRange(Track& track, const std::int64_t rangeStart,
         const auto overlapStart = std::max(rangeStart, clip.startSample);
         const auto overlapEnd = std::min(rangeEnd, clipEnd);
         if (overlapEnd <= overlapStart) continue;
+        auto& destinationBuffer =
+            clip.trackEffectsAlreadyApplied ? track.postEffectClipBuffer : track.mixBuffer;
         auto remaining = static_cast<int>(overlapEnd - overlapStart);
         auto outputOffset = destinationStart + static_cast<int>(overlapStart - rangeStart);
         auto localSample = overlapStart - clip.startSample;
@@ -1296,12 +1298,12 @@ void TimelineEngine::mixRange(Track& track, const std::int64_t rangeStart,
                 }
                 const auto panAngle = (clip.pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
                 const auto source = clip.scratch.getSample(0, sample) * clip.gain * envelope;
-                track.mixBuffer.addSample(0, outputOffset + sample, source * std::cos(panAngle));
-                track.mixBuffer.addSample(1, outputOffset + sample,
-                                          clip.scratch.getNumChannels() > 1
-                                              ? clip.scratch.getSample(1, sample) * clip.gain *
-                                                    envelope * std::sin(panAngle)
-                                              : source * std::sin(panAngle));
+                destinationBuffer.addSample(0, outputOffset + sample, source * std::cos(panAngle));
+                destinationBuffer.addSample(1, outputOffset + sample,
+                                            clip.scratch.getNumChannels() > 1
+                                                ? clip.scratch.getSample(1, sample) * clip.gain *
+                                                      envelope * std::sin(panAngle)
+                                                : source * std::sin(panAngle));
             }
             clip.expectedSourceFrame =
                 sourceFrame +
@@ -1401,8 +1403,8 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
         } else {
             track.effectChain.process(inputChannels, 2, processedChannels, 2, sampleCount);
         }
-        mixProcessedTrack(track, audible, outputChannels, channelCount, rangeStart,
-                          destinationStart, sampleCount);
+        mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart, destinationStart,
+                       sampleCount);
         if (track.instrument) {
             mixLiveTrack(track, audible, outputChannels, channelCount, rangeStart, destinationStart,
                          sampleCount);
@@ -1578,12 +1580,13 @@ void TimelineEngine::processLiveInstrumentTrack(PreparedTimeline& prepared, Trac
                                   sampleCount);
 }
 
-void TimelineEngine::mixProcessedTrack(Track& track, const bool audible,
-                                       float* const* outputChannels, const int channelCount,
-                                       const std::int64_t rangeStart, const int destinationStart,
-                                       const int sampleCount) noexcept {
+void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* const* outputChannels,
+                                    const int channelCount, const std::int64_t rangeStart,
+                                    const int destinationStart, const int sampleCount) noexcept {
     const auto delay = track.compensationDelaySamples;
     const auto delaySize = track.delayBuffer.getNumSamples();
+    const auto postEffectDelay = track.postEffectCompensationDelaySamples;
+    const auto postEffectDelaySize = track.postEffectDelayBuffer.getNumSamples();
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto timelinePosition = rangeStart + sample;
         const auto gain = juce::Decibels::decibelsToGain(ArrangementGraph::automationValueAt(
@@ -1605,6 +1608,19 @@ void TimelineEngine::mixProcessedTrack(Track& track, const bool audible,
             right = track.delayBuffer.getSample(1, static_cast<int>(read));
             track.delayWritePosition = (write + 1) % delaySize;
         }
+        auto postEffectLeft = track.postEffectClipBuffer.getSample(0, sample);
+        auto postEffectRight = track.postEffectClipBuffer.getSample(1, sample);
+        if (postEffectDelay > 0 && postEffectDelaySize > 0) {
+            const auto write = track.postEffectDelayWritePosition;
+            track.postEffectDelayBuffer.setSample(0, static_cast<int>(write), postEffectLeft);
+            track.postEffectDelayBuffer.setSample(1, static_cast<int>(write), postEffectRight);
+            const auto read = (write - postEffectDelay + postEffectDelaySize) % postEffectDelaySize;
+            postEffectLeft = track.postEffectDelayBuffer.getSample(0, static_cast<int>(read));
+            postEffectRight = track.postEffectDelayBuffer.getSample(1, static_cast<int>(read));
+            track.postEffectDelayWritePosition = (write + 1) % postEffectDelaySize;
+        }
+        left += postEffectLeft;
+        right += postEffectRight;
         if (audible && channelCount > 0 && outputChannels[0] != nullptr)
             outputChannels[0][destinationStart + sample] += left * leftGain;
         if (audible && channelCount > 1 && outputChannels[1] != nullptr)
@@ -1638,6 +1654,7 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
         for (auto& clip : track.clips) clip->expectedSourceFrame = -1;
         track.mixBuffer.clear();
         track.processedBuffer.clear();
+        track.postEffectClipBuffer.clear();
         track.midiBuffer.clear();
         if (track.instrumentRuntime != nullptr)
             track.instrumentRuntime->resetForTransportDiscontinuity();
@@ -1647,6 +1664,8 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
         track.liveEffectChain.allNotesOff();
         track.delayBuffer.clear();
         track.delayWritePosition = 0;
+        track.postEffectDelayBuffer.clear();
+        track.postEffectDelayWritePosition = 0;
     }
 }
 
@@ -1719,7 +1738,10 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         }
         if (active->loopEnabled && position < active->loopEndSample)
             chunk = std::min<int>(chunk, static_cast<int>(active->loopEndSample - position));
-        for (auto& trackPtr : active->tracks) trackPtr->mixBuffer.clear(0, chunk);
+        for (auto& trackPtr : active->tracks) {
+            trackPtr->mixBuffer.clear(0, chunk);
+            trackPtr->postEffectClipBuffer.clear(0, chunk);
+        }
         for (auto& trackPtr : active->tracks) mixRange(*trackPtr, position, 0, chunk);
         for (auto& trackPtr : active->tracks) scheduleMidi(*active, *trackPtr, position, chunk);
         const auto captureStart = captureBlockOffset.load(std::memory_order_acquire);

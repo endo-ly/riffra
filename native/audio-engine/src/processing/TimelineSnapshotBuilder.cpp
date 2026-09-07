@@ -353,6 +353,13 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 error = "Timeline clip must be an object.";
                 return false;
             }
+            const auto clipId = value.getProperty("clipId", {}).toString();
+            const auto takeVariant = value.getProperty("takeVariant", {}).toString();
+            const bool trackEffectsAlreadyApplied = takeVariant == "processed";
+            if (takeVariant != "raw" && !trackEffectsAlreadyApplied) {
+                error = "Timeline clip has an invalid takeVariant: " + clipId;
+                return false;
+            }
             const auto path = value.getProperty("path", {}).toString();
             auto reader =
                 std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(juce::File(path)));
@@ -361,7 +368,8 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                 return false;
             }
             auto clip = std::make_unique<Clip>();
-            clip->id = value.getProperty("clipId", {}).toString();
+            clip->id = clipId;
+            clip->trackEffectsAlreadyApplied = trackEffectsAlreadyApplied;
             const auto declaredSourceRate =
                 static_cast<double>(value.getProperty("sourceSampleRate", 0.0));
             clip->sourceSampleRate = reader->sampleRate;
@@ -496,6 +504,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         }
         track->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->liveProcessedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->recordingCapture.processedBuffer.setSize(2, maximumBlockSize, false, true, false);
@@ -508,6 +517,11 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             2, static_cast<int>(track->compensationDelaySamples + maximumBlockSize + 1), false,
             true, false);
         track->delayBuffer.clear();
+        track->postEffectCompensationDelaySamples = maximumPluginDelay;
+        track->postEffectDelayBuffer.setSize(
+            2, static_cast<int>(track->postEffectCompensationDelaySamples + maximumBlockSize + 1),
+            false, true, false);
+        track->postEffectDelayBuffer.clear();
     }
 
     return true;

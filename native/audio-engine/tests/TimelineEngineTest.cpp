@@ -174,6 +174,64 @@ juce::var makeAudioTrackSnapshot(const int trackCount, const bool monitorFirstTr
     return juce::var(snapshot);
 }
 
+juce::var makeRawAndProcessedClipSnapshot(const juce::File& rawFile,
+                                          const juce::File& processedFile) {
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    juce::Array<juce::var> clips;
+    const auto addClip = [&clips](const juce::String& id, const juce::File& file,
+                                  const juce::String& takeVariant) {
+        auto* clip = new juce::DynamicObject();
+        clip->setProperty("clipId", id);
+        clip->setProperty("path", file.getFullPathName());
+        clip->setProperty("sourceSampleRate", 48'000);
+        clip->setProperty("sourceStartFrame", 0);
+        clip->setProperty("sourceEndFrame", 32);
+        clip->setProperty("durationFrames", 32);
+        clip->setProperty("durationSampleRate", 48'000);
+        clip->setProperty("startTick", 0);
+        clip->setProperty("fadeInFrames", 0);
+        clip->setProperty("fadeOutFrames", 0);
+        clip->setProperty("fadeShape", 1);
+        clip->setProperty("gainDb", 0.0);
+        clip->setProperty("pan", 0.0);
+        clip->setProperty("takeVariant", takeVariant);
+        clip->setProperty("loopEnabled", false);
+        clip->setProperty("muted", false);
+        clips.add(juce::var(clip));
+    };
+    addClip("clip:raw", rawFile, "raw");
+    addClip("clip:processed", processedFile, "processed");
+
+    auto* track = new juce::DynamicObject();
+    track->setProperty("id", "track:audio");
+    track->setProperty("kind", "audio");
+    track->setProperty("gainDb", 0.0);
+    track->setProperty("pan", 0.0);
+    track->setProperty("muted", false);
+    track->setProperty("solo", false);
+    track->setProperty("armed", false);
+    track->setProperty("monitoring", "off");
+    auto* rack = new juce::DynamicObject();
+    rack->setProperty("devices", juce::Array<juce::var>{});
+    track->setProperty("rack", juce::var(rack));
+    track->setProperty("audioClips", clips);
+    track->setProperty("midiClips", juce::Array<juce::var>{});
+    track->setProperty("automation", juce::Array<juce::var>{});
+
+    juce::Array<juce::var> tracks;
+    tracks.add(juce::var(track));
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", tracks);
+    return juce::var(snapshot);
+}
+
 }  // namespace
 
 class TimelineEngineTestPeer final {
@@ -216,6 +274,25 @@ public:
         if (found == engine.timeline->tracks.end()) return false;
         return addChainDevice((*found)->effectChain, deviceId, std::move(processor), sampleRate,
                               blockSize, error);
+    }
+
+    static bool setPlaybackCompensationForTest(TimelineEngine& engine, const juce::String& trackId,
+                                               const std::int64_t samples) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr) return false;
+        const auto found =
+            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+                         [&trackId](const auto& item) { return item->id == trackId; });
+        if (found == engine.timeline->tracks.end()) return false;
+        auto& track = *(*found);
+        track.compensationDelaySamples = samples;
+        track.postEffectCompensationDelaySamples = samples;
+        const auto bufferSize = static_cast<int>(samples + track.preparedBlockSize + 1);
+        track.delayBuffer.setSize(2, bufferSize, false, true, false);
+        track.delayBuffer.clear();
+        track.postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
+        track.postEffectDelayBuffer.clear();
+        return true;
     }
 
     static bool instrumentEffectChainsProcessOnce() {
@@ -616,6 +693,7 @@ public:
                 clip->setProperty("fadeOutFrames", 0);
                 clip->setProperty("gainDb", 0.0);
                 clip->setProperty("pan", 0.0);
+                clip->setProperty("takeVariant", "raw");
                 clip->setProperty("loopEnabled", false);
                 clip->setProperty("muted", false);
                 clips.add(juce::var(clip));
@@ -1651,6 +1729,66 @@ TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
         EXPECT_NEAR(riffra::fadeEnvelope(1.0f, shape), 1.0f, 1e-6f);
         EXPECT_NEAR(riffra::fadeEnvelope(0.0f, shape), 0.0f, 1e-6f);
     }
+}
+
+TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("raw.wav");
+    const auto processedFile = directory.get().getChildFile("processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(makeRawAndProcessedClipSnapshot(rawFile, processedFile),
+                                    formats, 48'000.0, 32, error))
+        << error.toStdString();
+    std::vector<int> processOrder;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTimelineChainDevice(
+        engine, "track:audio", "effect:double",
+        std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 32, error))
+        << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
+
+    constexpr int kBlockSamples = 32;
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputChannels{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputChannels.data(), 2, kBlockSamples);
+    const auto expected = (0.05f * 2.0f + 0.10f) * 0.5f;
+
+    // Assert
+    EXPECT_EQ(processOrder, std::vector<int>{1});
+    for (int sample = 0; sample < 4; ++sample) {
+        EXPECT_FLOAT_EQ(left[static_cast<std::size_t>(sample)], 0.0f);
+        EXPECT_FLOAT_EQ(right[static_cast<std::size_t>(sample)], 0.0f);
+    }
+    EXPECT_NEAR(left[4], expected, 0.002f);
+    EXPECT_NEAR(right[4], expected, 0.002f);
+    EXPECT_NEAR(left[31], expected, 0.002f);
+    EXPECT_NEAR(right[31], expected, 0.002f);
+
+    // Act: a transport discontinuity must clear both compensation lines.
+    engine.stop();
+    engine.seekToTick(0);
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.play();
+    engine.mix(outputChannels.data(), 2, kBlockSamples);
+
+    // Assert
+    for (int sample = 0; sample < 4; ++sample) {
+        EXPECT_FLOAT_EQ(left[static_cast<std::size_t>(sample)], 0.0f);
+        EXPECT_FLOAT_EQ(right[static_cast<std::size_t>(sample)], 0.0f);
+    }
+    EXPECT_NEAR(left[4], expected, 0.002f);
+    EXPECT_NEAR(right[4], expected, 0.002f);
 }
 
 TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce) {
