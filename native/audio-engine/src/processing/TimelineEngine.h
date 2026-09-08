@@ -57,6 +57,7 @@ public:
     bool finalizeRecording(juce::String& error) noexcept;
     /// Generates processed recording variants after the realtime graph is stopped.
     bool processFinalizedRecording(juce::String& error) noexcept;
+    bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;

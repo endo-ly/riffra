@@ -32,6 +32,10 @@ bool RuntimeLifecycleExecutor::submit(Task task, std::chrono::milliseconds timeo
     return true;
 }
 
+bool RuntimeLifecycleExecutor::submitWithoutTimeout(Task task) {
+    return submit(std::move(task), kNoTimeout);
+}
+
 RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitState(
     std::string key, Task task, std::chrono::milliseconds timeout) {
     if (!task || key.empty() || timeout <= std::chrono::milliseconds::zero())
@@ -107,7 +111,7 @@ void RuntimeLifecycleExecutor::watch() {
         {
             std::unique_lock lock(mutex);
             if (stopping) return;
-            if (!running || currentTaskTimedOut) continue;
+            if (!running || currentTaskTimedOut || currentTaskTimeout == kNoTimeout) continue;
             if (std::chrono::steady_clock::now() - currentTaskStarted > currentTaskTimeout) {
                 timedOut = true;
                 currentTaskTimedOut = true;

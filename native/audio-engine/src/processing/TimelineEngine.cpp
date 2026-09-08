@@ -410,6 +410,11 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
 }
 
 bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
+    return processFinalizedRecording(nullptr, error);
+}
+
+bool TimelineEngine::processFinalizedRecording(ArrangementCaptureSink* sink,
+                                               juce::String& error) noexcept {
     std::vector<OfflineRecordingTrack> tracks;
     double sampleRate;
     int blockSize;
@@ -422,9 +427,14 @@ bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
         finalizedRecordingBlockSize = 0;
     }
 
-    auto sinkLease = recordingCapture->acquireSink();
-    auto* sink = sinkLease.get();
-    if (sink == nullptr) return true;
+    if (sink == nullptr) {
+        auto sinkLease = recordingCapture->acquireSink();
+        sink = sinkLease.get();
+        if (sink == nullptr) return true;
+        const auto generated =
+            generateProcessedVariants(sampleRate, blockSize, tracks, sink, error);
+        return generated && recordingCapture->captureErrors() == 0;
+    }
     const auto generated = generateProcessedVariants(sampleRate, blockSize, tracks, sink, error);
     return generated && recordingCapture->captureErrors() == 0;
 }

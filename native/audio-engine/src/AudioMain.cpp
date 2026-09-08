@@ -179,6 +179,47 @@ int serve(const std::optional<std::uint32_t> parentPid,
         std::_Exit(124);
     });
 
+    const auto publishRecordingCompletion =
+        [&](const std::shared_ptr<riffra::ArrangeRecordingSession>& session, const bool processed,
+            const juce::String& processingError) {
+            juce::String finishError;
+            const auto finished = session->finish(finishError);
+            juce::String error = processingError;
+            if (finishError.isNotEmpty()) {
+                if (error.isNotEmpty()) error << " ";
+                error << finishError;
+            }
+            const auto succeeded = processed && finished;
+            const auto status = session->status();
+            callback.completeArrangeRecordingProcessing(status, error);
+
+            auto* completion = new juce::DynamicObject();
+            completion->setProperty("type", "recordingComplete");
+            completion->setProperty("directory", status.getProperty("directory", {}));
+            completion->setProperty("success", succeeded);
+            if (error.isNotEmpty()) completion->setProperty("message", error);
+            writeJson(juce::var(completion));
+            writeJson(AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor(),
+                                                        {}, &timelineEngine));
+        };
+
+    callback.setRecordingFinalizationDispatcher(
+        [&](std::unique_ptr<riffra::ArrangeRecordingSession> session) {
+            if (session == nullptr) return;
+            auto owned = std::shared_ptr<riffra::ArrangeRecordingSession>(std::move(session));
+            const auto submitted = runtimeLifecycle.submitWithoutTimeout([&, owned] {
+                juce::String processingError;
+                const auto processed =
+                    timelineEngine.processFinalizedRecording(owned.get(), processingError);
+                publishRecordingCompletion(owned, processed, processingError);
+            });
+            if (!submitted) {
+                publishRecordingCompletion(
+                    owned, false,
+                    "The recording finalization worker stopped before processing could begin.");
+            }
+        });
+
     std::thread commandThread([&] {
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -1117,6 +1158,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     juce::MessageManager::getInstance()->runDispatchLoop();
     if (commandThread.joinable()) commandThread.join();
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
+    callback.setRecordingFinalizationDispatcher({});
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 

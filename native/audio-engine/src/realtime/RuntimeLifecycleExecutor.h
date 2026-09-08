@@ -55,6 +55,10 @@ public:
     /// Enqueues a lifecycle task that must finish within `timeout` of starting
     /// to execute. Exceeding the timeout invokes the timeout handler once.
     [[nodiscard]] bool submit(Task task, std::chrono::milliseconds timeout);
+    /// Enqueues work whose duration is determined by captured media length.
+    /// The task is still serialized with every other lifecycle operation, but
+    /// is not treated as a stalled third-party lifecycle call by the watchdog.
+    [[nodiscard]] bool submitWithoutTimeout(Task task);
     /// Enqueues a latest-value state event. Events with the same key replace
     /// one another, and a bounded state lane prevents parameter floods from
     /// delaying lifecycle work. State events are time-bounded like lifecycle
@@ -80,6 +84,7 @@ private:
     void watch();
 
     static constexpr std::size_t kStateTaskLimit = 256;
+    static constexpr auto kNoTimeout = std::chrono::milliseconds::max();
 
     mutable std::mutex mutex;
     std::condition_variable wake;

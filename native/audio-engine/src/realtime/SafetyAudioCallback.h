@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include "ArrangeRecordingSession.h"
@@ -24,6 +25,9 @@ enum class MuteReason : std::uint32_t {
 
 class SafetyAudioCallback final : public juce::AudioIODeviceCallback {
 public:
+    using RecordingFinalizationDispatcher =
+        std::function<void(std::unique_ptr<ArrangeRecordingSession>)>;
+
     SafetyAudioCallback() = default;
     ~SafetyAudioCallback() override;
 
@@ -53,7 +57,10 @@ public:
     [[nodiscard]] double getSampleRate() const noexcept;
     bool startArrangeRecording(const juce::File& directory, TimelineEngine& timeline,
                                juce::String& error);
+    void setRecordingFinalizationDispatcher(RecordingFinalizationDispatcher dispatcher);
     bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error);
+    std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept;
+    void completeArrangeRecordingProcessing(const juce::var& status, const juce::String& error);
     bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error);
     [[nodiscard]] juce::var recordingStatus() const;
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
@@ -130,6 +137,10 @@ private:
     float fadeStep = 0.0f;
     mutable juce::CriticalSection recordingLock;
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
+    std::unique_ptr<ArrangeRecordingSession> pendingFinalization;
+    RecordingFinalizationDispatcher recordingFinalizationDispatcher;
+    juce::var recordingFinalizationStatus;
+    bool recordingProcessing = false;
     std::atomic<bool> arrangeRecordingCancelled{false};
     mutable juce::CriticalSection previewLock;
     struct PreviewVoice {

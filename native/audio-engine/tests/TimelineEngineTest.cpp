@@ -1439,9 +1439,8 @@ public:
                         constexpr int kProdTotal = kProdLoopLength * kProdPasses;
                         constexpr int kProdBlock = 512;
 
-                        // 3 full passes
-                        // SafetyAudioCallback owns transport stop, offline processing, sink clear,
-                        // and session finalization.
+                        // 3 full passes. SafetyAudioCallback owns transport stop and capture
+                        // detachment; this test completes the detached offline job explicitly.
                         engine.seekToTick(0);
                         auto prodDir = directory.getChildFile("prod-writer");
                         SafetyAudioCallback prodCallback;
@@ -1474,6 +1473,17 @@ public:
                             juce::String stopError;
                             const auto stopOk =
                                 prodCallback.stopArrangeRecording(engine, stopError);
+                            auto detached = prodCallback.takeFinalizedRecording();
+                            const auto processed =
+                                detached != nullptr &&
+                                engine.processFinalizedRecording(detached.get(), stopError);
+                            juce::String finishError;
+                            const auto finished =
+                                detached != nullptr && detached->finish(finishError);
+                            if (finishError.isNotEmpty()) {
+                                if (stopError.isNotEmpty()) stopError << " ";
+                                stopError << finishError;
+                            }
                             engine.stop();
 
                             const auto rawFile = prodDir.getChildFile("tracks/0000/raw.wav");
@@ -1508,10 +1518,11 @@ public:
                             }
 
                             productionWriterPassed =
-                                prodWindowed && stopOk && rawFile.existsAsFile() &&
-                                processedFile.existsAsFile() && rawLength == kProdTotal &&
-                                processedLength == kProdTotal && completed &&
-                                diagProductionMissing == 0 && diagProductionDropped == 0;
+                                prodWindowed && stopOk && processed && finished &&
+                                rawFile.existsAsFile() && processedFile.existsAsFile() &&
+                                rawLength == kProdTotal && processedLength == kProdTotal &&
+                                completed && diagProductionMissing == 0 &&
+                                diagProductionDropped == 0;
 
                             // Verify capture segment ranges match
                             if (productionWriterPassed && manifestValue.isObject()) {
@@ -1763,7 +1774,7 @@ public:
                  longRecordingPassed);
         addCheck(
             "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns transport stop, "
-            "offline processing, sink clear and session finish)",
+            "capture detachment; lifecycle worker owns offline processing and session finish)",
             productionWriterPassed);
         addCheck("Production ThreadedWriter Partial Pass", productionWriterPartialPassed);
         addCheck("Stopped Transport processes live Instrument MIDI", liveInstrumentWhileStopped);

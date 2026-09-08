@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace riffra {
 SafetyAudioCallback::~SafetyAudioCallback() {
@@ -171,7 +172,7 @@ double SafetyAudioCallback::getSampleRate() const noexcept {
 bool SafetyAudioCallback::startArrangeRecording(const juce::File& directory,
                                                 TimelineEngine& timeline, juce::String& error) {
     const juce::ScopedLock lock(recordingLock);
-    if (arrangeRecording != nullptr) {
+    if (arrangeRecording != nullptr || pendingFinalization != nullptr || recordingProcessing) {
         error = "A recording is already active.";
         return false;
     }
@@ -180,25 +181,79 @@ bool SafetyAudioCallback::startArrangeRecording(const juce::File& directory,
     if (candidate == nullptr) return false;
     arrangeRecording = std::move(candidate);
     arrangeRecordingCancelled.store(false, std::memory_order_release);
+    recordingFinalizationStatus = juce::var{};
     timeline.setRecordingSink(arrangeRecording.get());
     return true;
 }
 
-bool SafetyAudioCallback::stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
+void SafetyAudioCallback::setRecordingFinalizationDispatcher(
+    RecordingFinalizationDispatcher dispatcher) {
     const juce::ScopedLock lock(recordingLock);
-    timeline.stopRecording();
-    const auto captureFinalized = timeline.finalizeRecording(error);
-    timeline.stop();
-    if (!captureFinalized) return false;
-    if (!timeline.processFinalizedRecording(error)) return false;
-    timeline.clearRecordingSink();
-    if (arrangeRecording == nullptr) return true;
-    auto finishing = std::move(arrangeRecording);
-    return finishing->finish(error);
+    recordingFinalizationDispatcher = std::move(dispatcher);
+}
+
+bool SafetyAudioCallback::stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
+    std::unique_ptr<ArrangeRecordingSession> detached;
+    RecordingFinalizationDispatcher dispatcher;
+    {
+        const juce::ScopedLock lock(recordingLock);
+        if (recordingProcessing) {
+            error = "The previous recording is still being processed.";
+            return false;
+        }
+        if (pendingFinalization != nullptr) {
+            error = "The previous recording is waiting for finalization.";
+            return false;
+        }
+        timeline.stopRecording();
+        const auto captureFinalized = timeline.finalizeRecording(error);
+        timeline.stop();
+        if (!captureFinalized) return false;
+        timeline.clearRecordingSink();
+        if (arrangeRecording == nullptr) return true;
+
+        detached = std::move(arrangeRecording);
+        recordingProcessing = true;
+        recordingFinalizationStatus = detached->status();
+        if (auto* status = recordingFinalizationStatus.getDynamicObject()) {
+            status->setProperty("active", false);
+            status->setProperty("processing", true);
+        }
+        dispatcher = recordingFinalizationDispatcher;
+    }
+
+    if (dispatcher != nullptr)
+        dispatcher(std::move(detached));
+    else {
+        const juce::ScopedLock lock(recordingLock);
+        pendingFinalization = std::move(detached);
+    }
+    return true;
+}
+
+std::unique_ptr<ArrangeRecordingSession> SafetyAudioCallback::takeFinalizedRecording() noexcept {
+    const juce::ScopedLock lock(recordingLock);
+    return std::move(pendingFinalization);
+}
+
+void SafetyAudioCallback::completeArrangeRecordingProcessing(const juce::var& status,
+                                                             const juce::String& error) {
+    const juce::ScopedLock lock(recordingLock);
+    recordingFinalizationStatus = status;
+    if (auto* result = recordingFinalizationStatus.getDynamicObject()) {
+        result->setProperty("active", false);
+        result->setProperty("processing", false);
+        if (error.isNotEmpty()) result->setProperty("error", error);
+    }
+    recordingProcessing = false;
 }
 
 bool SafetyAudioCallback::cancelArrangeRecording(TimelineEngine& timeline, juce::String& error) {
     const juce::ScopedLock lock(recordingLock);
+    if (recordingProcessing || pendingFinalization != nullptr) {
+        error = "The previous recording is still being processed.";
+        return false;
+    }
     timeline.clearRecordingSink();
     if (arrangeRecording == nullptr) {
         arrangeRecordingCancelled.store(true, std::memory_order_release);
@@ -212,9 +267,15 @@ bool SafetyAudioCallback::cancelArrangeRecording(TimelineEngine& timeline, juce:
 
 juce::var SafetyAudioCallback::recordingStatus() const {
     const juce::ScopedLock lock(recordingLock);
-    if (arrangeRecording != nullptr) return arrangeRecording->status();
+    if (arrangeRecording != nullptr) {
+        auto status = arrangeRecording->status();
+        if (auto* result = status.getDynamicObject()) result->setProperty("processing", false);
+        return status;
+    }
+    if (recordingFinalizationStatus.isObject()) return recordingFinalizationStatus;
     auto* status = new juce::DynamicObject();
     status->setProperty("active", false);
+    status->setProperty("processing", false);
     status->setProperty("cancelled", arrangeRecordingCancelled.load(std::memory_order_acquire));
     return juce::var(status);
 }
