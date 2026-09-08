@@ -36,7 +36,7 @@ public:
         const juce::String& trackId) noexcept override;
     bool writeProcessedAudioTrackOffline(const juce::String& trackId, const float* const* processed,
                                          int sampleCount, int timeoutMs) noexcept override;
-    bool finish(juce::String& error);
+    bool finish(bool processedSuccessfully, juce::String& error);
     bool cancel(juce::String& error);
     [[nodiscard]] juce::var status() const;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;

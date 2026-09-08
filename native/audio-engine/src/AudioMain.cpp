@@ -171,6 +171,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
         if (!juce::MessageManager::callSync([task = std::move(task)]() mutable { task(); }))
             std::_Exit(125);
     });
+    constexpr auto kRecordingFinalizationStallTimeout = std::chrono::seconds(45);
     runtimeLifecycle.setTimeoutHandler([] {
         // Do not write to stdout here. The parent may be the stalled party or
         // its pipe may already be back-pressured; the watchdog's only bounded
@@ -183,7 +184,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
         [&](const std::shared_ptr<riffra::ArrangeRecordingSession>& session, const bool processed,
             const juce::String& processingError) {
             juce::String finishError;
-            const auto finished = session->finish(finishError);
+            const auto finished = session->finish(processed, finishError);
             juce::String error = processingError;
             if (finishError.isNotEmpty()) {
                 if (error.isNotEmpty()) error << " ";
@@ -207,12 +208,15 @@ int serve(const std::optional<std::uint32_t> parentPid,
         [&](std::unique_ptr<riffra::ArrangeRecordingSession> session) {
             if (session == nullptr) return;
             auto owned = std::shared_ptr<riffra::ArrangeRecordingSession>(std::move(session));
-            const auto submitted = runtimeLifecycle.submitWithoutTimeout([&, owned] {
-                juce::String processingError;
-                const auto processed =
-                    timelineEngine.processFinalizedRecording(owned.get(), processingError);
-                publishRecordingCompletion(owned, processed, processingError);
-            });
+            const auto submitted = runtimeLifecycle.submitWithProgress(
+                [&, owned] {
+                    runtimeLifecycle.reportProgress();
+                    juce::String processingError;
+                    const auto processed = timelineEngine.processFinalizedRecording(
+                        owned.get(), processingError, [&] { runtimeLifecycle.reportProgress(); });
+                    publishRecordingCompletion(owned, processed, processingError);
+                },
+                kRecordingFinalizationStallTimeout);
             if (!submitted) {
                 publishRecordingCompletion(
                     owned, false,

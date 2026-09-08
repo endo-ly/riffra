@@ -42,7 +42,7 @@ RecordingSession::RecordingSession(juce::File directory, const double sampleRate
 
 RecordingSession::~RecordingSession() {
     juce::String ignored;
-    finish(ignored);
+    finish(true, ignored);
 }
 
 bool RecordingSession::initialise(juce::String& error) {
@@ -184,28 +184,36 @@ juce::File RecordingSession::flushRaw() noexcept {
     return {};
 }
 
-bool RecordingSession::finish(juce::String& error) {
+bool RecordingSession::finish(const bool processedSuccessfully, juce::String& error) {
     if (finished) return true;
     finished = true;
     rawWriter.reset();
     processedWriter.reset();
     writerThread.stopThread(5000);
 
-    auto completed = getRawSamplesWritten() > 0 && getProcessedSamplesWritten() > 0;
-    if (!completed)
+    const auto rawAvailable = getRawSamplesWritten() > 0 && rawPartial.existsAsFile();
+    const auto processedAvailable = processedSuccessfully && getProcessedSamplesWritten() > 0 &&
+                                    processedPartial.existsAsFile();
+    auto completed = rawAvailable && processedAvailable;
+    if (!processedSuccessfully)
+        error << "Processed recording generation failed; raw audio remains recoverable. ";
+    if (!rawAvailable)
         error
-            << "Recording contains no audio samples; empty partial files were kept for diagnosis. ";
+            << "Raw recording contains no audio samples; its partial file was kept for diagnosis. ";
+    if (!processedAvailable)
+        error << "Processed recording contains no usable audio samples; its partial file was kept "
+                 "for diagnosis. ";
     if (!rawPartial.existsAsFile()) {
         completed = false;
         error << "Raw recording file is missing. ";
-    } else if (completed && !rawPartial.moveFileTo(rawFinal)) {
+    } else if (rawAvailable && !rawPartial.moveFileTo(rawFinal)) {
         completed = false;
         error << "Raw recording remains recoverable at " << rawPartial.getFullPathName() << ". ";
     }
     if (!processedPartial.existsAsFile()) {
         completed = false;
         error << "Processed recording file is missing. ";
-    } else if (completed && !processedPartial.moveFileTo(processedFinal)) {
+    } else if (processedAvailable && !processedPartial.moveFileTo(processedFinal)) {
         completed = false;
         error << "Processed recording remains recoverable at " << processedPartial.getFullPathName()
               << ".";

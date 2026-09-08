@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -33,6 +34,8 @@ class TimelineSnapshotBuilder;
 
 class TimelineEngine final {
 public:
+    using ProcessingProgressCallback = std::function<void()>;
+
     explicit TimelineEngine(bool offline = false);
     ~TimelineEngine();
 
@@ -57,7 +60,8 @@ public:
     bool finalizeRecording(juce::String& error) noexcept;
     /// Generates processed recording variants after the realtime graph is stopped.
     bool processFinalizedRecording(juce::String& error) noexcept;
-    bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error) noexcept;
+    bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress = {}) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
@@ -218,7 +222,8 @@ private:
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateProcessedVariants(double sampleRate, int blockSize,
                                    const std::vector<OfflineRecordingTrack>& tracks,
-                                   ArrangementCaptureSink* sink, juce::String& error) noexcept;
+                                   ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress) noexcept;
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;

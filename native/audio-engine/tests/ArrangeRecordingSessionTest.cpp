@@ -83,7 +83,7 @@ bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {
     session.writeMidiTrack("track:keys", "midi:keyboard",
                            juce::MidiMessage::noteOn(1, 62, static_cast<juce::uint8>(100)), 1600);
     session.markLoopBoundary(1256);
-    return session.finish(error);
+    return session.finish(true, error);
 }
 
 class ArrangeRecordingSessionTest : public testing::Test {
@@ -164,6 +164,27 @@ TEST_F(ArrangeRecordingSessionTest, CancelsWithoutLeavingARecoverableDirectory) 
     EXPECT_FALSE(cancelledDirectory.exists());
 }
 
+TEST_F(ArrangeRecordingSessionTest, FailedProcessingKeepsRawAudioRecoverable) {
+    juce::String error;
+    auto session = ArrangeRecordingSession::create(directory.get(), makeConfiguration(), error);
+    ASSERT_NE(session, nullptr) << error;
+
+    std::array<float, 512> raw{};
+    ASSERT_TRUE(session->beginAudioTrackCapture("track:guitar", 1000, 24'000));
+    session->writeAudioTrack("track:guitar", raw.data(), static_cast<int>(raw.size()));
+    ASSERT_TRUE(session->endAudioTrackCapture("track:guitar", 1512, 24'512));
+
+    EXPECT_FALSE(session->finish(false, error));
+    const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
+    EXPECT_EQ(manifest.getProperty("state", {}).toString(), "recoverable");
+    EXPECT_EQ(manifest.getProperty("tracks", {})[0].getProperty("rawFile", {}).toString(),
+              "tracks/0000/raw.wav");
+    EXPECT_EQ(manifest.getProperty("tracks", {})[0].getProperty("processedFile", {}).toString(),
+              "tracks/0000/processed.wav.partial");
+    EXPECT_TRUE(directory.get().getChildFile("tracks/0000/raw.wav").existsAsFile());
+    EXPECT_FALSE(directory.get().getChildFile("tracks/0000/processed.wav").existsAsFile());
+}
+
 TEST_F(ArrangeRecordingSessionTest, ReportsOversizedMidiSourceIds) {
     juce::String error;
     auto session = ArrangeRecordingSession::create(directory.get(), makeConfiguration(), error);
@@ -190,7 +211,7 @@ TEST_F(ArrangeRecordingSessionTest, ReportsOversizedMidiSourceIds) {
     EXPECT_EQ(session->droppedMidiEvents(), 1u);
     EXPECT_EQ(static_cast<juce::int64>(session->status().getProperty("droppedMidiEvents", -1)), 1);
 
-    EXPECT_TRUE(session->finish(error)) << error;
+    EXPECT_TRUE(session->finish(true, error)) << error;
     const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
     EXPECT_EQ(static_cast<juce::int64>(manifest.getProperty("droppedMidiEvents", -1)), 1);
     EXPECT_EQ(manifest.getProperty("recoveryStatus", {}).toString(), "partial");

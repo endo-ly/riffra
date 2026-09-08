@@ -413,8 +413,10 @@ bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
     return processFinalizedRecording(nullptr, error);
 }
 
-bool TimelineEngine::processFinalizedRecording(ArrangementCaptureSink* sink,
-                                               juce::String& error) noexcept {
+bool TimelineEngine::processFinalizedRecording(
+    ArrangementCaptureSink* sink, juce::String& error,
+    const ProcessingProgressCallback& progress) noexcept {
+    if (progress) progress();
     std::vector<OfflineRecordingTrack> tracks;
     double sampleRate;
     int blockSize;
@@ -432,24 +434,27 @@ bool TimelineEngine::processFinalizedRecording(ArrangementCaptureSink* sink,
         sink = sinkLease.get();
         if (sink == nullptr) return true;
         const auto generated =
-            generateProcessedVariants(sampleRate, blockSize, tracks, sink, error);
+            generateProcessedVariants(sampleRate, blockSize, tracks, sink, error, progress);
         return generated && recordingCapture->captureErrors() == 0;
     }
-    const auto generated = generateProcessedVariants(sampleRate, blockSize, tracks, sink, error);
+    const auto generated =
+        generateProcessedVariants(sampleRate, blockSize, tracks, sink, error, progress);
     return generated && recordingCapture->captureErrors() == 0;
 }
 
-bool TimelineEngine::generateProcessedVariants(const double sampleRate, const int preparedBlockSize,
-                                               const std::vector<OfflineRecordingTrack>& tracks,
-                                               ArrangementCaptureSink* const sink,
-                                               juce::String& error) noexcept {
+bool TimelineEngine::generateProcessedVariants(
+    const double sampleRate, const int preparedBlockSize,
+    const std::vector<OfflineRecordingTrack>& tracks, ArrangementCaptureSink* const sink,
+    juce::String& error, const ProcessingProgressCallback& progress) noexcept {
     if (sink == nullptr || sampleRate <= 0.0) return true;
     const auto blockSize = std::max(1, preparedBlockSize);
     juce::AudioFormatManager formatReader;
     formatReader.registerBasicFormats();
     for (const auto& track : tracks) {
+        if (progress) progress();
         const auto rawFile = sink->prepareRawForReading(track.id);
         if (rawFile == juce::File{}) continue;
+        if (progress) progress();
         const auto segments = sink->getRawSegmentRanges(track.id);
         if (segments.empty()) continue;
         // Open the flushed raw file as a stream so that non-.wav extensions
@@ -463,9 +468,11 @@ bool TimelineEngine::generateProcessedVariants(const double sampleRate, const in
             return false;
         }
         PluginChain offlineEffects;
+        if (progress) progress();
         if (!offlineEffects.load(track.effectState, sampleRate, blockSize, error,
                                  track.id + "/offline-processing"))
             return false;
+        if (progress) progress();
         const auto delay = std::max(0, offlineEffects.latencySamples());
         for (const auto& [segStart, segEnd] : segments) {
             const auto segmentLength = segEnd - segStart;
@@ -480,6 +487,7 @@ bool TimelineEngine::generateProcessedVariants(const double sampleRate, const in
             juce::AudioBuffer<float> processedBlock(2, blockSize);
             int discarded = delay;
             int written = 0;
+            if (progress) progress();
             constexpr int kOfflineWriterTimeoutMs = 5000;
             const auto consumeProcessedBlock = [&](const int count) noexcept {
                 auto writeOffset = 0;
@@ -515,6 +523,7 @@ bool TimelineEngine::generateProcessedVariants(const double sampleRate, const in
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
                                        processedBlock.getArrayOfWritePointers(), 2, count);
                 if (!consumeProcessedBlock(count)) return false;
+                if (progress) progress();
                 remaining -= count;
             }
 
@@ -525,6 +534,7 @@ bool TimelineEngine::generateProcessedVariants(const double sampleRate, const in
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
                                        processedBlock.getArrayOfWritePointers(), 2, count);
                 if (!consumeProcessedBlock(count)) return false;
+                if (progress) progress();
             }
         }
     }

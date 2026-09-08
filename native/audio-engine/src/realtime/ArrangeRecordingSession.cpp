@@ -304,9 +304,10 @@ bool ArrangeRecordingSession::writeProcessedAudioTrackOffline(const juce::String
     return found->audio->writeProcessedOffline(processed, sampleCount, timeoutMs);
 }
 
-bool ArrangeRecordingSession::finish(juce::String& error) {
+bool ArrangeRecordingSession::finish(const bool processedSuccessfully, juce::String& error) {
     if (finished.exchange(true, std::memory_order_acq_rel)) return true;
     auto completed = true;
+    auto hasRawAudio = false;
     std::vector<MidiEvent> recordedMidiEvents;
     recordedMidiEvents.reserve(kMaximumMidiEvents);
     if (midiEvents != nullptr) {
@@ -317,10 +318,11 @@ bool ArrangeRecordingSession::finish(juce::String& error) {
     for (auto& track : tracks) {
         if (track.audio != nullptr) {
             juce::String trackError;
-            if (!track.audio->finish(trackError)) {
+            if (!track.audio->finish(processedSuccessfully, trackError)) {
                 completed = false;
                 error << track.trackId << ": " << trackError << " ";
             }
+            hasRawAudio = hasRawAudio || track.audio->getRawSamplesWritten() > 0;
         }
         if (track.kind == "instrument") {
             juce::Array<juce::var> events;
@@ -385,7 +387,8 @@ bool ArrangeRecordingSession::finish(juce::String& error) {
         }
     }
     juce::String manifestError;
-    if (!writeManifest(completed ? "completed" : "recoverable", manifestError)) {
+    const auto state = completed ? "completed" : (hasRawAudio ? "recoverable" : "failed");
+    if (!writeManifest(state, manifestError)) {
         error << manifestError;
         return false;
     }
@@ -397,7 +400,7 @@ bool ArrangeRecordingSession::cancel(juce::String& error) {
     for (auto& track : tracks) {
         if (track.audio != nullptr) {
             juce::String ignored;
-            (void)track.audio->finish(ignored);
+            (void)track.audio->finish(true, ignored);
             track.audio.reset();
         }
     }
@@ -610,8 +613,17 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
                     "processedDropoutEndSample",
                     static_cast<juce::int64>(track.audio->getProcessedLastMissingSample()));
             }
-            value->setProperty("rawFile", "tracks/" + track.trackKey + "/raw.wav");
-            value->setProperty("processedFile", "tracks/" + track.trackKey + "/processed.wav");
+            const auto trackDirectory = track.audio->getDirectory();
+            const auto rawFileName = trackDirectory.getChildFile("raw.wav").existsAsFile()
+                                         ? "raw.wav"
+                                         : "raw.wav.partial";
+            const auto processedFileName =
+                trackDirectory.getChildFile("processed.wav").existsAsFile()
+                    ? "processed.wav"
+                    : "processed.wav.partial";
+            value->setProperty("rawFile", "tracks/" + track.trackKey + "/" + rawFileName);
+            value->setProperty("processedFile",
+                               "tracks/" + track.trackKey + "/" + processedFileName);
             juce::Array<juce::var> variantSegments;
             const auto trackSegmentCount =
                 std::min(track.captureSegmentCount, track.captureSegments.size());

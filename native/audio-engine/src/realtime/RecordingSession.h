@@ -28,7 +28,10 @@ public:
     /// Flush and close the raw writer so the file can be read back.
     /// The processed writer remains active.
     juce::File flushRaw() noexcept;
-    bool finish(juce::String& error);
+    /// Flushes the writers and promotes only products that were generated
+    /// successfully. Raw audio remains recoverable when processed generation
+    /// fails.
+    bool finish(bool processedSuccessfully, juce::String& error);
 
     [[nodiscard]] int getRawChannels() const noexcept { return rawChannelCount; }
     [[nodiscard]] int getProcessedChannels() const noexcept { return processedChannelCount; }

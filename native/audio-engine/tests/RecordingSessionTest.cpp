@@ -55,7 +55,7 @@ TEST_F(RecordingSessionTest, FinalizesRawAndProcessedWaveFiles) {
         RecordingSession::create(directory.get(), kSampleRate, kChannels, kChannels, error);
     ASSERT_NE(session, nullptr) << error;
     ASSERT_TRUE(writeSyntheticTake(*session));
-    ASSERT_TRUE(session->finish(error)) << error;
+    ASSERT_TRUE(session->finish(true, error)) << error;
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -77,7 +77,7 @@ TEST_F(RecordingSessionTest, WritesExpectedRecordingManifest) {
         RecordingSession::create(directory.get(), kSampleRate, kChannels, kChannels, error);
     ASSERT_NE(session, nullptr) << error;
     ASSERT_TRUE(writeSyntheticTake(*session));
-    ASSERT_TRUE(session->finish(error)) << error;
+    ASSERT_TRUE(session->finish(true, error)) << error;
 
     const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
     ASSERT_TRUE(manifest.isObject());
@@ -96,7 +96,7 @@ TEST_F(RecordingSessionTest, PreservesIncompleteRecordingAsRecoverable) {
         RecordingSession::create(incompleteDirectory, kSampleRate, kChannels, kChannels, error);
     ASSERT_NE(session, nullptr) << error;
 
-    EXPECT_FALSE(session->finish(error));
+    EXPECT_FALSE(session->finish(true, error));
     const auto manifest = test::parseJsonFile(incompleteDirectory.getChildFile("manifest.json"));
     ASSERT_TRUE(manifest.isObject());
     EXPECT_EQ(manifest.getProperty("state", {}).toString(), "recoverable");

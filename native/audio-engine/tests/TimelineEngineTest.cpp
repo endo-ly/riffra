@@ -1479,7 +1479,7 @@ public:
                                 engine.processFinalizedRecording(detached.get(), stopError);
                             juce::String finishError;
                             const auto finished =
-                                detached != nullptr && detached->finish(finishError);
+                                detached != nullptr && detached->finish(processed, finishError);
                             if (finishError.isNotEmpty()) {
                                 if (stopError.isNotEmpty()) stopError << " ";
                                 stopError << finishError;
@@ -1590,7 +1590,7 @@ public:
                             const auto finalized = finalizeCapturedRecording(engine, error);
                             engine.clearRecordingSink();
                             juce::String finishError;
-                            const auto finished = partialSession->finish(finishError);
+                            const auto finished = partialSession->finish(finalized, finishError);
 
                             const auto rawFile = partialDir.getChildFile("tracks/0000/raw.wav");
                             const auto processedFile =

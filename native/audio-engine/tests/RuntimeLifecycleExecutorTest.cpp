@@ -200,15 +200,44 @@ TEST(RuntimeLifecycleExecutorTest, DoesNotFireTimeoutHandlerWithinTimeBound) {
     EXPECT_EQ(timeouts.load(std::memory_order_acquire), 0);
 }
 
-TEST(RuntimeLifecycleExecutorTest, DoesNotWatchdogMediaLengthBoundWork) {
+TEST(RuntimeLifecycleExecutorTest, DoesNotWatchdogMediaLengthBoundWorkWhileProgressing) {
     RuntimeLifecycleExecutor executor;
     std::atomic<int> timeouts{0};
     executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
 
-    ASSERT_TRUE(executor.submitWithoutTimeout(
-        [] { std::this_thread::sleep_for(std::chrono::milliseconds(80)); }));
+    ASSERT_TRUE(executor.submitWithProgress(
+        [&] {
+            for (int block = 0; block < 4; ++block) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                executor.reportProgress();
+            }
+        },
+        std::chrono::milliseconds(50)));
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(2)));
     EXPECT_EQ(timeouts.load(std::memory_order_acquire), 0);
+}
+
+TEST(RuntimeLifecycleExecutorTest, WatchdogsProgressAwareWorkWhenProgressStops) {
+    RuntimeLifecycleExecutor executor;
+    std::atomic<int> timeouts{0};
+    executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
+    std::atomic<bool> blockerStarted{false};
+    std::atomic<bool> releaseBlocker{false};
+
+    ASSERT_TRUE(executor.submitWithProgress(
+        [&] {
+            blockerStarted.store(true, std::memory_order_release);
+            while (!releaseBlocker.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        },
+        std::chrono::milliseconds(50)));
+    ASSERT_TRUE(waitForFlag(blockerStarted, std::chrono::seconds(1)));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    EXPECT_EQ(timeouts.load(std::memory_order_acquire), 1);
+
+    releaseBlocker.store(true, std::memory_order_release);
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
 }
 
 TEST(RuntimeLifecycleExecutorTest, ContinuesExecutingTasksAfterTimeoutFires) {
