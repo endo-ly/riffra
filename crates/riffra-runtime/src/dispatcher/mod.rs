@@ -583,6 +583,7 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "audio.driver.set"
             | "asset.preview"
             | "asset.preview.stop"
+            | "midi.target.set"
             | "plugin.catalog.list"
             | "plugin.scan"
             | "plugin.scan.start"

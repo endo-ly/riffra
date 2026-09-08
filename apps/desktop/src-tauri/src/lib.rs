@@ -142,6 +142,7 @@ pub fn run() {
             enable_midi_listening,
             disable_midi_listening,
             session::commands::send_midi_to_track,
+            session::commands::set_live_midi_target,
             session::commands::panic_midi_track,
             stop_preview,
             // Session Application Operations.

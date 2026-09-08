@@ -461,6 +461,22 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn set_live_midi_target(&self, track_id: Option<&str>) -> NativeAudioResult<()> {
+        if track_id.is_some_and(|value| value.trim().is_empty()) {
+            return Err(NativeAudioError::native_rejected(
+                "A live MIDI target must be an Instrument Track.",
+            ));
+        }
+        self.send_command_ack(
+            serde_json::json!({
+                "type": "setLiveMidiTarget",
+                "trackId": track_id.unwrap_or(""),
+            }),
+            "Live MIDI target updated.",
+            Duration::from_secs(3),
+        )
+    }
+
     pub fn panic_track_midi(&self, track_id: &str) -> NativeAudioResult<()> {
         if track_id.trim().is_empty() {
             return Err(NativeAudioError::native_rejected(

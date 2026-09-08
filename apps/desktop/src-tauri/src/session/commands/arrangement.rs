@@ -15,6 +15,14 @@ pub async fn send_midi_to_track(
 }
 
 #[tauri::command]
+pub async fn set_live_midi_target(
+    track_id: Option<String>,
+    app: AppHandle,
+) -> Result<(), NativeCommandError> {
+    dispatch(app, "midi.target.set", json!({ "trackId": track_id })).await
+}
+
+#[tauri::command]
 pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), NativeCommandError> {
     dispatch(app, "midi.panic", json!({ "trackId": track_id })).await
 }

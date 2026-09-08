@@ -921,6 +921,14 @@ impl HostState {
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
+            "midi.target.set" => {
+                let params: LiveMidiTargetParams = decode(params)?;
+                self.core
+                    .audio()
+                    .set_live_midi_target(params.track_id.as_deref())
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
             "midi.panic" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
@@ -1890,6 +1898,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "asset.preview"
             | "asset.preview.stop"
             | "midi.send"
+            | "midi.target.set"
             | "midi.panic"
             | "plugin.catalog.list"
             | "plugin.scan"
@@ -2027,6 +2036,12 @@ struct TakeComparisonParams {
 struct MidiSendParams {
     track_id: String,
     bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveMidiTargetParams {
+    track_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
