@@ -662,13 +662,8 @@ public:
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         std::array<float*, 2> outputs{left.data(), right.data()};
-        engine.publishInProgress.store(true, std::memory_order_release);
-        {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            engine.panicAllInstrumentTracks();
-            engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-        }
-        engine.publishInProgress.store(false, std::memory_order_release);
+        engine.panicAllInstrumentTracks();
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
         engine.play();
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 

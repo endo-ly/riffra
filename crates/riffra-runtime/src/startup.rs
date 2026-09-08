@@ -487,8 +487,10 @@ mod tests {
                 input_device: None,
                 input_channel: None,
                 input_channels: Vec::new(),
+                active_input_channels: Vec::new(),
                 output_device: None,
                 output_channels: Vec::new(),
+                active_output_channels: Vec::new(),
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -505,6 +507,7 @@ mod tests {
                 feedback_suspected: false,
                 previewing: false,
                 mute_reasons: 0,
+                device_operation: Default::default(),
                 diagnostics: Default::default(),
                 message: "fake".into(),
             }

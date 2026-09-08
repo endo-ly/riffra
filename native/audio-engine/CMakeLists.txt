@@ -463,6 +463,7 @@ if(BUILD_TESTING)
     tests/RuntimeLifecycleExecutorTest.cpp
     tests/TimelineEngineTest.cpp
     tests/SonalloyInstrumentRuntimeTest.cpp
+    tests/SonalloyInstrumentRuntimeBenchmarkTest.cpp
     tests/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE

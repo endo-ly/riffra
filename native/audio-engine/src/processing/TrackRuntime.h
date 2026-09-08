@@ -100,6 +100,10 @@ public:
     }
 
     void resetForTransportDiscontinuity() noexcept {
+        requestTransportDiscontinuity();
+    }
+
+    void requestTransportDiscontinuity() noexcept {
         if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();
         devices.effects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);

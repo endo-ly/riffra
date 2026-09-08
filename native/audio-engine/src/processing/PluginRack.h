@@ -58,8 +58,7 @@ public:
     [[nodiscard]] std::size_t parameterCount() const noexcept;
     void addProcessorListener(juce::AudioProcessorListener& listener) noexcept;
     void removeProcessorListener(juce::AudioProcessorListener& listener) noexcept;
-    /// Queues a live-only editor parameter change. It is applied by `process`
-    /// while that rack already owns its plugin lock at a block boundary.
+    /// Queues a live-only editor parameter change for the next audio block.
     void enqueueParameterChange(int index, float value) noexcept;
 
 private:
@@ -77,6 +76,14 @@ private:
         bool automatable = false;
     };
 
+    struct ParameterQueue final {
+        explicit ParameterQueue(std::size_t parameterCount) : capacity(parameterCount) {}
+
+        const std::size_t capacity;
+        std::unique_ptr<std::atomic<float>[]> values;
+        std::unique_ptr<std::atomic<bool>[]> dirty;
+    };
+
     void updateParameterCache(juce::AudioProcessor& processor);
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
@@ -84,8 +91,10 @@ private:
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
     [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
-    void applyQueuedParameterChanges() noexcept;
+    void applyQueuedParameterChanges(juce::AudioProcessor* processor,
+                                     ParameterQueue* queue) noexcept;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
+    void reclaimRetiredPlugins() noexcept;
 
     class PendingMidi final {
     public:
@@ -112,6 +121,15 @@ private:
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
+    // The audio thread only observes this immutable processing pointer. Plugin
+    // lifecycle work is performed on a candidate and published by swapping
+    // this pointer; old instances are reclaimed after the reader count drops.
+    std::atomic<juce::AudioProcessor*> activePlugin{nullptr};
+    std::vector<std::unique_ptr<juce::AudioProcessor>> retiredPlugins;
+    std::atomic<std::uint32_t> activeReaders{0};
+    std::atomic<ParameterQueue*> activeParameterQueue{nullptr};
+    std::unique_ptr<ParameterQueue> parameterQueue;
+    std::vector<std::unique_ptr<ParameterQueue>> retiredParameterQueues;
     PendingMidi pendingMidi;
     juce::MidiBuffer processMidi;
     mutable juce::SpinLock pluginLock;
@@ -126,18 +144,13 @@ private:
     std::atomic<int> cachedProgramCount{0};
     std::atomic<bool> cachedHasEditor{false};
     std::atomic<bool> loaded{false};
-    std::atomic<bool> mutationInProgress{false};
     std::atomic<std::uint64_t> bypassedBlocks{0};
     std::atomic<std::uint64_t> processedBlocks{0};
-    std::atomic<std::uint64_t> contentionBlocks{0};
     std::atomic<std::uint64_t> transitionBlocks{0};
     std::atomic<std::uint64_t> loadCount{0};
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
-    std::unique_ptr<std::atomic<float>[]> pendingParameterValues;
-    std::unique_ptr<std::atomic<bool>[]> pendingParameterDirty;
-    std::atomic<std::size_t> pendingParameterCapacity{0};
 };
 
 }  // namespace riffra

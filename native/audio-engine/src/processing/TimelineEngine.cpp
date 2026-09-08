@@ -43,34 +43,11 @@ private:
     bool entered = false;
 };
 
-class TimelineEngine::AudioPublishScope final {
-public:
-    explicit AudioPublishScope(TimelineEngine& owner) : engine(owner) {
-        engine.publishInProgress.store(true, std::memory_order_release);
-        ready = engine.waitForAudioReaders(std::chrono::milliseconds(100));
-    }
-
-    ~AudioPublishScope() { engine.publishInProgress.store(false, std::memory_order_release); }
-
-    [[nodiscard]] bool isReady() const noexcept { return ready; }
-
-private:
-    TimelineEngine& engine;
-    bool ready = false;
-};
-
 bool TimelineEngine::beginAudioRead(PreparedTimeline*& active) noexcept {
-    active = nullptr;
-    if (publishInProgress.load(std::memory_order_acquire)) {
-        callbackPublishMisses.fetch_add(1, std::memory_order_relaxed);
-        return false;
-    }
+    // Enter the reader section before loading the pointer. A publisher swaps
+    // the pointer first and only reclaims retired graphs after this counter
+    // reaches zero, so a callback always observes either the old or new graph.
     activeAudioReaders.fetch_add(1, std::memory_order_acq_rel);
-    if (publishInProgress.load(std::memory_order_acquire)) {
-        activeAudioReaders.fetch_sub(1, std::memory_order_acq_rel);
-        callbackPublishMisses.fetch_add(1, std::memory_order_relaxed);
-        return false;
-    }
     active = activeTimeline.load(std::memory_order_acquire);
     return true;
 }
@@ -88,6 +65,11 @@ bool TimelineEngine::waitForAudioReaders(const std::chrono::milliseconds timeout
     return true;
 }
 
+void TimelineEngine::reclaimRetiredTimelines() noexcept {
+    if (activeAudioReaders.load(std::memory_order_acquire) != 0) return;
+    retiredTimelines.clear();
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
@@ -95,15 +77,14 @@ TimelineEngine::TimelineEngine(const bool offline)
 
 TimelineEngine::~TimelineEngine() {
     stop();
-    publishInProgress.store(true, std::memory_order_release);
     if (!waitForAudioReaders(std::chrono::milliseconds(250))) std::_Exit(125);
     activeTimeline.store(nullptr, std::memory_order_release);
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
         timeline.reset();
         pendingTimeline.reset();
+        retiredTimelines.clear();
     }
-    publishInProgress.store(false, std::memory_order_release);
     if (readAheadThread.isThreadRunning()) readAheadThread.stopThread(3000);
 }
 
@@ -152,16 +133,10 @@ bool TimelineEngine::loadSnapshot(const juce::var& snapshot, juce::AudioFormatMa
 }
 
 bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
-    const AudioPublishScope publish(*this);
-    if (!publish.isReady()) {
-        error = "Native audio did not acknowledge the graph publish within 100 milliseconds.";
-        return false;
-    }
-
     std::unique_ptr<PreparedTimeline> candidate;
-    std::unique_ptr<PreparedTimeline> retiredTimeline;
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
+        const auto hadActiveTimeline = timeline != nullptr;
         if (pendingTimeline == nullptr) {
             error = "No prepared Timeline snapshot is available.";
             return false;
@@ -216,18 +191,19 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
             }
         }
 
-        retiredTimeline = std::move(timeline);
+        if (timeline != nullptr) retiredTimelines.push_back(std::move(timeline));
         timeline = std::move(candidate);
         activeTimeline.store(timeline.get(), std::memory_order_release);
         runtimeDevicesNeedReprepare.store(false, std::memory_order_release);
         monitorLiveInput.store(pendingMonitorLiveInput, std::memory_order_release);
         monitoringInputChannels.store(pendingMonitoringInputChannels, std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
-        if (retiredTimeline == nullptr) timelineSample.store(0, std::memory_order_release);
+        if (!hadActiveTimeline) timelineSample.store(0, std::memory_order_release);
         discontinuity.fetch_add(1, std::memory_order_relaxed);
+        graphPublishCount.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);
     }
-    retiredTimeline.reset();
+    reclaimRetiredTimelines();
     return true;
 }
 
@@ -248,32 +224,19 @@ void TimelineEngine::play() noexcept {
 
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
-    const AudioPublishScope publish(*this);
-    if (publish.isReady()) {
-        const juce::SpinLock::ScopedLockType lock(timelineLock);
-        if (timeline != nullptr) {
-            resetPlaybackTrackState(*timeline);
-            resetRecordingTrackState(*timeline);
-        }
-    }
+    resetPlaybackPending.store(true, std::memory_order_release);
+    requestPlaybackReset();
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TimelineEngine::audioDeviceStarted() noexcept {
     audioClockSample.store(0, std::memory_order_release);
-    const AudioPublishScope publish(*this);
-    if (publish.isReady()) {
-        activeTimeline.store(nullptr, std::memory_order_release);
-        monitorLiveInput.store(false, std::memory_order_release);
-        monitoringInputChannels.store(0, std::memory_order_release);
-        armedInstrumentTrack.store(false, std::memory_order_release);
-        const juce::SpinLock::ScopedLockType lock(timelineLock);
-        if (timeline != nullptr) {
-            resetPlaybackTrackState(*timeline);
-            resetRecordingTrackState(*timeline);
-        }
-    }
+    // Keep the previous graph published while the new device environment is
+    // being prepared. The safety callback owns the mute during this period;
+    // there is never a null active graph between device start and projection.
+    resetPlaybackPending.store(true, std::memory_order_release);
+    requestPlaybackReset();
     runtimeDevicesNeedReprepare.store(true, std::memory_order_release);
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
@@ -281,24 +244,18 @@ void TimelineEngine::audioDeviceStarted() noexcept {
 }
 
 void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
-    const AudioPublishScope publish(*this);
-    if (!publish.isReady()) return;
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) return;
-    timelineSample.store(timeline->timebase.tickToSample(tick, timeline->outputSampleRate),
-                         std::memory_order_release);
-    resetPlaybackTrackState(*timeline);
-    resetRecordingTrackState(*timeline);
+    const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
+    timelineSample.store(sample, std::memory_order_release);
+    pendingSeekSample.store(sample, std::memory_order_release);
+    seekPending.store(true, std::memory_order_release);
+    requestPlaybackReset();
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool TimelineEngine::startRecording(const int countInBeats, juce::String& error) noexcept {
-    const AudioPublishScope publish(*this);
-    if (!publish.isReady()) {
-        error = "Arrange recording could not acquire the audio graph boundary.";
-        return false;
-    }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr || timeline->outputSampleRate <= 0.0) {
         error = "Arrange recording requires a prepared Arrangement Graph.";
@@ -336,11 +293,6 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
 
 void TimelineEngine::stopRecording() noexcept {
     recordingPhase.store(RecordingPhase::stopping, std::memory_order_release);
-    const AudioPublishScope publish(*this);
-    if (!publish.isReady()) {
-        sequence.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     const auto hasCaptureWork =
         timeline != nullptr &&
@@ -366,11 +318,6 @@ bool TimelineEngine::cancelRecordingIfCountingIn() noexcept {
 }
 
 bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
-    const AudioPublishScope publish(*this);
-    if (!publish.isReady()) {
-        error = "Recording capture could not acquire the audio graph boundary.";
-        return false;
-    }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     auto sinkLease = recordingCapture->acquireSink();
     auto* sink = sinkLease.get();
@@ -617,10 +564,8 @@ bool TimelineEngine::setLiveMidiTarget(const juce::String& trackId, juce::String
 bool TimelineEngine::enqueueLiveMidi(const juce::MidiMessage& message,
                                      const juce::String& deviceId) noexcept {
     if (!armedInstrumentTrack.load(std::memory_order_acquire)) return false;
-    if (publishInProgress.load(std::memory_order_acquire)) return true;
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire) ||
-        timeline == nullptr)
+    if (!lock.isLocked() || timeline == nullptr)
         return true;
     for (auto& trackPtr : timeline->tracks) {
         auto& track = *trackPtr;
@@ -646,13 +591,8 @@ bool TimelineEngine::enqueueTargetedMidi(const juce::String& trackId,
         error = "A target track is required for MIDI input.";
         return false;
     }
-    if (publishInProgress.load(std::memory_order_acquire)) {
-        error = "The Arrangement Graph is changing; targeted MIDI can be retried shortly.";
-        return false;
-    }
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire) ||
-        timeline == nullptr) {
+    if (!lock.isLocked() || timeline == nullptr) {
         error = "The Arrangement Graph is unavailable for targeted MIDI.";
         return false;
     }
@@ -686,8 +626,7 @@ bool TimelineEngine::panicTargetedMidi(const juce::String& trackId, juce::String
         return false;
     }
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || publishInProgress.load(std::memory_order_acquire) ||
-        timeline == nullptr) {
+    if (!lock.isLocked() || timeline == nullptr) {
         error = "The Arrangement Graph is unavailable for targeted MIDI panic.";
         return false;
     }
@@ -1632,6 +1571,11 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
 }
 
 void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcept {
+    clearPlaybackTrackState(prepared);
+    for (auto& trackPtr : prepared.tracks) trackPtr->runtime->resetForTransportDiscontinuity();
+}
+
+void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcept {
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
         auto& runtime = *track.runtime;
@@ -1640,7 +1584,6 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.processedBuffer.clear();
         runtime.postEffectClipBuffer.clear();
         runtime.midiBuffer.clear();
-        runtime.resetForTransportDiscontinuity();
         runtime.delayBuffer.clear();
         runtime.delayWritePosition = 0;
         runtime.postEffectDelayBuffer.clear();
@@ -1663,6 +1606,16 @@ void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexce
     }
 }
 
+void TimelineEngine::requestPlaybackReset() noexcept {
+    PreparedTimeline* active = nullptr;
+    if (!beginAudioRead(active)) return;
+    if (active != nullptr)
+        for (auto& trackPtr : active->tracks)
+            if (trackPtr != nullptr && trackPtr->runtime != nullptr)
+                trackPtr->runtime->requestTransportDiscontinuity();
+    endAudioRead();
+}
+
 void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
     mix(nullptr, 0, outputChannels, channelCount, sampleCount);
@@ -1681,6 +1634,16 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
     AudioReadScope activeRead(*this);
     auto* active = activeRead.get();
     if (active == nullptr) return;
+    if (resetPlaybackPending.exchange(false, std::memory_order_acq_rel)) {
+        clearPlaybackTrackState(*active);
+        resetRecordingTrackState(*active);
+    }
+    if (seekPending.exchange(false, std::memory_order_acq_rel)) {
+        timelineSample.store(pendingSeekSample.load(std::memory_order_acquire),
+                             std::memory_order_release);
+        clearPlaybackTrackState(*active);
+        resetRecordingTrackState(*active);
+    }
     applyPendingPanic(*active);
     const auto currentState = state.load(std::memory_order_acquire);
     if (currentState == State::stopped || currentState == State::starting) {
@@ -1780,12 +1743,10 @@ juce::var TimelineEngine::status() const {
                         static_cast<juce::int64>(audioClockSample.load(std::memory_order_acquire)));
     object->setProperty(
         "sequence", static_cast<juce::int64>(sequence.fetch_add(1, std::memory_order_relaxed) + 1));
+    object->setProperty("graphRevision", 0);
     object->setProperty(
-        "callbackLockMisses",
-        static_cast<juce::int64>(callbackLockMisses.load(std::memory_order_acquire)));
-    object->setProperty(
-        "callbackPublishMisses",
-        static_cast<juce::int64>(callbackPublishMisses.load(std::memory_order_acquire)));
+        "graphPublishCount",
+        static_cast<juce::int64>(graphPublishCount.load(std::memory_order_acquire)));
     object->setProperty("trackCount", 0);
     object->setProperty("instrumentRuntimeCount", 0);
     object->setProperty("pluginCount", 0);
@@ -1818,6 +1779,7 @@ juce::var TimelineEngine::status() const {
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
     if (lock.isLocked() && timeline != nullptr) {
         object->setProperty("revision", static_cast<juce::int64>(timeline->revision));
+        object->setProperty("graphRevision", static_cast<juce::int64>(timeline->revision));
         object->setProperty("sampleRate", timeline->outputSampleRate);
         std::uint64_t liveMidiDrops = 0;
         int instrumentRuntimeCount = 0;

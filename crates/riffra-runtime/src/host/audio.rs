@@ -1,6 +1,8 @@
 use super::control::command_error;
 use super::*;
 use crate::NativeAudioError;
+use crate::model::AudioDeviceOperationState;
+use std::time::Duration;
 
 impl HostState {
     pub(super) fn set_audio_driver(
@@ -31,8 +33,30 @@ impl HostState {
                         .audio()
                         .mark_runtime_recovery_mute()
                         .map_err(command_error)?;
-                    self.reproject_after_audio_device_change()
-                        .map_err(command_error)?;
+                    let _ = self.core.audio().set_audio_device_operation(
+                        AudioDeviceOperationState::PreparingGraph,
+                        None,
+                    );
+                    match self.reproject_after_audio_device_change() {
+                        Ok(()) => {
+                            let _ = self.core.audio().set_audio_device_operation(
+                                AudioDeviceOperationState::DeviceFailed,
+                                Some(error.to_string()),
+                            );
+                        }
+                        Err(graph_error) => {
+                            let _ = self.core.audio().set_audio_device_operation(
+                                AudioDeviceOperationState::GraphFailed,
+                                Some(graph_error.clone()),
+                            );
+                            return Err(command_error(graph_error));
+                        }
+                    }
+                } else {
+                    let _ = self.core.audio().set_audio_device_operation(
+                        AudioDeviceOperationState::DeviceFailed,
+                        Some(error.to_string()),
+                    );
                 }
                 return Err(native_audio_error(error));
             }
@@ -45,6 +69,10 @@ impl HostState {
             let reason = format!(
                 "requested audio device was not activated: {}",
                 status.message
+            );
+            let _ = self.core.audio().set_audio_device_operation(
+                AudioDeviceOperationState::DeviceFailed,
+                Some(reason.clone()),
             );
             return Err(native_audio_error(NativeAudioError::structured(
                 "deviceRejected",
@@ -64,9 +92,23 @@ impl HostState {
                 "audio runtime restart preferences could not be updated: {error}"
             )));
         }
+        let _ = self
+            .core
+            .audio()
+            .set_audio_device_operation(AudioDeviceOperationState::PreparingGraph, None);
         if let Err(error) = self.reproject_after_audio_device_change() {
+            let _ = self.core.audio().set_audio_device_operation(
+                AudioDeviceOperationState::GraphFailed,
+                Some(error.clone()),
+            );
             return Err(command_error(error));
         }
+        let _ = self
+            .core
+            .audio()
+            .set_audio_device_operation(AudioDeviceOperationState::Completed, None);
+        let current = self.core.audio().status().map_err(command_error)?;
+        status.device_operation = current.device_operation;
         status.diagnostics.audio_environment_revision =
             self.core.audio().audio_environment_revision();
         if let Err(error) = AudioPreferencesStore::new(&self.data_root).save(&effective) {
@@ -102,6 +144,10 @@ impl HostState {
     fn prepare_runtime_for_audio_device_change(&self) -> Result<(), String> {
         self.core
             .audio()
+            .begin_audio_device_operation()
+            .map_err(|error| format!("audio device operation could not start: {error}"))?;
+        self.core
+            .audio()
             .mark_runtime_recovery_mute()
             .map_err(|error| format!("runtime recovery mute could not be recorded: {error}"))?;
         self.runtime.stop_for_audio_environment().map_err(|error| {
@@ -113,18 +159,21 @@ impl HostState {
         self.core.audio().advance_audio_environment();
         self.runtime.advance_audio_environment();
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
-        let _ = self.runtime.submit_nonblocking(
-            crate::runtime_snapshot::runtime_timeline_snapshot(
-                &self.data_root,
-                self.built_in_instruments.as_ref(),
-                &snapshot.session,
-            ),
-            riffra_core::ProjectionKey {
-                sequence: snapshot.sequence,
-                session_revision: snapshot.session.arrangement.revision,
-            },
-        );
-        Ok(())
+        self.runtime
+            .apply_and_wait(
+                crate::runtime_snapshot::runtime_timeline_snapshot(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &snapshot.session,
+                ),
+                riffra_core::ProjectionKey {
+                    sequence: snapshot.sequence,
+                    session_revision: snapshot.session.arrangement.revision,
+                },
+                Duration::from_secs(30),
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
@@ -135,25 +184,31 @@ impl HostState {
         }
         self.prepare_runtime_for_audio_device_change()
             .map_err(HostError::State)?;
-        let _outcome = self
+        let _outcome = match self.core.audio().recover_audio_device() {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let _ = self.core.audio().set_audio_device_operation(
+                    AudioDeviceOperationState::DeviceFailed,
+                    Some(error.to_string()),
+                );
+                return Err(HostError::State(error.to_string()));
+            }
+        };
+        let _ = self
             .core
             .audio()
-            .recover_audio_device()
-            .map_err(|error| HostError::State(error.to_string()))?;
-        self.core.audio().advance_audio_environment();
-        let snapshot = self.canonical()?;
-        self.runtime.advance_audio_environment();
-        let _ = self.runtime.submit_nonblocking(
-            crate::runtime_snapshot::runtime_timeline_snapshot(
-                &self.data_root,
-                self.built_in_instruments.as_ref(),
-                &snapshot.session,
-            ),
-            riffra_core::ProjectionKey {
-                sequence: snapshot.sequence,
-                session_revision: snapshot.session.arrangement.revision,
-            },
-        );
+            .set_audio_device_operation(AudioDeviceOperationState::PreparingGraph, None);
+        if let Err(error) = self.reproject_after_audio_device_change() {
+            let _ = self.core.audio().set_audio_device_operation(
+                AudioDeviceOperationState::GraphFailed,
+                Some(error.clone()),
+            );
+            return Err(HostError::State(error));
+        }
+        let _ = self
+            .core
+            .audio()
+            .set_audio_device_operation(AudioDeviceOperationState::Completed, None);
         self.core
             .audio()
             .refresh_status()

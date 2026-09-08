@@ -249,6 +249,34 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         Ok(true)
     }
 
+    /// Registers a Play intent without starting a new projection. Canonical
+    /// mutations submit projections independently; when that projection is
+    /// already active the native transport starts immediately, otherwise the
+    /// activation hook starts it after the prepared graph is committed.
+    pub fn request_play_when_ready(
+        &self,
+        sequence: u64,
+        projection: ProjectionKey,
+    ) -> Result<bool, RuntimeError> {
+        if self.status().state == crate::model::RuntimeProjectionState::Failed {
+            return Err(RuntimeError::NativeRejected(
+                "The active Arrangement Graph is unavailable.".into(),
+            ));
+        }
+        let lease = self.transport.acquire()?;
+        if matches!(
+            lease.request_play(sequence, Some(projection)),
+            PlayDecision::Rejected
+        ) {
+            return Ok(false);
+        }
+        if self.projection.is_ready_for(projection) {
+            return lease.play_if_current(Some(TransportSequence::new(sequence)), Some(projection));
+        }
+        lease.set_transport_starting()?;
+        Ok(true)
+    }
+
     pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
         if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {

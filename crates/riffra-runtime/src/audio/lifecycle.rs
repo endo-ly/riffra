@@ -41,8 +41,10 @@ impl AudioSupervisor {
                 input_device: None,
                 input_channel: None,
                 input_channels: Vec::new(),
+                active_input_channels: Vec::new(),
                 output_device: None,
                 output_channels: Vec::new(),
+                active_output_channels: Vec::new(),
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -59,6 +61,7 @@ impl AudioSupervisor {
                 feedback_suspected: false,
                 previewing: false,
                 mute_reasons: mute_reason_bit(MuteReason::DeviceFault),
+                device_operation: Default::default(),
                 diagnostics: Default::default(),
                 message: message.into(),
             })),
@@ -80,6 +83,7 @@ impl AudioSupervisor {
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
+            device_operation: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -94,8 +98,10 @@ impl AudioSupervisor {
             input_device: None,
             input_channel: None,
             input_channels: Vec::new(),
+            active_input_channels: Vec::new(),
             output_device: None,
             output_channels: Vec::new(),
+            active_output_channels: Vec::new(),
             sample_rate: None,
             buffer_size: None,
             round_trip_ms: None,
@@ -112,6 +118,7 @@ impl AudioSupervisor {
             feedback_suspected: false,
             previewing: false,
             mute_reasons: mute_reason_bit(MuteReason::StartupGuard),
+            device_operation: Default::default(),
             diagnostics: Default::default(),
             message: "Native audio sidecar is starting with the startup guard active.".into(),
         }));
@@ -133,6 +140,7 @@ impl AudioSupervisor {
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
+            device_operation: Arc::new(Mutex::new(Default::default())),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(generation) {

@@ -28,8 +28,10 @@ struct NativeStatus {
     input_device: Option<String>,
     input_channel: Option<u32>,
     input_channels: Option<Vec<NativeAudioChannelInfo>>,
+    active_input_channels: Option<Vec<u32>>,
     output_device: Option<String>,
     output_channels: Option<Vec<NativeAudioChannelInfo>>,
+    active_output_channels: Option<Vec<u32>>,
     sample_rate: Option<f64>,
     buffer_size: Option<u32>,
     round_trip_ms: Option<f64>,
@@ -68,8 +70,9 @@ struct NativeDiagnostics {
     average_callback_duration_us: Option<u64>,
     maximum_callback_duration_us: Option<u64>,
     callback_overruns: Option<u64>,
-    callback_lock_misses: Option<u64>,
     live_midi_drops: Option<u64>,
+    graph_revision: Option<u64>,
+    graph_publish_count: Option<u64>,
     track_count: Option<u64>,
     instrument_runtime_count: Option<u64>,
     plugin_count: Option<u64>,
@@ -179,6 +182,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 name: channel.name,
             })
             .collect(),
+        active_input_channels: native.active_input_channels.unwrap_or_default(),
         output_device: native.output_device,
         output_channels: native
             .output_channels
@@ -189,6 +193,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 name: channel.name,
             })
             .collect(),
+        active_output_channels: native.active_output_channels.unwrap_or_default(),
         sample_rate: native.sample_rate.and_then(normalize_sample_rate),
         buffer_size: native.buffer_size,
         round_trip_ms: native.round_trip_ms,
@@ -246,6 +251,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         feedback_suspected: native.feedback_suspected.unwrap_or(false),
         previewing: native.previewing.unwrap_or(false),
         mute_reasons,
+        device_operation: Default::default(),
         diagnostics: native
             .diagnostics
             .map_or_else(AudioDiagnostics::default, |diagnostics| AudioDiagnostics {
@@ -257,8 +263,9 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                     .maximum_callback_duration_us
                     .unwrap_or_default(),
                 callback_overruns: diagnostics.callback_overruns.unwrap_or_default(),
-                callback_lock_misses: diagnostics.callback_lock_misses.unwrap_or_default(),
                 live_midi_drops: diagnostics.live_midi_drops.unwrap_or_default(),
+                graph_revision: diagnostics.graph_revision.unwrap_or_default(),
+                graph_publish_count: diagnostics.graph_publish_count.unwrap_or_default(),
                 track_count: diagnostics.track_count.unwrap_or_default(),
                 instrument_runtime_count: diagnostics.instrument_runtime_count.unwrap_or_default(),
                 plugin_count: diagnostics.plugin_count.unwrap_or_default(),
@@ -512,11 +519,13 @@ mod tests {
                 index: 0,
                 name: "Input 1".into(),
             }],
+            active_input_channels: vec![0],
             output_device: Some("Output".into()),
             output_channels: vec![AudioChannelInfo {
                 index: 0,
                 name: "Output 1".into(),
             }],
+            active_output_channels: vec![0],
             sample_rate: Some(44_100),
             buffer_size: Some(441),
             round_trip_ms: Some(20.0),
@@ -533,6 +542,7 @@ mod tests {
             feedback_suspected: false,
             previewing: false,
             mute_reasons: 0,
+            device_operation: Default::default(),
             diagnostics: Default::default(),
             message: "ready".into(),
         }))

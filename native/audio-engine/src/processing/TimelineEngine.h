@@ -122,7 +122,6 @@ private:
     friend class TimelineSnapshotBuilder;
 
     class AudioReadScope;
-    class AudioPublishScope;
 
     enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
@@ -217,7 +216,9 @@ private:
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
                       int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    void requestPlaybackReset() noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateProcessedVariants(double sampleRate, int blockSize,
@@ -230,16 +231,22 @@ private:
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
+    void reclaimRetiredTimelines() noexcept;
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
     mutable juce::SpinLock timelineLock;
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;
+    // Owned only by the control/projection thread. A retired graph remains
+    // alive until every callback that could have loaded its pointer has left.
+    std::vector<std::unique_ptr<PreparedTimeline>> retiredTimelines;
     std::atomic<PreparedTimeline*> activeTimeline{nullptr};
     std::atomic<bool> runtimeDevicesNeedReprepare{false};
     std::atomic<std::uint32_t> activeAudioReaders{0};
-    std::atomic<bool> publishInProgress{false};
+    std::atomic<bool> resetPlaybackPending{false};
+    std::atomic<bool> seekPending{false};
+    std::atomic<std::int64_t> pendingSeekSample{0};
     std::atomic<bool> panicAllPending{false};
     bool pendingMonitorLiveInput = false;
     std::uint32_t pendingMonitoringInputChannels = 0;
@@ -255,8 +262,7 @@ private:
     std::atomic<std::uint64_t> audioClockSample{0};
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
-    std::atomic<std::uint64_t> callbackLockMisses{0};
-    std::atomic<std::uint64_t> callbackPublishMisses{0};
+    std::atomic<std::uint64_t> graphPublishCount{0};
     std::atomic<std::uint64_t> clockGeneration{0};
     std::atomic<std::uint64_t> discontinuity{1};
     std::atomic<bool> monitorLiveInput{false};

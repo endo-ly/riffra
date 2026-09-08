@@ -3,4 +3,4 @@
 /**
  * Realtime counters exposed for diagnosing an unsafe or overloaded callback.
  */
-export type AudioDiagnostics = { callbackCount: number, averageCallbackDurationUs: number, maximumCallbackDurationUs: number, callbackOverruns: number, callbackLockMisses: number, liveMidiDrops: number, trackCount: number, instrumentRuntimeCount: number, pluginCount: number, maximumLatencySamples: number, projectionDurationMs: number, audioEnvironmentRevision: number, };
+export type AudioDiagnostics = { callbackCount: number, averageCallbackDurationUs: number, maximumCallbackDurationUs: number, callbackOverruns: number, liveMidiDrops: number, graphRevision: number, graphPublishCount: number, trackCount: number, instrumentRuntimeCount: number, pluginCount: number, maximumLatencySamples: number, projectionDurationMs: number, audioEnvironmentRevision: number, };

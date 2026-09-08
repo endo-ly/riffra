@@ -231,11 +231,6 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
     if (timeline != nullptr) {
         const auto timelineStatus = timeline->status();
         status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
-        const auto callbackLockMisses =
-            static_cast<juce::int64>(timelineStatus.getProperty("callbackLockMisses", 0));
-        const auto callbackPublishMisses =
-            static_cast<juce::int64>(timelineStatus.getProperty("callbackPublishMisses", 0));
-        diagnostics->setProperty("callbackLockMisses", callbackLockMisses + callbackPublishMisses);
         diagnostics->setProperty("liveMidiDrops", timelineStatus.getProperty("liveMidiDrops", 0));
         diagnostics->setProperty("trackCount", timelineStatus.getProperty("trackCount", 0));
         diagnostics->setProperty("instrumentRuntimeCount",
@@ -243,6 +238,9 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
         diagnostics->setProperty("pluginCount", timelineStatus.getProperty("pluginCount", 0));
         diagnostics->setProperty("maximumLatencySamples",
                                  timelineStatus.getProperty("maximumLatencySamples", 0));
+        diagnostics->setProperty("graphRevision", timelineStatus.getProperty("graphRevision", 0));
+        diagnostics->setProperty("graphPublishCount",
+                                 timelineStatus.getProperty("graphPublishCount", 0));
     }
     status->setProperty("diagnostics", juce::var(diagnostics));
     if (message.isNotEmpty()) status->setProperty("message", message);
@@ -266,31 +264,33 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
         juce::Array<juce::var> inputChannels;
         const auto channelNames = device->getInputChannelNames();
         const auto activeInputChannels = device->getActiveInputChannels();
-        for (int physicalIndex = 0, logicalIndex = 0; physicalIndex < channelNames.size();
-             ++physicalIndex) {
-            if (!activeInputChannels[physicalIndex]) continue;
+        juce::Array<juce::var> activeInputChannelIndices;
+        for (int physicalIndex = 0; physicalIndex < channelNames.size(); ++physicalIndex) {
             auto* channel = new juce::DynamicObject();
-            channel->setProperty("index", logicalIndex++);
+            channel->setProperty("index", physicalIndex);
             channel->setProperty("name", channelNames[physicalIndex].isNotEmpty()
-                                             ? channelNames[physicalIndex]
-                                             : "Input " + juce::String(physicalIndex + 1));
+                                              ? channelNames[physicalIndex]
+                                              : "Input " + juce::String(physicalIndex + 1));
             inputChannels.add(juce::var(channel));
+            if (activeInputChannels[physicalIndex]) activeInputChannelIndices.add(physicalIndex);
         }
         status->setProperty("inputChannels", inputChannels);
+        status->setProperty("activeInputChannels", activeInputChannelIndices);
         juce::Array<juce::var> outputChannels;
         const auto outputChannelNames = device->getOutputChannelNames();
         const auto activeOutputChannels = device->getActiveOutputChannels();
-        for (int physicalIndex = 0, logicalIndex = 0; physicalIndex < outputChannelNames.size();
-             ++physicalIndex) {
-            if (!activeOutputChannels[physicalIndex]) continue;
+        juce::Array<juce::var> activeOutputChannelIndices;
+        for (int physicalIndex = 0; physicalIndex < outputChannelNames.size(); ++physicalIndex) {
             auto* channel = new juce::DynamicObject();
-            channel->setProperty("index", logicalIndex++);
+            channel->setProperty("index", physicalIndex);
             channel->setProperty("name", outputChannelNames[physicalIndex].isNotEmpty()
-                                             ? outputChannelNames[physicalIndex]
-                                             : "Output " + juce::String(physicalIndex + 1));
+                                              ? outputChannelNames[physicalIndex]
+                                              : "Output " + juce::String(physicalIndex + 1));
             outputChannels.add(juce::var(channel));
+            if (activeOutputChannels[physicalIndex]) activeOutputChannelIndices.add(physicalIndex);
         }
         status->setProperty("outputChannels", outputChannels);
+        status->setProperty("activeOutputChannels", activeOutputChannelIndices);
         status->setProperty("sampleRate", device->getCurrentSampleRate());
         status->setProperty("bufferSize", device->getCurrentBufferSizeSamples());
         const auto latencySamples =
@@ -355,7 +355,11 @@ juce::String AudioDeviceService::initialise(juce::AudioDeviceManager& manager,
     juce::AudioDeviceManager::AudioDeviceSetup preferredSetup;
     preferredSetup.inputDeviceName = resolved.inputDevice;
     preferredSetup.outputDeviceName = resolved.outputDevice;
-    preferredSetup.useDefaultInputChannels = true;
+    preferredSetup.useDefaultInputChannels = resolved.inputDevice.isEmpty();
+    if (!preferredSetup.useDefaultInputChannels) {
+        preferredSetup.inputChannels.clear();
+        preferredSetup.inputChannels.setBit(std::max(0, resolved.inputChannel));
+    }
     preferredSetup.sampleRate = configuration.sampleRate;
     preferredSetup.bufferSize = configuration.bufferSize;
     const auto error = manager.initialise(resolved.inputDevice.isNotEmpty() ? 2 : 0, 2, xml.get(),

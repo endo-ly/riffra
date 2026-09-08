@@ -79,22 +79,16 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
 }
 
 pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    // Playback is the boundary where an eventually-consistent projection is
-    // no longer sufficient. Register the Play intent before waiting for the
-    // graph so a concurrent Stop can cancel the pending start.
+    // Projection starts when canonical state changes. Play only registers a
+    // transport intent and either starts the already-active graph or waits for
+    // the projection activation hook; it never begins graph preparation.
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    context.runtime.apply_and_play(
+    context.runtime.request_play_when_ready(
         transport_sequence,
-        runtime_timeline_snapshot(
-            context.data_root,
-            context.built_in_instruments,
-            &projection.session,
-        ),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
         },
-        std::time::Duration::from_secs(30),
     )?;
     Ok(())
 }

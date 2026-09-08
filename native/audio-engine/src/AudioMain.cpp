@@ -98,7 +98,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     auto startupInputChannel = startupMessage.isEmpty() ? startupConfiguration.inputChannel : 0;
     const auto startupInputChannels =
         manager.getCurrentAudioDevice() != nullptr
-            ? manager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
+            ? manager.getCurrentAudioDevice()->getInputChannelNames().size()
             : 0;
     if (startupInputChannels > 0 && startupInputChannel >= startupInputChannels) {
         auto* details = new juce::DynamicObject();
@@ -1057,11 +1057,11 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     continue;
                 }
                 auto* activeDevice = manager.getCurrentAudioDevice();
-                const auto activeInputs =
+                const auto physicalInputs =
                     activeDevice != nullptr
-                        ? activeDevice->getActiveInputChannels().countNumberOfSetBits()
+                        ? activeDevice->getInputChannelNames().size()
                         : 0;
-                if (requested.inputChannel >= activeInputs) {
+                if (requested.inputChannel >= physicalInputs) {
                     const auto restoreError = restorePreviousDevice();
                     auto* details = new juce::DynamicObject();
                     details->setProperty("driver", requested.driver);

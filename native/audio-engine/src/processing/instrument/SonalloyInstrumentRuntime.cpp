@@ -384,13 +384,13 @@ bool SonalloyInstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t ev
 }
 
 void SonalloyInstrumentRuntime::allNotesOff() noexcept {
-    midiGeneration.fetch_add(1, std::memory_order_acq_rel);
-    resetPending.store(true, std::memory_order_release);
+    if (!resetPending.exchange(true, std::memory_order_acq_rel))
+        midiGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void SonalloyInstrumentRuntime::resetForTransportDiscontinuity() noexcept {
-    midiGeneration.fetch_add(1, std::memory_order_acq_rel);
-    resetPending.store(true, std::memory_order_release);
+    if (!resetPending.exchange(true, std::memory_order_acq_rel))
+        midiGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 int SonalloyInstrumentRuntime::latencySamples() const noexcept { return reportedLatencySamples; }
