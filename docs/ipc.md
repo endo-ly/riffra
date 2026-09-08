@@ -173,17 +173,18 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                    | ペイロード                | 意味                                                                                        |
-| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
-| `runtime-startup-finished`  | `{ succeeded }`           | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                            |
-| `audio-status`              | `AudioStatus`             | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                     |
-| `audio-meters`              | `AudioMeters`             | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                    |
-| `transport-status`          | `TransportStatus`         | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                          |
-| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態と世代・音声環境 revision（queued / preparing / active / failed） |
-| `runtime-restarted`         | `{ generation }`          | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                  |
-| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                               |
-| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                 |
-| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する      |
+| イベント                    | ペイロード                          | 意味                                                                                        |
+| --------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`  | `{ succeeded }`                     | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                            |
+| `audio-status`              | `AudioStatus`                       | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                     |
+| `audio-meters`              | `AudioMeters`                       | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                    |
+| `transport-status`          | `TransportStatus`                   | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                          |
+| `runtime-projection-status` | `RuntimeProjectionStatus`           | 非同期のランタイム投影状態と世代・音声環境 revision（queued / preparing / active / failed） |
+| `runtime-restarted`         | `{ generation }`                    | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                  |
+| `canonical-state-changed`   | `CanonicalState`                    | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                               |
+| `recording-finalized`       | `{ directory, succeeded, message }` | Native処理後の録音Asset登録とArrangement確定の完了結果                                      |
+| `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                 |
+| `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する      |
 
 購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
 プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。
@@ -220,7 +221,8 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
 - `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
 - `sendTrackMidi` と `panicTrackMidi` は、要求に含まれる Track ID へ直接ライブMIDIを送る。`setLiveMidiTarget` はPlay Surfaceが使用するInstrument TrackをRuntimeだけに設定し、対象TrackのLow Latency Monitoringを有効にする。対象はSurfaceの切替・終了時に解除し、正準Sessionへ保存しない。TimelineとLiveは同じTrack DSPを通り、通常はTrack出力でPDCを適用し、Low Latency Monitoring中は追加のTrack間補償だけを省略する。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
-- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、その後にグラフ境界の外でRackのProcessed Variantを生成する。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない
+- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、`recording.processing: true` の状態を返してすぐに応答する。RackのProcessed Variant生成とテイク確定はグラフ境界の外でライフサイクル実行器およびHost workerが行う。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない
+- Nativeのoffline処理が完了すると `recordingComplete` を通知する。成功時はHostがRaw / Processed / MIDIをAssetへ登録し、必要なArrangement変更を確定してから `recording-finalized` を境界Bのイベントとして配信する。`processing` 中は新しい録音とProject切替を受け付けない
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
@@ -230,6 +232,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
 | `audioMeters`                                             | ピーク・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知                       |
 | `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                        |
+| `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                              |
 | `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                   |
 | `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
 | `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
