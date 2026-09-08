@@ -205,9 +205,10 @@ Timeline と Live の入力は同じ Track DSP を同じ時間文脈で通り、
 イベントを捨てて診断値へ記録する。Audio Trackの入力監視も、そのTrackの同じEffect Chainを
 一度だけ通る。
 
-Armed Audio Trackはリアルタイムでは入力のRawテイクだけを保存する。録音確定時にRawの各
-セグメントを読み戻し、正準Rack状態から一時的なEffect Chainを構築してProcessed Variantを
-生成する。録音専用の常設Effect Chainは持たない。
+Armed Audio Trackはリアルタイムでは入力のRawテイクだけを保存する。停止時には短いグラフ境界で
+キャプチャの終了とRack状態を確定し、Transportを停止した後にグラフ境界の外でRawの各セグメントを
+読み戻す。正準Rack状態から一時的なEffect Chainを構築し、ブロック単位でProcessed Variantへ書き出す
+ため、録音時間に比例する作業用音声バッファを保持しない。録音専用の常設Effect Chainは持たない。
 
 ### 5.2 投影の整合性
 

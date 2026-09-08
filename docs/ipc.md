@@ -208,7 +208,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                                      |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setStartupGuard`、`setRuntimeRecoveryMute`、`setMasterGainDb` |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                                        |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`（Rawをリアルタイムに保存し、停止時にProcessed Variantを生成）                                       |
+| 録音                | `startArrangeRecording`、`stopArrangeRecording`（Rawをリアルタイムに保存し、Transport停止後にProcessed Variantを生成）                              |
 | プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                                                 |
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                                          |
 | MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`setLiveMidiTarget`、`panicTrackMidi`                                               |
@@ -220,6 +220,7 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
 - `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
 - `sendTrackMidi` と `panicTrackMidi` は、要求に含まれる Track ID へ直接ライブMIDIを送る。`setLiveMidiTarget` はPlay Surfaceが使用するInstrument TrackをRuntimeだけに設定し、対象TrackのLow Latency Monitoringを有効にする。対象はSurfaceの切替・終了時に解除し、正準Sessionへ保存しない。TimelineとLiveは同じTrack DSPを通り、通常はTrack出力でPDCを適用し、Low Latency Monitoring中は追加のTrack間補償だけを省略する。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
+- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、その後にグラフ境界の外でRackのProcessed Variantを生成する。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
