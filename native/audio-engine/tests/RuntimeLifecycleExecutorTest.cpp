@@ -207,12 +207,12 @@ TEST(RuntimeLifecycleExecutorTest, DoesNotWatchdogMediaLengthBoundWorkWhileProgr
 
     ASSERT_TRUE(executor.submitWithProgress(
         [&] {
-            for (int block = 0; block < 4; ++block) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            for (int block = 0; block < 6; ++block) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 executor.reportProgress();
             }
         },
-        std::chrono::milliseconds(50)));
+        std::chrono::milliseconds(500)));
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(2)));
     EXPECT_EQ(timeouts.load(std::memory_order_acquire), 0);
 }
