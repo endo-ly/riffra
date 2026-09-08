@@ -134,6 +134,15 @@ export async function sendMidiToTrack(
   }
 }
 
+export async function setLiveMidiTarget(trackId: string | null): Promise<AudioStatus | null> {
+  try {
+    await invokeHost<void>('set_live_midi_target', { trackId });
+    return null;
+  } catch (error) {
+    return await audioCommandError('Set live MIDI target', error);
+  }
+}
+
 export async function panicMidiTrack(trackId: string): Promise<AudioStatus | null> {
   try {
     await invokeHost<void>('panic_midi_track', { trackId });

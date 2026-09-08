@@ -199,6 +199,8 @@ export interface AudioApi {
   disableMidiListening(): Promise<AudioStatus>;
   /** Sends a live MIDI message to the specified Instrument Track. */
   sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
+  /** Sets the runtime-only low-latency target for live MIDI input. */
+  setLiveMidiTarget(trackId: string | null): Promise<AudioStatus | null>;
   /** Sends the targeted Instrument Track panic messages without changing the session. */
   panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
 }

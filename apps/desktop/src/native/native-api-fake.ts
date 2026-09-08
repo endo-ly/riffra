@@ -368,6 +368,9 @@ export class FakeNativeApi implements NativeApi {
   sendMidiToTrack(...args: Parameters<NativeApi['sendMidiToTrack']>) {
     return this.command('sendMidiToTrack', args);
   }
+  setLiveMidiTarget(...args: Parameters<NativeApi['setLiveMidiTarget']>) {
+    return this.command('setLiveMidiTarget', args);
+  }
   panicMidiTrack(...args: Parameters<NativeApi['panicMidiTrack']>) {
     return this.command('panicMidiTrack', args);
   }
@@ -828,6 +831,7 @@ export class FakeNativeApi implements NativeApi {
       case 'importMidiBytes':
       case 'analyzeAsset':
       case 'sendMidiToTrack':
+      case 'setLiveMidiTarget':
       case 'panicMidiTrack':
       case 'updateLibraryAsset':
       case 'tagRecording':

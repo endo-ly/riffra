@@ -14,7 +14,7 @@ interface PlaySurfacePanelProps {
   summary: string;
   onModeChange: (mode: PlaySurfaceMode) => void;
   audio: AudioStatus;
-  api: Pick<AudioApi, 'sendMidiToTrack'>;
+  api: Pick<AudioApi, 'sendMidiToTrack' | 'setLiveMidiTarget'>;
   runtimeReady: boolean;
   missingDeviceIds: string[];
   onChooseInstrument: () => void;
