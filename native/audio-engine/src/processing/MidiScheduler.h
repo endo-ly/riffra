@@ -74,8 +74,7 @@ public:
                                       juce::String& error);
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,
-                         int sampleCount, juce::MidiBuffer& destination,
-                         std::int64_t timelineDelaySamples = 0) noexcept;
+                         int sampleCount, juce::MidiBuffer& destination) noexcept;
 };
 
 }  // namespace riffra

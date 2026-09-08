@@ -548,11 +548,12 @@ public:
             liveTrack.runtime->setInstrument(
                 Vst3InstrumentRuntime::fromRack(std::move(instrumentRack)));
             // Simulate a Project where another Track's plugin is the latency
-            // leader. Live MIDI remains immediate even when Timeline MIDI is
-            // compensated on the same Track.
+            // leader while the Play Surface targets this Instrument Track.
             liveTrack.runtime->pluginDelaySamples = 0;
             liveTrack.runtime->compensationDelaySamples = 4;
         }
+
+        if (!engine.setLiveMidiTarget("track:live-instrument", error)) return false;
 
         if (!engine.enqueueTargetedMidi("track:live-instrument",
                                         juce::MidiMessage::noteOn(1, 60, 0.8f), error))
@@ -571,7 +572,7 @@ public:
                immediate > 0.0f;
     }
 
-    static bool timelineMidiKeepsPdcWhenLiveMidiIsImmediate() {
+    static bool timelineMidiUsesCurrentTransportContext() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -627,7 +628,7 @@ public:
 
         // Assert
         return trace.midiSamplePositions.size() >= 2 && trace.midiSamplePositions[0] == 0 &&
-               trace.midiSamplePositions[1] == 4;
+               trace.midiSamplePositions[1] == 0;
     }
 
     static bool panicClosesInstrumentRuntime() {
@@ -987,14 +988,16 @@ public:
                     engine.mix(physicalInputs.data(), 1, captureOutputs.data(), 2,
                                static_cast<int>(physicalInput.size()));
                 engine.stopRecording();
+                const auto captureFinalized = engine.finalizeRecording(error);
                 engine.stop();
                 engine.clearRecordingSink();
                 recordingTapIsolated =
-                    captureWindow && captureOffset == 0 &&
+                    captureWindow && captureFinalized && captureOffset == 0 &&
                     captureSamples == static_cast<int>(physicalInput.size()) &&
                     captureSink.receivedTrack == "track:test" &&
                     captureSink.receivedSamples == static_cast<int>(physicalInput.size()) &&
-                    captureSink.isolated;
+                    captureSink.totalProcessedSamples == static_cast<int>(physicalInput.size()) &&
+                    captureSink.offlineProcessedWriteCalls > 0;
 
                 auto* loopSnapshot = new juce::DynamicObject();
                 auto* loopTimebase = new juce::DynamicObject();
@@ -1067,7 +1070,7 @@ public:
                     if (loopWindowed && loopRemaining > 0)
                         engine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, loopRemaining);
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
+                    engine.finalizeRecording(error);
                     engine.stop();
                     engine.clearRecordingSink();
                     loopCaptureSegments =
@@ -1091,12 +1094,9 @@ public:
                                 static_cast<std::uint64_t>(loopPassSamples);
                     }
                 }
-                // Synthetic Plugin Loop Recording test:
-                // Latency 256, Tail 48000, Loop 24000, 3 passes with distinct impulses
+                // Synthetic loop recording test with distinct impulses per pass.
                 if (loopSnapshotLoaded &&
                     engine.loadSnapshot(loopSnapshotValue, formats, 48000.0, 512, error)) {
-                    constexpr int kSynthDelay = 256;
-                    constexpr int kSynthTail = 48'000;
                     constexpr int kSynthLoopLength = 24'000;
                     constexpr int kSynthPasses = 3;
                     constexpr int kSynthTotal = kSynthLoopLength * kSynthPasses;
@@ -1104,20 +1104,6 @@ public:
                     constexpr float kImpulseAmplitude = 0.9f;
                     // Impulse positions within each pass (must be >= kSynthDelay)
                     constexpr int kImpulsePos[kSynthPasses] = {256, 1256, 2256};
-                    // Set synthetic plugin delay and tail on the armed track
-                    {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
-                                if (trackPtr->runtime != nullptr &&
-                                    !trackPtr->runtime->instrumentTrack &&
-                                    trackPtr->runtime->armed) {
-                                    trackPtr->runtime->pluginDelaySamples = kSynthDelay;
-                                    trackPtr->runtime->pluginTailSamples = kSynthTail;
-                                }
-                            }
-                        }
-                    }
                     LoopDataCaptureSink synthSink(directory, "synth");
                     engine.setRecordingSink(&synthSink);
                     engine.seekToTick(0);
@@ -1156,7 +1142,7 @@ public:
                         synthMixed += block;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
+                    engine.finalizeRecording(error);
                     engine.stop();
                     engine.clearRecordingSink();
                     const auto clockAfter = engine.audioClockSample.load(std::memory_order_acquire);
@@ -1188,10 +1174,9 @@ public:
                         synthImpulseOk = base + impulseAt < synthSink.rawBuffer.size() &&
                                          std::abs(synthSink.rawBuffer[base + impulseAt] -
                                                   kImpulseAmplitude) < 0.001f;
-                        // Processed impulse at P - delay (passthrough chain + delay compensation)
-                        // For a real plugin with latency D, output aligns at P.
-                        // For passthrough test chain, compensation shifts left by D.
-                        const auto processedPos = impulseAt - static_cast<std::size_t>(kSynthDelay);
+                        // The offline chain is empty for this synthetic capture, so the
+                        // processed variant preserves the raw impulse position.
+                        const auto processedPos = impulseAt;
                         synthImpulseOk = synthImpulseOk &&
                                          base + processedPos < synthSink.processedLeft.size() &&
                                          std::abs(synthSink.processedLeft[base + processedPos] -
@@ -1253,7 +1238,7 @@ public:
                         partialMixed += block;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
+                    engine.finalizeRecording(error);
                     engine.stop();
                     engine.clearRecordingSink();
                     // Expected: 3 segments (partial 12000, full 24000, full 24000)
@@ -1298,19 +1283,8 @@ public:
                     // preparedBlockSize = 128; chain must be fed in <= 128 sample chunks
                     constexpr int kBsTotal = 24'000;  // 1 pass
                     constexpr int kBsBlock = 128;
-                    constexpr int kBsDelay = 64;
                     constexpr float kBsImpulse = 0.8f;
                     constexpr int kBsImpulsePos = 500;
-                    {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
-                                if (trackPtr->runtime != nullptr &&
-                                    !trackPtr->runtime->instrumentTrack && trackPtr->runtime->armed)
-                                    trackPtr->runtime->pluginDelaySamples = kBsDelay;
-                            }
-                        }
-                    }
                     LoopDataCaptureSink bsSink(directory, "blocksize");
                     engine.setRecordingSink(&bsSink);
                     engine.seekToTick(0);
@@ -1334,13 +1308,13 @@ public:
                         bsMixed += kBsBlock;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
+                    engine.finalizeRecording(error);
                     engine.stop();
                     engine.clearRecordingSink();
                     // Verify: processed length matches raw, impulse at correct position
                     const bool bsLengthOk =
                         bsSink.totalRaw == kBsTotal && bsSink.totalProcessed == kBsTotal;
-                    const auto bsProcessedPos = kBsImpulsePos - kBsDelay;
+                    const auto bsProcessedPos = kBsImpulsePos;
                     const bool bsImpulseOk =
                         bsProcessedPos >= 0 &&
                         static_cast<std::size_t>(bsProcessedPos) < bsSink.processedLeft.size() &&
@@ -1404,7 +1378,7 @@ public:
                             longMixed += block;
                         }
                         engine.stopRecording();
-                        engine.flushRecordingTail(error);
+                        engine.finalizeRecording(error);
                         engine.stop();
                         engine.clearRecordingSink();
                         // Verify: all 130 passes recorded, raw/processed match
@@ -1601,7 +1575,7 @@ public:
                                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             }
                             engine.stopRecording();
-                            const auto tailOk = engine.flushRecordingTail(error);
+                            const auto finalized = engine.finalizeRecording(error);
                             engine.stop();
                             engine.clearRecordingSink();
                             juce::String finishError;
@@ -1631,9 +1605,10 @@ public:
                                 static_cast<std::uint64_t>(processedLength);
 
                             productionWriterPartialPassed =
-                                partialWindowed && tailOk && finished && rawFile.existsAsFile() &&
-                                processedFile.existsAsFile() && rawLength == kPartialTotal &&
-                                processedLength == kPartialTotal && completed;
+                                partialWindowed && finalized && finished &&
+                                rawFile.existsAsFile() && processedFile.existsAsFile() &&
+                                rawLength == kPartialTotal && processedLength == kPartialTotal &&
+                                completed;
 
                             // Verify 3 segments and raw/processed ranges
                             if (productionWriterPartialPassed && manifestValue.isObject()) {
@@ -1967,7 +1942,7 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[4], expected, 0.002f);
 }
 
-TEST(TimelineEngineTest, CompensatesTimelineAudioBeforeMergingMonitoredInput) {
+TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     // Arrange
     test::TemporaryDirectory directory;
     const auto rawFile = directory.get().getChildFile("raw-monitor.wav");
@@ -2006,10 +1981,9 @@ TEST(TimelineEngineTest, CompensatesTimelineAudioBeforeMergingMonitoredInput) {
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
 
     // Assert
-    const auto gain = std::sqrt(0.5f);
-    EXPECT_NEAR(left[0], 0.25f * gain, 0.002f);
-    EXPECT_NEAR(right[0], 0.25f * gain, 0.002f);
-    EXPECT_GT(left[4], left[0] + 0.07f);
+    EXPECT_GT(left[0], 0.23f);
+    EXPECT_NEAR(right[0], left[0], 0.002f);
+    EXPECT_NEAR(left[4], left[0], 0.002f);
     EXPECT_NEAR(right[4], left[4], 0.002f);
 }
 
@@ -2026,8 +2000,8 @@ TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
     EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
 }
 
-TEST(TimelineEngineTest, KeepsTimelineMidiCompensatedWhileLiveMidiStartsImmediately) {
-    EXPECT_TRUE(TimelineEngineTestPeer::timelineMidiKeepsPdcWhenLiveMidiIsImmediate());
+TEST(TimelineEngineTest, ProcessesTimelineAndLiveMidiInTheSameTrackContext) {
+    EXPECT_TRUE(TimelineEngineTestPeer::timelineMidiUsesCurrentTransportContext());
 }
 
 TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
@@ -2322,12 +2296,12 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
     engine.stopRecording();
-    const auto flushed = engine.flushRecordingTail(error);
+    const auto finalized = engine.finalizeRecording(error);
     engine.stop();
     engine.clearRecordingSink();
 
     // Assert
-    EXPECT_TRUE(flushed);
+    EXPECT_TRUE(finalized);
     EXPECT_EQ(captureOffset, 0);
     EXPECT_EQ(captureSamples, kBlockSamples);
     EXPECT_EQ(rawSamplesAfterCallback, kBlockSamples);

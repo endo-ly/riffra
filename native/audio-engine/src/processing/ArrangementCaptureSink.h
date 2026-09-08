@@ -13,13 +13,11 @@ public:
     virtual bool beginAudioTrackCapture(const juce::String& trackId,
                                         std::uint64_t audioClockStartSample,
                                         std::uint64_t timelineStartSample) noexcept = 0;
-    virtual void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
-                                 const float* const* processed,
-                                 int processedSampleCount) noexcept = 0;
+    virtual void writeAudioTrack(const juce::String& trackId, const float* raw,
+                                 int rawSampleCount) noexcept = 0;
     virtual bool endAudioTrackCapture(const juce::String& trackId,
                                       std::uint64_t audioClockEndSample,
                                       std::uint64_t timelineEndSample) noexcept = 0;
-    virtual bool completeAudioTrackTail(const juce::String& trackId) noexcept = 0;
     virtual void markLoopBoundary(std::uint64_t audioSample) noexcept = 0;
     virtual void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                                 const juce::MidiMessage& message,
@@ -42,9 +40,9 @@ public:
         return {};
     }
 
-    /// Offline processed audio track writer used after loop recording stops.
-    /// Unlike writeAudioTrack(), this method may wait for the writer FIFO,
-    /// and returns true only when all samples are successfully committed.
+    /// Offline processed audio track writer used after recording stops.
+    /// This method may wait for the writer FIFO and returns true only when all
+    /// samples are successfully committed.
     virtual bool writeProcessedAudioTrackOffline(const juce::String& trackId,
                                                  const float* const* processed, int sampleCount,
                                                  int timeoutMs) noexcept {

@@ -883,6 +883,16 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
+            if (type == "setLiveMidiTarget") {
+                const auto trackId = command.getProperty("trackId", {}).toString();
+                juce::String timelineError;
+                if (!timelineEngine.setLiveMidiTarget(trackId, timelineError)) {
+                    writeJson(makeError("liveMidiTarget", timelineError));
+                    continue;
+                }
+                writeJson(AudioDeviceService::currentMeters(callback));
+                continue;
+            }
             if (type == "sendTrackMidi" || type == "panicTrackMidi") {
                 if (timelineOperationRunning.load(std::memory_order_acquire)) {
                     writeJson(makeError("timelineBusy",

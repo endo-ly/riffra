@@ -184,8 +184,10 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         const auto monitoring = trackValue.getProperty("monitoring", {}).toString();
         track->runtime->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             monitoring, track->runtime->armed, track->runtime->instrumentTrack);
-        track->recordingEffectRuntimeRequired =
-            !track->runtime->instrumentTrack && track->runtime->armed;
+        track->runtime->setLowLatencyMonitoring(
+            track->runtime->instrumentTrack
+                ? (track->runtime->armed || engine.isLiveMidiTarget(track->id))
+                : track->runtime->monitorInput);
         if (track->runtime->monitorInput) monitorLiveInputState = true;
         const auto audioInput = trackValue.getProperty("audioInput", {});
         if (audioInput.isObject())
@@ -262,8 +264,6 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                     (*existing)->effectTopologySignature == track->effectTopologySignature &&
                     (*existing)->instrumentTopologySignature ==
                         track->instrumentTopologySignature &&
-                    (*existing)->recordingEffectRuntimeRequired ==
-                        track->recordingEffectRuntimeRequired &&
                     (*existing)->runtime->outputSampleRate == track->runtime->outputSampleRate &&
                     (*existing)->runtime->preparedBlockSize == track->runtime->preparedBlockSize) {
                     sameRuntimeTopology = true;
@@ -284,11 +284,6 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             if (!track->reuseRuntimeDevices &&
                 !track->runtime->effects().load(devices, outputSampleRate, maximumBlockSize, error,
                                                 track->id + "/track-effect"))
-                return false;
-            if (!track->reuseRuntimeDevices && track->recordingEffectRuntimeRequired &&
-                !track->runtime->recordingEffects().load(devices, outputSampleRate,
-                                                         maximumBlockSize, error,
-                                                         track->id + "/recording-effect"))
                 return false;
         }
         if (instrument.isObject() && !track->reuseRuntimeDevices) {
@@ -513,20 +508,15 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
-        track->runtime->recordingCapture.processedBuffer.setSize(2, maximumBlockSize, false, true,
-                                                                 false);
         prepared->tracks.push_back(std::move(track));
     }
     for (auto& track : prepared->tracks) {
         track->runtime->compensationDelaySamples = ArrangementGraph::compensationDelay(
             maximumPluginDelay, track->runtime->pluginDelaySamples);
-        if (!track->runtime->instrumentTrack) {
-            track->runtime->delayBuffer.setSize(
-                2,
-                static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
-                false, true, false);
-            track->runtime->delayBuffer.clear();
-        }
+        track->runtime->delayBuffer.setSize(
+            2, static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
+            false, true, false);
+        track->runtime->delayBuffer.clear();
         track->runtime->postEffectCompensationDelaySamples = maximumPluginDelay;
         track->runtime->postEffectDelayBuffer.setSize(
             2,

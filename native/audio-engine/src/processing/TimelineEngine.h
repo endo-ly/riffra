@@ -52,10 +52,11 @@ public:
     bool startRecording(int countInBeats, juce::String& error) noexcept;
     bool cancelRecordingIfCountingIn() noexcept;
     void stopRecording() noexcept;
-    bool flushRecordingTail(juce::String& error) noexcept;
+    bool finalizeRecording(juce::String& error) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
+    bool setLiveMidiTarget(const juce::String& trackId, juce::String& error) noexcept;
     [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message,
                                        const juce::String& deviceId = {}) noexcept;
     [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
@@ -151,7 +152,6 @@ private:
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
-        bool recordingEffectRuntimeRequired = false;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
@@ -206,10 +206,11 @@ private:
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
-    bool generateLoopProcessedVariants(PreparedTimeline& timeline,
-                                       ArrangementCaptureSink* sink) noexcept;
+    bool generateProcessedVariants(PreparedTimeline& timeline, ArrangementCaptureSink* sink,
+                                   juce::String& error) noexcept;
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
+    [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
@@ -228,6 +229,7 @@ private:
     std::uint32_t pendingMonitoringInputChannels = 0;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
+    juce::String liveMidiTargetTrackId;
     std::atomic<State> state{State::stopped};
     std::atomic<std::int64_t> timelineSample{0};
     std::atomic<std::int64_t> lastMixStartSample{0};

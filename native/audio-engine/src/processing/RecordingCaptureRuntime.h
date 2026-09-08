@@ -4,26 +4,19 @@
 #include <cstdint>
 
 #include "ArrangementCaptureSink.h"
-#include "PluginChain.h"
-
 namespace riffra {
 
-enum class RecordingCaptureState { idle, capturing, drainingTail, completed };
+enum class RecordingCaptureState { idle, capturing };
 
 struct RecordingCaptureTrackState final {
-    juce::AudioBuffer<float> processedBuffer;
     std::uint64_t endAudioSample = 0;
     std::uint64_t endTimelineSample = 0;
-    int latencyToDiscard = 0;
     RecordingCaptureState state = RecordingCaptureState::idle;
-    int tailRemainingSamples = 0;
 
     void reset() noexcept {
         endAudioSample = 0;
         endTimelineSample = 0;
-        latencyToDiscard = 0;
         state = RecordingCaptureState::idle;
-        tailRemainingSamples = 0;
     }
 };
 
@@ -69,16 +62,8 @@ public:
                                          std::uint64_t timelineStartSample) noexcept;
     [[nodiscard]] bool endTrackCapture(const juce::String& trackId,
                                        const RecordingCaptureTrackState& track) noexcept;
-    [[nodiscard]] bool beginTailDrain(const juce::String& trackId,
-                                      RecordingCaptureTrackState& track,
-                                      std::int64_t pluginDelaySamples,
-                                      std::int64_t pluginTailSamples) noexcept;
-    [[nodiscard]] bool drainTail(const juce::String& trackId, RecordingCaptureTrackState& track,
-                                 PluginChain& effectChain, juce::AudioBuffer<float>& silentInput,
-                                 int sampleCount) noexcept;
-
-    void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
-                         const float* const* processed, int processedSampleCount) noexcept;
+    void writeAudioTrack(const juce::String& trackId, const float* raw,
+                         int rawSampleCount) noexcept;
     void markLoopBoundary(std::uint64_t audioSample) noexcept;
     void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                         const juce::MidiMessage& message, std::uint64_t audioSample) noexcept;
@@ -86,21 +71,16 @@ public:
                          std::uint64_t startTimelineSample,
                          std::uint64_t endTimelineSample) noexcept;
 
-    [[nodiscard]] unsigned int drainingTailTracks() const noexcept {
-        return drainingTailTracksCount.load(std::memory_order_acquire);
-    }
     [[nodiscard]] std::uint64_t captureErrors() const noexcept {
         return captureErrorCount.load(std::memory_order_acquire);
     }
     void resetCaptureErrors() noexcept;
-    void resetDrainingTailTracks() noexcept;
 
 private:
     void incrementError() noexcept { captureErrorCount.fetch_add(1, std::memory_order_relaxed); }
 
     std::atomic<ArrangementCaptureSink*> recordingSink{nullptr};
     std::atomic<unsigned int> recordingSinkReaders{0};
-    std::atomic<unsigned int> drainingTailTracksCount{0};
     std::atomic<std::uint64_t> captureErrorCount{0};
 };
 

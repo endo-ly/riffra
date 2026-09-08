@@ -40,7 +40,6 @@ class TrackRuntime final {
 
         std::unique_ptr<InstrumentRuntime> instrument;
         PluginChain effects;
-        PluginChain recordingEffects;
     };
 
 public:
@@ -58,10 +57,6 @@ public:
     }
     [[nodiscard]] PluginChain& effects() noexcept { return devices.effects; }
     [[nodiscard]] const PluginChain& effects() const noexcept { return devices.effects; }
-    [[nodiscard]] PluginChain& recordingEffects() noexcept { return devices.recordingEffects; }
-    [[nodiscard]] const PluginChain& recordingEffects() const noexcept {
-        return devices.recordingEffects;
-    }
 
     void setInstrument(std::unique_ptr<InstrumentRuntime> runtime) noexcept {
         devices.instrument = std::move(runtime);
@@ -69,6 +64,14 @@ public:
 
     [[nodiscard]] bool hasLoadedInstrument() const noexcept {
         return devices.instrument != nullptr && devices.instrument->isLoaded();
+    }
+
+    void setLowLatencyMonitoring(const bool enabled) noexcept {
+        lowLatencyMonitoringState.store(enabled, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool lowLatencyMonitoring() const noexcept {
+        return lowLatencyMonitoringState.load(std::memory_order_acquire);
     }
 
     /// Reserves the timeline MIDI storage owned by the instrument runtime.
@@ -89,7 +92,6 @@ public:
     void panic() noexcept {
         if (devices.instrument != nullptr) devices.instrument->allNotesOff();
         devices.effects.allNotesOff();
-        devices.recordingEffects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);
         sustain.store(false, std::memory_order_release);
         liveTailRemainingSamples.store(std::max<std::int64_t>(1, pluginTailSamples),
@@ -100,7 +102,6 @@ public:
     void resetForTransportDiscontinuity() noexcept {
         if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();
         devices.effects.allNotesOff();
-        devices.recordingEffects.allNotesOff();
         heldNotes.store(0, std::memory_order_release);
         sustain.store(false, std::memory_order_release);
         liveTailRemainingSamples.store(0, std::memory_order_release);
@@ -205,6 +206,7 @@ private:
 
     TrackDeviceRuntime devices;
     std::atomic<bool> liveMidiActiveState{false};
+    std::atomic<bool> lowLatencyMonitoringState{false};
     std::atomic<int> heldNotes{0};
     std::atomic<bool> sustain{false};
     std::atomic<std::int64_t> liveTailRemainingSamples{0};

@@ -20,11 +20,10 @@ public:
 
     bool beginAudioTrackCapture(const juce::String& trackId, std::uint64_t audioClockStartSample,
                                 std::uint64_t timelineStartSample) noexcept override;
-    void writeAudioTrack(const juce::String& trackId, const float* raw, int rawSampleCount,
-                         const float* const* processed, int processedSampleCount) noexcept override;
+    void writeAudioTrack(const juce::String& trackId, const float* raw,
+                         int rawSampleCount) noexcept override;
     bool endAudioTrackCapture(const juce::String& trackId, std::uint64_t audioClockEndSample,
                               std::uint64_t timelineEndSample) noexcept override;
-    bool completeAudioTrackTail(const juce::String& trackId) noexcept override;
     void markLoopBoundary(std::uint64_t audioSample) noexcept override;
     void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                         const juce::MidiMessage& message,
@@ -78,7 +77,6 @@ private:
             std::uint64_t rawFileEndSample = 0;
             std::uint64_t processedFileStartSample = 0;
             std::uint64_t processedFileEndSample = 0;
-            std::uint64_t processedTailEndSample = 0;
         };
         juce::String trackId;
         juce::String trackKey;
@@ -94,8 +92,6 @@ private:
         std::vector<VariantCaptureSegment> captureSegments;
         std::size_t captureSegmentCount = 0;
         bool captureActive = false;
-        bool tailActive = false;
-        std::size_t tailSegmentIndex = 0;
     };
 
     ArrangeRecordingSession(juce::File directory, double sampleRate);

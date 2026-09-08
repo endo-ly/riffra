@@ -36,45 +36,45 @@ juce::var makeConfiguration() {
 
 bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {
     std::array<float, 512> guitarRaw{};
-    std::array<float, 512> guitarLeft{};
-    std::array<float, 512> guitarRight{};
+    std::array<float, 512> guitarProcessedLeft{};
+    std::array<float, 512> guitarProcessedRight{};
     std::array<float, 512> vocalRaw{};
-    std::array<float, 512> vocalLeft{};
-    std::array<float, 512> vocalRight{};
+    std::array<float, 512> vocalProcessedLeft{};
+    std::array<float, 512> vocalProcessedRight{};
     guitarRaw.fill(0.1f);
-    guitarLeft.fill(0.2f);
-    guitarRight.fill(0.21f);
+    guitarProcessedLeft.fill(0.2f);
+    guitarProcessedRight.fill(0.21f);
     vocalRaw.fill(0.3f);
-    vocalLeft.fill(0.4f);
-    vocalRight.fill(0.41f);
-    const std::array<const float*, 2> guitarProcessed{guitarLeft.data(), guitarRight.data()};
-    const std::array<const float*, 2> vocalProcessed{vocalLeft.data(), vocalRight.data()};
+    vocalProcessedLeft.fill(0.4f);
+    vocalProcessedRight.fill(0.41f);
+    const std::array<const float*, 2> guitarProcessed{guitarProcessedLeft.data(),
+                                                      guitarProcessedRight.data()};
+    const std::array<const float*, 2> vocalProcessed{vocalProcessedLeft.data(),
+                                                     vocalProcessedRight.data()};
 
     session.setCaptureRange(1000, 1256, 24'000, 24'256);
     session.setCaptureRange(1256, 1512, 24'000, 24'256);
     if (!session.beginAudioTrackCapture("track:guitar", 1000, 24'000)) return false;
-    session.writeAudioTrack("track:guitar", guitarRaw.data(), 256, guitarProcessed.data(), 256);
+    session.writeAudioTrack("track:guitar", guitarRaw.data(), 256);
+    if (!session.writeProcessedAudioTrackOffline("track:guitar", guitarProcessed.data(), 256, 100))
+        return false;
     session.endAudioTrackCapture("track:guitar", 1256, 24'256);
-    session.completeAudioTrackTail("track:guitar");
     if (!session.beginAudioTrackCapture("track:guitar", 1256, 24'000)) return false;
-    const std::array<const float*, 2> guitarProcessedSecond{guitarLeft.data() + 256,
-                                                            guitarRight.data() + 256};
-    session.writeAudioTrack("track:guitar", guitarRaw.data() + 256, 256,
-                            guitarProcessedSecond.data(), 256);
+    session.writeAudioTrack("track:guitar", guitarRaw.data() + 256, 256);
+    if (!session.writeProcessedAudioTrackOffline("track:guitar", guitarProcessed.data(), 256, 100))
+        return false;
     session.endAudioTrackCapture("track:guitar", 1512, 24'256);
-    session.completeAudioTrackTail("track:guitar");
 
     if (!session.beginAudioTrackCapture("track:vocal", 1000, 24'000)) return false;
-    session.writeAudioTrack("track:vocal", vocalRaw.data(), 256, vocalProcessed.data(), 256);
+    session.writeAudioTrack("track:vocal", vocalRaw.data(), 256);
+    if (!session.writeProcessedAudioTrackOffline("track:vocal", vocalProcessed.data(), 256, 100))
+        return false;
     session.endAudioTrackCapture("track:vocal", 1256, 24'256);
-    session.completeAudioTrackTail("track:vocal");
     if (!session.beginAudioTrackCapture("track:vocal", 1256, 24'000)) return false;
-    const std::array<const float*, 2> vocalProcessedSecond{vocalLeft.data() + 256,
-                                                           vocalRight.data() + 256};
-    session.writeAudioTrack("track:vocal", vocalRaw.data() + 256, 256, vocalProcessedSecond.data(),
-                            256);
+    session.writeAudioTrack("track:vocal", vocalRaw.data() + 256, 256);
+    if (!session.writeProcessedAudioTrackOffline("track:vocal", vocalProcessed.data(), 256, 100))
+        return false;
     session.endAudioTrackCapture("track:vocal", 1512, 24'256);
-    session.completeAudioTrackTail("track:vocal");
 
     session.writeMidiTrack("track:keys", "midi:keyboard",
                            juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);
@@ -174,10 +174,12 @@ TEST_F(ArrangeRecordingSessionTest, ReportsOversizedMidiSourceIds) {
     std::array<float, 1> processedRight{0.21f};
     const std::array<const float*, 2> processed{processedLeft.data(), processedRight.data()};
     ASSERT_TRUE(session->beginAudioTrackCapture("track:guitar", 1000, 24'000));
-    session->writeAudioTrack("track:guitar", raw.data(), 1, processed.data(), 1);
+    session->writeAudioTrack("track:guitar", raw.data(), 1);
+    ASSERT_TRUE(session->writeProcessedAudioTrackOffline("track:guitar", processed.data(), 1, 100));
     ASSERT_TRUE(session->endAudioTrackCapture("track:guitar", 1001, 24'001));
     ASSERT_TRUE(session->beginAudioTrackCapture("track:vocal", 1000, 24'000));
-    session->writeAudioTrack("track:vocal", raw.data(), 1, processed.data(), 1);
+    session->writeAudioTrack("track:vocal", raw.data(), 1);
+    ASSERT_TRUE(session->writeProcessedAudioTrackOffline("track:vocal", processed.data(), 1, 100));
     ASSERT_TRUE(session->endAudioTrackCapture("track:vocal", 1001, 24'001));
 
     juce::String oversizedSource;

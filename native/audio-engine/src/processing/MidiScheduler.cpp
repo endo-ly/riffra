@@ -26,13 +26,15 @@ std::size_t saturatingMultiply(const std::size_t left, const std::size_t right) 
     return left * right;
 }
 
-std::size_t maximumNonLoopEvents(const CompiledMidiClip& clip, const int blockSize) noexcept {
+std::size_t maximumEventsInWindow(std::vector<std::int64_t>& eventSamples,
+                                  const int blockSize) noexcept {
+    if (eventSamples.empty()) return 0;
+    std::sort(eventSamples.begin(), eventSamples.end());
     std::size_t maximum = 0;
     std::size_t firstInWindow = 0;
-    for (std::size_t lastInWindow = 0; lastInWindow < clip.events.size(); ++lastInWindow) {
+    for (std::size_t lastInWindow = 0; lastInWindow < eventSamples.size(); ++lastInWindow) {
         while (firstInWindow <= lastInWindow &&
-               clip.events[lastInWindow].sampleOffset - clip.events[firstInWindow].sampleOffset >=
-                   blockSize)
+               eventSamples[lastInWindow] - eventSamples[firstInWindow] >= blockSize)
             ++firstInWindow;
         maximum = std::max(maximum, lastInWindow - firstInWindow + 1);
     }
@@ -97,15 +99,23 @@ std::size_t maximumLoopEvents(const CompiledMidiClip& clip, const int blockSize)
 std::size_t MidiScheduler::maximumEventsPerBlock(const std::vector<CompiledMidiClip>& clips,
                                                  const int blockSize) noexcept {
     if (blockSize <= 0) return 0;
-    std::size_t maximum = 0;
+    std::vector<std::int64_t> nonLoopEventSamples;
+    std::size_t loopMaximum = 0;
     for (const auto& clip : clips) {
         if (clip.muted || clip.events.empty() || clip.lengthSamples <= 0) continue;
-        const auto clipMaximum =
-            clip.loop ? maximumLoopEvents(clip, blockSize) : maximumNonLoopEvents(clip, blockSize);
-        maximum = saturatingAdd(maximum, clipMaximum);
-        if (maximum == std::numeric_limits<std::size_t>::max()) return maximum;
+        if (clip.loop) {
+            loopMaximum = saturatingAdd(loopMaximum, maximumLoopEvents(clip, blockSize));
+            if (loopMaximum == std::numeric_limits<std::size_t>::max()) return loopMaximum;
+            continue;
+        }
+        if (clip.events.size() >
+            std::numeric_limits<std::size_t>::max() - nonLoopEventSamples.size())
+            return std::numeric_limits<std::size_t>::max();
+        nonLoopEventSamples.reserve(nonLoopEventSamples.size() + clip.events.size());
+        for (const auto& event : clip.events)
+            nonLoopEventSamples.push_back(clip.startSample + event.sampleOffset);
     }
-    return maximum;
+    return saturatingAdd(maximumEventsInWindow(nonLoopEventSamples, blockSize), loopMaximum);
 }
 
 bool MidiScheduler::prepareBuffer(juce::MidiBuffer& buffer,
@@ -183,29 +193,26 @@ bool MidiScheduler::compile(const MidiClip& source, const TimelineTimebase& time
 
 void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                              const std::int64_t rangeStart, const int sampleCount,
-                             juce::MidiBuffer& destination,
-                             const std::int64_t timelineDelaySamples) noexcept {
+                             juce::MidiBuffer& destination) noexcept {
     if (sampleCount <= 0) return;
-    const auto sourceRangeStart = rangeStart - std::max<std::int64_t>(0, timelineDelaySamples);
-    const auto sourceRangeEnd = sourceRangeStart + sampleCount;
+    const auto rangeEnd = rangeStart + sampleCount;
     for (const auto& clip : clips) {
         if (clip.muted || clip.lengthSamples <= 0) continue;
         const auto firstIteration =
-            clip.loop && sourceRangeStart > clip.startSample
-                ? std::max<std::int64_t>(
-                      0, (sourceRangeStart - clip.startSample) / clip.lengthSamples - 1)
+            clip.loop && rangeStart > clip.startSample
+                ? std::max<std::int64_t>(0,
+                                         (rangeStart - clip.startSample) / clip.lengthSamples - 1)
                 : 0;
         const auto lastIteration =
-            clip.loop
-                ? std::max<std::int64_t>(
-                      firstIteration, (sourceRangeEnd - clip.startSample + clip.lengthSamples - 1) /
-                                          clip.lengthSamples)
-                : 0;
+            clip.loop ? std::max<std::int64_t>(
+                            firstIteration, (rangeEnd - clip.startSample + clip.lengthSamples - 1) /
+                                                clip.lengthSamples)
+                      : 0;
         for (std::int64_t iteration = firstIteration; iteration <= lastIteration; ++iteration) {
             const auto iterationStart = clip.startSample + iteration * clip.lengthSamples;
-            const auto localStart = std::max<std::int64_t>(0, sourceRangeStart - iterationStart);
+            const auto localStart = std::max<std::int64_t>(0, rangeStart - iterationStart);
             const auto localEnd = std::min<std::int64_t>(
-                clip.lengthSamples, std::max<std::int64_t>(0, sourceRangeEnd - iterationStart));
+                clip.lengthSamples, std::max<std::int64_t>(0, rangeEnd - iterationStart));
             const auto isClipBoundary =
                 localStart == clip.lengthSamples && localEnd == clip.lengthSamples;
             if (localEnd < localStart || (localEnd == localStart && !isClipBoundary)) {
@@ -223,7 +230,7 @@ void MidiScheduler::schedule(const std::vector<CompiledMidiClip>& clips,
                     (event->sampleOffset == clip.lengthSamples && localEnd == clip.lengthSamples);
                 if (!inRange) break;
                 const auto absoluteSample = iterationStart + event->sampleOffset;
-                const auto offset = static_cast<int>(absoluteSample - sourceRangeStart);
+                const auto offset = static_cast<int>(absoluteSample - rangeStart);
                 if (offset >= 0 && offset < sampleCount)
                     (void)destination.addEvent(event->message, offset);
             }

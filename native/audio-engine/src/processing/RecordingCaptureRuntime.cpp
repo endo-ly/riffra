@@ -1,8 +1,5 @@
 #include "RecordingCaptureRuntime.h"
 
-#include <algorithm>
-#include <array>
-#include <limits>
 #include <thread>
 
 namespace riffra {
@@ -59,8 +56,7 @@ void RecordingCaptureRuntime::resetTrack(RecordingCaptureTrackState& track) noex
 
 bool RecordingCaptureRuntime::hasCaptureWork(
     const RecordingCaptureTrackState& track) const noexcept {
-    return track.state == RecordingCaptureState::capturing ||
-           track.state == RecordingCaptureState::drainingTail;
+    return track.state == RecordingCaptureState::capturing;
 }
 
 bool RecordingCaptureRuntime::beginTrackCapture(const juce::String& trackId,
@@ -69,7 +65,7 @@ bool RecordingCaptureRuntime::beginTrackCapture(const juce::String& trackId,
                                                 const std::uint64_t timelineStartSample) noexcept {
     auto sink = acquireSink();
     if (!sink || !sink->beginAudioTrackCapture(trackId, audioStartSample, timelineStartSample)) {
-        track.state = RecordingCaptureState::completed;
+        track.state = RecordingCaptureState::idle;
         incrementError();
         return false;
     }
@@ -88,89 +84,10 @@ bool RecordingCaptureRuntime::endTrackCapture(const juce::String& trackId,
     return true;
 }
 
-bool RecordingCaptureRuntime::beginTailDrain(const juce::String& trackId,
-                                             RecordingCaptureTrackState& track,
-                                             const std::int64_t pluginDelaySamples,
-                                             const std::int64_t pluginTailSamples) noexcept {
-    if (track.state != RecordingCaptureState::capturing) return true;
-    if (!endTrackCapture(trackId, track)) return false;
-
-    const auto total = std::max<std::int64_t>(0, pluginDelaySamples + pluginTailSamples);
-    track.tailRemainingSamples =
-        static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
-    if (track.tailRemainingSamples == 0) {
-        auto sink = acquireSink();
-        if (!sink || !sink->completeAudioTrackTail(trackId)) {
-            incrementError();
-            return false;
-        }
-        track.state = RecordingCaptureState::idle;
-        return true;
-    }
-    track.state = RecordingCaptureState::drainingTail;
-    drainingTailTracksCount.fetch_add(1, std::memory_order_acq_rel);
-    return true;
-}
-
-bool RecordingCaptureRuntime::drainTail(const juce::String& trackId,
-                                        RecordingCaptureTrackState& track, PluginChain& effectChain,
-                                        juce::AudioBuffer<float>& silentInput,
-                                        const int sampleCount) noexcept {
-    if (track.state != RecordingCaptureState::drainingTail) return true;
-
-    auto sink = acquireSink();
-    if (!sink) {
-        track.state = RecordingCaptureState::completed;
-        incrementError();
-        drainingTailTracksCount.fetch_sub(1, std::memory_order_acq_rel);
-        return true;
-    }
-
-    const auto count = std::min({
-        std::max(0, sampleCount),
-        std::max(0, track.tailRemainingSamples),
-        track.processedBuffer.getNumSamples(),
-    });
-    if (count <= 0) {
-        track.state = RecordingCaptureState::completed;
-        incrementError();
-        drainingTailTracksCount.fetch_sub(1, std::memory_order_acq_rel);
-        return true;
-    }
-
-    silentInput.clear(0, 0, count);
-    silentInput.clear(1, 0, count);
-    track.processedBuffer.clear(0, 0, count);
-    track.processedBuffer.clear(1, 0, count);
-    effectChain.process(silentInput.getArrayOfReadPointers(), 2,
-                        track.processedBuffer.getArrayOfWritePointers(), 2, count);
-
-    const auto discard = std::min(track.latencyToDiscard, count);
-    track.latencyToDiscard -= discard;
-    const auto processedCount = count - discard;
-    if (processedCount > 0) {
-        const std::array<const float*, 2> processed{
-            track.processedBuffer.getReadPointer(0) + discard,
-            track.processedBuffer.getReadPointer(1) + discard,
-        };
-        sink->writeAudioTrack(trackId, nullptr, 0, processed.data(), processedCount);
-    }
-
-    track.tailRemainingSamples -= count;
-    if (track.tailRemainingSamples == 0) {
-        if (!sink->completeAudioTrackTail(trackId)) incrementError();
-        track.state = RecordingCaptureState::idle;
-        drainingTailTracksCount.fetch_sub(1, std::memory_order_acq_rel);
-    }
-    return drainingTailTracksCount.load(std::memory_order_acquire) == 0;
-}
-
 void RecordingCaptureRuntime::writeAudioTrack(const juce::String& trackId, const float* const raw,
-                                              const int rawSampleCount,
-                                              const float* const* const processed,
-                                              const int processedSampleCount) noexcept {
+                                              const int rawSampleCount) noexcept {
     auto sink = acquireSink();
-    if (sink) sink->writeAudioTrack(trackId, raw, rawSampleCount, processed, processedSampleCount);
+    if (sink) sink->writeAudioTrack(trackId, raw, rawSampleCount);
 }
 
 void RecordingCaptureRuntime::markLoopBoundary(const std::uint64_t audioSample) noexcept {
@@ -198,10 +115,6 @@ void RecordingCaptureRuntime::setCaptureRange(const std::uint64_t startAudioSamp
 
 void RecordingCaptureRuntime::resetCaptureErrors() noexcept {
     captureErrorCount.store(0, std::memory_order_release);
-}
-
-void RecordingCaptureRuntime::resetDrainingTailTracks() noexcept {
-    drainingTailTracksCount.store(0, std::memory_order_release);
 }
 
 }  // namespace riffra

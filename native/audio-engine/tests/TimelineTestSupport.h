@@ -83,22 +83,14 @@ public:
         segmentStartSample = rawBuffer.size();
         return true;
     }
-    void writeAudioTrack(const juce::String& trackId, const float* raw, const int rawSampleCount,
-                         const float* const* processed,
-                         const int processedSampleCount) noexcept override {
+    void writeAudioTrack(const juce::String& trackId, const float* raw,
+                         const int rawSampleCount) noexcept override {
         receivedTrack = trackId;
         receivedSamples = rawSampleCount;
         currentRawSamples += std::max(0, rawSampleCount);
         totalRawSamples += std::max(0, rawSampleCount);
-        totalProcessedSamples += std::max(0, processedSampleCount);
         if (raw != nullptr && rawSampleCount > 0)
             rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
-        isolated = raw != nullptr && processed != nullptr && processed[0] != nullptr &&
-                   processed[1] != nullptr && rawSampleCount == processedSampleCount;
-        for (int sample = 0; isolated && sample < rawSampleCount; ++sample)
-            isolated = std::abs(raw[sample] - 0.05f) < 0.0001f &&
-                       std::abs(processed[0][sample] - 0.05f) < 0.0001f &&
-                       std::abs(processed[1][sample] - 0.05f) < 0.0001f;
     }
     bool writeProcessedAudioTrackOffline(const juce::String&, const float* const* processed,
                                          const int sampleCount, int) noexcept override {
@@ -122,8 +114,6 @@ public:
         ++endCount;
         return true;
     }
-    bool completeAudioTrackTail(const juce::String&) noexcept override { return true; }
-
     void markLoopBoundary(const std::uint64_t audioClockSample) noexcept override {
         if (loopBoundaryCount < static_cast<int>(loopBoundarySamples.size()))
             loopBoundarySamples[static_cast<std::size_t>(loopBoundaryCount)] = audioClockSample;
@@ -163,7 +153,6 @@ public:
 
     juce::String receivedTrack;
     int receivedSamples = 0;
-    bool isolated = false;
     int beginCount = 0;
     int endCount = 0;
     int loopBoundaryCount = 0;
@@ -197,21 +186,11 @@ public:
         segmentStartSample = rawBuffer.size();
         return true;
     }
-    void writeAudioTrack(const juce::String&, const float* raw, int rawSampleCount,
-                         const float* const* processed,
-                         int processedSampleCount) noexcept override {
+    void writeAudioTrack(const juce::String&, const float* raw,
+                         int rawSampleCount) noexcept override {
         if (raw != nullptr && rawSampleCount > 0)
             rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
-        if (processed != nullptr && processedSampleCount > 0 && processed[0] != nullptr &&
-            processed[1] != nullptr) {
-            processedLeft.insert(processedLeft.end(), processed[0],
-                                 processed[0] + processedSampleCount);
-            processedRight.insert(processedRight.end(), processed[1],
-                                  processed[1] + processedSampleCount);
-            maxProcessedWriteSize = std::max(maxProcessedWriteSize, processedSampleCount);
-        }
         totalRaw += std::max(0, rawSampleCount);
-        totalProcessed += std::max(0, processedSampleCount);
     }
     bool writeProcessedAudioTrackOffline(const juce::String&, const float* const* processed,
                                          const int sampleCount, int) noexcept override {
@@ -229,7 +208,6 @@ public:
         segmentRanges.emplace_back(segmentStartSample, rawBuffer.size());
         return true;
     }
-    bool completeAudioTrackTail(const juce::String&) noexcept override { return true; }
     void markLoopBoundary(std::uint64_t) noexcept override { ++boundaryCount; }
     void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
                         std::uint64_t) noexcept override {}
@@ -271,7 +249,6 @@ public:
     int totalProcessed = 0;
     int segmentCount = 0;
     int boundaryCount = 0;
-    int maxProcessedWriteSize = 0;
     int maxOfflineProcessedWriteSize = 0;
     int offlineProcessedWriteCalls = 0;
 

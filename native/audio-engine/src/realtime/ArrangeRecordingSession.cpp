@@ -89,7 +89,7 @@ bool ArrangeRecordingSession::beginAudioTrackCapture(
         return track.trackId == trackId;
     });
     if (found == tracks.end() || found->audio == nullptr || found->captureActive ||
-        found->tailActive || found->captureSegmentCount >= found->captureSegments.capacity())
+        found->captureSegmentCount >= found->captureSegments.capacity())
         return false;
     found->captureSegments.emplace_back();
     auto& segment = found->captureSegments[found->captureSegmentCount++];
@@ -101,23 +101,17 @@ bool ArrangeRecordingSession::beginAudioTrackCapture(
         // Loop recording: processed will be generated offline with same layout as raw
         segment.processedFileStartSample = segment.rawFileStartSample;
         segment.processedFileEndSample = segment.rawFileStartSample;
-        segment.processedTailEndSample = segment.rawFileStartSample;
     } else {
         segment.processedFileStartSample = found->audio->getProcessedSamplesWritten();
         segment.processedFileEndSample = segment.processedFileStartSample;
-        segment.processedTailEndSample = segment.processedFileStartSample;
     }
     found->captureActive = true;
     return true;
 }
 
 void ArrangeRecordingSession::writeAudioTrack(const juce::String& trackId, const float* raw,
-                                              const int rawSampleCount,
-                                              const float* const* processed,
-                                              const int processedSampleCount) noexcept {
-    if (finished.load(std::memory_order_acquire) || (rawSampleCount > 0 && raw == nullptr) ||
-        (processedSampleCount > 0 && processed == nullptr))
-        return;
+                                              const int rawSampleCount) noexcept {
+    if (finished.load(std::memory_order_acquire) || (rawSampleCount > 0 && raw == nullptr)) return;
     const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
         return track.trackId == trackId;
     });
@@ -126,11 +120,6 @@ void ArrangeRecordingSession::writeAudioTrack(const juce::String& trackId, const
         const std::array<const float*, 1> rawChannels{raw};
         (void)found->audio->writeRaw(rawChannels.data(), rawSampleCount);
     }
-    if (processedSampleCount > 0)
-        (void)found->audio->writeProcessed(processed, processedSampleCount);
-    if (found->tailActive && found->tailSegmentIndex < found->captureSegmentCount)
-        found->captureSegments[found->tailSegmentIndex].processedTailEndSample =
-            found->audio->getProcessedSamplesWritten();
 }
 
 bool ArrangeRecordingSession::endAudioTrackCapture(const juce::String& trackId,
@@ -150,30 +139,12 @@ bool ArrangeRecordingSession::endAudioTrackCapture(const juce::String& trackId,
         // Loop recording: processed mirrors raw layout (generated offline after stop)
         segment.processedFileStartSample = segment.rawFileStartSample;
         segment.processedFileEndSample = segment.rawFileEndSample;
-        segment.processedTailEndSample = segment.rawFileEndSample;
         found->captureActive = false;
-        found->tailActive = false;
     } else {
         segment.processedFileEndSample = segment.processedFileStartSample +
                                          (segment.rawFileEndSample - segment.rawFileStartSample);
-        segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
         found->captureActive = false;
-        found->tailActive = true;
-        found->tailSegmentIndex = found->captureSegmentCount - 1;
     }
-    return true;
-}
-
-bool ArrangeRecordingSession::completeAudioTrackTail(const juce::String& trackId) noexcept {
-    const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
-        return track.trackId == trackId;
-    });
-    if (found == tracks.end() || found->audio == nullptr || !found->tailActive ||
-        found->tailSegmentIndex >= found->captureSegmentCount)
-        return false;
-    auto& segment = found->captureSegments[found->tailSegmentIndex];
-    segment.processedTailEndSample = found->audio->getProcessedSamplesWritten();
-    found->tailActive = false;
     return true;
 }
 
@@ -663,8 +634,6 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
                                     static_cast<juce::int64>(segment.processedFileStartSample));
                 mapped->setProperty("processedFileEndSample",
                                     static_cast<juce::int64>(segment.processedFileEndSample));
-                mapped->setProperty("processedTailEndSample",
-                                    static_cast<juce::int64>(segment.processedTailEndSample));
                 variantSegments.add(juce::var(mapped));
             }
             value->setProperty("captureSegments", variantSegments);
