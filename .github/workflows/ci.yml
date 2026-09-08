@@ -162,9 +162,6 @@ jobs:
         with:
           node-version: 24
 
-      # Native sidecars are exercised by the native job. The Tauri crate tests
-      # do not package or execute those binaries, so this job stays independent.
-
       - uses: actions/cache@v6
         with:
           path: |
@@ -175,8 +172,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-tauri-
 
-      - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # Tauri's build script validates bundle inputs even for lint and tests.
+      # Packaging and sidecar execution are covered by the native jobs, so
+      # code-only validation uses an empty bundle configuration.
+      - name: Check Rust Tauri code
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Test Rust Tauri code
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       - name: Stage built-in instrument resources
         shell: pwsh
