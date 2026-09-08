@@ -186,20 +186,28 @@ Automation、PDC 用バッファ、録音キャプチャ状態を所有する。
 
 ```text
 Audio Track
-Timeline Audio ── Track compensation ─┐
-Live Audio ────────────────────────────┴─ Pre-FX → Effect Chain → Track strip → master mix
+Timeline Audio ──┐
+Live Audio ────────────────────────────┴─ Pre-FX → Effect Chain → Track output compensation → master mix
 
 Instrument Track
-Timeline MIDI ── Track compensation ──┐
-Live MIDI ─────────────────────────────┴─ Instrument Runtime → Effect Chain → Track strip → master mix
+Timeline MIDI ──┐
+Live MIDI ──────┴─ Instrument Runtime → Effect Chain → Track output compensation → master mix
 ```
 
 MIDI のタイムラインイベントは投影時に時系列へ整列し、再生ブロックではカーソルから
-必要な範囲だけを取り出す。ループ範囲を事前に展開せず、境界で発生する Note Off と次の
-ループの Note On を同じスケジューラで処理する。タイムライン由来の音声とMIDIにはTrack間の
-同期に必要な補償をmerge前に適用し、ライブ入力は追加の補償を受けず即時経路へ送る。ライブ
-MIDIは固定容量のキューへ受け、容量超過はイベントを捨てて診断値へ記録する。Audio Trackの
-入力監視も、そのTrackの同じEffect Chainを一度だけ通る。
+必要な範囲だけを取り出す。非ループClipは絶対サンプル位置でTrack全体のブロック内密度を
+計算し、ループClipは展開せず境界を含む密度を算出する。ループ範囲を事前に展開せず、境界で
+発生する Note Off と次のループの Note On を同じスケジューラで処理する。
+
+Timeline と Live の入力は同じ Track DSP を同じ時間文脈で通り、Track出力にTrack間同期用の
+補償を適用する。Low Latency Monitoring中のTrackは追加のTrack間補償だけをバイパスし、
+プラグイン固有のレイテンシは維持する。ライブ MIDIは固定容量のキューへ受け、容量超過は
+イベントを捨てて診断値へ記録する。Audio Trackの入力監視も、そのTrackの同じEffect Chainを
+一度だけ通る。
+
+Armed Audio Trackはリアルタイムでは入力のRawテイクだけを保存する。録音確定時にRawの各
+セグメントを読み戻し、正準Rack状態から一時的なEffect Chainを構築してProcessed Variantを
+生成する。録音専用の常設Effect Chainは持たない。
 
 ### 5.2 投影の整合性
 
