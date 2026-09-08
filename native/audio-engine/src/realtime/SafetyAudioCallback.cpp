@@ -187,7 +187,10 @@ bool SafetyAudioCallback::startArrangeRecording(const juce::File& directory,
 bool SafetyAudioCallback::stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
     const juce::ScopedLock lock(recordingLock);
     timeline.stopRecording();
-    if (!timeline.finalizeRecording(error)) return false;
+    const auto captureFinalized = timeline.finalizeRecording(error);
+    timeline.stop();
+    if (!captureFinalized) return false;
+    if (!timeline.processFinalizedRecording(error)) return false;
     timeline.clearRecordingSink();
     if (arrangeRecording == nullptr) return true;
     auto finishing = std::move(arrangeRecording);

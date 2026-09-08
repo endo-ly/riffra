@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 namespace riffra {
 namespace {
@@ -94,18 +95,87 @@ std::size_t maximumLoopEvents(const CompiledMidiClip& clip, const int blockSize)
     return saturatingAdd(completeLoopEvents, maximumRemainderEvents);
 }
 
+std::int64_t positiveModulo(const std::int64_t value, const std::int64_t modulus) noexcept {
+    const auto remainder = value % modulus;
+    return remainder >= 0 ? remainder : remainder + modulus;
+}
+
+std::int64_t addModulo(const std::int64_t left, const std::int64_t right,
+                       const std::int64_t modulus) noexcept {
+    const auto offset = positiveModulo(right, modulus);
+    if (offset == 0) return left;
+    return left >= modulus - offset ? left - (modulus - offset) : left + offset;
+}
+
+std::size_t maximumPeriodicEvents(const std::vector<const CompiledMidiClip*>& clips,
+                                  const int blockSize) noexcept {
+    constexpr std::size_t kMaximumAnalysisEvents = 1'000'000;
+    std::int64_t period = 1;
+    for (const auto* clip : clips) {
+        if (clip->lengthSamples <= 0 || clip->events.empty()) continue;
+        const auto divisor = std::gcd(period, clip->lengthSamples);
+        const auto reduced = period / divisor;
+        if (reduced > std::numeric_limits<std::int64_t>::max() / clip->lengthSamples)
+            return std::numeric_limits<std::size_t>::max();
+        period = reduced * clip->lengthSamples;
+    }
+
+    std::size_t eventCount = 0;
+    for (const auto* clip : clips) {
+        if (clip->lengthSamples <= 0 || clip->events.empty()) continue;
+        const auto repetitions = static_cast<std::size_t>(period / clip->lengthSamples);
+        if (repetitions > kMaximumAnalysisEvents ||
+            clip->events.size() > kMaximumAnalysisEvents / repetitions ||
+            eventCount > kMaximumAnalysisEvents - repetitions * clip->events.size())
+            return std::numeric_limits<std::size_t>::max();
+        eventCount += repetitions * clip->events.size();
+    }
+    if (eventCount == 0) return 0;
+
+    std::vector<std::int64_t> phases;
+    phases.reserve(eventCount);
+    for (const auto* clip : clips) {
+        if (clip->lengthSamples <= 0 || clip->events.empty()) continue;
+        const auto repetitions = period / clip->lengthSamples;
+        const auto clipStart = positiveModulo(clip->startSample, period);
+        for (std::int64_t iteration = 0; iteration < repetitions; ++iteration) {
+            const auto iterationStart =
+                addModulo(clipStart, iteration * clip->lengthSamples, period);
+            for (const auto& event : clip->events)
+                phases.push_back(addModulo(iterationStart, event.sampleOffset, period));
+        }
+    }
+    std::sort(phases.begin(), phases.end());
+
+    const auto periodLength = period;
+    const auto blockLength = static_cast<std::int64_t>(blockSize);
+    const auto fullPeriods = blockLength / periodLength;
+    const auto remainder = blockLength % periodLength;
+    const auto fullPeriodEvents =
+        saturatingMultiply(static_cast<std::size_t>(fullPeriods), phases.size());
+    if (fullPeriodEvents == std::numeric_limits<std::size_t>::max()) return fullPeriodEvents;
+    if (remainder == 0) return fullPeriodEvents;
+
+    std::vector<std::int64_t> repeatedPhases;
+    repeatedPhases.reserve(phases.size() * 2);
+    repeatedPhases.insert(repeatedPhases.end(), phases.begin(), phases.end());
+    for (const auto phase : phases) repeatedPhases.push_back(phase + periodLength);
+    const auto remainderMaximum =
+        maximumEventsInWindow(repeatedPhases, static_cast<int>(remainder));
+    return saturatingAdd(fullPeriodEvents, remainderMaximum);
+}
+
 }  // namespace
 
 std::size_t MidiScheduler::maximumEventsPerBlock(const std::vector<CompiledMidiClip>& clips,
                                                  const int blockSize) noexcept {
     if (blockSize <= 0) return 0;
     std::vector<std::int64_t> nonLoopEventSamples;
-    std::size_t loopMaximum = 0;
+    std::vector<const CompiledMidiClip*> loopClips;
     for (const auto& clip : clips) {
         if (clip.muted || clip.events.empty() || clip.lengthSamples <= 0) continue;
         if (clip.loop) {
-            loopMaximum = saturatingAdd(loopMaximum, maximumLoopEvents(clip, blockSize));
-            if (loopMaximum == std::numeric_limits<std::size_t>::max()) return loopMaximum;
+            loopClips.push_back(&clip);
             continue;
         }
         if (clip.events.size() >
@@ -114,6 +184,14 @@ std::size_t MidiScheduler::maximumEventsPerBlock(const std::vector<CompiledMidiC
         nonLoopEventSamples.reserve(nonLoopEventSamples.size() + clip.events.size());
         for (const auto& event : clip.events)
             nonLoopEventSamples.push_back(clip.startSample + event.sampleOffset);
+    }
+    auto loopMaximum = maximumPeriodicEvents(loopClips, blockSize);
+    if (loopMaximum == std::numeric_limits<std::size_t>::max()) {
+        loopMaximum = 0;
+        for (const auto* clip : loopClips) {
+            loopMaximum = saturatingAdd(loopMaximum, maximumLoopEvents(*clip, blockSize));
+            if (loopMaximum == std::numeric_limits<std::size_t>::max()) return loopMaximum;
+        }
     }
     return saturatingAdd(maximumEventsInWindow(nonLoopEventSamples, blockSize), loopMaximum);
 }

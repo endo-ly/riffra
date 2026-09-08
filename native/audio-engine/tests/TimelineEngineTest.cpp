@@ -22,6 +22,12 @@ namespace riffra {
 
 namespace {
 
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
+    if (!engine.finalizeRecording(error)) return false;
+    engine.stop();
+    return engine.processFinalizedRecording(error);
+}
+
 juce::var makeInstrumentSnapshot(const juce::String& trackId,
                                  const juce::String& instrumentDeviceId = {}) {
     auto* timebase = new juce::DynamicObject();
@@ -988,8 +994,7 @@ public:
                     engine.mix(physicalInputs.data(), 1, captureOutputs.data(), 2,
                                static_cast<int>(physicalInput.size()));
                 engine.stopRecording();
-                const auto captureFinalized = engine.finalizeRecording(error);
-                engine.stop();
+                const auto captureFinalized = finalizeCapturedRecording(engine, error);
                 engine.clearRecordingSink();
                 recordingTapIsolated =
                     captureWindow && captureFinalized && captureOffset == 0 &&
@@ -1070,8 +1075,7 @@ public:
                     if (loopWindowed && loopRemaining > 0)
                         engine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, loopRemaining);
                     engine.stopRecording();
-                    engine.finalizeRecording(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     loopCaptureSegments =
                         loopWindowed && loopCaptureOffset == 0 &&
@@ -1142,8 +1146,7 @@ public:
                         synthMixed += block;
                     }
                     engine.stopRecording();
-                    engine.finalizeRecording(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     const auto clockAfter = engine.audioClockSample.load(std::memory_order_acquire);
                     // Verify: audio clock advanced continuously by total mixed samples
@@ -1238,8 +1241,7 @@ public:
                         partialMixed += block;
                     }
                     engine.stopRecording();
-                    engine.finalizeRecording(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Expected: 3 segments (partial 12000, full 24000, full 24000)
                     const bool partialSegmentsOk = partialSink.segmentCount == 3;
@@ -1308,8 +1310,7 @@ public:
                         bsMixed += kBsBlock;
                     }
                     engine.stopRecording();
-                    engine.finalizeRecording(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Verify: processed length matches raw, impulse at correct position
                     const bool bsLengthOk =
@@ -1378,8 +1379,7 @@ public:
                             longMixed += block;
                         }
                         engine.stopRecording();
-                        engine.finalizeRecording(error);
-                        engine.stop();
+                        finalizeCapturedRecording(engine, error);
                         engine.clearRecordingSink();
                         // Verify: all 130 passes recorded, raw/processed match
                         longRecordingPassed =
@@ -1440,7 +1440,8 @@ public:
                         constexpr int kProdBlock = 512;
 
                         // 3 full passes
-                        // SafetyAudioCallback owns stop, tail flush, sink clear and session finish.
+                        // SafetyAudioCallback owns transport stop, offline processing, sink clear,
+                        // and session finalization.
                         engine.seekToTick(0);
                         auto prodDir = directory.getChildFile("prod-writer");
                         SafetyAudioCallback prodCallback;
@@ -1575,8 +1576,7 @@ public:
                                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             }
                             engine.stopRecording();
-                            const auto finalized = engine.finalizeRecording(error);
-                            engine.stop();
+                            const auto finalized = finalizeCapturedRecording(engine, error);
                             engine.clearRecordingSink();
                             juce::String finishError;
                             const auto finished = partialSession->finish(finishError);
@@ -1762,8 +1762,8 @@ public:
         addCheck("Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
                  longRecordingPassed);
         addCheck(
-            "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns stop, tail flush, "
-            "sink clear and session finish)",
+            "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns transport stop, "
+            "offline processing, sink clear and session finish)",
             productionWriterPassed);
         addCheck("Production ThreadedWriter Partial Pass", productionWriterPartialPassed);
         addCheck("Stopped Transport processes live Instrument MIDI", liveInstrumentWhileStopped);
@@ -2296,8 +2296,7 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
     engine.stopRecording();
-    const auto finalized = engine.finalizeRecording(error);
-    engine.stop();
+    const auto finalized = finalizeCapturedRecording(engine, error);
     engine.clearRecordingSink();
 
     // Assert
@@ -2310,6 +2309,52 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     EXPECT_EQ(captureSink.totalRawSamples, kBlockSamples);
     EXPECT_EQ(captureSink.beginCount, 1);
     EXPECT_EQ(captureSink.endCount, 1);
+}
+
+TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    constexpr int kRecordingSamples = 100'000;
+    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, false, true), formats, 48'000.0,
+                                    kBlockSamples, error));
+    test::TemporaryDirectory directory;
+    CaptureIsolationSink captureSink(directory.get());
+    engine.setRecordingSink(&captureSink);
+    std::array<float, kBlockSamples> input{};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> outputLeft{};
+    std::array<float, kBlockSamples> outputRight{};
+    const std::array<const float*, 1> inputChannels{input.data()};
+    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
+    int captureOffset = 0;
+    int captureSamples = 0;
+    ASSERT_TRUE(engine.startRecording(0, error));
+    ASSERT_TRUE(engine.recordingWindow(kRecordingSamples, captureOffset, captureSamples));
+
+    // Act
+    auto remaining = kRecordingSamples;
+    while (remaining > 0) {
+        const auto block = std::min(kBlockSamples, remaining);
+        engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, block);
+        remaining -= block;
+    }
+    const auto finalized = finalizeCapturedRecording(engine, error);
+    engine.clearRecordingSink();
+
+    // Assert
+    EXPECT_TRUE(finalized);
+    EXPECT_EQ(captureOffset, 0);
+    EXPECT_EQ(captureSamples, kRecordingSamples);
+    EXPECT_EQ(captureSink.beginCount, 1);
+    EXPECT_EQ(captureSink.endCount, 1);
+    EXPECT_EQ(captureSink.totalRawSamples, kRecordingSamples);
+    EXPECT_EQ(captureSink.totalProcessedSamples, kRecordingSamples);
+    EXPECT_GT(captureSink.offlineProcessedWriteCalls, 1);
+    EXPECT_LE(captureSink.maxOfflineProcessedWriteSize, kBlockSamples);
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {

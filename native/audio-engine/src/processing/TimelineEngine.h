@@ -51,8 +51,12 @@ public:
     void seekToTick(std::uint64_t tick) noexcept;
     bool startRecording(int countInBeats, juce::String& error) noexcept;
     bool cancelRecordingIfCountingIn() noexcept;
+    /// Closes realtime capture segments at the audio graph boundary.
     void stopRecording() noexcept;
+    /// Finalizes raw capture metadata without performing offline DSP.
     bool finalizeRecording(juce::String& error) noexcept;
+    /// Generates processed recording variants after the realtime graph is stopped.
+    bool processFinalizedRecording(juce::String& error) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
@@ -180,6 +184,11 @@ private:
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
+    struct OfflineRecordingTrack final {
+        juce::String id;
+        juce::var effectState;
+    };
+
     void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
                   int sampleCount) noexcept;
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
@@ -206,8 +215,9 @@ private:
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
-    bool generateProcessedVariants(PreparedTimeline& timeline, ArrangementCaptureSink* sink,
-                                   juce::String& error) noexcept;
+    bool generateProcessedVariants(double sampleRate, int blockSize,
+                                   const std::vector<OfflineRecordingTrack>& tracks,
+                                   ArrangementCaptureSink* sink, juce::String& error) noexcept;
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;

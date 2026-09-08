@@ -364,7 +364,7 @@ bool TimelineEngine::cancelRecordingIfCountingIn() noexcept {
 bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
     const AudioPublishScope publish(*this);
     if (!publish.isReady()) {
-        error = "Processed recording could not acquire the audio graph boundary.";
+        error = "Recording capture could not acquire the audio graph boundary.";
         return false;
     }
     const juce::SpinLock::ScopedLockType lock(timelineLock);
@@ -387,20 +387,44 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
         }
         track.runtime->recordingCapture.state = RecordingCaptureState::idle;
     }
-    const auto generated = generateProcessedVariants(*timeline, sink, error);
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
+    return recordingCapture->captureErrors() == 0;
+}
+
+bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
+    std::vector<OfflineRecordingTrack> tracks;
+    double sampleRate = 0.0;
+    int blockSize = 0;
+    {
+        const juce::SpinLock::ScopedLockType lock(timelineLock);
+        if (timeline == nullptr) return true;
+        sampleRate = timeline->outputSampleRate;
+        blockSize = timeline->preparedBlockSize;
+        tracks.reserve(timeline->tracks.size());
+        for (const auto& track : timeline->tracks) {
+            if (track->runtime == nullptr || track->runtime->instrumentTrack ||
+                !track->runtime->armed)
+                continue;
+            tracks.push_back({track->id, track->effectState});
+        }
+    }
+
+    auto sinkLease = recordingCapture->acquireSink();
+    auto* sink = sinkLease.get();
+    if (sink == nullptr) return true;
+    const auto generated = generateProcessedVariants(sampleRate, blockSize, tracks, sink, error);
     return generated && recordingCapture->captureErrors() == 0;
 }
 
-bool TimelineEngine::generateProcessedVariants(PreparedTimeline& prepared,
+bool TimelineEngine::generateProcessedVariants(const double sampleRate, const int preparedBlockSize,
+                                               const std::vector<OfflineRecordingTrack>& tracks,
                                                ArrangementCaptureSink* const sink,
                                                juce::String& error) noexcept {
-    const auto blockSize = std::max(1, prepared.preparedBlockSize);
+    if (sink == nullptr || sampleRate <= 0.0) return true;
+    const auto blockSize = std::max(1, preparedBlockSize);
     juce::AudioFormatManager formatReader;
     formatReader.registerBasicFormats();
-    for (auto& trackPtr : prepared.tracks) {
-        auto& track = *trackPtr;
-        if (track.runtime->instrumentTrack || !track.runtime->armed) continue;
+    for (const auto& track : tracks) {
         const auto rawFile = sink->prepareRawForReading(track.id);
         if (rawFile == juce::File{}) continue;
         const auto segments = sink->getRawSegmentRanges(track.id);
@@ -416,25 +440,45 @@ bool TimelineEngine::generateProcessedVariants(PreparedTimeline& prepared,
             return false;
         }
         PluginChain offlineEffects;
-        if (!offlineEffects.load(track.effectState, prepared.outputSampleRate, blockSize, error,
+        if (!offlineEffects.load(track.effectState, sampleRate, blockSize, error,
                                  track.id + "/offline-processing"))
             return false;
         const auto delay = std::max(0, offlineEffects.latencySamples());
         for (const auto& [segStart, segEnd] : segments) {
-            const auto segmentSamples = static_cast<int>(segEnd - segStart);
-            if (segmentSamples <= 0) continue;
-            offlineEffects.reset();
-            if (delay > std::numeric_limits<int>::max() - segmentSamples) {
-                error = "Recorded audio is too large for offline processing.";
+            const auto segmentLength = segEnd - segStart;
+            if (segmentLength > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                error = "Recorded audio segment is too large for offline processing.";
                 return false;
             }
-            // Output buffer holds segmentSamples + delay for latency alignment
-            const auto outputSize = segmentSamples + delay;
-            juce::AudioBuffer<float> outputBuffer(2, outputSize);
-            outputBuffer.clear();
-            int outputOffset = 0;
-            // Process raw segment in block-sized chunks
+            const auto segmentSamples = static_cast<int>(segmentLength);
+            if (segmentSamples <= 0) continue;
+            offlineEffects.reset();
             juce::AudioBuffer<float> blockBuffer(2, blockSize);
+            juce::AudioBuffer<float> processedBlock(2, blockSize);
+            int discarded = delay;
+            int written = 0;
+            constexpr int kOfflineWriterTimeoutMs = 5000;
+            const auto consumeProcessedBlock = [&](const int count) noexcept {
+                auto writeOffset = 0;
+                if (discarded > 0) {
+                    const auto skipped = std::min(discarded, count);
+                    discarded -= skipped;
+                    writeOffset += skipped;
+                }
+                const auto writable = std::min(count - writeOffset, segmentSamples - written);
+                if (writable <= 0) return true;
+                const std::array<const float*, 2> outputChannels{
+                    processedBlock.getReadPointer(0) + writeOffset,
+                    processedBlock.getReadPointer(1) + writeOffset,
+                };
+                if (!sink->writeProcessedAudioTrackOffline(track.id, outputChannels.data(),
+                                                           writable, kOfflineWriterTimeoutMs))
+                    return false;
+                written += writable;
+                return true;
+            };
+
+            // Process raw audio in bounded blocks and write post-latency samples immediately.
             int remaining = segmentSamples;
             std::int64_t readPos = static_cast<std::int64_t>(segStart);
             while (remaining > 0) {
@@ -445,43 +489,19 @@ bool TimelineEngine::generateProcessedVariants(PreparedTimeline& prepared,
                     return false;
                 }
                 readPos += count;
-                const std::array<float*, 2> outPtrs{
-                    outputBuffer.getWritePointer(0) + outputOffset,
-                    outputBuffer.getWritePointer(1) + outputOffset,
-                };
-                offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2, outPtrs.data(), 2,
-                                       count);
-                outputOffset += count;
+                offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
+                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                if (!consumeProcessedBlock(count)) return false;
                 remaining -= count;
             }
-            // Feed delay zeros to flush plugin latency
-            int delayRemaining = delay;
-            while (delayRemaining > 0) {
-                const auto count = std::min(blockSize, delayRemaining);
+
+            // Flush plugin latency with bounded zero blocks until the segment length is written.
+            while (written < segmentSamples) {
+                const auto count = blockSize;
                 blockBuffer.clear();
-                const std::array<float*, 2> outPtrs{
-                    outputBuffer.getWritePointer(0) + outputOffset,
-                    outputBuffer.getWritePointer(1) + outputOffset,
-                };
-                offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2, outPtrs.data(), 2,
-                                       count);
-                outputOffset += count;
-                delayRemaining -= count;
-            }
-            // Discard first delay samples, write segmentSamples in block-sized chunks
-            constexpr int kOfflineWriterTimeoutMs = 5000;
-            int writeOffset = 0;
-            while (writeOffset < segmentSamples) {
-                const auto count = std::min(blockSize, segmentSamples - writeOffset);
-                const std::array<const float*, 2> processedBlock{
-                    outputBuffer.getReadPointer(0) + delay + writeOffset,
-                    outputBuffer.getReadPointer(1) + delay + writeOffset,
-                };
-                if (!sink->writeProcessedAudioTrackOffline(track.id, processedBlock.data(), count,
-                                                           kOfflineWriterTimeoutMs)) {
-                    return false;
-                }
-                writeOffset += count;
+                offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
+                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                if (!consumeProcessedBlock(count)) return false;
             }
         }
     }

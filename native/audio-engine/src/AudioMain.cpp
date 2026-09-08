@@ -1079,8 +1079,6 @@ int serve(const std::optional<std::uint32_t> parentPid,
                         writeJson(makeError("recording", recordingError));
                         continue;
                     }
-
-                    timelineEngine.stop();
                 }
 
                 writeJson(AudioDeviceService::currentStatus(

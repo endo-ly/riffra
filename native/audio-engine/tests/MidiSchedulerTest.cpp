@@ -105,6 +105,21 @@ TEST(MidiSchedulerTest, CalculatesDensityAcrossSeparatedClipsUsingAbsoluteSample
     EXPECT_EQ(MidiScheduler::maximumEventsPerBlock(clips, 256), 2u);
 }
 
+TEST(MidiSchedulerTest, CalculatesDensityAcrossLoopClipsUsingAbsolutePhase) {
+    CompiledMidiClip first;
+    first.lengthSamples = 16;
+    first.loop = true;
+    first.events.push_back({0, 0, juce::MidiMessage::controllerEvent(1, 1, 1)});
+
+    CompiledMidiClip second;
+    second.startSample = 8;
+    second.lengthSamples = 16;
+    second.loop = true;
+    second.events.push_back({0, 0, juce::MidiMessage::controllerEvent(1, 1, 2)});
+
+    EXPECT_EQ(MidiScheduler::maximumEventsPerBlock({first, second}, 4), 1u);
+}
+
 TEST(MidiSchedulerTest, PreservesDenseBlocksAfterPrepareCapacityIsCalculated) {
     CompiledMidiClip compiled;
     compiled.startSample = 0;

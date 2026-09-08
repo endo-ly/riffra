@@ -375,7 +375,6 @@ void DeviceFaultWatcher::changeListenerCallback(juce::ChangeBroadcaster*) {
     if (audioCallback.isDeviceFaulted()) return;
     audioCallback.setDeviceFaulted(true);
     juce::String ignored;
-    timelineEngine.stopRecording();
     audioCallback.stopArrangeRecording(timelineEngine, ignored);
     writeJson(AudioDeviceService::currentStatus(deviceManager, audioCallback, nullptr, {},
                                                 &timelineEngine));
