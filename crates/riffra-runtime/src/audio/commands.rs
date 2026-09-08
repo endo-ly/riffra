@@ -289,6 +289,11 @@ impl AudioSupervisor {
         directory: &Path,
         count_in_beats: u8,
     ) -> NativeAudioResult<AudioStatus> {
+        if self.recording_finalization_pending() {
+            return Err(NativeAudioError::native_rejected(
+                "The previous recording is still being finalized.",
+            ));
+        }
         self.send_command(
             start_arrange_recording_command(directory, count_in_beats),
             "Arrange recording scheduled on the Native Audio Clock.",

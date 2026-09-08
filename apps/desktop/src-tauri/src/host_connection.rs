@@ -1211,7 +1211,7 @@ fn attached_recording_active(client: &LocalHostClient) -> bool {
         .request(&request)
         .ok()
         .and_then(|response| response_value::<AudioStatus>(response).ok())
-        .map(|status| status.recording.active)
+        .map(|status| status.recording.active || status.recording.processing)
         .unwrap_or(false)
 }
 
@@ -1281,6 +1281,18 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
         HostEvent::AudioStatus(value) => HostEventFrame::new("audio-status", json!(value)),
         HostEvent::AudioMeters(value) => HostEventFrame::new("audio-meters", value),
         HostEvent::TransportStatus(value) => HostEventFrame::new("transport-status", value),
+        HostEvent::RecordingFinalized {
+            directory,
+            succeeded,
+            message,
+        } => HostEventFrame::new(
+            "recording-finalized",
+            json!({
+                "directory": directory,
+                "succeeded": succeeded,
+                "message": message,
+            }),
+        ),
         HostEvent::RuntimeRestarted { generation } => {
             HostEventFrame::new("runtime-restarted", json!({"generation": generation}))
         }

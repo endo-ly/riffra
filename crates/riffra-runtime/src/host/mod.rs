@@ -195,7 +195,7 @@ impl DawHost {
             .core
             .audio()
             .status()
-            .map(|status| status.recording.active)
+            .map(|status| status.recording.active || status.recording.processing)
             .unwrap_or(false)
     }
 

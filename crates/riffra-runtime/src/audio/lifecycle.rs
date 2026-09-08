@@ -78,6 +78,8 @@ impl AudioSupervisor {
             events,
             audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            recording_finalization_pending: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -129,6 +131,8 @@ impl AudioSupervisor {
             events,
             audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            recording_finalization_pending: Arc::new(Mutex::new(None)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(generation) {
@@ -159,7 +163,8 @@ impl AudioSupervisor {
 
     /// Emits the latest audio status through the Host event sink.
     pub fn emit_status(&self) {
-        if let Ok(status) = self.status.lock() {
+        if let Ok(mut status) = self.status.lock() {
+            self.overlay_diagnostics(&mut status);
             self.events.emit(HostEvent::AudioStatus(status.clone()));
         }
     }
@@ -340,6 +345,13 @@ impl AudioSupervisor {
                                     })));
                                 }
                             }
+                            NativeEvent::RecordingCompletion => {
+                                if let Err(error) =
+                                    event_supervisor.record_recording_completion(&response.value)
+                                {
+                                    event_supervisor.fail_recording_completion(error);
+                                }
+                            }
                             NativeEvent::None => {}
                         }
                     }
@@ -397,6 +409,7 @@ impl AudioSupervisor {
     fn handle_sidecar_exit(&self, generation: u64, error: NativeAudioError) {
         self.process.mark_terminated(generation);
         set_faulted(&self.status, error.to_string());
+        self.fail_recording_completion(error.clone());
         fail_pending_requests(&self.command_bus.responses, error);
         self.emit_status();
 
@@ -576,6 +589,7 @@ impl AudioSupervisor {
     pub fn force_shutdown(&self) {
         self.process.shutting_down.store(true, Ordering::Release);
         self.process.readiness.1.notify_all();
+        self.fail_recording_completion(NativeAudioError::ShuttingDown);
         fail_pending_requests(&self.command_bus.responses, NativeAudioError::ShuttingDown);
         let _command_gate = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()

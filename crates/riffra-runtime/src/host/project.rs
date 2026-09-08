@@ -110,7 +110,7 @@ fn project_state(state: &HostState) -> Result<ProjectState, ProtocolError> {
 
 fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
     let status = state.core.audio().status().map_err(audio_error)?;
-    if status.recording.active {
+    if status.recording.active || status.recording.processing {
         return Err(command_error("Stop recording before switching Projects."));
     }
     if !state.core.safe_mode() {

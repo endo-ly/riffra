@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 pub(super) enum NativeEvent {
     AudioStatus,
     AudioMeters,
+    RecordingCompletion,
     None,
 }
 
@@ -91,6 +92,8 @@ struct NativeErrorPayload {
 struct NativeRecordingStatus {
     active: bool,
     #[serde(default)]
+    processing: bool,
+    #[serde(default)]
     cancelled: bool,
     directory: Option<String>,
     sample_rate: Option<f64>,
@@ -113,6 +116,7 @@ struct NativeRecordingStatus {
     processed_dropout_start_sample: Option<u64>,
     processed_dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +197,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
             .recording
             .map(|recording| RecordingStatus {
                 active: recording.active,
+                processing: recording.processing,
                 cancelled: recording.cancelled,
                 directory: recording.directory,
                 sample_rate: recording.sample_rate.and_then(normalize_sample_rate),
@@ -225,6 +230,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                         "partial".into()
                     }
                 }),
+                error: recording.error,
             })
             .unwrap_or_default(),
         midi_inputs: native.midi_inputs.unwrap_or_default(),
@@ -283,6 +289,9 @@ enum ParsedNativeLine {
         request_id: Option<u64>,
     },
     Response {
+        request_id: Option<u64>,
+    },
+    RecordingCompletion {
         request_id: Option<u64>,
     },
     Error {
@@ -346,6 +355,7 @@ fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
         Some("transportStatus" | "timelineAck") => {
             Some(ParsedNativeLine::Acknowledgement { request_id })
         }
+        Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
         Some("error") => {
             let error = serde_json::from_value::<NativeErrorPayload>(payload.clone()).ok()?;
             let native_error = NativeAudioError::structured(
@@ -439,6 +449,12 @@ pub(super) fn handle_native_stdout(
             request_id,
             result: Ok(()),
             event: NativeEvent::None,
+            value,
+        }),
+        ParsedNativeLine::RecordingCompletion { request_id } => Some(NativeReply {
+            request_id,
+            result: Ok(()),
+            event: NativeEvent::RecordingCompletion,
             value,
         }),
         ParsedNativeLine::Error {
@@ -624,6 +640,7 @@ mod tests {
             ParsedNativeLine::Meters { .. }
             | ParsedNativeLine::Acknowledgement { .. }
             | ParsedNativeLine::Response { .. }
+            | ParsedNativeLine::RecordingCompletion { .. }
             | ParsedNativeLine::Error { .. } => {
                 panic!("expected a status line")
             }
@@ -685,10 +702,22 @@ mod tests {
             ParsedNativeLine::Status { .. }
             | ParsedNativeLine::Meters { .. }
             | ParsedNativeLine::Acknowledgement { .. }
-            | ParsedNativeLine::Response { .. } => {
+            | ParsedNativeLine::Response { .. }
+            | ParsedNativeLine::RecordingCompletion { .. } => {
                 panic!("expected an error line")
             }
         }
+    }
+
+    #[test]
+    fn recognizes_recording_completion_events_without_an_ack_request() {
+        let reply = handle_native_stdout(
+            &Arc::new(Mutex::new(AudioStatus::default())),
+            br#"{"type":"recordingComplete","directory":"C:\\takes\\take-1","success":true}"#,
+        )
+        .expect("recording completion line");
+        assert!(reply.request_id.is_none());
+        assert!(matches!(reply.event, NativeEvent::RecordingCompletion));
     }
 
     #[test]

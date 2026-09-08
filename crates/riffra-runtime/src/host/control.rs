@@ -1006,15 +1006,17 @@ impl HostState {
                     .lock()
                     .map_err(|_| command_error("recording operation lock was poisoned"))?;
                 let context = RecordingContext {
-                    core: &self.core,
-                    audio: self.core.audio(),
-                    runtime: &self.runtime,
+                    core: Arc::clone(&self.core),
+                    audio: self.core.audio().clone(),
+                    runtime: Arc::clone(&self.runtime),
                     storage: self
                         .project_store
                         .active_session_store()
                         .map_err(|error| command_error(error.to_string()))?,
-                    data_root: &self.data_root,
-                    built_in_instruments: self.built_in_instruments.as_ref(),
+                    data_root: self.data_root.clone(),
+                    built_in_instruments: Arc::clone(&self.built_in_instruments),
+                    events: Arc::clone(&self.events),
+                    jobs: self.jobs.clone(),
                     safe_mode: self.core.safe_mode(),
                 };
                 let mut sequence = current.sequence;

@@ -623,6 +623,38 @@ pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::i
     persist_manifest(&manifest_path, &manifest)
 }
 
+/// Marks a stopped capture as completing before the native offline products
+/// are promoted into canonical Assets.
+pub fn save_capture_completing(directory: &Path) -> std::io::Result<()> {
+    let manifest_path = directory.join("manifest.json");
+    let mut parsed = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
+    let mut capture = parsed.capture.take().unwrap_or_else(|| {
+        RecordingCapture::start(
+            format!("capture:{}", directory.to_string_lossy()),
+            "unknown",
+            now_ms(),
+        )
+    });
+    if capture.status == RecordingCaptureStatus::Recording {
+        let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
+    }
+    let payload = fs::read(&manifest_path)?;
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let object = manifest.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    object.insert(
+        "capture".into(),
+        serde_json::to_value(capture)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    );
+    persist_manifest(&manifest_path, &manifest)
+}
+
 fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {
     let payload = fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {

@@ -172,8 +172,10 @@ impl DawHost {
         {
             control.shutdown();
         }
-        self.state.jobs.cancel_all_and_wait();
+        // Wake recording-finalization workers before joining them. A stopped
+        // sidecar is a terminal outcome for an in-flight native completion.
         self.state.core.audio().force_shutdown();
+        self.state.jobs.cancel_all_and_wait();
         if let Ok(mut startup) = self.startup.lock()
             && let Some(startup) = startup.take()
         {

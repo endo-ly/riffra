@@ -26,6 +26,12 @@ pub enum HostEvent {
     AudioMeters(Value),
     /// Raw transport status from the native engine.
     TransportStatus(Value),
+    /// Canonical recording finalization completed after native offline processing.
+    RecordingFinalized {
+        directory: String,
+        succeeded: bool,
+        message: Option<String>,
+    },
     /// A native runtime generation was replaced.
     RuntimeRestarted { generation: u64 },
     /// Raw plugin state event from the native engine.
@@ -55,6 +61,18 @@ impl HostEvent {
             Self::AudioStatus(value) => ("audio-status", serde_json::to_value(value)),
             Self::AudioMeters(value) => ("audio-meters", Ok(value.clone())),
             Self::TransportStatus(value) => ("transport-status", Ok(value.clone())),
+            Self::RecordingFinalized {
+                directory,
+                succeeded,
+                message,
+            } => (
+                "recording-finalized",
+                Ok(serde_json::json!({
+                    "directory": directory,
+                    "succeeded": succeeded,
+                    "message": message,
+                })),
+            ),
             Self::RuntimeRestarted { generation } => (
                 "runtime-restarted",
                 Ok(serde_json::json!({"generation": generation})),

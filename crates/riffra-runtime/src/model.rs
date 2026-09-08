@@ -294,6 +294,8 @@ pub enum AudioState {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStatus {
     pub active: bool,
+    #[serde(default)]
+    pub processing: bool,
     pub cancelled: bool,
     pub directory: Option<String>,
     pub sample_rate: Option<u32>,
@@ -317,6 +319,9 @@ pub struct RecordingStatus {
     pub processed_dropout_start_sample: Option<u64>,
     pub processed_dropout_end_sample: Option<u64>,
     pub recovery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
 }
 
 /// A channel exposed by an audio device probe.
@@ -511,12 +516,11 @@ pub struct RecordingStopResult {
     pub finalization: RecordingFinalizationOutcome,
 }
 
-/// Describes whether stopped recording outputs were committed to the
-/// Arrangement or remain available for Inbox recovery.
+/// Describes the immediate outcome of stopping a recording capture.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum RecordingFinalizationOutcome {
     NotRequired,
-    Completed,
+    Processing,
     RecoveryRequired { message: String },
 }
