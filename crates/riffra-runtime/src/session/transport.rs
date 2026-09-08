@@ -78,36 +78,28 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
-pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
+pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     // Projection starts when canonical state changes. Play only registers a
     // transport intent and either starts the already-active graph or waits for
     // the projection activation hook; it never begins graph preparation.
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    context.runtime.request_play_when_ready(
-        transport_sequence,
-        riffra_core::ProjectionKey {
+    context
+        .runtime
+        .request_play_when_ready(riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
-        },
-    )?;
+        })?;
     Ok(())
 }
 
-pub fn stop_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    context
-        .runtime
-        .stop(transport_sequence)
-        .map(|_| ())
-        .map_err(String::from)
+pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+    context.runtime.stop().map(|_| ()).map_err(String::from)
 }
 
-pub fn go_to_start_timeline(
-    context: &SessionContext<'_>,
-    transport_sequence: u64,
-) -> Result<(), String> {
+pub fn go_to_start_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     context
         .runtime
-        .stop_and_seek_to_start(transport_sequence, || {
+        .stop_and_seek_to_start(|| {
             context
                 .audio
                 .seek_timeline(0)

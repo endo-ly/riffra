@@ -46,14 +46,6 @@ describe('useTransportController', () => {
 
   it('stops a timeline play request before the playing status arrives', async () => {
     const api = new FakeNativeApi();
-    let playSequence = 0;
-    let stopSequence = 0;
-    api.setResponse('playTimeline', (sequence: unknown) => {
-      playSequence = Number(sequence);
-    });
-    api.setResponse('stopTimeline', (sequence: unknown) => {
-      stopSequence = Number(sequence);
-    });
     render(<Harness api={api} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
@@ -61,19 +53,12 @@ describe('useTransportController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
 
     await waitFor(() => expect(api.calls).toContain('stopTimeline'));
-    expect(stopSequence).toBeGreaterThan(playSequence);
+    expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'stopTimeline')).toHaveLength(1);
   });
 
   it('moves a timeline play request to the start before the playing status arrives', async () => {
     const api = new FakeNativeApi();
-    let playSequence = 0;
-    let startSequence = 0;
-    api.setResponse('playTimeline', (sequence: unknown) => {
-      playSequence = Number(sequence);
-    });
-    api.setResponse('goToStartTimeline', (sequence: unknown) => {
-      startSequence = Number(sequence);
-    });
     render(<Harness api={api} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
@@ -81,7 +66,8 @@ describe('useTransportController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to Start' }));
 
     await waitFor(() => expect(api.calls).toContain('goToStartTimeline'));
-    expect(startSequence).toBeGreaterThan(playSequence);
+    expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'goToStartTimeline')).toHaveLength(1);
   });
 
   it('starts a newer Play intent while Stop is still pending', async () => {

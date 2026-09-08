@@ -9,8 +9,6 @@ export type { AudioClip } from './AudioClip';
 export type { AudioClipMove } from './AudioClipMove';
 export type { AudioClipPatch } from './AudioClipPatch';
 export type { AudioDeviceInfo } from './AudioDeviceInfo';
-export type { AudioDeviceOperation } from './AudioDeviceOperation';
-export type { AudioDeviceOperationState } from './AudioDeviceOperationState';
 export type { AudioDevicePairing } from './AudioDevicePairing';
 export type { AudioDeviceProbe } from './AudioDeviceProbe';
 export type { AudioDiagnostics } from './AudioDiagnostics';

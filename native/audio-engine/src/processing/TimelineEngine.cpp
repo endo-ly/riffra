@@ -565,8 +565,7 @@ bool TimelineEngine::enqueueLiveMidi(const juce::MidiMessage& message,
                                      const juce::String& deviceId) noexcept {
     if (!armedInstrumentTrack.load(std::memory_order_acquire)) return false;
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (!lock.isLocked() || timeline == nullptr)
-        return true;
+    if (!lock.isLocked() || timeline == nullptr) return true;
     for (auto& trackPtr : timeline->tracks) {
         auto& track = *trackPtr;
         if (track.runtime->instrumentTrack && track.runtime->armed &&

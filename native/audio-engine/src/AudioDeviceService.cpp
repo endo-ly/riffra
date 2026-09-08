@@ -228,6 +228,10 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
                              static_cast<juce::int64>(callback.getMaximumCallbackDurationUs()));
     diagnostics->setProperty("callbackOverruns",
                              static_cast<juce::int64>(callback.getCallbackOverruns()));
+    diagnostics->setProperty("preLimiterPeak", callback.getPreLimiterPeak());
+    diagnostics->setProperty("limiterGainReductionDb", callback.getLimiterGainReductionDb());
+    diagnostics->setProperty("hardClipSamples",
+                             static_cast<juce::int64>(callback.getHardClipSamples()));
     if (timeline != nullptr) {
         const auto timelineStatus = timeline->status();
         status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
@@ -311,6 +315,9 @@ juce::var AudioDeviceService::currentMeters(const SafetyAudioCallback& callback)
     meters->setProperty("outputPeak", callback.getOutputPeak());
     meters->setProperty("invalidSamples",
                         static_cast<juce::int64>(callback.getInvalidSampleCount()));
+    meters->setProperty("preLimiterPeak", callback.getPreLimiterPeak());
+    meters->setProperty("limiterGainReductionDb", callback.getLimiterGainReductionDb());
+    meters->setProperty("hardClipSamples", static_cast<juce::int64>(callback.getHardClipSamples()));
     meters->setProperty("muteReasons", static_cast<juce::int64>(callback.getMuteReasons()));
     meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
     meters->setProperty("previewing", callback.isPreviewing());

@@ -398,28 +398,6 @@ pub struct DeviceChannels {
     pub output_channels: Vec<AudioChannelInfo>,
 }
 
-/// State of a host-owned audio device transition.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum AudioDeviceOperationState {
-    #[default]
-    Idle,
-    ActivatingDevice,
-    PreparingGraph,
-    Completed,
-    DeviceFailed,
-    GraphFailed,
-}
-
-/// Host-owned state for one audio-environment transition.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioDeviceOperation {
-    pub state: AudioDeviceOperationState,
-    pub operation_id: u64,
-    pub error: Option<String>,
-}
-
 /// A native audio status snapshot.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -455,7 +433,6 @@ pub struct AudioStatus {
     /// Bitmask owned by the Native safety callback. Each bit identifies the
     /// owner that currently keeps the output muted.
     pub mute_reasons: u32,
-    pub device_operation: AudioDeviceOperation,
     pub diagnostics: AudioDiagnostics,
     pub message: String,
 }
@@ -468,6 +445,9 @@ pub struct AudioDiagnostics {
     pub average_callback_duration_us: u64,
     pub maximum_callback_duration_us: u64,
     pub callback_overruns: u64,
+    pub pre_limiter_peak: f64,
+    pub limiter_gain_reduction_db: f64,
+    pub hard_clip_samples: u64,
     pub live_midi_drops: u64,
     pub graph_revision: u64,
     pub graph_publish_count: u64,

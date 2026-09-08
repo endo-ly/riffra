@@ -21,7 +21,7 @@ pub enum HostEvent {
     /// The latest canonical arrangement projection state.
     RuntimeProjectionStatus(RuntimeProjectionStatus),
     /// Current audio device and safety state.
-    AudioStatus(AudioStatus),
+    AudioStatus(Box<AudioStatus>),
     /// Raw native meters retained until a stable DTO is justified.
     AudioMeters(Value),
     /// Raw transport status from the native engine.

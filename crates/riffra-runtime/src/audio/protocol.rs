@@ -61,6 +61,9 @@ struct NativeMeters {
     mute_reasons: Option<u32>,
     feedback_suspected: Option<bool>,
     previewing: Option<bool>,
+    pre_limiter_peak: Option<f64>,
+    limiter_gain_reduction_db: Option<f64>,
+    hard_clip_samples: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +73,9 @@ struct NativeDiagnostics {
     average_callback_duration_us: Option<u64>,
     maximum_callback_duration_us: Option<u64>,
     callback_overruns: Option<u64>,
+    pre_limiter_peak: Option<f64>,
+    limiter_gain_reduction_db: Option<f64>,
+    hard_clip_samples: Option<u64>,
     live_midi_drops: Option<u64>,
     graph_revision: Option<u64>,
     graph_publish_count: Option<u64>,
@@ -251,7 +257,6 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         feedback_suspected: native.feedback_suspected.unwrap_or(false),
         previewing: native.previewing.unwrap_or(false),
         mute_reasons,
-        device_operation: Default::default(),
         diagnostics: native
             .diagnostics
             .map_or_else(AudioDiagnostics::default, |diagnostics| AudioDiagnostics {
@@ -263,6 +268,11 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                     .maximum_callback_duration_us
                     .unwrap_or_default(),
                 callback_overruns: diagnostics.callback_overruns.unwrap_or_default(),
+                pre_limiter_peak: diagnostics.pre_limiter_peak.unwrap_or_default(),
+                limiter_gain_reduction_db: diagnostics
+                    .limiter_gain_reduction_db
+                    .unwrap_or_default(),
+                hard_clip_samples: diagnostics.hard_clip_samples.unwrap_or_default(),
                 live_midi_drops: diagnostics.live_midi_drops.unwrap_or_default(),
                 graph_revision: diagnostics.graph_revision.unwrap_or_default(),
                 graph_publish_count: diagnostics.graph_publish_count.unwrap_or_default(),
@@ -434,6 +444,11 @@ pub(super) fn handle_native_stdout(
                 current.output_peak = meters.output_peak.unwrap_or_default().clamp(0.0, 1.0);
                 current.invalid_samples = meters.invalid_samples.unwrap_or_default();
                 current.feedback_suspected = meters.feedback_suspected.unwrap_or(false);
+                current.diagnostics.pre_limiter_peak = meters.pre_limiter_peak.unwrap_or_default();
+                current.diagnostics.limiter_gain_reduction_db =
+                    meters.limiter_gain_reduction_db.unwrap_or_default();
+                current.diagnostics.hard_clip_samples =
+                    meters.hard_clip_samples.unwrap_or_default();
             }
             Some(NativeReply {
                 request_id,
@@ -542,7 +557,6 @@ mod tests {
             feedback_suspected: false,
             previewing: false,
             mute_reasons: 0,
-            device_operation: Default::default(),
             diagnostics: Default::default(),
             message: "ready".into(),
         }))

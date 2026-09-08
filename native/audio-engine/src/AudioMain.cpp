@@ -85,7 +85,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     juce::AudioBuffer<float> comparisonProcessed;
     MidiInputService midiInputs(callback, timelineEngine);
     callback.setTimelineEngine(&timelineEngine);
-    callback.setStartupGuard(true);
+    callback.setEngineTransitionMute(true);
 
     auto error = AudioDeviceService::initialise(manager, startupConfiguration);
     juce::String startupMessage;
@@ -237,7 +237,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
             setCurrentRequestId(command.getProperty("requestId", {}).toString());
             const auto type = command.getProperty("type", {}).toString();
             if (type == "shutdown") {
-                callback.setRuntimeRecoveryMute(true);
+                callback.setEngineTransitionMute(true);
                 const auto submitted = runtimeLifecycle.submit(
                     [&] {
                         if (trackPluginEditor != nullptr) {
@@ -267,12 +267,9 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
-            if (type == "setStartupGuard" || type == "setRuntimeRecoveryMute") {
+            if (type == "setEngineTransitionMute") {
                 const auto active = static_cast<bool>(command.getProperty("active", true));
-                if (type == "setStartupGuard")
-                    callback.setStartupGuard(active);
-                else
-                    callback.setRuntimeRecoveryMute(active);
+                callback.setEngineTransitionMute(active);
                 writeJson(AudioDeviceService::currentStatus(
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
@@ -935,7 +932,8 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     writeJson(makeError("liveMidiTarget", timelineError));
                     continue;
                 }
-                writeJson(AudioDeviceService::currentMeters(callback));
+                writeJson(AudioDeviceService::currentStatus(
+                    manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
                 continue;
             }
             if (type == "sendTrackMidi" || type == "panicTrackMidi") {
@@ -972,7 +970,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 callback.setDeviceTransitionActive(true);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
-                callback.setRuntimeRecoveryMute(true);
+                callback.setEngineTransitionMute(true);
                 const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
                 if (recoveryError.isNotEmpty()) {
                     callback.setDeviceTransitionActive(false);
@@ -1015,7 +1013,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 callback.setDeviceTransitionActive(true);
                 manager.removeAudioCallback(&callback);
                 manager.closeAudioDevice();
-                callback.setRuntimeRecoveryMute(true);
+                callback.setEngineTransitionMute(true);
                 bool restoredPreviousDevice = false;
                 const auto restorePreviousDevice = [&]() {
                     manager.closeAudioDevice();
@@ -1166,7 +1164,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     runtimeLifecycle.requestStop();
     runtimeLifecycle.join();
 
-    callback.setRuntimeRecoveryMute(true);
+    callback.setEngineTransitionMute(true);
     midiInputs.monitor().setActive(false);
     midiInputs.setListening(false);
     midiInputs.reopenAll();

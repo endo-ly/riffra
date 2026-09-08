@@ -383,9 +383,9 @@ export interface ArrangeApi {
 export interface TransportApi {
   getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
-  playTimeline(transportSequence: number): Promise<void>;
-  stopTimeline(transportSequence: number): Promise<void>;
-  goToStartTimeline(transportSequence: number): Promise<void>;
+  playTimeline(): Promise<void>;
+  stopTimeline(): Promise<void>;
+  goToStartTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;
 }
 

@@ -5,11 +5,11 @@ This sidecar owns the real-time timing domain. The Tauri process supervises it a
 Current executable modes:
 
 - `riffra-audio --probe` enumerates platform audio device types without opening an audio stream.
-- `riffra-audio --serve` opens the configured device in `StartupGuard` mute state and accepts one JSON command per stdin line.
+- `riffra-audio --serve` opens the configured device in `EngineTransition` mute state and accepts one JSON command per stdin line.
 
 Windows uses ASIO and WASAPI. Linux uses ALSA.
 
-The safety chain is deliberately small and auditable: owner-specific mute reasons, a 50 ms fade-in after startup protection is released, non-finite sample rejection, a 0.98 hard ceiling, DC offset blocking on the output path, and acoustic feedback detection that engages `FeedbackProtection` when sustained near-peak input is observed on a software-monitored input. The session master gain defaults to 0 dB and is applied by the safety callback. Rust releases `StartupGuard` after this safety boundary; a failed VST graph is kept passive and reported separately from device safety. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
+The safety chain is deliberately small and auditable: owner-specific mute reasons, a 50 ms fade-in after an engine transition, non-finite sample rejection, a prepared limiter followed by a 0.98 final ceiling, DC offset blocking on the output path, and acoustic feedback detection that engages `FeedbackProtection` when sustained near-peak input is observed on a software-monitored input. The callback reports the pre-limiter peak, limiter gain reduction, final hard clips, callback overruns, and graph diagnostics. The session master gain defaults to 0 dB and is applied by the safety callback. Host Runtime releases `EngineTransition` only after the device and the canonical graph are both ready; a failed VST graph remains passive and the transition mute is kept. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
 
 ## Protocol examples
 
@@ -19,6 +19,7 @@ The safety chain is deliberately small and auditable: owner-specific mute reason
 {"type":"setMasterGainDb","gainDb":-24.0}
 {"type":"loadTimelineSnapshot","snapshot":{...}}
 {"type":"setTrackDeviceParameter","trackId":"track:1","deviceId":"device:1","parameterIndex":0,"value":0.5}
+{"type":"setLiveMidiTarget","trackId":"track:1"}
 {"type":"sendTrackMidi","trackId":"track:1","bytes":[144,60,100]}
 {"type":"recoverAudioDevice"}
 {"type":"previewSample","path":"C:\\path\\to\\processed.wav","startMs":0,"endMs":1000,"gain":1.0}
@@ -32,9 +33,11 @@ The safety chain is deliberately small and auditable: owner-specific mute reason
 
 Responses are JSON Lines. A failed command returns `type: "error"` with `kind`, `message`, `operation`, and an object-valued `details` field. Status replies include the `muteReasons` bitmask and callback diagnostics.
 
-Status replies include `feedbackSuspected` when the detector has engaged `FeedbackProtection` due to acoustic feedback. Each mute owner clears only its own bit; releasing the user mute does not clear a device fault or feedback protection.
+Status replies include `feedbackSuspected` when the detector has engaged `FeedbackProtection` due to acoustic feedback. Each mute owner clears only its own bit; releasing the user mute does not clear an engine transition, device fault, or feedback protection.
 
-When an input is open, live MIDI is routed to the matching Instrument Track.
+When an input is open, live MIDI is routed to the matching Instrument Track. The focused
+Play Surface target bypasses only inter-track compensation delay; its prepared delay buffer
+continues to advance so returning to compensated playback does not reinitialize timing state.
 Arrange recording stores captured MIDI with the track's recording result.
 
 ## Building

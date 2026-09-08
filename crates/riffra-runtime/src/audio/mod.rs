@@ -4,7 +4,7 @@
 //! construction, process lifecycle, protocol translation, recovery, and
 //! Runtime port adaptation live in responsibility-specific sibling modules.
 
-use crate::model::{AudioDeviceOperation, AudioDeviceOperationState, AudioStatus};
+use crate::model::AudioStatus;
 use crate::{RuntimeBinaries, SharedHostEventSink};
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -26,7 +26,6 @@ pub use error::{NativeAudioError, NativeAudioResult};
 use probe::ProbeCoordinator;
 use recovery::RecoveryState;
 pub use recovery::{AudioDeviceReopenOutcome, RuntimeRestartHandler};
-pub(crate) use recovery::{MuteReason, mute_reason_bit};
 use sidecar_process::SidecarProcess;
 
 pub(crate) const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -71,7 +70,6 @@ pub struct AudioSupervisor {
     projection_duration_ms: Arc<AtomicU64>,
     recording_completion: Arc<(Mutex<Option<RecordingCompletion>>, Condvar)>,
     recording_finalization_pending: Arc<Mutex<Option<String>>>,
-    device_operation: Arc<Mutex<AudioDeviceOperation>>,
 }
 
 impl AudioSupervisor {
@@ -86,35 +84,6 @@ impl AudioSupervisor {
             })?;
         self.overlay_diagnostics(&mut status);
         Ok(status)
-    }
-
-    pub(crate) fn begin_audio_device_operation(&self) -> NativeAudioResult<u64> {
-        let mut operation =
-            self.device_operation
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Audio device operation",
-                })?;
-        operation.operation_id = operation.operation_id.saturating_add(1);
-        operation.state = AudioDeviceOperationState::ActivatingDevice;
-        operation.error = None;
-        Ok(operation.operation_id)
-    }
-
-    pub(crate) fn set_audio_device_operation(
-        &self,
-        state: AudioDeviceOperationState,
-        error: Option<String>,
-    ) -> NativeAudioResult<()> {
-        let mut operation =
-            self.device_operation
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Audio device operation",
-                })?;
-        operation.state = state;
-        operation.error = error;
-        Ok(())
     }
 
     /// Returns the current native process generation.
@@ -199,9 +168,6 @@ impl AudioSupervisor {
         if self.recording_finalization_pending() {
             status.recording.active = false;
             status.recording.processing = true;
-        }
-        if let Ok(operation) = self.device_operation.lock() {
-            status.device_operation = operation.clone();
         }
     }
 

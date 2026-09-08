@@ -571,8 +571,7 @@ public:
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
         const auto peak = std::max(*std::max_element(left.begin(), left.end()),
                                    *std::max_element(right.begin(), right.end()));
-        // The live voice must start at the first output sample instead of being
-        // pushed right by the inter-track compensation delay.
+        // The focused Play Surface target bypasses inter-track compensation delay.
         const auto immediate = std::max(left[0], right[0]);
         return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f &&
                immediate > 0.0f;
@@ -1987,6 +1986,7 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
 
     // Assert
+    // Audio monitoring bypasses only inter-track compensation delay.
     EXPECT_GT(left[0], 0.23f);
     EXPECT_NEAR(right[0], left[0], 0.002f);
     EXPECT_NEAR(left[4], left[0], 0.002f);

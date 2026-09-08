@@ -15,42 +15,18 @@ pub async fn retry_runtime_projection(
 }
 
 #[tauri::command]
-pub async fn play_timeline(
-    transport_sequence: u64,
-    app: AppHandle,
-) -> Result<(), NativeCommandError> {
-    dispatch(
-        app,
-        "transport.play",
-        json!({ "transportSequence": transport_sequence }),
-    )
-    .await
+pub async fn play_timeline(app: AppHandle) -> Result<(), NativeCommandError> {
+    dispatch(app, "transport.play", json!({})).await
 }
 
 #[tauri::command]
-pub async fn stop_timeline(
-    transport_sequence: u64,
-    app: AppHandle,
-) -> Result<(), NativeCommandError> {
-    dispatch(
-        app,
-        "transport.stop",
-        json!({ "transportSequence": transport_sequence }),
-    )
-    .await
+pub async fn stop_timeline(app: AppHandle) -> Result<(), NativeCommandError> {
+    dispatch(app, "transport.stop", json!({})).await
 }
 
 #[tauri::command]
-pub async fn go_to_start_timeline(
-    transport_sequence: u64,
-    app: AppHandle,
-) -> Result<(), NativeCommandError> {
-    dispatch(
-        app,
-        "transport.go-to-start",
-        json!({ "transportSequence": transport_sequence }),
-    )
-    .await
+pub async fn go_to_start_timeline(app: AppHandle) -> Result<(), NativeCommandError> {
+    dispatch(app, "transport.go-to-start", json!({})).await
 }
 
 #[tauri::command]

@@ -1215,17 +1215,10 @@ pub enum RuntimeProjectionCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TransportCommand {
-    Play(TransportSequenceArgs),
-    Stop(TransportSequenceArgs),
-    GoToStart(TransportSequenceArgs),
+    Play,
+    Stop,
+    GoToStart,
     Seek(SeekArgs),
-}
-
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransportSequenceArgs {
-    #[arg(long)]
-    pub transport_sequence: u64,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -1834,9 +1827,9 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             },
         },
         CliCommand::Transport { command } => match command {
-            TransportCommand::Play(args) => value("transport.play", args),
-            TransportCommand::Stop(args) => value("transport.stop", args),
-            TransportCommand::GoToStart(args) => value("transport.go-to-start", args),
+            TransportCommand::Play => simple("transport.play"),
+            TransportCommand::Stop => simple("transport.stop"),
+            TransportCommand::GoToStart => simple("transport.go-to-start"),
             TransportCommand::Seek(args) => value("transport.seek", args),
         },
         CliCommand::Midi { command } => match command {

@@ -57,5 +57,5 @@ pub use preferences::{
 };
 pub use runtime::{
     ProjectionDriver, ProjectionStatusHook, RuntimeDriver, RuntimeError, RuntimeReconciler,
-    RuntimeRecovery, TIMELINE_PREPARE_TIMEOUT, TransportDriver,
+    TIMELINE_PREPARE_TIMEOUT, TransportDriver,
 };

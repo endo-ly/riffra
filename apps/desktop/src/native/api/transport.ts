@@ -9,16 +9,16 @@ export async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus>
   return await invokeHost<RuntimeProjectionStatus>('retry_runtime_projection');
 }
 
-export async function playTimeline(transportSequence: number): Promise<void> {
-  await invokeHost<void>('play_timeline', { transportSequence });
+export async function playTimeline(): Promise<void> {
+  await invokeHost<void>('play_timeline');
 }
 
-export async function stopTimeline(transportSequence: number): Promise<void> {
-  await invokeHost<void>('stop_timeline', { transportSequence });
+export async function stopTimeline(): Promise<void> {
+  await invokeHost<void>('stop_timeline');
 }
 
-export async function goToStartTimeline(transportSequence: number): Promise<void> {
-  await invokeHost<void>('go_to_start_timeline', { transportSequence });
+export async function goToStartTimeline(): Promise<void> {
+  await invokeHost<void>('go_to_start_timeline');
 }
 
 export async function seekTimeline(tick: number): Promise<void> {

@@ -5,7 +5,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useHostConnection } from '@/app/runtime/useHostConnection';
-import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
+import { useStartupRuntimeRestore } from '@/app/runtime/useStartupRuntimeRestore';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
@@ -69,7 +69,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runBackgroundJob,
   });
   const { plugins, scanPlugins } = pluginCatalog;
-  useStartupRuntimeRecovery({
+  useStartupRuntimeRestore({
     hostGeneration: hostConnection.state.generation,
     hostReady,
     boot,
@@ -108,7 +108,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       api,
       sessionRef,
       hostGeneration: hostConnection.state.generation,
-      projectId,
     });
 
   const audioHook = useAudioSettings(api, {

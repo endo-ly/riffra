@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, BackgroundJobStatus, BootstrapState } from '@/model/domain';
 import { showToast } from '@/shared/toasts';
 
-interface UseStartupRuntimeRecoveryOptions {
+interface UseStartupRuntimeRestoreOptions {
   hostGeneration?: number;
   hostReady?: boolean;
   boot: BootstrapState | null;
@@ -17,7 +17,7 @@ interface UseStartupRuntimeRecoveryOptions {
 }
 
 /** Restores the native runtime once after the startup plugin scan. */
-export function useStartupRuntimeRecovery({
+export function useStartupRuntimeRestore({
   hostGeneration = 0,
   hostReady = true,
   boot,
@@ -28,21 +28,21 @@ export function useStartupRuntimeRecovery({
   scanPlugins,
   retryStartupRuntime,
   setAudio,
-}: UseStartupRuntimeRecoveryOptions) {
+}: UseStartupRuntimeRestoreOptions) {
   const startupScanStarted = useRef(false);
-  const startupRuntimeRecoveryAttempted = useRef(false);
+  const startupRuntimeRestoreAttempted = useRef(false);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
   useEffect(() => {
     startupScanStarted.current = false;
-    startupRuntimeRecoveryAttempted.current = false;
+    startupRuntimeRestoreAttempted.current = false;
   }, [hostGeneration]);
 
-  const retryRuntimeAfterScan = useCallback(async () => {
-    if (startupRuntimeRecoveryAttempted.current || runtimeStarted) return;
+  const restoreRuntimeAfterScan = useCallback(async () => {
+    if (startupRuntimeRestoreAttempted.current || runtimeStarted) return;
     const requestGeneration = hostGeneration;
-    startupRuntimeRecoveryAttempted.current = true;
+    startupRuntimeRestoreAttempted.current = true;
     try {
       const nextAudio = await retryStartupRuntime();
       if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
@@ -72,14 +72,14 @@ export function useStartupRuntimeRecovery({
     }
     startupScanStarted.current = true;
     void (async () => {
-      if (await scanPlugins()) await retryRuntimeAfterScan();
+      if (await scanPlugins()) await restoreRuntimeAfterScan();
     })();
   }, [
     activeJobId,
     backgroundJob,
     boot,
     hostReady,
-    retryRuntimeAfterScan,
+    restoreRuntimeAfterScan,
     runtimeStartupFinished,
     scanPlugins,
   ]);

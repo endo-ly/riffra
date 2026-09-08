@@ -1,6 +1,8 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
+use crate::runtime_snapshot::runtime_timeline_snapshot;
+use std::time::Duration;
 
 impl HostState {
     fn response(
@@ -687,18 +689,28 @@ impl HostState {
                 current.sequence,
             )),
             "runtime.projection.retry" => {
-                if self.runtime.reset_for_repair() {
-                    Ok((
-                        "runtimeProjection",
-                        serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
-                        current.sequence,
-                    ))
-                } else {
-                    Err(ProtocolError::new(
-                        ErrorCode::CommandFailed,
-                        "runtime projection is not waiting for repair",
-                    ))
-                }
+                let target = self
+                    .canonical()
+                    .map_err(|error| command_error(error.to_string()))?;
+                self.runtime
+                    .apply_and_wait(
+                        runtime_timeline_snapshot(
+                            &self.data_root,
+                            self.built_in_instruments.as_ref(),
+                            &target.session,
+                        ),
+                        riffra_core::ProjectionKey {
+                            sequence: target.sequence,
+                            session_revision: target.session.arrangement.revision,
+                        },
+                        Duration::from_secs(60),
+                    )
+                    .map_err(runtime_error)?;
+                Ok((
+                    "runtimeProjection",
+                    serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
+                    target.sequence,
+                ))
             }
             "transport.play" => {
                 if self.core.safe_mode() {
@@ -706,21 +718,11 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
                 self.runtime
-                    .apply_and_play(
-                        params.transport_sequence,
-                        crate::runtime_snapshot::runtime_timeline_snapshot(
-                            &self.data_root,
-                            self.built_in_instruments.as_ref(),
-                            &current.session,
-                        ),
-                        riffra_core::ProjectionKey {
-                            sequence: current.sequence,
-                            session_revision: current.session.arrangement.revision,
-                        },
-                        std::time::Duration::from_secs(30),
-                    )
+                    .request_play_when_ready(riffra_core::ProjectionKey {
+                        sequence: current.sequence,
+                        session_revision: current.session.arrangement.revision,
+                    })
                     .map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
@@ -730,10 +732,7 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
-                self.runtime
-                    .stop(params.transport_sequence)
-                    .map_err(runtime_error)?;
+                self.runtime.stop().map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
             "transport.go-to-start" => {
@@ -742,9 +741,8 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
                 self.runtime
-                    .stop_and_seek_to_start(params.transport_sequence, || {
+                    .stop_and_seek_to_start(|| {
                         self.core
                             .audio()
                             .seek_timeline(0)
@@ -1955,12 +1953,6 @@ struct BuiltInInstrumentParams {
 #[serde(rename_all = "camelCase")]
 struct SeekParams {
     tick: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TransportParams {
-    transport_sequence: u64,
 }
 
 #[derive(Debug, Deserialize)]

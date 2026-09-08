@@ -3,7 +3,7 @@ use super::StartupState;
 use super::command_bus::{CommandBus, fail_pending_requests, record_command_response};
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::protocol::{NativeEvent, handle_native_stdout, set_faulted, set_starting};
-use super::recovery::{MuteReason, RecoveryState, mute_reason_bit};
+use super::recovery::RecoveryState;
 use super::sidecar_process::{ChildProcess, SidecarProcess};
 use crate::model::{AudioState, AudioStatus, RecordingStatus};
 use crate::preferences::AudioPreferences;
@@ -60,8 +60,7 @@ impl AudioSupervisor {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
-                mute_reasons: mute_reason_bit(MuteReason::DeviceFault),
-                device_operation: Default::default(),
+                mute_reasons: 0,
                 diagnostics: Default::default(),
                 message: message.into(),
             })),
@@ -83,7 +82,6 @@ impl AudioSupervisor {
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
-            device_operation: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -117,8 +115,7 @@ impl AudioSupervisor {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
-            mute_reasons: mute_reason_bit(MuteReason::StartupGuard),
-            device_operation: Default::default(),
+            mute_reasons: 0,
             diagnostics: Default::default(),
             message: "Native audio sidecar is starting with the startup guard active.".into(),
         }));
@@ -140,7 +137,6 @@ impl AudioSupervisor {
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
-            device_operation: Arc::new(Mutex::new(Default::default())),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(generation) {
@@ -173,7 +169,8 @@ impl AudioSupervisor {
     pub fn emit_status(&self) {
         if let Ok(mut status) = self.status.lock() {
             self.overlay_diagnostics(&mut status);
-            self.events.emit(HostEvent::AudioStatus(status.clone()));
+            self.events
+                .emit(HostEvent::AudioStatus(Box::new(status.clone())));
         }
     }
 
@@ -325,7 +322,6 @@ impl AudioSupervisor {
                         if let Ok(mut status) = event_supervisor.status.lock() {
                             event_supervisor.overlay_diagnostics(&mut status);
                         }
-                        event_supervisor.synchronize_mute_reasons_from_status();
                         if let Some(request_id) = response.request_id {
                             record_command_response(
                                 &event_responses,
@@ -340,7 +336,8 @@ impl AudioSupervisor {
                         match response.event {
                             NativeEvent::AudioStatus => {
                                 if let Ok(status) = event_status.lock() {
-                                    event_events.emit(HostEvent::AudioStatus(status.clone()));
+                                    event_events
+                                        .emit(HostEvent::AudioStatus(Box::new(status.clone())));
                                 }
                             }
                             NativeEvent::AudioMeters => {
@@ -399,7 +396,7 @@ impl AudioSupervisor {
                         ),
                     );
                     if let Ok(status) = stderr_status.lock() {
-                        stderr_events.emit(HostEvent::AudioStatus(status.clone()));
+                        stderr_events.emit(HostEvent::AudioStatus(Box::new(status.clone())));
                     }
                 }
             })

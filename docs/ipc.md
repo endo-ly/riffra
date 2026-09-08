@@ -202,25 +202,25 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ### 5.2 コマンド分類
 
-| 分類                | コマンド                                                                                                                                            |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 状態照会            | `status`、`meterStatus`                                                                                                                             |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                                                      |
-| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                                      |
-| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setStartupGuard`、`setRuntimeRecoveryMute`、`setMasterGainDb` |
-| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                                        |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`（Rawをリアルタイムに保存し、Transport停止後にProcessed Variantを生成）                              |
-| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                                                 |
-| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                                          |
-| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`setLiveMidiTarget`、`panicTrackMidi`                                               |
-| トランスポート準備  | `setTransportStarting`                                                                                                                              |
+| 分類                | コマンド                                                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 状態照会            | `status`、`meterStatus`                                                                                                           |
+| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                                    |
+| トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                    |
+| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
+| トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |
+| 録音                | `startArrangeRecording`、`stopArrangeRecording`（Rawをリアルタイムに保存し、Transport停止後にProcessed Variantを生成）            |
+| プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                               |
+| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                        |
+| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                                  |
+| トランスポート準備  | `setTransportStarting`                                                                                                            |
 
 ### 5.3 応答とエラー
 
 - 成功応答: `{"type":"audioStatus","requestId":N, ...}`（状態スナップショット）または `{"type":"audioMeters","requestId":N, ...}`
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
-- `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
-- `sendTrackMidi` と `panicTrackMidi` は、要求に含まれる Track ID へ直接ライブMIDIを送る。`setLiveMidiTarget` はPlay Surfaceが使用するInstrument TrackをRuntimeだけに設定し、対象TrackのLow Latency Monitoringを有効にする。対象はSurfaceの切替・終了時に解除し、正準Sessionへ保存しない。TimelineとLiveは同じTrack DSPを通り、通常はTrack出力でPDCを適用し、Low Latency Monitoring中は追加のTrack間補償だけを省略する。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
+- `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。Host は操作の開始前に `EngineTransition` を有効にし、デバイスの応答後に正準グラフを新しい音声環境へ投影する。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は以前の環境へグラフを再投影してから遷移ミュートを解除する。復元できない場合は `deviceLost` として扱う
+- `set_live_midi_target` はPlay SurfaceのフォーカスをRuntime-only状態として設定する。対象Instrument Trackは同じTrack Runtimeを使い、遅延バッファを更新しながらトラック間補償遅延だけを迂回する。`sendTrackMidi` と `panicTrackMidi` は、要求に含まれるTrack IDへ直接ライブMIDIを送る。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
 - `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、`recording.processing: true` の状態を返してすぐに応答する。RackのProcessed Variant生成とテイク確定はグラフ境界の外でライフサイクル実行器およびHost workerが行う。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない。処理時間に上限は設けず、各ブロックとVST処理境界の進捗が一定時間止まった場合だけ、Nativeサイドカーを終了してRustの復旧経路へ移す
 - Nativeのoffline処理が完了すると `recordingComplete` を通知する。成功時はHostがRaw / Processed / MIDIをAssetへ登録し、必要なArrangement変更を確定してから `recording-finalized` を境界Bのイベントとして配信する。処理失敗またはNativeサイドカー終了時も、Hostは`RecordingCapture`を`Completing`のまま残さず、Rawが利用可能なら`recoverable`、Rawも利用できなければ`failed`へ確定してから失敗の`recording-finalized`を配信する。`processing` 中は新しい録音とProject切替を受け付けない
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
@@ -230,14 +230,14 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | type                                                      | 内容                                                                                                                       |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
-| `audioMeters`                                             | ピーク・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知                       |
+| `audioMeters`                                             | ピーク・リミッター診断・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知       |
 | `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                        |
 | `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                              |
 | `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                   |
 | `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
 | `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
 
-フィードバック検知（`feedbackSuspected`）は `FeedbackProtection` のミュート理由と連動する。ミュート理由は Native の bitmask を正本とし、ユーザー操作、起動保護、ランタイム復旧、デバイス障害、フィードバック保護を所有者ごとに解除する。
+フィードバック検知（`feedbackSuspected`）は `FeedbackProtection` のミュート理由と連動する。ミュート理由は Native の bitmask を正本とし、ユーザー操作、エンジン遷移、デバイス障害、フィードバック保護を所有者ごとに解除する。Rust はこの bitmask を複製せず、ユーザー緊急ミュートの意図だけを保持する。
 
 ---
 

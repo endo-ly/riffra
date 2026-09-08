@@ -1,9 +1,7 @@
 use super::RuntimeError;
 use super::ports::TransportDriver;
+use super::transport::{PlayDecision, StopDecision, TransportController, TransportOperationId};
 use riffra_core::ProjectionKey;
-use riffra_core::application::transport::{
-    PlayDecision, StopDecision, TransportController, TransportSequence,
-};
 use std::sync::{Arc, Condvar, Mutex};
 
 pub(crate) struct TransportExecutor<D: TransportDriver> {
@@ -18,12 +16,6 @@ pub(crate) struct TransportExecutionLease<'a, D: TransportDriver> {
     // only while acquiring/releasing the lease; native calls happen after it
     // has been released.
     active: bool,
-}
-
-pub(crate) struct PlayIntentRollback {
-    controller: Arc<Mutex<TransportController>>,
-    sequence: TransportSequence,
-    armed: bool,
 }
 
 impl<D: TransportDriver> TransportExecutor<D> {
@@ -56,10 +48,10 @@ impl<D: TransportDriver> TransportExecutor<D> {
     }
 
     #[cfg(test)]
-    pub(crate) fn is_play_requested(&self, sequence: TransportSequence) -> bool {
+    pub(crate) fn is_play_requested(&self, operation: TransportOperationId) -> bool {
         self.controller
             .lock()
-            .is_ok_and(|controller| controller.is_play_requested(sequence))
+            .is_ok_and(|controller| controller.is_play_requested(operation))
     }
 
     pub(crate) fn play_after_projection(
@@ -67,23 +59,15 @@ impl<D: TransportDriver> TransportExecutor<D> {
         projection: ProjectionKey,
     ) -> Result<(), RuntimeError> {
         let guard = self.acquire()?;
-        let sequence = self
+        let operation = self
             .controller
             .lock()
             .ok()
             .and_then(|controller| controller.projection_activated(projection));
-        if let Some(sequence) = sequence {
-            let _ = guard.play_if_current(Some(sequence), Some(projection))?;
+        if let Some(operation) = operation {
+            let _ = guard.play_if_current(Some(operation), Some(projection))?;
         }
         Ok(())
-    }
-
-    pub(crate) fn play_intent_rollback(&self, sequence: TransportSequence) -> PlayIntentRollback {
-        PlayIntentRollback {
-            controller: Arc::clone(&self.controller),
-            sequence,
-            armed: true,
-        }
     }
 
     pub(crate) fn fail_play_for_projection(&self, projection: ProjectionKey) {
@@ -107,35 +91,24 @@ impl<D: TransportDriver> TransportExecutor<D> {
 }
 
 impl<D: TransportDriver> TransportExecutionLease<'_, D> {
-    pub(crate) fn request_play(
-        &self,
-        sequence: u64,
-        required_projection: Option<ProjectionKey>,
-    ) -> PlayDecision {
+    pub(crate) fn request_play(&self, required_projection: Option<ProjectionKey>) -> PlayDecision {
         self.executor
             .controller
             .lock()
-            .map(|mut controller| controller.request_play(sequence, required_projection))
-            .unwrap_or(PlayDecision::Rejected)
+            .map(|mut controller| controller.request_play(required_projection))
+            .unwrap_or(PlayDecision {
+                operation: TransportOperationId(0),
+            })
     }
 
-    pub(crate) fn request_stop(&self, sequence: u64) -> StopDecision {
+    pub(crate) fn request_stop(&self) -> StopDecision {
         self.executor
             .controller
             .lock()
-            .map(|mut controller| controller.request_stop(sequence))
-            .unwrap_or(StopDecision::Rejected)
-    }
-
-    pub(crate) fn can_execute_play(
-        &self,
-        sequence: TransportSequence,
-        active_projection: Option<ProjectionKey>,
-    ) -> bool {
-        self.executor
-            .controller
-            .lock()
-            .is_ok_and(|controller| controller.can_execute_play(sequence, active_projection))
+            .map(|mut controller| controller.request_stop())
+            .unwrap_or(StopDecision {
+                operation: TransportOperationId(0),
+            })
     }
 
     pub(crate) fn set_transport_starting(&self) -> Result<(), RuntimeError> {
@@ -152,11 +125,12 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
 
     pub(crate) fn play_if_current(
         &self,
-        sequence: Option<TransportSequence>,
+        operation: Option<TransportOperationId>,
         active_projection: Option<ProjectionKey>,
     ) -> Result<bool, RuntimeError> {
         let should_play = self.executor.controller.lock().is_ok_and(|controller| {
-            sequence.is_none_or(|sequence| controller.can_execute_play(sequence, active_projection))
+            operation
+                .is_none_or(|operation| controller.can_execute_play(operation, active_projection))
         });
         if !should_play {
             return Ok(false);
@@ -165,11 +139,11 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
         match self.executor.driver.play_timeline() {
             Ok(()) => Ok(true),
             Err(error) => {
-                let failed_current_play = sequence.is_none_or(|sequence| {
+                let failed_current_play = operation.is_none_or(|operation| {
                     self.executor
                         .controller
                         .lock()
-                        .is_ok_and(|mut controller| controller.record_play_failure(sequence))
+                        .is_ok_and(|mut controller| controller.record_play_failure(operation))
                 });
                 if !failed_current_play {
                     return Ok(false);
@@ -199,24 +173,6 @@ impl<D: TransportDriver> Drop for TransportExecutionLease<'_, D> {
             *in_flight = false;
             self.executor.execution.1.notify_one();
         }
-    }
-}
-
-impl PlayIntentRollback {
-    pub(crate) fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for PlayIntentRollback {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let _ = self
-            .controller
-            .lock()
-            .is_ok_and(|mut controller| controller.record_play_failure(self.sequence));
     }
 }
 
@@ -271,17 +227,15 @@ mod tests {
         *driver.play_probe.lock().unwrap() = Some(Arc::new(move || {
             if let Some(executor) = weak_executor.upgrade() {
                 sender
-                    .send(executor.is_play_requested(TransportSequence::new(1)))
+                    .send(executor.is_play_requested(TransportOperationId(1)))
                     .unwrap();
             }
         }));
 
         let lease = executor.acquire().unwrap();
-        let PlayDecision::Accepted { sequence } = lease.request_play(1, None) else {
-            panic!("the play request must be accepted")
-        };
+        let operation = lease.request_play(None).operation;
 
-        assert!(lease.play_if_current(Some(sequence), None).unwrap());
+        assert!(lease.play_if_current(Some(operation), None).unwrap());
         assert!(receiver.recv_timeout(Duration::from_secs(1)).unwrap());
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
     }
@@ -290,24 +244,16 @@ mod tests {
     fn stale_play_rollback_does_not_clear_a_newer_intent() {
         let driver = Arc::new(FakeTransportDriver::new());
         let executor = TransportExecutor::new(Arc::clone(&driver));
-        let first_sequence = {
+        let first_operation = {
             let lease = executor.acquire().unwrap();
-            let PlayDecision::Accepted { sequence } = lease.request_play(1, None) else {
-                panic!("the first play request must be accepted")
-            };
-            sequence
+            lease.request_play(None).operation
         };
-        let rollback = executor.play_intent_rollback(first_sequence);
 
         {
             let lease = executor.acquire().unwrap();
-            assert!(matches!(
-                lease.request_play(2, None),
-                PlayDecision::Accepted { .. }
-            ));
+            let _ = lease.request_play(None);
         }
 
-        drop(rollback);
-        assert!(executor.is_play_requested(TransportSequence::new(2)));
+        assert!(!executor.is_play_requested(first_operation));
     }
 }

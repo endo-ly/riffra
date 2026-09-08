@@ -5,7 +5,6 @@ import type { NativeEventApi, TransportApi } from '@/native/native-api';
 
 interface TransportControllerOptions {
   hostGeneration?: number;
-  projectId?: string | null;
   api: Pick<
     NativeEventApi & TransportApi,
     'onTransportStatus' | 'playTimeline' | 'stopTimeline' | 'goToStartTimeline'
@@ -14,33 +13,25 @@ interface TransportControllerOptions {
 }
 
 /**
- * Owns transport intent sequencing and operation cancellation. The actual
- * timeline playing state comes from the native transport-status event.
+ * Owns transport operation cancellation. Ordering is assigned by the Host
+ * Runtime; the client only expresses the requested intent.
  */
 export function useTransportController({
   api,
   sessionRef,
   hostGeneration = 0,
-  projectId = null,
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelineStarting, setTimelineStarting] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
-  const sequenceRef = useRef(0);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
   useEffect(() => {
-    sequenceRef.current = 0;
     pendingPlayRef.current = null;
     setTimelinePlaying(false);
     setTimelineStarting(false);
-  }, [hostGeneration, projectId]);
-
-  const nextTransportSequence = useCallback(() => {
-    sequenceRef.current += 1;
-    return sequenceRef.current;
-  }, []);
+  }, [hostGeneration]);
 
   const cancelPendingPlay = useCallback(() => {
     pendingPlayRef.current = null;
@@ -75,50 +66,31 @@ export function useTransportController({
   const playTransport = useCallback(() => {
     const pending = pendingPlayRef.current;
     if (pending) return pending;
-    const transportSequence = nextTransportSequence();
     const generationAtRequest = hostGeneration;
     return runPlayOperation(async () => {
       if (!sessionRef.current) return;
-      if (
-        sequenceRef.current !== transportSequence ||
-        currentHostGeneration.current !== generationAtRequest
-      )
-        return;
-      await api.playTimeline(transportSequence);
+      if (currentHostGeneration.current !== generationAtRequest) return;
+      await api.playTimeline();
     });
-  }, [api, hostGeneration, nextTransportSequence, runPlayOperation, sessionRef]);
+  }, [api, hostGeneration, runPlayOperation, sessionRef]);
 
   const stopTransport = useCallback(() => {
-    const transportSequence = nextTransportSequence();
     const generationAtRequest = hostGeneration;
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
       if (currentHostGeneration.current !== generationAtRequest) return;
-      await api.stopTimeline(transportSequence);
+      await api.stopTimeline();
     });
-  }, [
-    api,
-    cancelPendingPlay,
-    hostGeneration,
-    nextTransportSequence,
-    runImmediateTransportOperation,
-  ]);
+  }, [api, cancelPendingPlay, hostGeneration, runImmediateTransportOperation]);
 
   const goToStart = useCallback(() => {
-    const transportSequence = nextTransportSequence();
     const generationAtRequest = hostGeneration;
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
       if (currentHostGeneration.current !== generationAtRequest) return;
-      await api.goToStartTimeline(transportSequence);
+      await api.goToStartTimeline();
     });
-  }, [
-    api,
-    cancelPendingPlay,
-    hostGeneration,
-    nextTransportSequence,
-    runImmediateTransportOperation,
-  ]);
+  }, [api, cancelPendingPlay, hostGeneration, runImmediateTransportOperation]);
 
   useEffect(() => {
     return api.onTransportStatus((status) => {

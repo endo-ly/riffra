@@ -39,7 +39,7 @@ use crate::session::{
 use crate::startup;
 use crate::{
     AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
-    RuntimeRecovery, active_device_matches_preferences, load_or_default,
+    active_device_matches_preferences, load_or_default,
 };
 use crate::{analysis, library, missing, plugins};
 use riffra_control::{

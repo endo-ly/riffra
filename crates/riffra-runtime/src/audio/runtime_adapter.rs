@@ -66,10 +66,6 @@ impl ProjectionDriver for AudioSupervisor {
         self.sidecar_generation()
     }
 
-    fn release_runtime_mute_if_allowed(&self) -> Result<(), RuntimeError> {
-        AudioSupervisor::release_runtime_mute_if_allowed(self).map_err(RuntimeError::from)
-    }
-
     fn force_shutdown(&self) {
         AudioSupervisor::force_shutdown(self);
     }

@@ -114,10 +114,7 @@ fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
         return Err(command_error("Stop recording before switching Projects."));
     }
     if !state.core.safe_mode() {
-        state
-            .runtime
-            .stop(status.timeline_tick.unwrap_or_default())
-            .map_err(runtime_error)?;
+        state.runtime.stop().map_err(runtime_error)?;
     }
     Ok(())
 }
@@ -333,8 +330,8 @@ mod tests {
 
         let stale_transport = host.dispatch_control(
             ControlRequest::new(
-                "stale-transport-play",
-                ControlCommand::new("transport.play", json!({"transportSequence": 1})),
+                "host-owned-transport-play",
+                ControlCommand::new("transport.play", json!({})),
                 None,
             )
             .with_expected_project_id(initial_project_id.clone()),

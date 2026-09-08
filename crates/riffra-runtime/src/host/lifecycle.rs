@@ -39,19 +39,8 @@ impl DawHost {
         let audio = Arc::new(audio);
         let runtime_events = Arc::clone(&events);
         let projection_audio = Arc::clone(&audio);
-        let runtime_recovery: Option<RuntimeRecovery> = if config.safe_mode {
-            None
-        } else {
-            let recovery_audio = Arc::clone(&audio);
-            Some(Arc::new(move |generation, timeout| {
-                recovery_audio
-                    .restart_sidecar_for_runtime(generation, timeout)
-                    .map_err(RuntimeError::from)
-            }))
-        };
         let runtime = match RuntimeReconciler::with_status_listener(
             Arc::clone(&audio),
-            runtime_recovery,
             Arc::new(move |status| {
                 if let (Some(started), Some(completed)) =
                     (status.started_at_ms, status.completed_at_ms)
@@ -99,18 +88,18 @@ impl DawHost {
             audio.force_shutdown();
             return Err(HostError::State(error.to_string()));
         }
-        let runtime_for_restart = Arc::downgrade(&state.runtime);
+        let host_for_restart = Arc::downgrade(&state);
         if let Err(error) =
             audio.set_runtime_restart_handler(Arc::new(move |runtime_audio, generation| {
-                if let Some(runtime) = runtime_for_restart.upgrade()
-                    && !runtime.requeue_after_runtime_restart(generation)
-                    && let Err(error) = runtime_audio.release_runtime_mute_if_allowed()
-                {
-                    tracing::warn!(
-                        generation,
-                        error = %error,
-                        "audio runtime restarted without an active graph"
-                    );
+                let Some(host) = host_for_restart.upgrade() else {
+                    return;
+                };
+                if let Err(error) = host.reproject_after_audio_device_change() {
+                    tracing::warn!(generation, error = %error, "audio runtime graph restoration failed after sidecar restart");
+                    return;
+                }
+                if let Err(error) = runtime_audio.set_engine_transition_mute(false) {
+                    tracing::warn!(generation, error = %error, "audio engine transition could not be completed after sidecar restart");
                 }
             }))
         {

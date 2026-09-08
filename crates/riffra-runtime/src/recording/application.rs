@@ -1769,7 +1769,7 @@ mod tests {
             false,
             false,
         ));
-        let runtime = Arc::new(RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap());
+        let runtime = Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap());
         RecordingContext {
             core,
             audio: audio.clone(),
@@ -1895,7 +1895,7 @@ mod tests {
         let ctx = RecordingContext {
             core: Arc::new(core),
             audio: audio.clone(),
-            runtime: Arc::new(RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap()),
+            runtime: Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap()),
             storage: riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001"),
             data_root: root.clone(),
             built_in_instruments: Arc::new(crate::test_support::empty_built_in_catalog().clone()),

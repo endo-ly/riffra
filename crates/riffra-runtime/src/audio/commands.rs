@@ -1,6 +1,6 @@
 use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
-use super::recovery::{AudioDeviceReopenOutcome, MuteReason, RuntimeControlState, mute_reason_bit};
+use super::recovery::AudioDeviceReopenOutcome;
 use crate::model::AudioStatus;
 use crate::preferences::AudioDriverConfig;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
@@ -57,16 +57,6 @@ fn start_arrange_recording_command(directory: &Path, count_in_beats: u8) -> serd
 }
 
 impl AudioSupervisor {
-    pub fn current_mute_reasons(&self) -> NativeAudioResult<u32> {
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map(|controls| controls.mute_reasons)
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })
-    }
-
     pub fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
         self.send_command(serde_json::json!({"type": "status"}), "")
     }
@@ -502,10 +492,7 @@ impl AudioSupervisor {
             command,
             "Audio device recovery requested; output remains muted until the device is ready.",
         ) {
-            Ok(status) => {
-                self.mark_runtime_recovery_mute()?;
-                Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status))
-            }
+            Ok(status) => Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)),
             Err(error) if error.requires_restart() => {
                 self.restart_sidecar(
                     "Native audio sidecar is restarting with the startup guard active.",
@@ -541,10 +528,7 @@ impl AudioSupervisor {
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
         ) {
-            Ok(status) => {
-                self.mark_runtime_recovery_mute()?;
-                Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status))
-            }
+            Ok(status) => Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)),
             Err(error) if error.requires_restart() => {
                 self.restart_sidecar(
                     "The audio driver switch stalled; the isolated engine is restarting.",
@@ -561,112 +545,38 @@ impl AudioSupervisor {
         }
     }
 
-    /// Applies a user-selected mute state and records the intent for future
-    /// startup and sidecar recovery decisions.
+    /// Applies a user-selected mute state and records only that user intent
+    /// for future sidecar recovery.
     pub fn set_emergency_mute_from_user(&self, muted: bool) -> NativeAudioResult<AudioStatus> {
-        self.with_mute_gate(|audio| {
-            let status = audio.send_emergency_mute_command(muted)?;
-            let mut controls = audio.recovery.runtime_controls.lock().map_err(|_| {
-                NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                }
-            })?;
-            update_mute_controls_after_command(&mut controls, muted, &status);
-            Ok(status)
-        })
+        let status = self.send_emergency_mute_command(muted)?;
+        self.recovery
+            .runtime_controls
+            .lock()
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Runtime control",
+            })?
+            .user_emergency_muted = muted;
+        Ok(status)
     }
 
     /// Explicitly releases the feedback detector's safety latch while
     /// preserving every other mute owner.
     pub fn reset_feedback_protection(&self) -> NativeAudioResult<AudioStatus> {
-        self.with_mute_gate(|audio| {
-            let status = audio.send_command(
-                serde_json::json!({"type": "setFeedbackProtection", "active": false}),
-                "Feedback protection was released through the safety control.",
-            )?;
-            let mut controls = audio.recovery.runtime_controls.lock().map_err(|_| {
-                NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                }
-            })?;
-            controls.mute_reasons =
-                status.mute_reasons & !mute_reason_bit(MuteReason::FeedbackProtection);
-            Ok(status)
-        })
+        self.send_command(
+            serde_json::json!({"type": "setFeedbackProtection", "active": false}),
+            "Feedback protection was released through the safety control.",
+        )
     }
 
-    pub fn release_startup_mute_if_allowed(
-        &self,
-        generation: u64,
-    ) -> NativeAudioResult<Option<AudioStatus>> {
-        self.with_mute_gate(|audio| {
-            if audio.sidecar_generation() != generation {
-                return Err(NativeAudioError::GenerationChanged {
-                    expected: generation,
-                    actual: audio.sidecar_generation(),
-                });
-            }
-            if audio.sidecar_terminated(generation) {
-                return Err(NativeAudioError::transport_lost(
-                    "Native audio sidecar terminated before startup mute release.",
-                ));
-            }
-            let user_mute = audio
-                .recovery
-                .runtime_controls
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Runtime control",
-                })?
-                .mute_reasons
-                & mute_reason_bit(MuteReason::UserEmergency)
-                != 0;
-            if user_mute {
-                return Ok(None);
-            }
-
-            let status = audio.send_startup_guard_command(false)?;
-            if audio.sidecar_generation() != generation {
-                return Err(NativeAudioError::GenerationChanged {
-                    expected: generation,
-                    actual: audio.sidecar_generation(),
-                });
-            }
-            if audio.sidecar_terminated(generation) {
-                return Err(NativeAudioError::transport_lost(
-                    "Native audio sidecar terminated during startup mute release.",
-                ));
-            }
-            if !audio_status_is_safe(&status) {
-                reinforce_startup_guard(audio, &status)?;
-                let mut controls = audio.recovery.runtime_controls.lock().map_err(|_| {
-                    NativeAudioError::LockPoisoned {
-                        resource: "Runtime control",
-                    }
-                })?;
-                controls.mute_reasons =
-                    status.mute_reasons | mute_reason_bit(MuteReason::StartupGuard);
-                return Ok(None);
-            }
-            if let Ok(mut controls) = audio.recovery.runtime_controls.lock() {
-                controls.mute_reasons = status.mute_reasons;
-            }
-            Ok(Some(status))
-        })
-    }
-
-    pub(super) fn with_mute_gate<T>(
-        &self,
-        operation: impl FnOnce(&Self) -> NativeAudioResult<T>,
-    ) -> NativeAudioResult<T> {
-        let _mute_gate =
-            self.recovery
-                .mute_gate
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Mute gate",
-                })?;
-        operation(self)
+    pub fn set_engine_transition_mute(&self, active: bool) -> NativeAudioResult<AudioStatus> {
+        self.send_command(
+            serde_json::json!({"type": "setEngineTransitionMute", "active": active}),
+            if active {
+                "Audio engine transition started; output is muted until the graph is active."
+            } else {
+                "Audio engine transition completed."
+            },
+        )
     }
 
     pub(super) fn send_emergency_mute_command(
@@ -682,139 +592,5 @@ impl AudioSupervisor {
             },
         )?;
         Ok(status)
-    }
-
-    pub(super) fn send_startup_guard_command(
-        &self,
-        active: bool,
-    ) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "setStartupGuard", "active": active}),
-            "Native audio startup safety guard updated.",
-        )
-    }
-
-    pub(super) fn send_runtime_recovery_mute_command(
-        &self,
-        active: bool,
-    ) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "setRuntimeRecoveryMute", "active": active}),
-            "Native audio Runtime recovery mute updated.",
-        )
-    }
-}
-
-pub(super) fn audio_status_is_safe(status: &AudioStatus) -> bool {
-    !matches!(
-        status.state,
-        crate::model::AudioState::Faulted | crate::model::AudioState::Offline
-    ) && !status.feedback_suspected
-}
-
-fn update_mute_controls_after_command(
-    controls: &mut RuntimeControlState,
-    requested_muted: bool,
-    status: &AudioStatus,
-) {
-    let user_reason = mute_reason_bit(MuteReason::UserEmergency);
-    if requested_muted {
-        controls.mute_reasons = status.mute_reasons | user_reason;
-    } else {
-        controls.mute_reasons = status.mute_reasons & !user_reason;
-    }
-}
-
-/// Reasserts the startup guard after Native reports that startup is unsafe.
-fn reinforce_startup_guard(audio: &AudioSupervisor, status: &AudioStatus) -> NativeAudioResult<()> {
-    if status.state == crate::model::AudioState::Offline {
-        return Ok(());
-    }
-    audio.send_startup_guard_command(true).map(|_| ())
-}
-
-/// Reasserts the Runtime recovery guard while the recovered graph is unsafe.
-pub(super) fn reinforce_runtime_recovery_mute(
-    audio: &AudioSupervisor,
-    status: &AudioStatus,
-) -> NativeAudioResult<()> {
-    if status.state == crate::model::AudioState::Offline {
-        return Ok(());
-    }
-    audio.send_runtime_recovery_mute_command(true).map(|_| ())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::protocol::handle_native_stdout;
-    use super::*;
-
-    const DEVICE_FAULT_MUTE_REASON: u32 = mute_reason_bit(MuteReason::DeviceFault);
-    const FEEDBACK_PROTECTION_MUTE_REASON: u32 = mute_reason_bit(MuteReason::FeedbackProtection);
-
-    #[test]
-    fn track_device_parameter_command_uses_the_native_parameter_field() {
-        let command = set_track_device_parameter_command("track:1", "device:1", 7, 2.0);
-
-        assert_eq!(command["type"], "setTrackDeviceParameter");
-        assert_eq!(command["parameterIndex"], 7);
-        assert_eq!(command["value"], 1.0);
-        assert!(command.get("index").is_none());
-    }
-
-    #[test]
-    fn arrange_recording_command_contains_only_supported_start_fields() {
-        let command = start_arrange_recording_command(Path::new("recordings/take-1"), 4);
-
-        assert_eq!(command["type"], "startArrangeRecording");
-        assert_eq!(command["directory"], "recordings/take-1");
-        assert_eq!(command["countInBeats"], 4);
-        assert_eq!(command.as_object().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn native_mute_status_transitions_keep_the_owner_state_in_sync() {
-        // Arrange
-        let supervisor = AudioSupervisor::offline("test");
-
-        // Act
-        handle_native_stdout(
-            &supervisor.status,
-            br#"{"type":"audioStatus","state":"muted","muteReasons":16,"feedbackSuspected":true}"#,
-        );
-        supervisor.synchronize_mute_reasons_from_status();
-
-        // Assert
-        assert_eq!(
-            supervisor.current_mute_reasons().unwrap(),
-            FEEDBACK_PROTECTION_MUTE_REASON
-        );
-        assert_ne!(
-            supervisor.current_mute_reasons().unwrap() & FEEDBACK_PROTECTION_MUTE_REASON,
-            0
-        );
-
-        // Act
-        handle_native_stdout(
-            &supervisor.status,
-            br#"{"type":"audioStatus","state":"ready","muteReasons":0,"feedbackSuspected":false}"#,
-        );
-        supervisor.synchronize_mute_reasons_from_status();
-
-        // Assert
-        assert_eq!(supervisor.current_mute_reasons().unwrap(), 0);
-
-        // Act
-        handle_native_stdout(
-            &supervisor.status,
-            br#"{"type":"audioStatus","state":"faulted","muteReasons":8,"feedbackSuspected":false}"#,
-        );
-        supervisor.synchronize_mute_reasons_from_status();
-
-        // Assert
-        assert_eq!(
-            supervisor.current_mute_reasons().unwrap(),
-            DEVICE_FAULT_MUTE_REASON
-        );
     }
 }

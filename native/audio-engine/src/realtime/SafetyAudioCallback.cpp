@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace riffra {
@@ -15,12 +16,20 @@ void SafetyAudioCallback::setTimelineEngine(TimelineEngine* const engine) noexce
     timelineEngine = engine;
 }
 
-void SafetyAudioCallback::panicAll() noexcept {
-    allNotesOff();
-    if (timelineEngine != nullptr) {
-        timelineEngine->panicAllInstrumentTracks();
-        timelineEngine->servicePendingPanic();
-    }
+SafetyAudioCallback::PreviewControlGuard::PreviewControlGuard(SafetyAudioCallback& ownerIn) noexcept
+    : owner(ownerIn) {
+    while (owner.previewBusy.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
+}
+
+SafetyAudioCallback::PreviewControlGuard::~PreviewControlGuard() {
+    owner.previewBusy.clear(std::memory_order_release);
+}
+
+SafetyAudioCallback::PreviewAudioGuard::PreviewAudioGuard(SafetyAudioCallback& ownerIn) noexcept
+    : owner(ownerIn), ownsLock(!owner.previewBusy.test_and_set(std::memory_order_acquire)) {}
+
+SafetyAudioCallback::PreviewAudioGuard::~PreviewAudioGuard() {
+    if (ownsLock) owner.previewBusy.clear(std::memory_order_release);
 }
 
 namespace {
@@ -36,7 +45,8 @@ void SafetyAudioCallback::setMuteReason(const MuteReason reason, const bool acti
     if (active) {
         muteReasons.fetch_or(bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
-        panicAll();
+        panicRequested.store(true, std::memory_order_release);
+        synthPanicRequested.store(true, std::memory_order_release);
     } else {
         muteReasons.fetch_and(~bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
@@ -47,12 +57,8 @@ void SafetyAudioCallback::setUserEmergencyMute(const bool shouldMute) noexcept {
     setMuteReason(MuteReason::UserEmergency, shouldMute);
 }
 
-void SafetyAudioCallback::setStartupGuard(const bool active) noexcept {
-    setMuteReason(MuteReason::StartupGuard, active);
-}
-
-void SafetyAudioCallback::setRuntimeRecoveryMute(const bool active) noexcept {
-    setMuteReason(MuteReason::RuntimeRecovery, active);
+void SafetyAudioCallback::setEngineTransitionMute(const bool active) noexcept {
+    setMuteReason(MuteReason::EngineTransition, active);
 }
 
 void SafetyAudioCallback::setFeedbackProtection(const bool active) noexcept {
@@ -139,6 +145,18 @@ std::uint64_t SafetyAudioCallback::getMaximumCallbackDurationUs() const noexcept
 
 std::uint64_t SafetyAudioCallback::getCallbackOverruns() const noexcept {
     return callbackOverruns.load(std::memory_order_acquire);
+}
+
+float SafetyAudioCallback::getPreLimiterPeak() const noexcept {
+    return preLimiterPeak.exchange(0.0f, std::memory_order_acq_rel);
+}
+
+float SafetyAudioCallback::getLimiterGainReductionDb() const noexcept {
+    return limiterGainReductionDb.exchange(0.0f, std::memory_order_acq_rel);
+}
+
+std::uint64_t SafetyAudioCallback::getHardClipSamples() const noexcept {
+    return hardClipSamples.load(std::memory_order_acquire);
 }
 
 void SafetyAudioCallback::recordCallbackDuration(
@@ -283,7 +301,7 @@ juce::var SafetyAudioCallback::recordingStatus() const {
 bool SafetyAudioCallback::startPreview(juce::AudioBuffer<float>& buffer, const int startSample,
                                        const int endSample, const float gain, const bool loop,
                                        juce::String& error, const int voiceKey) {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
         error = "Preview source contains no audio samples.";
         return false;
@@ -330,7 +348,7 @@ bool SafetyAudioCallback::startPreview(juce::AudioBuffer<float>& buffer, const i
 }
 
 void SafetyAudioCallback::stopPreview() noexcept {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     for (auto& voice : previewVoices) {
         voice.active = false;
         voice.key = -1;
@@ -343,7 +361,7 @@ void SafetyAudioCallback::stopPreview() noexcept {
 }
 
 void SafetyAudioCallback::stopPreviewForKey(const int voiceKey) noexcept {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     for (auto& voice : previewVoices) {
         if (voice.active && voice.key == voiceKey) {
             voice.active = false;
@@ -356,7 +374,7 @@ void SafetyAudioCallback::stopPreviewForKey(const int voiceKey) noexcept {
 
 void SafetyAudioCallback::startSynthNote(const int note, const float velocity) noexcept {
     if (note < 0 || note > 127) return;
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     SynthVoice* target = nullptr;
     for (auto& voice : synthVoices) {
         if (voice.active && voice.note == note) {
@@ -383,21 +401,21 @@ void SafetyAudioCallback::startSynthNote(const int note, const float velocity) n
 }
 
 void SafetyAudioCallback::stopSynthNote(const int note) noexcept {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     for (auto& voice : synthVoices) {
         if (voice.active && voice.note == note) voice.releasing = true;
     }
 }
 
 void SafetyAudioCallback::allNotesOff() noexcept {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     for (auto& voice : synthVoices) {
         voice.releasing = true;
     }
 }
 
 bool SafetyAudioCallback::isPreviewing() const noexcept {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(const_cast<SafetyAudioCallback&>(*this));
     for (const auto& voice : previewVoices) {
         if (voice.active) return true;
     }
@@ -431,6 +449,9 @@ void SafetyAudioCallback::mixPreview(float* const* outputChannelData, const int 
 
 void SafetyAudioCallback::mixSynth(float* const* outputChannelData, const int numOutputChannels,
                                    const int numSamples) noexcept {
+    if (synthPanicRequested.exchange(false, std::memory_order_acq_rel)) {
+        for (auto& voice : synthVoices) voice.releasing = true;
+    }
     const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
     if (sampleRate <= 0.0 || numOutputChannels <= 0) return;
     constexpr float twoPi = static_cast<float>(kTwoPi);
@@ -471,7 +492,7 @@ void SafetyAudioCallback::silenceAndCommit(float* const* outputChannelData,
 bool SafetyAudioCallback::switchPreviewBuffer(const int voiceKey,
                                               const juce::AudioBuffer<float>& buffer,
                                               juce::String& error) {
-    const juce::ScopedLock lock(previewLock);
+    const PreviewControlGuard lock(*this);
     if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {
         error = "Take comparison source contains no audio.";
         return false;
@@ -498,6 +519,8 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const auto recordDuration = [this, callbackStarted, numSamples] {
         recordCallbackDuration(callbackStarted, numSamples);
     };
+    if (panicRequested.exchange(false, std::memory_order_acq_rel) && timelineEngine != nullptr)
+        timelineEngine->panicAllInstrumentTracks();
     if (timelineEngine != nullptr) timelineEngine->servicePendingPanic();
     if (timelineEngine != nullptr) {
         int recordingOffset = 0;
@@ -546,9 +569,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
         const auto graphMayRunWhileMuted =
-            (activeMuteReasons &
-             (muteReasonBit(MuteReason::RuntimeRecovery) | muteReasonBit(MuteReason::DeviceFault) |
-              muteReasonBit(MuteReason::FeedbackProtection))) == 0u;
+            (activeMuteReasons & ~muteReasonBit(MuteReason::UserEmergency)) == 0u;
         if (graphMayRunWhileMuted && timelineEngine != nullptr)
             timelineEngine->mix(inputChannelData, numInputChannels, outputChannelData,
                                 numOutputChannels, numSamples);
@@ -571,6 +592,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const auto target = targetGainLinear.load(std::memory_order_acquire);
     if (resetGainOnNextCallback.exchange(false, std::memory_order_acq_rel))
         currentGainLinear = 0.0f;
+    float blockPreLimiterPeak = 0.0f;
     float blockOutputPeak = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
 
@@ -585,8 +607,8 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     if (timelineEngine != nullptr)
         timelineEngine->mixMetronome(outputChannelData, numOutputChannels, numSamples);
 
-    const juce::ScopedTryLock previewTry(previewLock);
-    if (previewTry.isLocked()) {
+    const PreviewAudioGuard previewTry(*this);
+    if (previewTry.acquired()) {
         mixPreview(outputChannelData, numOutputChannels, numSamples);
         mixSynth(outputChannelData, numOutputChannels, numSamples);
     }
@@ -607,14 +629,56 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
                 ++blockInvalidSamples;
             }
             value *= currentGainLinear;
-            value = juce::jlimit(-kLimiterCeiling, kLimiterCeiling, value);
-            blockOutputPeak = std::max(blockOutputPeak, std::abs(value));
+            blockPreLimiterPeak = std::max(blockPreLimiterPeak, std::abs(value));
             if (outputChannelData[channel] != nullptr) outputChannelData[channel][sample] = value;
         }
     }
 
+    bool limiterReady = limiterPrepared && numOutputChannels > 0 &&
+                        numOutputChannels <= static_cast<int>(limiterChannels.size());
+    if (limiterReady) {
+        for (int channel = 0; channel < numOutputChannels; ++channel) {
+            limiterChannels[static_cast<std::size_t>(channel)] = outputChannelData[channel];
+            if (limiterChannels[static_cast<std::size_t>(channel)] == nullptr) {
+                limiterReady = false;
+                break;
+            }
+        }
+    }
+    if (limiterReady) {
+        juce::dsp::AudioBlock<float> block(limiterChannels.data(),
+                                           static_cast<std::size_t>(numOutputChannels),
+                                           static_cast<std::size_t>(numSamples));
+        limiter.process(juce::dsp::ProcessContextReplacing<float>(block));
+    }
+
+    std::uint64_t blockHardClipSamples = 0;
+    for (int sample = 0; sample < numSamples; ++sample) {
+        for (int channel = 0; channel < numOutputChannels; ++channel) {
+            auto* output = outputChannelData[channel];
+            if (output == nullptr) continue;
+            auto value = output[sample];
+            if (!std::isfinite(value)) {
+                value = 0.0f;
+                ++blockInvalidSamples;
+            }
+            if (std::abs(value) > kLimiterCeiling) ++blockHardClipSamples;
+            value = juce::jlimit(-kLimiterCeiling, kLimiterCeiling, value);
+            output[sample] = value;
+            blockOutputPeak = std::max(blockOutputPeak, std::abs(value));
+        }
+    }
+
     holdPeak(inputPeak, rawInputPeak);
+    holdPeak(preLimiterPeak, blockPreLimiterPeak);
     holdPeak(outputPeak, blockOutputPeak);
+    if (blockPreLimiterPeak > 0.0f && blockOutputPeak > 0.0f) {
+        const auto reductionDb = juce::Decibels::gainToDecibels(
+            juce::jmax(0.000001f, blockPreLimiterPeak / blockOutputPeak));
+        holdPeak(limiterGainReductionDb, juce::jmax(0.0f, reductionDb));
+    }
+    if (blockHardClipSamples > 0)
+        hardClipSamples.fetch_add(blockHardClipSamples, std::memory_order_relaxed);
     if (blockInvalidSamples > 0)
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
     recordDuration();
@@ -631,20 +695,37 @@ void SafetyAudioCallback::audioDeviceAboutToStart(juce::AudioIODevice* const dev
     fadeStep = sampleRate > 0.0 ? static_cast<float>(1.0 / (sampleRate * kFadeInSeconds)) : 0.0f;
     inputPeak.store(0.0f, std::memory_order_release);
     outputPeak.store(0.0f, std::memory_order_release);
+    preLimiterPeak.store(0.0f, std::memory_order_release);
+    limiterGainReductionDb.store(0.0f, std::memory_order_release);
+    hardClipSamples.store(0, std::memory_order_release);
     dcBlocker.prepare(
         device != nullptr
             ? static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits())
             : 0);
     feedbackDetector.prepare(sampleRate);
+    const auto outputChannels =
+        device != nullptr ? device->getActiveOutputChannels().countNumberOfSetBits() : 0;
+    const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+    limiterPrepared = sampleRate > 0.0 && outputChannels > 0 && blockSize > 0;
+    if (limiterPrepared) {
+        limiter.prepare({sampleRate, static_cast<juce::uint32>(blockSize),
+                         static_cast<juce::uint32>(outputChannels)});
+        limiter.setThreshold(juce::Decibels::gainToDecibels(kLimiterCeiling));
+        limiter.setRelease(50.0f);
+        limiter.reset();
+    }
     feedbackSuspected.store(false, std::memory_order_release);
     if (timelineEngine != nullptr) timelineEngine->audioDeviceStarted();
 }
 
 void SafetyAudioCallback::audioDeviceStopped() {
     activeSampleRate.store(0.0, std::memory_order_release);
+    limiterPrepared = false;
     currentGainLinear = 0.0f;
     inputPeak.store(0.0f, std::memory_order_release);
     outputPeak.store(0.0f, std::memory_order_release);
+    preLimiterPeak.store(0.0f, std::memory_order_release);
+    limiterGainReductionDb.store(0.0f, std::memory_order_release);
     dcBlocker.reset();
     feedbackDetector.reset();
     stopPreview();
