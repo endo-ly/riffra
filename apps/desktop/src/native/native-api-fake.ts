@@ -23,6 +23,7 @@ import type {
   NativeApi,
   HostConnectionBootstrap,
   HostConnectionChangedEvent,
+  RecordingFinalizedEvent,
   RuntimeStartupFinishedEvent,
 } from './native-api';
 
@@ -43,6 +44,7 @@ export interface FakeNativeApiOptions {
 export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   const recording: RecordingStatus = {
     active: false,
+    processing: false,
     directory: null,
     sampleRate: null,
     rawChannels: null,
@@ -135,6 +137,9 @@ export class FakeNativeApi implements NativeApi {
   private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
   private readonly runtimeProjectionListeners = new Set<
     (status: RuntimeProjectionStatus) => void
+  >();
+  private readonly recordingFinalizedListeners = new Set<
+    (event: RecordingFinalizedEvent) => void
   >();
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
@@ -614,6 +619,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onRuntimeRestarted');
     return this.subscribe(this.runtimeRestartListeners, callback);
   }
+  onRecordingFinalized(callback: Parameters<NativeApi['onRecordingFinalized']>[0]) {
+    this.recordCall('onRecordingFinalized');
+    return this.subscribe(this.recordingFinalizedListeners, callback);
+  }
   private command<K extends keyof NativeApi>(
     name: K,
     arguments_: Parameters<NativeMethod<K>>,
@@ -650,6 +659,10 @@ export class FakeNativeApi implements NativeApi {
   emitRuntimeProjectionStatus(status: RuntimeProjectionStatus): void {
     this.runtimeProjection = status;
     this.runtimeProjectionListeners.forEach((listener) => listener(status));
+  }
+
+  emitRecordingFinalized(event: RecordingFinalizedEvent): void {
+    this.recordingFinalizedListeners.forEach((listener) => listener(event));
   }
 
   emitTransportStatus(status: Partial<TransportStatus> = {}): void {

@@ -337,7 +337,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         audio={audio}
         probe={deviceProbe}
         safeMode={boot.safeMode}
-        recordingActive={audio.recording.active || recordingCommandPending}
+        recordingActive={
+          audio.recording.active || audio.recording.processing || recordingCommandPending
+        }
         onClose={() => setAudioSettingsOpen(false)}
         onRefresh={refreshAudioDevices}
         onProbeChannels={probeAudioChannels}

@@ -77,7 +77,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}
-              recordingActive={props.audio.recording.active}
+              recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
               api={props.api}
@@ -106,7 +106,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}
-              recordingActive={props.audio.recording.active}
+              recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
               api={props.api}
@@ -142,7 +142,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               session={props.session}
               selection={props.arrangeSelection}
               applyCanonicalState={props.applyCanonicalState}
-              recordingActive={props.audio.recording.active}
+              recordingActive={props.audio.recording.active || props.audio.recording.processing}
               recordingCommandPending={props.recordingCommandPending}
               onRecordAnotherTake={props.onRecordAnotherTake}
               api={props.api}

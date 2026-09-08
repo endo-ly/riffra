@@ -127,7 +127,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         <TransportControls
           session={props.session}
           applyCanonicalState={props.applyCanonicalState}
-          recordingActive={props.audio.recording.active}
+          recordingActive={props.audio.recording.active || props.audio.recording.processing}
           transportPlaying={props.transportPlaying}
           transportStarting={props.transportStarting}
           onPlay={props.onPlay}

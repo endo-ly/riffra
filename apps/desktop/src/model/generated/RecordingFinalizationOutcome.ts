@@ -4,4 +4,4 @@
  * Describes whether stopped recording outputs were committed to the
  * Arrangement or remain available for Inbox recovery.
  */
-export type RecordingFinalizationOutcome = { "state": "notRequired" } | { "state": "completed" } | { "state": "recoveryRequired", message: string, };
+export type RecordingFinalizationOutcome = { "state": "notRequired" } | { "state": "processing" } | { "state": "recoveryRequired", message: string, };

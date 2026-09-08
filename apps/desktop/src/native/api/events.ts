@@ -7,7 +7,7 @@ import type {
   RuntimeProjectionStatus,
 } from '@/model/domain';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
-import type { NativeEventApi } from '../native-api';
+import type { NativeEventApi, RecordingFinalizedEvent } from '../native-api';
 import { isNativeRuntime } from '../invoke';
 import type { TransportStatus } from '../contracts';
 
@@ -42,4 +42,6 @@ export const eventApi: NativeEventApi = {
     subscribe<{ generation: number }>('runtime-restarted', ({ generation }) =>
       callback(generation),
     ),
+  onRecordingFinalized: (callback) =>
+    subscribe<RecordingFinalizedEvent>('recording-finalized', callback),
 };

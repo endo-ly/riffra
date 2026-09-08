@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioStatus, CanonicalState, RecordingAsset } from '@/model/domain';
 import { logNativeError } from '@/native/invoke';
-import type { LibraryApi, RecordingApi } from '@/native/native-api';
+import type { LibraryApi, NativeEventApi, RecordingApi } from '@/native/native-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
 interface UseRecordingOptions {
@@ -15,7 +15,9 @@ interface UseRecordingOptions {
   onFinalizationFailure: (message: string) => void;
 }
 
-type RecordingFeatureApi = RecordingApi & Pick<LibraryApi, 'listRecordings'>;
+type RecordingFeatureApi = RecordingApi &
+  Pick<LibraryApi, 'listRecordings'> &
+  Pick<NativeEventApi, 'onRecordingFinalized'>;
 type RecordingCommand = () => Promise<void>;
 
 /** Owns recording command serialization and the Inbox projection of new takes. */
@@ -34,7 +36,13 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   const recordingCommandLock = useRef(false);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
-  const { listRecordings, startArrangeRecording, recordAnotherTake, stopArrangeRecording } = api;
+  const {
+    listRecordings,
+    onRecordingFinalized,
+    startArrangeRecording,
+    recordAnotherTake,
+    stopArrangeRecording,
+  } = api;
 
   useEffect(() => {
     currentHostGeneration.current = hostGeneration;
@@ -53,6 +61,14 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   const refreshRecordings = useCallback(() => {
     void reloadRecordings().catch(logNativeError('listRecordings'));
   }, [reloadRecordings]);
+
+  useEffect(() => {
+    return onRecordingFinalized((event) => {
+      if (currentHostGeneration.current !== hostGeneration) return;
+      void reloadRecordings().catch(logNativeError('listRecordings'));
+      if (!event.succeeded && event.message) onFinalizationFailure(event.message);
+    });
+  }, [hostGeneration, onFinalizationFailure, onRecordingFinalized, reloadRecordings]);
 
   const runRecordingCommand = useCallback(
     async (command: RecordingCommand, errorLabel: string): Promise<boolean> => {
@@ -104,6 +120,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   );
 
   const toggleRecording = useCallback(async () => {
+    if (audio.recording.processing) return;
     if (audio.recording.active) {
       const succeeded = await runRecordingCommand(async () => {
         const result = await stopArrangeRecording();
@@ -121,6 +138,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     await startRecordingNow();
   }, [
     audio.recording.active,
+    audio.recording.processing,
     hostGeneration,
     refreshRecordings,
     runRecordingCommand,

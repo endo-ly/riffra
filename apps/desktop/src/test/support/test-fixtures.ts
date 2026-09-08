@@ -20,6 +20,7 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     timelineTick: null,
     recording: {
       active: false,
+      processing: false,
       cancelled: false,
       directory: null,
       sampleRate: null,

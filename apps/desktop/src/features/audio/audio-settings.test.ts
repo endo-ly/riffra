@@ -27,6 +27,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
     timelineTick: null,
     recording: {
       active: false,
+      processing: false,
       cancelled: false,
       directory: null,
       sampleRate: null,

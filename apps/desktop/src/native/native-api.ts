@@ -54,6 +54,12 @@ export interface RuntimeStartupFinishedEvent {
   succeeded: boolean;
 }
 
+export interface RecordingFinalizedEvent {
+  directory: string;
+  succeeded: boolean;
+  message: string | null;
+}
+
 export interface HostConnectionBootstrap {
   state: HostConnectionState;
   bootstrap: BootstrapState;
@@ -429,6 +435,7 @@ export interface NativeEventApi {
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
+  onRecordingFinalized(callback: (event: RecordingFinalizedEvent) => void): () => void;
 }
 
 export interface NativeApi
