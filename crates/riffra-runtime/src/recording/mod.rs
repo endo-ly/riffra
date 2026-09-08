@@ -13,5 +13,5 @@ pub use model::{DropoutInformation, RecordingCapture, RecordingCaptureStatus};
 pub use repository::RecordingAsset;
 pub(crate) use repository::{
     archive, delete, detect_duplicates, list, media_paths, preflight_audio_paths, promote, rename,
-    save_asset_ids, save_capture_completing, save_capture_start,
+    save_asset_ids, save_capture_completing, save_capture_finalization_failure, save_capture_start,
 };

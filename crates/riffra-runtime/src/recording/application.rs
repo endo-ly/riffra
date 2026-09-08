@@ -242,11 +242,13 @@ pub fn stop_recording(context: &RecordingContext) -> Result<RecordingStopResult,
         };
         let directory_path = PathBuf::from(directory);
         let _ = crate::recording::save_capture_completing(&directory_path);
-        context
-            .audio
-            .begin_recording_finalization(&directory_path)
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = context.audio.begin_recording_finalization(&directory_path) {
+            let error = error.to_string();
+            let error = persist_finalization_failure(&directory_path, error);
+            return Err(error);
+        }
         if let Err(error) = queue_recording_finalization(context, directory_path.clone()) {
+            let error = persist_finalization_failure(&directory_path, error);
             context.audio.finish_recording_finalization();
             context.audio.emit_status();
             return Err(error);
@@ -287,6 +289,10 @@ fn queue_recording_finalization(
                     })
                 })
                 .and_then(|()| finalize_stopped_recording(&worker_context, &worker_directory));
+            let result = match result {
+                Ok(result) => Ok(result),
+                Err(error) => Err(persist_finalization_failure(&worker_directory, error)),
+            };
             worker_context.audio.finish_recording_finalization();
             worker_context.audio.emit_status();
             match result {
@@ -312,6 +318,15 @@ fn queue_recording_finalization(
                 }),
             }
         })
+}
+
+fn persist_finalization_failure(directory: &Path, error: String) -> String {
+    match crate::recording::save_capture_finalization_failure(directory, &error) {
+        Ok(()) => error,
+        Err(recovery_error) => {
+            format!("{error}; recording recovery state could not be saved: {recovery_error}")
+        }
+    }
 }
 
 fn recording_stop_result(

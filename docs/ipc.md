@@ -221,8 +221,8 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 - 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
 - `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は新しい音声環境へ正準グラフを再投影してから `RuntimeRecovery` ミュートを解除する。復元できない場合は `deviceLost` として扱う
 - `sendTrackMidi` と `panicTrackMidi` は、要求に含まれる Track ID へ直接ライブMIDIを送る。`setLiveMidiTarget` はPlay Surfaceが使用するInstrument TrackをRuntimeだけに設定し、対象TrackのLow Latency Monitoringを有効にする。対象はSurfaceの切替・終了時に解除し、正準Sessionへ保存しない。TimelineとLiveは同じTrack DSPを通り、通常はTrack出力でPDCを適用し、Low Latency Monitoring中は追加のTrack間補償だけを省略する。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
-- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、`recording.processing: true` の状態を返してすぐに応答する。RackのProcessed Variant生成とテイク確定はグラフ境界の外でライフサイクル実行器およびHost workerが行う。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない
-- Nativeのoffline処理が完了すると `recordingComplete` を通知する。成功時はHostがRaw / Processed / MIDIをAssetへ登録し、必要なArrangement変更を確定してから `recording-finalized` を境界Bのイベントとして配信する。`processing` 中は新しい録音とProject切替を受け付けない
+- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、`recording.processing: true` の状態を返してすぐに応答する。RackのProcessed Variant生成とテイク確定はグラフ境界の外でライフサイクル実行器およびHost workerが行う。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない。処理時間に上限は設けず、各ブロックとVST処理境界の進捗が一定時間止まった場合だけ、Nativeサイドカーを終了してRustの復旧経路へ移す
+- Nativeのoffline処理が完了すると `recordingComplete` を通知する。成功時はHostがRaw / Processed / MIDIをAssetへ登録し、必要なArrangement変更を確定してから `recording-finalized` を境界Bのイベントとして配信する。処理失敗またはNativeサイドカー終了時も、Hostは`RecordingCapture`を`Completing`のまま残さず、Rawが利用可能なら`recoverable`、Rawも利用できなければ`failed`へ確定してから失敗の`recording-finalized`を配信する。`processing` 中は新しい録音とProject切替を受け付けない
 - ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
 
 ### 5.4 サイドカー → Rust イベント
