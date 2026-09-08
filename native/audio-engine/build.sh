@@ -68,7 +68,11 @@ if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]; then
 fi
 "$CMAKE" "${build_args[@]}"
 if [ "$SKIP_TESTS" -ne 1 ]; then
-  "$CTEST" --test-dir "$BUILD_DIR" --output-on-failure -C "$CONFIG"
+  ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure -C "$CONFIG")
+  if [ -n "${CTEST_PARALLEL_LEVEL:-}" ]; then
+    ctest_args+=(--parallel "$CTEST_PARALLEL_LEVEL")
+  fi
+  "$CTEST" "${ctest_args[@]}"
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"
 

@@ -62,6 +62,12 @@ $configureArgs = @(
 if ($Generator -like 'Visual Studio *' -and $Architecture) {
     $configureArgs += @('-A', $Architecture)
 }
+if ($env:CMAKE_C_COMPILER_LAUNCHER) {
+    $configureArgs += "-DCMAKE_C_COMPILER_LAUNCHER=$($env:CMAKE_C_COMPILER_LAUNCHER)"
+}
+if ($env:CMAKE_CXX_COMPILER_LAUNCHER) {
+    $configureArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$($env:CMAKE_CXX_COMPILER_LAUNCHER)"
+}
 & $cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
@@ -69,11 +75,18 @@ $buildArgs = @('--build', $buildDir, '--config', $Configuration, '--parallel')
 if ($SidecarsOnly) {
     $buildArgs += @('--target', 'riffra-runtime-sidecars')
 }
+if ($env:CMAKE_BUILD_PARALLEL_LEVEL) {
+    $buildArgs += $env:CMAKE_BUILD_PARALLEL_LEVEL
+}
 & $cmake @buildArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine build failed.' }
 
 if (-not $SkipTests) {
-    & $ctest --test-dir $buildDir -C $Configuration --output-on-failure
+    $ctestArgs = @('--test-dir', $buildDir, '-C', $Configuration, '--output-on-failure')
+    if ($env:CTEST_PARALLEL_LEVEL) {
+        $ctestArgs += @('--parallel', $env:CTEST_PARALLEL_LEVEL)
+    }
+    & $ctest @ctestArgs
     if ($LASTEXITCODE -ne 0) { throw 'Native audio engine tests failed.' }
 }
 

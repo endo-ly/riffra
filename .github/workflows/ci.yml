@@ -32,7 +32,41 @@ jobs:
         id: filter
         with:
           filters: |
+            node:
+              - 'package.json'
+              - 'package-lock.json'
+              - '.prettierignore'
+              - '.prettierrc'
+              - 'eslint.config.js'
+              - 'knip.json'
+              - 'stylelint.config.js'
+              - '.github/workflows/ci.yml'
+              - '**/*.{css,js,json,mjs,ts,tsx,yaml,yml}'
+              - 'apps/desktop/package.json'
+              - 'apps/desktop/index.html'
+              - 'apps/desktop/public/**'
+              - 'apps/desktop/src/**'
+              - 'apps/desktop/tsconfig*.json'
+              - 'apps/desktop/vite.config.ts'
+            rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'apps/cli/**'
+              - 'scripts/ci/**'
+              - 'scripts/resources/**'
+              - '.github/workflows/ci.yml'
+            tauri:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'apps/desktop/src-tauri/**'
+              - 'scripts/ci/**'
+              - 'scripts/resources/**'
+              - '.github/workflows/ci.yml'
             native:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'native/audio-engine/**'
               - 'crates/riffra-runtime/src/audio/**'
               - 'crates/riffra-runtime/src/binaries.rs'
@@ -47,10 +81,15 @@ jobs:
               - '.github/workflows/ci.yml'
 
     outputs:
+      node: ${{ steps.filter.outputs.node }}
+      rust: ${{ steps.filter.outputs.rust }}
+      tauri: ${{ steps.filter.outputs.tauri }}
       native: ${{ steps.filter.outputs.native }}
 
   node:
     name: Node
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.node == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -68,6 +107,8 @@ jobs:
 
   rust:
     name: Rust host crates
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -107,31 +148,22 @@ jobs:
 
   rust-tauri:
     name: Rust Tauri
-    needs: [changes, native-windows]
-    if: >-
-      always() &&
-      needs.changes.result == 'success' &&
-      (
-        needs.native-windows.result == 'success' ||
-        (github.event_name != 'workflow_dispatch' && needs.changes.outputs.native != 'true')
-      )
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.tauri == 'true'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v8
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.native == 'true'
-        with:
-          name: native-sidecars-windows
-          path: apps/desktop/src-tauri
-
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy,rustfmt
+          components: clippy
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+
+      # Native sidecars are exercised by the native job. The Tauri crate tests
+      # do not package or execute those binaries, so this job stays independent.
 
       - uses: actions/cache@v6
         with:
@@ -172,12 +204,13 @@ jobs:
         with:
           node-version: 24
 
+      - uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Install Linux dependencies
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            ccache \
             clang-format \
             libasound2-dev \
             libegl-dev \
@@ -211,13 +244,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-native-sonalloy-debug-
 
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/ccache
-          key: ${{ runner.os }}-native-ccache-${{ hashFiles('native/audio-engine/**') }}
-          restore-keys: |
-            ${{ runner.os }}-native-ccache-
-
       - name: Check clang-format
         shell: bash
         run: |
@@ -234,15 +260,20 @@ jobs:
       - name: Build and test on Linux
         shell: bash
         env:
-          CMAKE_BUILD_PARALLEL_LEVEL: 2
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          CTEST_PARALLEL_LEVEL: 4
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
         run: ./native/audio-engine/build.sh Debug
 
       - name: Exercise normal headless Host with native sidecars
         shell: bash
         env:
           RIFFRA_HEADLESS_SAFE_MODE: '0'
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
         run: bash scripts/ci/headless-host-process.sh
 
   native-windows:
@@ -258,6 +289,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
 
       - uses: actions/cache@v6
         with:
@@ -277,22 +310,22 @@ jobs:
 
       - name: Build and test on Windows
         shell: pwsh
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          CTEST_PARALLEL_LEVEL: 4
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
         run: .\native\audio-engine\build.ps1 -Configuration Debug
 
       - name: Exercise normal headless Host with native sidecars
         shell: pwsh
         env:
           RIFFRA_HEADLESS_SAFE_MODE: '0'
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
         run: .\scripts\ci\headless-host-process.ps1
-
-      - name: Upload Windows sidecars
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-sidecars-windows
-          path: |
-            apps/desktop/src-tauri/binaries
-            apps/desktop/src-tauri/resources
-          if-no-files-found: error
 
   native-macos:
     name: Native audio engine (macOS arm64)
@@ -307,6 +340,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
 
       - uses: actions/cache@v6
         with:
@@ -327,8 +362,13 @@ jobs:
       - name: Build, test, and package on macOS
         shell: bash
         env:
-          CMAKE_BUILD_PARALLEL_LEVEL: 2
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          CTEST_PARALLEL_LEVEL: 4
+          CMAKE_C_COMPILER_LAUNCHER: sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
           MACOSX_DEPLOYMENT_TARGET: '14.0'
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
         run: |
           if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
             ./native/audio-engine/build.sh Debug
