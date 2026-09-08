@@ -239,6 +239,9 @@ private:
     std::uint32_t pendingMonitoringInputChannels = 0;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
+    std::vector<OfflineRecordingTrack> finalizedRecordingTracks;
+    double finalizedRecordingSampleRate = 0.0;
+    int finalizedRecordingBlockSize = 0;
     juce::String liveMidiTargetTrackId;
     std::atomic<State> state{State::stopped};
     std::atomic<std::int64_t> timelineSample{0};

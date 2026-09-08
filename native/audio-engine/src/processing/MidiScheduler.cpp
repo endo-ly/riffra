@@ -119,6 +119,8 @@ std::size_t maximumPeriodicEvents(const std::vector<const CompiledMidiClip*>& cl
             return std::numeric_limits<std::size_t>::max();
         period = reduced * clip->lengthSamples;
     }
+    if (period > std::numeric_limits<std::int64_t>::max() / 2)
+        return std::numeric_limits<std::size_t>::max();
 
     std::size_t eventCount = 0;
     for (const auto* clip : clips) {

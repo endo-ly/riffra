@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <limits>
 #include <thread>
+#include <utility>
 
 #include "ArrangementGraph.h"
 #include "TimelineSnapshotBuilder.h"
@@ -307,6 +308,9 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
         error = "Arrange recording is already active.";
         return false;
     }
+    finalizedRecordingTracks.clear();
+    finalizedRecordingSampleRate = 0.0;
+    finalizedRecordingBlockSize = 0;
     for (auto& track : timeline->tracks) {
         recordingCapture->resetTrack(track->runtime->recordingCapture);
     }
@@ -370,9 +374,20 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     auto sinkLease = recordingCapture->acquireSink();
     auto* sink = sinkLease.get();
+    finalizedRecordingTracks.clear();
+    finalizedRecordingSampleRate = 0.0;
+    finalizedRecordingBlockSize = 0;
     if (timeline == nullptr || sink == nullptr) {
         recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
         return true;
+    }
+    finalizedRecordingSampleRate = timeline->outputSampleRate;
+    finalizedRecordingBlockSize = timeline->preparedBlockSize;
+    finalizedRecordingTracks.reserve(timeline->tracks.size());
+    for (const auto& track : timeline->tracks) {
+        if (track->runtime == nullptr || track->runtime->instrumentTrack || !track->runtime->armed)
+            continue;
+        finalizedRecordingTracks.push_back({track->id, track->effectState});
     }
     for (auto& trackPtr : timeline->tracks) {
         auto& track = *trackPtr;
@@ -382,6 +397,9 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
         if (!recordingCapture->endTrackCapture(track.id, track.runtime->recordingCapture)) {
             error = "Recording Capture Segment could not be closed.";
             track.runtime->recordingCapture.state = RecordingCaptureState::idle;
+            finalizedRecordingTracks.clear();
+            finalizedRecordingSampleRate = 0.0;
+            finalizedRecordingBlockSize = 0;
             recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
             return false;
         }
@@ -393,20 +411,15 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
 
 bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
     std::vector<OfflineRecordingTrack> tracks;
-    double sampleRate = 0.0;
-    int blockSize = 0;
+    double sampleRate;
+    int blockSize;
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
-        if (timeline == nullptr) return true;
-        sampleRate = timeline->outputSampleRate;
-        blockSize = timeline->preparedBlockSize;
-        tracks.reserve(timeline->tracks.size());
-        for (const auto& track : timeline->tracks) {
-            if (track->runtime == nullptr || track->runtime->instrumentTrack ||
-                !track->runtime->armed)
-                continue;
-            tracks.push_back({track->id, track->effectState});
-        }
+        sampleRate = finalizedRecordingSampleRate;
+        blockSize = finalizedRecordingBlockSize;
+        tracks = std::move(finalizedRecordingTracks);
+        finalizedRecordingSampleRate = 0.0;
+        finalizedRecordingBlockSize = 0;
     }
 
     auto sinkLease = recordingCapture->acquireSink();
