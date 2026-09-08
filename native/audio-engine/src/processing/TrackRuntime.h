@@ -99,9 +99,7 @@ public:
         liveMidiActiveState.store(false, std::memory_order_release);
     }
 
-    void resetForTransportDiscontinuity() noexcept {
-        requestTransportDiscontinuity();
-    }
+    void resetForTransportDiscontinuity() noexcept { requestTransportDiscontinuity(); }
 
     void requestTransportDiscontinuity() noexcept {
         if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();

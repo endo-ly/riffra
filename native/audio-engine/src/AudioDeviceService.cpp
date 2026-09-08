@@ -273,8 +273,8 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
             auto* channel = new juce::DynamicObject();
             channel->setProperty("index", physicalIndex);
             channel->setProperty("name", channelNames[physicalIndex].isNotEmpty()
-                                              ? channelNames[physicalIndex]
-                                              : "Input " + juce::String(physicalIndex + 1));
+                                             ? channelNames[physicalIndex]
+                                             : "Input " + juce::String(physicalIndex + 1));
             inputChannels.add(juce::var(channel));
             if (activeInputChannels[physicalIndex]) activeInputChannelIndices.add(physicalIndex);
         }
@@ -288,8 +288,8 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
             auto* channel = new juce::DynamicObject();
             channel->setProperty("index", physicalIndex);
             channel->setProperty("name", outputChannelNames[physicalIndex].isNotEmpty()
-                                              ? outputChannelNames[physicalIndex]
-                                              : "Output " + juce::String(physicalIndex + 1));
+                                             ? outputChannelNames[physicalIndex]
+                                             : "Output " + juce::String(physicalIndex + 1));
             outputChannels.add(juce::var(channel));
             if (activeOutputChannels[physicalIndex]) activeOutputChannelIndices.add(physicalIndex);
         }

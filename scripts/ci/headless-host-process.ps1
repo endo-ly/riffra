@@ -82,7 +82,7 @@ try {
             throw 'Safe Mode audio.status returned an invalid contract'
         }
 
-        $transportOutput = & $binary --attach transport play --transport-sequence 1 2>&1
+        $transportOutput = & $binary --attach transport play 2>&1
         $transportExitCode = $LASTEXITCODE
         if ($transportExitCode -eq 0) { throw 'transport play unexpectedly succeeded in Safe Mode' }
         if (-not (($transportOutput -join "`n") -match 'runtimeUnavailable')) {

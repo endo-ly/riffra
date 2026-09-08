@@ -1056,9 +1056,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 }
                 auto* activeDevice = manager.getCurrentAudioDevice();
                 const auto physicalInputs =
-                    activeDevice != nullptr
-                        ? activeDevice->getInputChannelNames().size()
-                        : 0;
+                    activeDevice != nullptr ? activeDevice->getInputChannelNames().size() : 0;
                 if (requested.inputChannel >= physicalInputs) {
                     const auto restoreError = restorePreviousDevice();
                     auto* details = new juce::DynamicObject();

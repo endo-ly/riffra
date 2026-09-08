@@ -127,7 +127,7 @@ juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& proc
 }  // namespace
 
 std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const double sampleRate,
-                                                 const int blockSize) {
+                                                const int blockSize) {
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
         return PluginLoadError{
@@ -350,8 +350,8 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
         plugin->prepareToPlay(sampleRate, blockSize);
         plugin->reset();
         const auto* queue = activeParameterQueue.load(std::memory_order_acquire);
-        if (queue == nullptr || queue->capacity !=
-            static_cast<std::size_t>(plugin->getParameters().size())) {
+        if (queue == nullptr ||
+            queue->capacity != static_cast<std::size_t>(plugin->getParameters().size())) {
             juce::String ignored;
             (void)allocateParameterQueue(static_cast<std::size_t>(plugin->getParameters().size()),
                                          ignored);
@@ -391,10 +391,9 @@ void PluginRack::enqueueParameterChange(const int index, const float value) noex
     queue->values[offset].store(normalized, std::memory_order_release);
     queue->dirty[offset].store(true, std::memory_order_release);
     const juce::ScopedLock statusGuard(statusLock);
-    const auto cached = std::find_if(cachedParameters.begin(), cachedParameters.end(),
-                                     [index](const auto& parameter) {
-                                         return parameter.index == index;
-                                     });
+    const auto cached =
+        std::find_if(cachedParameters.begin(), cachedParameters.end(),
+                     [index](const auto& parameter) { return parameter.index == index; });
     if (cached != cachedParameters.end()) cached->value = normalized;
     activeReaders.fetch_sub(1, std::memory_order_release);
 }
@@ -571,10 +570,9 @@ juce::var PluginRack::persistedState(juce::String& error) const {
     }
     const auto parameters = plugin->getParameters();
     for (int index = 0; index < parameters.size(); ++index) {
-        const auto found = std::find_if(cached.begin(), cached.end(),
-                                        [index](const auto& parameter) {
-                                            return parameter.index == index;
-                                        });
+        const auto found =
+            std::find_if(cached.begin(), cached.end(),
+                         [index](const auto& parameter) { return parameter.index == index; });
         values.add(found != cached.end()
                        ? found->value
                        : (parameters[index] != nullptr ? parameters[index]->getValue() : 0.0f));
@@ -708,13 +706,13 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
 }
 
 void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const processor,
-                                              ParameterQueue* const queue) noexcept {
+                                             ParameterQueue* const queue) noexcept {
     if (processor == nullptr || queue == nullptr) return;
     const auto& parameters = processor->getParameters();
     const auto count = std::min(parameters.size(), static_cast<int>(queue->capacity));
     for (int index = 0; index < count; ++index) {
         if (!queue->dirty[static_cast<std::size_t>(index)].exchange(false,
-                                                                     std::memory_order_acq_rel))
+                                                                    std::memory_order_acq_rel))
             continue;
         if (auto* parameter = parameters[index])
             parameter->setValueNotifyingHost(

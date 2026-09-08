@@ -76,7 +76,7 @@ if [[ "$safe_mode" == 1 ]]; then
         "$data_root/safe-audio.json" >/dev/null
 
     if "$binary" --attach transport play \
-        --transport-sequence 1 >"$data_root/transport.stdout.log" 2>"$data_root/transport.stderr.log"; then
+        >"$data_root/transport.stdout.log" 2>"$data_root/transport.stderr.log"; then
         echo 'transport play unexpectedly succeeded in Safe Mode' >&2
         exit 1
     fi

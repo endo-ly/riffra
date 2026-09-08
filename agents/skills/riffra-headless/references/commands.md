@@ -344,14 +344,14 @@ Runtime 系コマンドのうち、次のグループが `runtimeUnavailable` �
 
 ### Transport 制御
 
-| コマンド                | 主要引数                 |
-| ----------------------- | ------------------------ |
-| `transport play`        | `--transport-sequence N` |
-| `transport stop`        | `--transport-sequence N` |
-| `transport go-to-start` | `--transport-sequence N` |
-| `transport seek`        | `--tick N`               |
+| コマンド                | 主要引数   |
+| ----------------------- | ---------- |
+| `transport play`        | -          |
+| `transport stop`        | -          |
+| `transport go-to-start` | -          |
+| `transport seek`        | `--tick N` |
 
-`--transport-sequence` はトランスポート要求の順序を示す番号で、古い要求が新しい状態を上書きしないために単調に増やして使う。
+トランスポート操作の順序はHost Runtimeが管理する。CLIから操作番号を指定する必要はない。
 
 ### Audio デバイス
 
