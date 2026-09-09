@@ -1,6 +1,6 @@
 # Build the native audio engine, run tests, and install sidecars and resources.
 param(
-    [ValidateSet('Release', 'Debug')]
+    [ValidateSet('Debug', 'RelWithDebInfo', 'Release')]
     [string] $Configuration = 'Release',
 
     [string] $BuildDirectory = (Join-Path $PSScriptRoot 'build'),
@@ -35,14 +35,14 @@ $ctest = Find-Executable -Name 'ctest' -Fallback $vsCtest
 $buildDir = $BuildDirectory
 $headlessDestination = if ($env:RIFFRA_HEADLESS_BINARIES_DESTINATION) {
     $env:RIFFRA_HEADLESS_BINARIES_DESTINATION
-} elseif ($Configuration -eq 'Debug') {
+} elseif ($Configuration -in @('Debug', 'RelWithDebInfo')) {
     'target/debug'
 } else {
     'target/release'
 }
 $headlessResourcesDestination = if ($env:RIFFRA_HEADLESS_RESOURCES_DESTINATION) {
     $env:RIFFRA_HEADLESS_RESOURCES_DESTINATION
-} elseif ($Configuration -eq 'Debug') {
+} elseif ($Configuration -in @('Debug', 'RelWithDebInfo')) {
     'target/debug'
 } else {
     'target/release'
@@ -71,10 +71,11 @@ if ($env:CMAKE_CXX_COMPILER_LAUNCHER) {
 & $cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
-$buildArgs = @('--build', $buildDir, '--config', $Configuration, '--parallel')
+$buildArgs = @('--build', $buildDir, '--config', $Configuration)
 if ($SidecarsOnly) {
     $buildArgs += @('--target', 'riffra-runtime-sidecars')
 }
+$buildArgs += '--parallel'
 if ($env:CMAKE_BUILD_PARALLEL_LEVEL) {
     $buildArgs += $env:CMAKE_BUILD_PARALLEL_LEVEL
 }

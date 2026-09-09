@@ -113,10 +113,7 @@ impl HostState {
     ) -> Result<T, ProtocolError> {
         self.begin_audio_transition().map_err(command_error)?;
         let operation_result = operation(self);
-        if operation_result
-            .as_ref()
-            .is_err_and(is_graph_failed)
-        {
+        if operation_result.as_ref().is_err_and(is_graph_failed) {
             return operation_result;
         }
         let finish_result = self.end_audio_transition();

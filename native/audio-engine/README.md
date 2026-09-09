@@ -45,6 +45,21 @@ Arrange recording stores captured MIDI with the track's recording result.
 The engine is built with CMake, a compatible C++ toolchain, Rust/Cargo, and
 Node.js. The wrapper script does not require `npm install`:
 
+The normal desktop development entry point is `npm run dev:tauri`. Its ensure
+step builds the native sidecars with `RelWithDebInfo` and the Sonalloy C API
+with Cargo's `release` profile, while installing the unsuffixed sidecars under
+`target/debug/` beside the development CLI.
+
+The supported configurations have these meanings:
+
+| Configuration    | Native build                     | Sonalloy Cargo profile | Headless sidecar destination |
+| ---------------- | -------------------------------- | ---------------------- | ---------------------------- |
+| `Debug`          | Debug symbols and checks         | `dev`                  | `target/debug/`              |
+| `RelWithDebInfo` | Optimized with debug information | `release`              | `target/debug/`              |
+| `Release`        | Distribution build               | `release`              | `target/release/`            |
+
+Use `Debug` only when explicitly debugging the native engine.
+
 ```powershell
 # Windows
 .\build.ps1 -Configuration Debug
@@ -74,7 +89,8 @@ Both scripts do the following:
 3. Run CTest.
 4. Install the Tauri-named sidecars to `apps/desktop/src-tauri/binaries/` and
    unsuffixed copies beside the matching Cargo CLI artifact (`target/debug/`
-   for Debug, `target/release/` otherwise) with `cmake --install`.
+   for Debug and RelWithDebInfo, `target/release/` for Release) with
+   `cmake --install`.
 
 For development startup, the repository ensure step uses the same wrapper with
 `-SidecarsOnly` on Windows or `SIDECARS_ONLY=1` on other platforms. This builds
