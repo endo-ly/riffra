@@ -55,6 +55,15 @@ public:
     /// Enqueues a lifecycle task that must finish within `timeout` of starting
     /// to execute. Exceeding the timeout invokes the timeout handler once.
     [[nodiscard]] bool submit(Task task, std::chrono::milliseconds timeout);
+    /// Enqueues work whose duration is determined by captured media length.
+    /// The watchdog measures the time since the last call to
+    /// [`RuntimeLifecycleExecutor::reportProgress`], rather than the total
+    /// task duration. A task that stops reporting progress is still treated as
+    /// a stalled third-party lifecycle call.
+    [[nodiscard]] bool submitWithProgress(Task task, std::chrono::milliseconds stallTimeout);
+    /// Reports that the current progress-aware task completed another bounded
+    /// unit of work. Calls made outside such a task are ignored.
+    void reportProgress() noexcept;
     /// Enqueues a latest-value state event. Events with the same key replace
     /// one another, and a bounded state lane prevents parameter floods from
     /// delaying lifecycle work. State events are time-bounded like lifecycle
@@ -74,13 +83,13 @@ private:
     struct TimedTask {
         Task task;
         std::chrono::milliseconds timeout{0};
+        bool usesProgressWatchdog = false;
     };
 
     void run();
     void watch();
 
     static constexpr std::size_t kStateTaskLimit = 256;
-
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::condition_variable idleChanged;
@@ -92,7 +101,9 @@ private:
     bool stopping = false;
     bool running = false;
     bool currentTaskTimedOut = false;
+    bool currentTaskUsesProgressWatchdog = false;
     std::chrono::steady_clock::time_point currentTaskStarted{};
+    std::chrono::steady_clock::time_point currentTaskLastProgress{};
     std::chrono::milliseconds currentTaskTimeout{0};
     // Threads are declared after every piece of state they can observe and
     // are started in the constructor body, once the complete object exists.

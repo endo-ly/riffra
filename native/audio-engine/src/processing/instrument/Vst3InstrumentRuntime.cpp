@@ -49,8 +49,16 @@ void Vst3InstrumentRuntime::process(float* const* outputChannels, const int outp
 
 bool Vst3InstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) noexcept {
     if (!isLoaded()) return false;
-    rack->enqueueMidi(message);
-    return true;
+    return rack->enqueueMidi(message);
+}
+
+bool Vst3InstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                                        juce::String& error) noexcept {
+    if (rack == nullptr) {
+        error = "VST3 instrument runtime is not loaded.";
+        return false;
+    }
+    return rack->prepareTimelineMidiCapacity(eventCapacity, error);
 }
 
 void Vst3InstrumentRuntime::allNotesOff() noexcept {
@@ -65,6 +73,10 @@ int Vst3InstrumentRuntime::latencySamples() const noexcept {
 
 int Vst3InstrumentRuntime::tailSamples() const noexcept {
     return rack != nullptr ? rack->tailSamples() : 0;
+}
+
+std::uint64_t Vst3InstrumentRuntime::droppedMidiEvents() const noexcept {
+    return rack != nullptr ? rack->droppedMidiEvents() : 0;
 }
 
 void Vst3InstrumentRuntime::setBypassed(const bool shouldBypass) noexcept {

@@ -3,17 +3,17 @@ use super::*;
 use crate::model::{ProjectActivationResult, ProjectState};
 
 #[tauri::command]
-pub async fn undo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
+pub async fn undo_session(app: AppHandle) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "undo", json!({})).await
 }
 
 #[tauri::command]
-pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, String> {
+pub async fn redo_session(app: AppHandle) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "redo", json!({})).await
 }
 
 #[tauri::command]
-pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
+pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, NativeCommandError> {
     dispatch(app, "history.get", json!({})).await
 }
 
@@ -21,7 +21,7 @@ pub async fn get_history_state(app: AppHandle) -> Result<HistoryState, String> {
 pub async fn restore_recovery_generation(
     file_name: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "project.restore-generation",
@@ -34,12 +34,12 @@ pub async fn restore_recovery_generation(
 pub async fn import_project(
     path: String,
     app: AppHandle,
-) -> Result<ProjectActivationResult, String> {
+) -> Result<ProjectActivationResult, NativeCommandError> {
     dispatch(app, "project.import", json!({ "path": path })).await
 }
 
 #[tauri::command]
-pub async fn list_projects(app: AppHandle) -> Result<ProjectState, String> {
+pub async fn list_projects(app: AppHandle) -> Result<ProjectState, NativeCommandError> {
     dispatch(app, "project.list", json!({})).await
 }
 
@@ -47,7 +47,7 @@ pub async fn list_projects(app: AppHandle) -> Result<ProjectState, String> {
 pub async fn create_project(
     name: Option<String>,
     app: AppHandle,
-) -> Result<ProjectActivationResult, String> {
+) -> Result<ProjectActivationResult, NativeCommandError> {
     dispatch(app, "project.create", json!({ "name": name })).await
 }
 
@@ -55,12 +55,15 @@ pub async fn create_project(
 pub async fn open_project(
     project_id: String,
     app: AppHandle,
-) -> Result<ProjectActivationResult, String> {
+) -> Result<ProjectActivationResult, NativeCommandError> {
     dispatch(app, "project.open", json!({ "projectId": project_id })).await
 }
 
 #[tauri::command]
-pub async fn rename_project(name: String, app: AppHandle) -> Result<ProjectState, String> {
+pub async fn rename_project(
+    name: String,
+    app: AppHandle,
+) -> Result<ProjectState, NativeCommandError> {
     dispatch(app, "project.rename", json!({ "name": name })).await
 }
 
@@ -68,12 +71,15 @@ pub async fn rename_project(name: String, app: AppHandle) -> Result<ProjectState
 pub async fn update_session_settings(
     patch: SessionSettingsPatch,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "session.settings.update", patch).await
 }
 
 #[tauri::command]
-pub async fn set_master_gain_db(gain_db: f64, app: AppHandle) -> Result<SessionAudioPair, String> {
+pub async fn set_master_gain_db(
+    gain_db: f64,
+    app: AppHandle,
+) -> Result<SessionAudioPair, NativeCommandError> {
     dispatch(app, "audio.master-gain.set", json!({ "gainDb": gain_db })).await
 }
 
@@ -82,9 +88,10 @@ pub async fn relink_missing_dependency(
     asset_id: String,
     new_path: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
-    let asset_id = AssetId::from_normalized(asset_id)
-        .map_err(|error| format!("Asset id is invalid: {error}"))?;
+) -> Result<ArrangementMutationResult, NativeCommandError> {
+    let asset_id = AssetId::from_normalized(asset_id).map_err(|error| {
+        NativeCommandError::invalid_request(format!("Asset id is invalid: {error}"))
+    })?;
     dispatch(
         app,
         "missing.relink",
@@ -97,7 +104,7 @@ pub async fn relink_missing_dependency(
 pub async fn disable_missing_plugin(
     device_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "missing.disable-plugin",
@@ -111,7 +118,7 @@ pub async fn replace_missing_track_plugin(
     device_id: String,
     new_path: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "missing.replace-plugin",
@@ -121,6 +128,8 @@ pub async fn replace_missing_track_plugin(
 }
 
 #[tauri::command]
-pub async fn get_missing_dependencies(app: AppHandle) -> Result<Vec<MissingDependency>, String> {
+pub async fn get_missing_dependencies(
+    app: AppHandle,
+) -> Result<Vec<MissingDependency>, NativeCommandError> {
     dispatch(app, "missing.list", json!({})).await
 }

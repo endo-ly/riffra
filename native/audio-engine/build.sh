@@ -9,27 +9,29 @@ BUILD_DIR="${BUILD_DIR:-$ENGINE_DIR/build}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 SIDECARS_ONLY="${SIDECARS_ONLY:-0}"
 
-if [[ -n "${RIFFRA_HEADLESS_BINARIES_DESTINATION:-}" ]]; then
-  headless_destination="$RIFFRA_HEADLESS_BINARIES_DESTINATION"
-elif [[ "$CONFIG" == "Debug" ]]; then
-  headless_destination="target/debug"
-else
-  headless_destination="target/release"
-fi
-
-if [[ -n "${RIFFRA_HEADLESS_RESOURCES_DESTINATION:-}" ]]; then
-  headless_resources_destination="$RIFFRA_HEADLESS_RESOURCES_DESTINATION"
-elif [[ "$CONFIG" == "Debug" ]]; then
-  headless_resources_destination="target/debug"
-else
-  headless_resources_destination="target/release"
-fi
-
-if [[ "$CONFIG" == "Debug" ]]; then
-  sonalloy_cargo_profile="dev"
-else
-  sonalloy_cargo_profile="release"
-fi
+case "$CONFIG" in
+  Debug)
+    headless_destination="target/debug"
+    headless_resources_destination="target/debug"
+    sonalloy_cargo_profile="dev"
+    ;;
+  RelWithDebInfo)
+    headless_destination="target/debug"
+    headless_resources_destination="target/debug"
+    sonalloy_cargo_profile="release"
+    ;;
+  Release)
+    headless_destination="target/release"
+    headless_resources_destination="target/release"
+    sonalloy_cargo_profile="release"
+    ;;
+  *)
+    echo "Configuration must be Debug, RelWithDebInfo, or Release." >&2
+    exit 1
+    ;;
+esac
+headless_destination="${RIFFRA_HEADLESS_BINARIES_DESTINATION:-$headless_destination}"
+headless_resources_destination="${RIFFRA_HEADLESS_RESOURCES_DESTINATION:-$headless_resources_destination}"
 
 CMAKE="${CMAKE:-$(command -v cmake || true)}"
 if [ -z "$CMAKE" ]; then
@@ -59,16 +61,21 @@ if [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
   configure_args+=("-DCMAKE_CXX_COMPILER_LAUNCHER=$CMAKE_CXX_COMPILER_LAUNCHER")
 fi
 "$CMAKE" "${configure_args[@]}"
-build_args=(--build "$BUILD_DIR" --config "$CONFIG" --parallel)
+build_args=(--build "$BUILD_DIR" --config "$CONFIG")
 if [[ "$SIDECARS_ONLY" -eq 1 ]]; then
   build_args+=(--target riffra-runtime-sidecars)
 fi
+build_args+=(--parallel)
 if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]; then
   build_args+=("$CMAKE_BUILD_PARALLEL_LEVEL")
 fi
 "$CMAKE" "${build_args[@]}"
 if [ "$SKIP_TESTS" -ne 1 ]; then
-  "$CTEST" --test-dir "$BUILD_DIR" --output-on-failure -C "$CONFIG"
+  ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure -C "$CONFIG")
+  if [ -n "${CTEST_PARALLEL_LEVEL:-}" ]; then
+    ctest_args+=(--parallel "$CTEST_PARALLEL_LEVEL")
+  fi
+  "$CTEST" "${ctest_args[@]}"
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"
 

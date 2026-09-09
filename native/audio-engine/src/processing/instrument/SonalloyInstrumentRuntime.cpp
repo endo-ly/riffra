@@ -376,14 +376,21 @@ bool SonalloyInstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) no
     return pendingMidi.tryPush(pending);
 }
 
+bool SonalloyInstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                                            juce::String& error) noexcept {
+    if (eventCapacity <= kMaximumTimelineEventsPerBlock) return true;
+    error = "Timeline MIDI requires more events per block than the built-in instrument supports.";
+    return false;
+}
+
 void SonalloyInstrumentRuntime::allNotesOff() noexcept {
-    midiGeneration.fetch_add(1, std::memory_order_acq_rel);
-    resetPending.store(true, std::memory_order_release);
+    if (!resetPending.exchange(true, std::memory_order_acq_rel))
+        midiGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void SonalloyInstrumentRuntime::resetForTransportDiscontinuity() noexcept {
-    midiGeneration.fetch_add(1, std::memory_order_acq_rel);
-    resetPending.store(true, std::memory_order_release);
+    if (!resetPending.exchange(true, std::memory_order_acq_rel))
+        midiGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 int SonalloyInstrumentRuntime::latencySamples() const noexcept { return reportedLatencySamples; }
@@ -420,12 +427,17 @@ void SonalloyInstrumentRuntime::process(float* const* outputChannels, const int 
             return;
         }
     }
+    const auto liveEventCount = eventCount;
     if (midi != nullptr) {
         for (const auto metadata : *midi) {
             if (metadata.data == nullptr || metadata.numBytes <= 0 || metadata.samplePosition < 0 ||
                 metadata.samplePosition >= numSamples ||
                 !appendMidiBytes(metadata.data, static_cast<std::size_t>(metadata.numBytes),
                                  static_cast<std::uint32_t>(metadata.samplePosition), eventCount)) {
+                failBlock(SONALLOY_INTERNAL_PANIC, outputChannels, outputChannelCount, numSamples);
+                return;
+            }
+            if (eventCount - liveEventCount > kMaximumTimelineEventsPerBlock) {
                 failBlock(SONALLOY_INTERNAL_PANIC, outputChannels, outputChannelCount, numSamples);
                 return;
             }

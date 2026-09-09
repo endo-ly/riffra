@@ -23,6 +23,7 @@ import type {
   NativeApi,
   HostConnectionBootstrap,
   HostConnectionChangedEvent,
+  RecordingFinalizedEvent,
   RuntimeStartupFinishedEvent,
 } from './native-api';
 
@@ -43,6 +44,7 @@ export interface FakeNativeApiOptions {
 export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
   const recording: RecordingStatus = {
     active: false,
+    processing: false,
     directory: null,
     sampleRate: null,
     rawChannels: null,
@@ -73,11 +75,13 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     inputDevice: 'Input 1',
     inputChannel: 0,
     inputChannels: [{ index: 0, name: 'Input 1' }],
+    activeInputChannels: [0],
     outputDevice: 'Output 1',
     outputChannels: [
       { index: 0, name: 'Output 1' },
       { index: 1, name: 'Output 2' },
     ],
+    activeOutputChannels: [0, 1],
     sampleRate: 48_000,
     bufferSize: 480,
     roundTripMs: 8,
@@ -93,6 +97,26 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
+    muteReasons: 0,
+    diagnostics: {
+      callbackCount: 0,
+      averageCallbackDurationUs: 0,
+      maximumCallbackDurationUs: 0,
+      callbackOverruns: 0,
+      preLimiterPeak: 0,
+      limiterGainReductionDb: 0,
+      hardClipSamples: 0,
+      liveMidiDrops: 0,
+      graphRevision: 0,
+      graphPublishCount: 0,
+      trackCount: 0,
+      instrumentRuntimeCount: 0,
+      pluginCount: 0,
+      maximumLatencySamples: 0,
+      projectionDurationMs: 0,
+      audioEnvironmentRevision: 0,
+      instrumentFaults: [],
+    },
     message: 'Fake audio supervisor is ready through the safety limiter.',
     ...overrides,
   };
@@ -120,6 +144,9 @@ export class FakeNativeApi implements NativeApi {
   private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
   private readonly runtimeProjectionListeners = new Set<
     (status: RuntimeProjectionStatus) => void
+  >();
+  private readonly recordingFinalizedListeners = new Set<
+    (event: RecordingFinalizedEvent) => void
   >();
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
@@ -163,6 +190,10 @@ export class FakeNativeApi implements NativeApi {
       activeProjectionSequence: null,
       activeSessionRevision: null,
       runtimeGeneration: 1,
+      audioEnvironmentRevision: 0,
+      targetAudioEnvironmentRevision: null,
+      preparedAudioEnvironmentRevision: null,
+      activeAudioEnvironmentRevision: null,
       queuedAtMs: null,
       startedAtMs: null,
       completedAtMs: null,
@@ -325,6 +356,9 @@ export class FakeNativeApi implements NativeApi {
   setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
     return this.command('setEmergencyMute', args);
   }
+  resetFeedbackProtection(...args: Parameters<NativeApi['resetFeedbackProtection']>) {
+    return this.command('resetFeedbackProtection', args);
+  }
   setMasterGainDb(...args: Parameters<NativeApi['setMasterGainDb']>) {
     return this.command('setMasterGainDb', args);
   }
@@ -345,6 +379,9 @@ export class FakeNativeApi implements NativeApi {
   }
   sendMidiToTrack(...args: Parameters<NativeApi['sendMidiToTrack']>) {
     return this.command('sendMidiToTrack', args);
+  }
+  setLiveMidiTarget(...args: Parameters<NativeApi['setLiveMidiTarget']>) {
+    return this.command('setLiveMidiTarget', args);
   }
   panicMidiTrack(...args: Parameters<NativeApi['panicMidiTrack']>) {
     return this.command('panicMidiTrack', args);
@@ -589,6 +626,10 @@ export class FakeNativeApi implements NativeApi {
     this.recordCall('onRuntimeRestarted');
     return this.subscribe(this.runtimeRestartListeners, callback);
   }
+  onRecordingFinalized(callback: Parameters<NativeApi['onRecordingFinalized']>[0]) {
+    this.recordCall('onRecordingFinalized');
+    return this.subscribe(this.recordingFinalizedListeners, callback);
+  }
   private command<K extends keyof NativeApi>(
     name: K,
     arguments_: Parameters<NativeMethod<K>>,
@@ -625,6 +666,10 @@ export class FakeNativeApi implements NativeApi {
   emitRuntimeProjectionStatus(status: RuntimeProjectionStatus): void {
     this.runtimeProjection = status;
     this.runtimeProjectionListeners.forEach((listener) => listener(status));
+  }
+
+  emitRecordingFinalized(event: RecordingFinalizedEvent): void {
+    this.recordingFinalizedListeners.forEach((listener) => listener(event));
   }
 
   emitTransportStatus(status: Partial<TransportStatus> = {}): void {
@@ -792,6 +837,9 @@ export class FakeNativeApi implements NativeApi {
           state: arguments_[0] ? 'muted' : 'ready',
         };
         return Promise.resolve(this.audio);
+      case 'resetFeedbackProtection':
+        this.audio = { ...this.audio, feedbackSuspected: false, state: 'ready' };
+        return Promise.resolve(this.audio);
       case 'startScanJob':
         return Promise.resolve(this.completedJob('scan', { plugins: this.plugins, issues: [] }));
       case 'getBackgroundJob':
@@ -803,6 +851,7 @@ export class FakeNativeApi implements NativeApi {
       case 'importMidiBytes':
       case 'analyzeAsset':
       case 'sendMidiToTrack':
+      case 'setLiveMidiTarget':
       case 'panicMidiTrack':
       case 'updateLibraryAsset':
       case 'tagRecording':

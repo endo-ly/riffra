@@ -13,7 +13,13 @@ interface UseAudioOptions {
 }
 
 export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
-  const { recoverAudioDevice, setAudioDriver, enableMidiListening, setEmergencyMute } = api;
+  const {
+    recoverAudioDevice,
+    setAudioDriver,
+    enableMidiListening,
+    setEmergencyMute,
+    resetFeedbackProtection,
+  } = api;
   const { audio, hostGeneration = 0, setAudio } = options;
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
@@ -99,6 +105,12 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
   }, [audio, hostGeneration, setAudio, setEmergencyMute]);
 
+  const resetFeedback = useCallback(async () => {
+    const requestGeneration = hostGeneration;
+    const nextAudio = await resetFeedbackProtection();
+    if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
+  }, [hostGeneration, resetFeedbackProtection, setAudio]);
+
   return {
     audioPreferenceMessage,
     deviceProbe,
@@ -108,5 +120,6 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     selectAudioDriver,
     enableMidi,
     toggleMute,
+    resetFeedback,
   };
 }

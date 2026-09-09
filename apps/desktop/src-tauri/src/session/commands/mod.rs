@@ -4,10 +4,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
-use crate::AppState;
 use crate::model::{
     ArrangementMutationResult, AudioStatus, RuntimeProjectionStatus, SessionAudioPair,
 };
+use crate::{AppState, NativeCommandError};
 use riffra_core::application::{
     MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SessionSettingsPatch,
 };
@@ -22,33 +22,38 @@ pub(super) async fn dispatch<T, P>(
     app: AppHandle,
     command: &'static str,
     params: P,
-) -> Result<T, String>
+) -> Result<T, NativeCommandError>
 where
     T: DeserializeOwned + Send + 'static,
     P: Serialize + Send + 'static,
 {
-    let params = serde_json::to_value(params).map_err(|error| error.to_string())?;
+    let params = serde_json::to_value(params)
+        .map_err(|error| NativeCommandError::invalid_request(error.to_string()))?;
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .host_connection
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Host operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Host operation failed: {error}"))
+    })?
 }
 
 pub(super) async fn dispatch_json<T: DeserializeOwned + Send + 'static>(
     app: AppHandle,
     command: &'static str,
     params: Value,
-) -> Result<T, String> {
+) -> Result<T, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .host_connection
             .dispatch(command, params)
     })
     .await
-    .map_err(|error| format!("Host operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Host operation failed: {error}"))
+    })?
 }
 
 mod arrangement;

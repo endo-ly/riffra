@@ -3,15 +3,15 @@
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
-use crate::AppState;
 use crate::render::{RenderOptions, RenderResult};
+use crate::{AppState, NativeCommandError};
 use riffra_runtime::jobs::{BackgroundJobStatus, JobState};
 
 #[tauri::command]
 pub async fn render_timeline(
     options: Option<RenderOptions>,
     app: AppHandle,
-) -> Result<RenderResult, String> {
+) -> Result<RenderResult, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let queued: BackgroundJobStatus = state
@@ -20,7 +20,9 @@ pub async fn render_timeline(
         let job_id = match queued {
             BackgroundJobStatus::Render { id, .. } => id,
             BackgroundJobStatus::Scan { .. } => {
-                return Err("Host returned a non-render job for render.start".into());
+                return Err(NativeCommandError::command_failed(
+                    "Host returned a non-render job for render.start",
+                ));
             }
         };
         loop {
@@ -29,7 +31,9 @@ pub async fn render_timeline(
                 .host_connection
                 .dispatch("job.get", json!({ "id": job_id }))?;
             let Some(status) = status else {
-                return Err("Host render job disappeared before it reported a result".into());
+                return Err(NativeCommandError::command_failed(
+                    "Host render job disappeared before it reported a result",
+                ));
             };
             match status {
                 BackgroundJobStatus::Render {
@@ -46,14 +50,18 @@ pub async fn render_timeline(
                     state: JobState::Cancelled,
                     message,
                     ..
-                } => return Err(message),
+                } => return Err(NativeCommandError::command_failed(message)),
                 BackgroundJobStatus::Render { .. } => {}
                 BackgroundJobStatus::Scan { .. } => {
-                    return Err("Host returned a non-render job while polling render".into());
+                    return Err(NativeCommandError::command_failed(
+                        "Host returned a non-render job while polling render",
+                    ));
                 }
             }
         }
     })
     .await
-    .map_err(|error| format!("Render operation failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Render operation failed: {error}"))
+    })?
 }

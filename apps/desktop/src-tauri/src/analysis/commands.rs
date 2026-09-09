@@ -3,16 +3,21 @@
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
-use crate::AppState;
 use crate::analysis::AudioAnalysis;
+use crate::{AppState, NativeCommandError};
 
 #[tauri::command]
-pub async fn analyze_asset(asset_id: String, app: AppHandle) -> Result<AudioAnalysis, String> {
+pub async fn analyze_asset(
+    asset_id: String,
+    app: AppHandle,
+) -> Result<AudioAnalysis, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .host_connection
             .dispatch("analysis.start", json!({ "assetId": asset_id }))
     })
     .await
-    .map_err(|error| format!("Audio analysis task failed: {error}"))?
+    .map_err(|error| {
+        NativeCommandError::command_failed(format!("Audio analysis task failed: {error}"))
+    })?
 }

@@ -16,7 +16,9 @@ void setCurrentRequestId(const juce::String& requestId);
 [[nodiscard]] std::uint64_t droppedTelemetryCount() noexcept;
 [[nodiscard]] std::uint64_t droppedStateCount() noexcept;
 
-[[nodiscard]] juce::var makeError(const juce::String& scope, const juce::String& message);
+[[nodiscard]] juce::var makeError(const juce::String& kind, const juce::String& message,
+                                  const juce::String& operation = {},
+                                  const juce::var& details = {});
 bool parseMidiBytes(const juce::var& value, juce::MidiMessage& message, juce::String& error);
 void writeJson(const juce::var& value, const juce::String& requestId = {},
                OutputKind kind = OutputKind::control, std::string stateKey = {});

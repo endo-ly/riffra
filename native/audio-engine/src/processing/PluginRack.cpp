@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -17,8 +18,7 @@ PluginRack::PluginRack() {
     // JUCE stores each event as timestamp (int32), payload length (uint16), and
     // payload bytes. Reserve the sum of the per-source event limits up front so
     // process() never grows this buffer on the audio callback.
-    constexpr auto maximumMidiEvents =
-        PendingMidi::kCapacity + kMaximumPanicMidiEvents + kMaximumTimelineMidiEvents;
+    constexpr auto maximumMidiEvents = PendingMidi::kCapacity + kMaximumPanicMidiEvents;
     processMidi.ensureSize(maximumMidiEvents *
                            (PendingMidi::kMaximumMessageBytes + kMidiEventOverhead));
 }
@@ -29,16 +29,16 @@ void PluginRack::PendingMidi::reset() {
     }
 }
 
-void PluginRack::PendingMidi::add(const juce::MidiMessage& message) noexcept {
+bool PluginRack::PendingMidi::add(const juce::MidiMessage& message) noexcept {
     const auto size = message.getRawDataSize();
     if (size <= 0 || static_cast<std::size_t>(size) > kMaximumMessageBytes) {
         droppedEventsCount.fetch_add(1, std::memory_order_relaxed);
-        return;
+        return false;
     }
     Event event;
     event.size = static_cast<std::uint16_t>(size);
     std::copy_n(message.getRawData(), size, event.bytes.begin());
-    (void)messages.tryPush(event);
+    return messages.tryPush(event);
 }
 
 void PluginRack::PendingMidi::appendTo(juce::MidiBuffer& destination,
@@ -58,15 +58,6 @@ std::uint64_t PluginRack::PendingMidi::droppedEvents() const noexcept {
 }
 
 namespace {
-
-class AtomicFlagReset final {
-public:
-    explicit AtomicFlagReset(std::atomic<bool>& target) noexcept : flag(target) {}
-    ~AtomicFlagReset() { flag.store(false, std::memory_order_release); }
-
-private:
-    std::atomic<bool>& flag;
-};
 
 struct PluginDescriptionCacheEntry final {
     juce::String path;
@@ -137,8 +128,6 @@ juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& proc
 
 std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const double sampleRate,
                                                 const int blockSize) {
-    mutationInProgress.store(true, std::memory_order_release);
-    const AtomicFlagReset resetMutation(mutationInProgress);
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
         return PluginLoadError{
@@ -210,19 +199,9 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     juce::String parameterQueueError;
     if (!allocateParameterQueue(candidateParameterCount, parameterQueueError))
         return PluginLoadError{"parameterQueue", parameterQueueError};
-    if (plugin != nullptr) {
-        try {
-            FaultInjection::before(FaultStage::destroy);
-        } catch (...) {
-            return PluginLoadError{
-                "pluginDestroy",
-                "Fault injection interrupted destruction of the previous VST3 instance.",
-            };
-        }
-        plugin->releaseResources();
-        destroyCount.fetch_add(1, std::memory_order_relaxed);
-    }
+    if (plugin != nullptr) retiredPlugins.push_back(std::move(plugin));
     plugin = std::move(candidate);
+    activePlugin.store(plugin.get(), std::memory_order_release);
     {
         const juce::ScopedLock statusGuard(statusLock);
         pluginPath = path;
@@ -238,14 +217,20 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
     processedBlocks.store(0, std::memory_order_release);
-    contentionBlocks.store(0, std::memory_order_release);
     transitionBlocks.store(0, std::memory_order_release);
     loaded.store(true, std::memory_order_release);
     loadCount.fetch_add(1, std::memory_order_relaxed);
+    reclaimRetiredPlugins();
     return std::nullopt;
 }
 
-PluginRack::~PluginRack() { clear(); }
+PluginRack::~PluginRack() {
+    clear();
+    activePlugin.store(nullptr, std::memory_order_release);
+    activeParameterQueue.store(nullptr, std::memory_order_release);
+    retiredPlugins.clear();
+    retiredParameterQueues.clear();
+}
 
 std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcessor& processor,
                                                               const double sampleRate,
@@ -310,22 +295,11 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
 }
 
 void PluginRack::clear() noexcept {
-    mutationInProgress.store(true, std::memory_order_release);
-    const AtomicFlagReset resetMutation(mutationInProgress);
-    try {
-        FaultInjection::before(FaultStage::destroy);
-    } catch (...) {
-        return;
-    }
     const juce::SpinLock::ScopedLockType lock(pluginLock);
-    if (plugin != nullptr) {
-        plugin->releaseResources();
-        destroyCount.fetch_add(1, std::memory_order_relaxed);
-    }
-    plugin.reset();
-    pendingParameterValues.reset();
-    pendingParameterDirty.reset();
-    pendingParameterCapacity.store(0, std::memory_order_release);
+    if (plugin != nullptr) retiredPlugins.push_back(std::move(plugin));
+    if (parameterQueue != nullptr) retiredParameterQueues.push_back(std::move(parameterQueue));
+    activePlugin.store(nullptr, std::memory_order_release);
+    activeParameterQueue.store(nullptr, std::memory_order_release);
     {
         const juce::ScopedLock statusGuard(statusLock);
         pluginPath.clear();
@@ -341,8 +315,24 @@ void PluginRack::clear() noexcept {
     panicPending.store(true, std::memory_order_release);
     bypassedBlocks.store(0, std::memory_order_release);
     processedBlocks.store(0, std::memory_order_release);
-    contentionBlocks.store(0, std::memory_order_release);
     transitionBlocks.store(0, std::memory_order_release);
+    reclaimRetiredPlugins();
+}
+
+void PluginRack::reclaimRetiredPlugins() noexcept {
+    if (activeReaders.load(std::memory_order_acquire) != 0) return;
+    for (auto& retired : retiredPlugins) {
+        if (retired == nullptr) continue;
+        try {
+            FaultInjection::before(FaultStage::destroy);
+        } catch (...) {
+            continue;
+        }
+        retired->releaseResources();
+        destroyCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    retiredPlugins.clear();
+    retiredParameterQueues.clear();
 }
 
 void PluginRack::release() noexcept {
@@ -359,8 +349,9 @@ void PluginRack::prepare(const double sampleRate, const int blockSize) noexcept 
         plugin->setRateAndBufferSizeDetails(sampleRate, blockSize);
         plugin->prepareToPlay(sampleRate, blockSize);
         plugin->reset();
-        if (pendingParameterCapacity.load(std::memory_order_acquire) !=
-            static_cast<std::size_t>(plugin->getParameters().size())) {
+        const auto* queue = activeParameterQueue.load(std::memory_order_acquire);
+        if (queue == nullptr ||
+            queue->capacity != static_cast<std::size_t>(plugin->getParameters().size())) {
             juce::String ignored;
             (void)allocateParameterQueue(static_cast<std::size_t>(plugin->getParameters().size()),
                                          ignored);
@@ -389,14 +380,22 @@ void PluginRack::removeProcessorListener(juce::AudioProcessorListener& listener)
 }
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
-    const auto capacity = pendingParameterCapacity.load(std::memory_order_acquire);
-    if (index < 0 || static_cast<std::size_t>(index) >= capacity ||
-        pendingParameterValues == nullptr || pendingParameterDirty == nullptr)
+    activeReaders.fetch_add(1, std::memory_order_acq_rel);
+    auto* queue = activeParameterQueue.load(std::memory_order_acquire);
+    if (queue == nullptr || index < 0 || static_cast<std::size_t>(index) >= queue->capacity) {
+        activeReaders.fetch_sub(1, std::memory_order_release);
         return;
+    }
     const auto offset = static_cast<std::size_t>(index);
-    pendingParameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value),
-                                         std::memory_order_release);
-    pendingParameterDirty[offset].store(true, std::memory_order_release);
+    const auto normalized = juce::jlimit(0.0f, 1.0f, value);
+    queue->values[offset].store(normalized, std::memory_order_release);
+    queue->dirty[offset].store(true, std::memory_order_release);
+    const juce::ScopedLock statusGuard(statusLock);
+    const auto cached =
+        std::find_if(cachedParameters.begin(), cachedParameters.end(),
+                     [index](const auto& parameter) { return parameter.index == index; });
+    if (cached != cachedParameters.end()) cached->value = normalized;
+    activeReaders.fetch_sub(1, std::memory_order_release);
 }
 
 std::size_t PluginRack::parameterCount() const noexcept {
@@ -409,26 +408,28 @@ bool PluginRack::hasPrograms() const noexcept {
 }
 
 bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& error) noexcept {
-    if (count == 0) {
-        pendingParameterValues.reset();
-        pendingParameterDirty.reset();
-        pendingParameterCapacity.store(0, std::memory_order_release);
-        return true;
-    }
-    auto values =
-        std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
-    auto dirty = std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
-    if (values == nullptr || dirty == nullptr) {
+    std::unique_ptr<ParameterQueue> candidate(new (std::nothrow) ParameterQueue(count));
+    if (candidate == nullptr) {
         error = "The plugin parameter change queue could not be allocated.";
         return false;
     }
-    for (std::size_t index = 0; index < count; ++index) {
-        values[index].store(0.0f, std::memory_order_relaxed);
-        dirty[index].store(false, std::memory_order_relaxed);
+    if (count > 0) {
+        candidate->values =
+            std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
+        candidate->dirty =
+            std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
+        if (candidate->values == nullptr || candidate->dirty == nullptr) {
+            error = "The plugin parameter change queue could not be allocated.";
+            return false;
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            candidate->values[index].store(0.0f, std::memory_order_relaxed);
+            candidate->dirty[index].store(false, std::memory_order_relaxed);
+        }
     }
-    pendingParameterValues = std::move(values);
-    pendingParameterDirty = std::move(dirty);
-    pendingParameterCapacity.store(count, std::memory_order_release);
+    if (parameterQueue != nullptr) retiredParameterQueues.push_back(std::move(parameterQueue));
+    parameterQueue = std::move(candidate);
+    activeParameterQueue.store(parameterQueue.get(), std::memory_order_release);
     return true;
 }
 
@@ -459,18 +460,16 @@ juce::String PluginRack::currentPluginName() const {
 }
 
 bool PluginRack::setParameter(const int index, const float value, juce::String& error) noexcept {
-    const juce::SpinLock::ScopedLockType lock(pluginLock);
-    if (plugin == nullptr) {
+    if (!loaded.load(std::memory_order_acquire)) {
         error = "No VST3 plugin is loaded.";
         return false;
     }
-    const auto& parameters = plugin->getParameters();
-    if (index < 0 || index >= parameters.size() || parameters[index] == nullptr) {
+    const auto parameters = parameterStatus().getProperty("parameters", {});
+    if (!parameters.isArray() || index < 0 || index >= parameters.size()) {
         error = "Plugin parameter index is out of range.";
         return false;
     }
-    parameters[index]->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
-    updateParameterCache(*plugin);
+    enqueueParameterChange(index, value);
     return true;
 }
 
@@ -564,8 +563,20 @@ juce::var PluginRack::persistedState(juce::String& error) const {
     }
     auto* result = new juce::DynamicObject();
     juce::Array<juce::var> values;
-    for (auto* parameter : plugin->getParameters())
-        values.add(parameter != nullptr ? parameter->getValue() : 0.0f);
+    std::vector<CachedParameter> cached;
+    {
+        const juce::ScopedLock statusGuard(statusLock);
+        cached = cachedParameters;
+    }
+    const auto parameters = plugin->getParameters();
+    for (int index = 0; index < parameters.size(); ++index) {
+        const auto found =
+            std::find_if(cached.begin(), cached.end(),
+                         [index](const auto& parameter) { return parameter.index == index; });
+        values.add(found != cached.end()
+                       ? found->value
+                       : (parameters[index] != nullptr ? parameters[index]->getValue() : 0.0f));
+    }
     result->setProperty("parameterValues", values);
     result->setProperty("bypassed", bypassed.load(std::memory_order_acquire));
     try {
@@ -584,9 +595,22 @@ juce::var PluginRack::persistedState(juce::String& error) const {
     return juce::var(result);
 }
 
-void PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
-    if (!loaded.load(std::memory_order_acquire)) return;
-    pendingMidi.add(message);
+bool PluginRack::enqueueMidi(const juce::MidiMessage& message) noexcept {
+    if (!loaded.load(std::memory_order_acquire)) return false;
+    return pendingMidi.add(message);
+}
+
+bool PluginRack::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
+                                             juce::String& error) noexcept {
+    constexpr auto bytesPerEvent = PendingMidi::kMaximumMessageBytes + kMidiEventOverhead;
+    if (eventCapacity > (std::numeric_limits<int>::max() / bytesPerEvent) - PendingMidi::kCapacity -
+                            kMaximumPanicMidiEvents) {
+        error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
+        return false;
+    }
+    processMidi.ensureSize(static_cast<int>(
+        (eventCapacity + PendingMidi::kCapacity + kMaximumPanicMidiEvents) * bytesPerEvent));
+    return true;
 }
 
 void PluginRack::allNotesOff() noexcept { panicPending.store(true, std::memory_order_release); }
@@ -613,6 +637,8 @@ int PluginRack::tailSamples() const noexcept {
     return static_cast<int>(std::min(sampleRate * 30.0, std::ceil(seconds * sampleRate)));
 }
 
+std::uint64_t PluginRack::droppedMidiEvents() const noexcept { return pendingMidi.droppedEvents(); }
+
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
                          const int numSamples,
@@ -628,31 +654,18 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
             juce::FloatVectorOperations::clear(output, numSamples);
     }
 
-    const juce::SpinLock::ScopedTryLockType lock(pluginLock);
-    if (!lock.isLocked()) {
-        if (loaded.load(std::memory_order_acquire) ||
-            mutationInProgress.load(std::memory_order_acquire)) {
-            for (int channel = 0; channel < numOutputChannels; ++channel)
-                if (outputChannelData[channel] != nullptr)
-                    juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-            if (mutationInProgress.load(std::memory_order_acquire))
-                transitionBlocks.fetch_add(1, std::memory_order_relaxed);
-            else
-                contentionBlocks.fetch_add(1, std::memory_order_relaxed);
-        }
+    activeReaders.fetch_add(1, std::memory_order_acq_rel);
+    const auto leave = [this] { activeReaders.fetch_sub(1, std::memory_order_release); };
+    auto* active = activePlugin.load(std::memory_order_acquire);
+    auto* queue = activeParameterQueue.load(std::memory_order_acquire);
+    if (active == nullptr || numOutputChannels <= 0 || numSamples <= 0) {
+        leave();
         return;
     }
-    if (mutationInProgress.load(std::memory_order_acquire)) {
-        for (int channel = 0; channel < numOutputChannels; ++channel)
-            if (outputChannelData[channel] != nullptr)
-                juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        transitionBlocks.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    if (plugin == nullptr || numOutputChannels <= 0 || numSamples <= 0) return;
-    applyQueuedParameterChanges();
+    applyQueuedParameterChanges(active, queue);
     if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
+        leave();
         return;
     }
 
@@ -674,10 +687,8 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         }
     }
     if (timelineMidi != nullptr) {
-        std::size_t timelineEventCount = 0;
         for (const auto metadata : *timelineMidi) {
-            if (timelineEventCount >= kMaximumTimelineMidiEvents || metadata.data == nullptr ||
-                metadata.numBytes <= 0 ||
+            if (metadata.data == nullptr || metadata.numBytes <= 0 ||
                 static_cast<std::size_t>(metadata.numBytes) > PendingMidi::kMaximumMessageBytes) {
                 pendingMidi.recordDropped();
                 continue;
@@ -686,28 +697,26 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
                 pendingMidi.recordDropped();
                 continue;
             }
-            ++timelineEventCount;
         }
     }
     pendingMidi.appendTo(processMidi, numSamples);
-    plugin->processBlock(buffer, processMidi);
+    active->processBlock(buffer, processMidi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
+    leave();
 }
 
-void PluginRack::applyQueuedParameterChanges() noexcept {
-    if (plugin == nullptr) return;
-    const auto& parameters = plugin->getParameters();
-    const auto count =
-        std::min(parameters.size(),
-                 static_cast<int>(pendingParameterCapacity.load(std::memory_order_acquire)));
+void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const processor,
+                                             ParameterQueue* const queue) noexcept {
+    if (processor == nullptr || queue == nullptr) return;
+    const auto& parameters = processor->getParameters();
+    const auto count = std::min(parameters.size(), static_cast<int>(queue->capacity));
     for (int index = 0; index < count; ++index) {
-        if (!pendingParameterDirty[static_cast<std::size_t>(index)].exchange(
-                false, std::memory_order_acq_rel))
+        if (!queue->dirty[static_cast<std::size_t>(index)].exchange(false,
+                                                                    std::memory_order_acq_rel))
             continue;
         if (auto* parameter = parameters[index])
             parameter->setValueNotifyingHost(
-                pendingParameterValues[static_cast<std::size_t>(index)].load(
-                    std::memory_order_acquire));
+                queue->values[static_cast<std::size_t>(index)].load(std::memory_order_acquire));
     }
 }
 
@@ -745,8 +754,6 @@ juce::var PluginRack::cachedStatus(const bool includeParameters) const {
                         static_cast<juce::int64>(bypassedBlocks.load(std::memory_order_acquire)));
     result->setProperty("processedBlocks",
                         static_cast<juce::int64>(processedBlocks.load(std::memory_order_acquire)));
-    result->setProperty("contentionBlocks",
-                        static_cast<juce::int64>(contentionBlocks.load(std::memory_order_acquire)));
     result->setProperty("transitionBlocks",
                         static_cast<juce::int64>(transitionBlocks.load(std::memory_order_acquire)));
     result->setProperty("droppedMidiEvents", static_cast<juce::int64>(pendingMidi.droppedEvents()));

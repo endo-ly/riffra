@@ -13,14 +13,12 @@ pub trait ProjectionDriver: Send + Sync + 'static {
     fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;
     fn runtime_generation(&self) -> u64;
-    fn release_runtime_mute_if_allowed(&self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
     fn force_shutdown(&self) {}
 }
 
 /// Port used by the Transport executor. It contains no projection operations.
 pub trait TransportDriver: Send + Sync + 'static {
+    fn set_transport_starting(&self) -> Result<(), RuntimeError>;
     fn play_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
 }

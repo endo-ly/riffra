@@ -82,8 +82,19 @@ struct RecordingManifest {
     processed_dropout_start_sample: Option<u64>,
     processed_dropout_end_sample: Option<u64>,
     recovery_status: Option<String>,
+    finalization_error: Option<String>,
+    #[serde(default)]
+    tracks: Option<Vec<RecordingTrackManifest>>,
     #[serde(default)]
     capture: Option<RecordingCapture>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingTrackManifest {
+    raw_file: Option<String>,
+    processed_file: Option<String>,
+    midi_file: Option<String>,
 }
 
 /// Returns the canonical product references held by a `RecordingCapture`.
@@ -281,6 +292,29 @@ fn resolve_take_file(directory: &Path, file: Option<&str>, label: &str) -> Resul
     Ok(path.to_string_lossy().into_owned())
 }
 
+fn resolve_arrange_file(
+    directory: &Path,
+    file: &str,
+    label: &str,
+    require_existing: bool,
+) -> Result<String, String> {
+    let path = Path::new(file);
+    if file.trim().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "{label} file must be a safe relative path inside the take directory."
+        ));
+    }
+    let path = directory.join(path);
+    if require_existing && !path.is_file() {
+        return Err(format!("{label} file is missing from the take directory."));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
 pub fn media_paths(take_id: &str) -> Result<(Option<String>, Option<String>), String> {
     let (raw, processed, midi) = audio_paths(take_id)?;
     Ok((processed.or(raw), midi))
@@ -293,14 +327,7 @@ pub type RecordingAudioPaths = (Option<String>, Option<String>, Option<String>);
 pub fn audio_paths(take_id: &str) -> Result<RecordingAudioPaths, String> {
     let directory = Path::new(take_id.strip_prefix("recording:").unwrap_or(take_id));
     let manifest = read_manifest(&directory.join("manifest.json"))?;
-    let processed = manifest
-        .processed_file
-        .as_deref()
-        .and_then(|file| resolve_take_file(directory, Some(file), "Processed").ok());
-    let raw = manifest
-        .raw_file
-        .as_deref()
-        .and_then(|file| resolve_take_file(directory, Some(file), "Raw").ok());
+    let (raw, processed) = manifest_audio_paths(directory, &manifest, false)?;
     let midi = directory
         .join("midi.json")
         .is_file()
@@ -312,16 +339,7 @@ pub fn audio_paths(take_id: &str) -> Result<RecordingAudioPaths, String> {
 /// any Asset registration when a declared file is missing or unsafe.
 pub fn preflight_audio_paths(directory: &Path) -> Result<RecordingAudioPaths, String> {
     let manifest = read_manifest(&directory.join("manifest.json"))?;
-    let raw = manifest
-        .raw_file
-        .as_deref()
-        .map(|file| resolve_take_file(directory, Some(file), "Raw"))
-        .transpose()?;
-    let processed = manifest
-        .processed_file
-        .as_deref()
-        .map(|file| resolve_take_file(directory, Some(file), "Processed"))
-        .transpose()?;
+    let (raw, processed) = manifest_audio_paths(directory, &manifest, true)?;
     let midi = directory
         .join("midi.json")
         .is_file()
@@ -366,10 +384,60 @@ fn validate_manifest(
             return Ok((String::new(), String::new()));
         }
     }
-    let raw_path = resolve_take_file(directory, manifest.raw_file.as_deref(), "Raw")?;
-    let processed_path =
-        resolve_take_file(directory, manifest.processed_file.as_deref(), "Processed")?;
-    Ok((raw_path, processed_path))
+    let (raw_path, processed_path) = manifest_audio_paths(directory, manifest, true)?;
+    match (raw_path, processed_path) {
+        (Some(raw_path), Some(processed_path)) => Ok((raw_path, processed_path)),
+        _ => Err("Recording manifest does not declare usable audio files.".into()),
+    }
+}
+
+fn manifest_audio_paths(
+    directory: &Path,
+    manifest: &RecordingManifest,
+    require_existing: bool,
+) -> Result<(Option<String>, Option<String>), String> {
+    if manifest.raw_file.is_some() || manifest.processed_file.is_some() {
+        let raw = manifest
+            .raw_file
+            .as_deref()
+            .map(|file| resolve_take_file(directory, Some(file), "Raw"))
+            .transpose()?;
+        let processed = manifest
+            .processed_file
+            .as_deref()
+            .map(|file| resolve_take_file(directory, Some(file), "Processed"))
+            .transpose()?;
+        return Ok((raw, processed));
+    }
+
+    let Some(tracks) = manifest.tracks.as_ref() else {
+        return Ok((None, None));
+    };
+    let mut raw = None;
+    let mut processed = None;
+    for track in tracks {
+        if raw.is_none()
+            && let Some(file) = track.raw_file.as_deref()
+        {
+            raw = Some(resolve_arrange_file(
+                directory,
+                file,
+                "Raw",
+                require_existing,
+            )?);
+        }
+        if processed.is_none()
+            && let Some(file) = track.processed_file.as_deref()
+        {
+            processed = Some(resolve_arrange_file(
+                directory,
+                file,
+                "Processed",
+                require_existing,
+            )?);
+        }
+    }
+    Ok((raw, processed))
 }
 
 pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>, String> {
@@ -431,8 +499,11 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         {
             validation_error = Some(error);
         }
-        let error = manifest_error.or(validation_error);
-        let state = if error.is_some() {
+        let invalid_error = manifest_error.or(validation_error);
+        let error = invalid_error
+            .clone()
+            .or_else(|| manifest.finalization_error.clone());
+        let state = if invalid_error.is_some() {
             "invalid".into()
         } else {
             declared_state
@@ -441,7 +512,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
         if !query.is_empty() && !search_text.contains(&query) {
             continue;
         }
-        let (raw_path, processed_path) = if canonical_capture && error.is_none() {
+        let (raw_path, processed_path) = if canonical_capture && invalid_error.is_none() {
             (
                 raw_asset_id
                     .as_ref()
@@ -621,6 +692,125 @@ pub fn save_capture_start(directory: &Path, capture: RecordingCapture) -> std::i
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
     );
     persist_manifest(&manifest_path, &manifest)
+}
+
+/// Marks a stopped capture as completing before the native offline products
+/// are promoted into canonical Assets.
+pub fn save_capture_completing(directory: &Path) -> std::io::Result<()> {
+    let manifest_path = directory.join("manifest.json");
+    let mut parsed = read_manifest(&manifest_path).map_err(std::io::Error::other)?;
+    let mut capture = parsed.capture.take().unwrap_or_else(|| {
+        RecordingCapture::start(
+            format!("capture:{}", directory.to_string_lossy()),
+            "unknown",
+            now_ms(),
+        )
+    });
+    if capture.status == RecordingCaptureStatus::Recording {
+        let _ = capture.transition(RecordingCaptureStatus::Completing, now_ms());
+    }
+    let payload = fs::read(&manifest_path)?;
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let object = manifest.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    object.insert(
+        "capture".into(),
+        serde_json::to_value(capture)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    );
+    persist_manifest(&manifest_path, &manifest)
+}
+
+/// Persists the terminal recovery state when Native finalization cannot
+/// produce a complete processed take. Raw audio remains recoverable whenever
+/// the Native manifest contains a readable WAV with at least one sample.
+pub fn save_capture_finalization_failure(directory: &Path, message: &str) -> std::io::Result<()> {
+    let manifest_path = directory.join("manifest.json");
+    let payload = fs::read(&manifest_path)?;
+    let mut manifest = serde_json::from_slice::<serde_json::Value>(&payload)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let raw_usable = raw_audio_is_usable(directory, &manifest);
+    let target = if raw_usable {
+        RecordingCaptureStatus::Recoverable
+    } else {
+        RecordingCaptureStatus::Failed
+    };
+    let mut capture = manifest
+        .get("capture")
+        .cloned()
+        .map(serde_json::from_value::<RecordingCapture>)
+        .transpose()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+        .unwrap_or_else(|| {
+            RecordingCapture::start(
+                format!("capture:{}", directory.to_string_lossy()),
+                "unknown",
+                now_ms(),
+            )
+        });
+    if matches!(
+        capture.status,
+        RecordingCaptureStatus::Recording | RecordingCaptureStatus::Completing
+    ) {
+        capture
+            .transition(target, now_ms())
+            .map_err(std::io::Error::other)?;
+    }
+    let state = capture.status.as_str();
+    let recovery_status = match capture.status {
+        RecordingCaptureStatus::Completed => "clean",
+        RecordingCaptureStatus::Failed => "failed",
+        _ => "partial",
+    };
+    let object = manifest.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Recording manifest must be an object.",
+        )
+    })?;
+    object.insert("state".into(), serde_json::Value::String(state.into()));
+    object.insert(
+        "recoveryStatus".into(),
+        serde_json::Value::String(recovery_status.into()),
+    );
+    if !message.trim().is_empty() {
+        object.insert(
+            "finalizationError".into(),
+            serde_json::Value::String(message.to_owned()),
+        );
+    }
+    object.insert(
+        "capture".into(),
+        serde_json::to_value(capture)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+    );
+    persist_manifest(&manifest_path, &manifest)
+}
+
+fn raw_audio_is_usable(directory: &Path, manifest: &serde_json::Value) -> bool {
+    let candidates = manifest
+        .get("tracks")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flat_map(|tracks| tracks.iter())
+        .filter_map(|track| track.get("rawFile"))
+        .chain(manifest.get("rawFile"));
+    candidates
+        .filter_map(serde_json::Value::as_str)
+        .any(|file| {
+            let Ok(path) = resolve_arrange_file(directory, file, "Raw", true) else {
+                return false;
+            };
+            fs::read(path)
+                .ok()
+                .and_then(|bytes| partial_wav_samples(&bytes))
+                .is_some_and(|samples| samples > 0)
+        })
 }
 
 fn read_manifest(path: &Path) -> Result<RecordingManifest, String> {
@@ -814,6 +1004,23 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("riffra-recordings-{now}"))
+    }
+
+    fn one_sample_wav() -> Vec<u8> {
+        let mut wav = Vec::from(&b"RIFF"[..]);
+        wav.extend_from_slice(&40_u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&44_100_u32.to_le_bytes());
+        wav.extend_from_slice(&88_200_u32.to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&2_u32.to_le_bytes());
+        wav.extend_from_slice(&[0, 0]);
+        wav
     }
 
     #[test]
@@ -1291,6 +1498,77 @@ mod tests {
         assert_eq!(manifest["recordStartAudioSample"], 1_000);
         assert_eq!(manifest["tracks"][0]["trackId"], "track:guitar");
         assert!(manifest["capture"].is_object());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finalization_failure_terminates_completing_capture_as_recoverable_or_failed() {
+        let root = temp_root();
+        let recoverable = root.join("recordings/inbox/take-recoverable");
+        fs::create_dir_all(recoverable.join("tracks/0000")).unwrap();
+        let mut capture = RecordingCapture::start("capture:recoverable", "session-1", 1_000);
+        capture
+            .transition(RecordingCaptureStatus::Completing, 2_000)
+            .unwrap();
+        fs::write(
+            recoverable.join("manifest.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "state": "recording",
+                "tracks": [{
+                    "rawFile": "tracks/0000/raw.wav.partial",
+                    "processedFile": "tracks/0000/processed.wav.partial"
+                }],
+                "capture": capture,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            recoverable.join("tracks/0000/raw.wav.partial"),
+            one_sample_wav(),
+        )
+        .unwrap();
+        fs::write(
+            recoverable.join("tracks/0000/processed.wav.partial"),
+            b"partial processed",
+        )
+        .unwrap();
+
+        save_capture_finalization_failure(&recoverable, "offline effect failed").unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(recoverable.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["state"], "recoverable");
+        assert_eq!(manifest["capture"]["status"], "recoverable");
+        assert_eq!(manifest["finalizationError"], "offline effect failed");
+        let listed = list(&root, Some("take-recoverable")).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].state, "recoverable");
+        assert_eq!(listed[0].error.as_deref(), Some("offline effect failed"));
+        assert!(listed[0].raw_path.is_some());
+
+        let failed = root.join("recordings/inbox/take-failed");
+        fs::create_dir_all(&failed).unwrap();
+        let mut capture = RecordingCapture::start("capture:failed", "session-1", 1_000);
+        capture
+            .transition(RecordingCaptureStatus::Completing, 2_000)
+            .unwrap();
+        fs::write(
+            failed.join("manifest.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "state": "recording",
+                "capture": capture,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        save_capture_finalization_failure(&failed, "raw capture was unavailable").unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(failed.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["state"], "failed");
+        assert_eq!(manifest["capture"]["status"], "failed");
         let _ = fs::remove_dir_all(root);
     }
 

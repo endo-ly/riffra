@@ -27,12 +27,14 @@ interface GlobalControlBarProps {
   onExportProject: () => void;
   onImportProject: () => void;
   onToggleMute: () => void;
+  onResetFeedback: () => void;
   onOpenCommand: () => void;
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAudio: (audio: AudioStatus) => void;
   transportPlaying: boolean;
+  transportStarting: boolean;
   onPlay: () => void;
   onStop: () => void;
   onGoToStart: () => void;
@@ -125,8 +127,9 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         <TransportControls
           session={props.session}
           applyCanonicalState={props.applyCanonicalState}
-          recordingActive={props.audio.recording.active}
+          recordingActive={props.audio.recording.active || props.audio.recording.processing}
           transportPlaying={props.transportPlaying}
+          transportStarting={props.transportStarting}
           onPlay={props.onPlay}
           onStop={props.onStop}
           onGoToStart={props.onGoToStart}
@@ -191,6 +194,17 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
         >
           <Icon name="stop" />
         </button>
+        {props.audio.feedbackSuspected && (
+          <button
+            type="button"
+            className={styles.emergencyButton}
+            onClick={props.onResetFeedback}
+            aria-label="Reset feedback protection"
+            title="Reset feedback protection"
+          >
+            RESET FEEDBACK
+          </button>
+        )}
       </fieldset>
     </header>
   );

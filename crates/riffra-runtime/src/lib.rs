@@ -29,7 +29,7 @@ mod startup;
 pub(crate) mod test_support;
 
 pub use audio::{
-    AudioDeviceReopenOutcome, AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult,
+    AudioDeviceReopenOutcome, AudioSupervisor, NativeAudioError, NativeAudioResult,
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;
@@ -43,13 +43,15 @@ pub use instrument::{
 };
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
-    AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
-    AudioStatus, DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterInfo,
-    MidiDeviceInfo, PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult,
-    ProjectRecoveryState, ProjectState, ProjectSummary, RecordingFinalizationOutcome,
-    RecordingStatus, RecordingStopResult, RecoveryCandidate, RuntimeProjectionState,
-    RuntimeProjectionStatus, SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary,
-    TrackInstrumentSummarySource, TrackRackSummary, TrackSummary,
+    AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDiagnostics,
+    AudioDiagnosticsDevice, AudioDiagnosticsMute, AudioDiagnosticsOutput, AudioDiagnosticsRealtime,
+    AudioDiagnosticsReport, AudioDriverInfo, AudioInstrumentFault, AudioState, AudioStatus,
+    DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterInfo, MidiDeviceInfo,
+    PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult, ProjectRecoveryState,
+    ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary, TrackInstrumentSummarySource,
+    TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
@@ -57,5 +59,5 @@ pub use preferences::{
 };
 pub use runtime::{
     ProjectionDriver, ProjectionStatusHook, RuntimeDriver, RuntimeError, RuntimeReconciler,
-    RuntimeRecovery, TIMELINE_PREPARE_TIMEOUT, TransportDriver,
+    TIMELINE_PREPARE_TIMEOUT, TransportDriver,
 };

@@ -15,14 +15,17 @@ export function offlineAudioStatus(
     inputDevice: null,
     inputChannel: null,
     inputChannels: [],
+    activeInputChannels: [],
     outputDevice: null,
     outputChannels: [],
+    activeOutputChannels: [],
     sampleRate: null,
     bufferSize: null,
     roundTripMs: null,
     timelineTick: null,
     recording: {
       active: false,
+      processing: false,
       cancelled: false,
       directory: null,
       sampleRate: null,
@@ -56,6 +59,26 @@ export function offlineAudioStatus(
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
+    muteReasons: 0,
+    diagnostics: {
+      callbackCount: 0,
+      averageCallbackDurationUs: 0,
+      maximumCallbackDurationUs: 0,
+      callbackOverruns: 0,
+      preLimiterPeak: 0,
+      limiterGainReductionDb: 0,
+      hardClipSamples: 0,
+      liveMidiDrops: 0,
+      graphRevision: 0,
+      graphPublishCount: 0,
+      trackCount: 0,
+      instrumentRuntimeCount: 0,
+      pluginCount: 0,
+      maximumLatencySamples: 0,
+      projectionDurationMs: 0,
+      audioEnvironmentRevision: 0,
+      instrumentFaults: [],
+    },
     message,
   };
 }
@@ -67,7 +90,7 @@ export function offlineAudioStatus(
  */
 export function startingAudioStatus(): AudioStatus {
   return {
-    ...offlineAudioStatus('Native audio sidecar is starting in emergency-mute state.'),
+    ...offlineAudioStatus('Native audio sidecar is starting with the startup guard active.'),
     state: 'starting',
   };
 }

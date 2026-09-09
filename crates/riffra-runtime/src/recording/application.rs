@@ -25,10 +25,13 @@
 //! filesystem already provides.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use crate::HostEvent;
 use crate::asset;
 use crate::audio::AudioSupervisor;
 use crate::instrument::BuiltInInstrumentCatalog;
+use crate::jobs::JobRegistry;
 use crate::library;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus,
@@ -51,13 +54,16 @@ use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
 
 /// Concrete dependencies a Recording Application Operation needs. Bundling them
 /// keeps the operation signatures small without pulling in `tauri::State`.
-pub struct RecordingContext<'a> {
-    pub core: &'a AppCore<AudioSupervisor>,
-    pub audio: &'a AudioSupervisor,
-    pub runtime: &'a RuntimeReconciler<AudioSupervisor>,
+#[derive(Clone)]
+pub struct RecordingContext {
+    pub core: Arc<AppCore<AudioSupervisor>>,
+    pub audio: AudioSupervisor,
+    pub runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     pub storage: riffra_host::SessionStore,
-    pub data_root: &'a Path,
-    pub built_in_instruments: &'a BuiltInInstrumentCatalog,
+    pub data_root: PathBuf,
+    pub built_in_instruments: Arc<BuiltInInstrumentCatalog>,
+    pub events: crate::SharedHostEventSink,
+    pub jobs: JobRegistry,
     pub safe_mode: bool,
 }
 
@@ -66,21 +72,21 @@ pub struct RecordingContext<'a> {
 /// the native writer's output with the session context needed for recovery.
 /// Capture persistence is part of the operation contract; if it fails,
 /// recording is stopped again and the operation returns an error.
-pub fn start_recording(context: &RecordingContext<'_>) -> Result<AudioStatus, String> {
+pub fn start_recording(context: &RecordingContext) -> Result<AudioStatus, String> {
     start_recording_in_session(context, None)
 }
 
 /// Starts a new take in an existing Recording Session after the user has
 /// explicitly requested another take.
 pub fn record_another_take(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     recording_session_id: &str,
 ) -> Result<AudioStatus, String> {
     start_recording_in_session(context, Some(recording_session_id))
 }
 
 fn start_recording_in_session(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     recording_session_id: Option<&str>,
 ) -> Result<AudioStatus, String> {
     if context.safe_mode {
@@ -116,7 +122,11 @@ fn start_recording_in_session(
         ));
     }
     context.runtime.apply_and_wait(
-        runtime_timeline_snapshot(context.data_root, context.built_in_instruments, &session),
+        runtime_timeline_snapshot(
+            &context.data_root,
+            context.built_in_instruments.as_ref(),
+            &session,
+        ),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
@@ -206,8 +216,11 @@ fn build_startup_capture(
 /// buffers, and the resulting raw / processed / MIDI outputs are registered as
 /// canonical Assets. The take manifest's nested `RecordingCapture` is updated
 /// to point at those Asset IDs so the canonical state is the source of truth.
-pub fn stop_recording(context: &RecordingContext<'_>) -> Result<RecordingStopResult, String> {
+pub fn stop_recording(context: &RecordingContext) -> Result<RecordingStopResult, String> {
     let before = context.audio.refresh_status().ok();
+    let was_active = before
+        .as_ref()
+        .is_some_and(|status| status.recording.active);
     let status = context.audio.stop_arrange_recording()?;
     if status.recording.cancelled {
         return recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired);
@@ -217,58 +230,111 @@ pub fn stop_recording(context: &RecordingContext<'_>) -> Result<RecordingStopRes
         .directory
         .clone()
         .or_else(|| before.and_then(|status| status.recording.directory));
-    if let Some(directory) = directory {
-        let directory_path = PathBuf::from(directory);
-        match native_arrange_manifest(&directory_path) {
-            Err(error) => {
-                return recording_stop_result(
-                    context,
-                    status,
-                    RecordingFinalizationOutcome::RecoveryRequired { message: error },
-                );
-            }
-            Ok(Some(manifest)) => {
-                return match finalize_arrange_recording(context, &directory_path, &manifest) {
-                    Ok(mutation) => Ok(recording_stop_result_from_mutation(
-                        status,
-                        mutation,
-                        RecordingFinalizationOutcome::Completed,
-                    )),
-                    Err(error) => recording_stop_result(
-                        context,
-                        status,
-                        RecordingFinalizationOutcome::RecoveryRequired { message: error },
-                    ),
-                };
-            }
-            Ok(None) => {}
-        }
-        return match register_recording_outputs(context.data_root, &directory_path)
-            .and_then(|outputs| place_recording_on_timeline(context, &directory_path, outputs))
-        {
-            Ok(Some(mutation)) => Ok(recording_stop_result_from_mutation(
-                status,
-                mutation,
-                RecordingFinalizationOutcome::Completed,
-            )),
-            Ok(None) => {
-                recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired)
-            }
-            Err(error) => recording_stop_result(
+    if status.recording.processing || was_active {
+        let Some(directory) = directory else {
+            return recording_stop_result(
                 context,
                 status,
-                RecordingFinalizationOutcome::RecoveryRequired { message: error },
-            ),
+                RecordingFinalizationOutcome::RecoveryRequired {
+                    message: "Native recording stopped without a take directory.".into(),
+                },
+            );
         };
+        let directory_path = PathBuf::from(directory);
+        let _ = crate::recording::save_capture_completing(&directory_path);
+        if let Err(error) = context.audio.begin_recording_finalization(&directory_path) {
+            let error = error.to_string();
+            let error = persist_finalization_failure(&directory_path, error);
+            return Err(error);
+        }
+        if let Err(error) = queue_recording_finalization(context, directory_path.clone()) {
+            let error = persist_finalization_failure(&directory_path, error);
+            context.audio.finish_recording_finalization();
+            context.audio.emit_status();
+            return Err(error);
+        }
+        return recording_stop_result(context, status, RecordingFinalizationOutcome::Processing);
     }
     recording_stop_result(context, status, RecordingFinalizationOutcome::NotRequired)
 }
 
+fn finalize_stopped_recording(
+    context: &RecordingContext,
+    directory: &Path,
+) -> Result<Option<ArrangementMutationResult>, String> {
+    match native_arrange_manifest(directory)? {
+        Some(manifest) => finalize_arrange_recording(context, directory, &manifest).map(Some),
+        None => register_recording_outputs(&context.data_root, directory)
+            .and_then(|outputs| place_recording_on_timeline(context, directory, outputs)),
+    }
+}
+
+fn queue_recording_finalization(
+    context: &RecordingContext,
+    directory: PathBuf,
+) -> Result<(), String> {
+    let worker_context = context.clone();
+    let worker_directory = directory.clone();
+    let worker_id = format!("recording-finalize:{}", directory.display());
+    context
+        .jobs
+        .spawn_worker(&worker_id, "riffra-recording-finalize", move || {
+            let result = worker_context
+                .audio
+                .wait_for_recording_completion(&worker_directory)
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    crate::recording::save_capture_completing(&worker_directory).map_err(|error| {
+                        format!("Recording capture status could not be saved: {error}")
+                    })
+                })
+                .and_then(|()| finalize_stopped_recording(&worker_context, &worker_directory));
+            let result = match result {
+                Ok(result) => Ok(result),
+                Err(error) => Err(persist_finalization_failure(&worker_directory, error)),
+            };
+            worker_context.audio.finish_recording_finalization();
+            worker_context.audio.emit_status();
+            match result {
+                Ok(Some(mutation)) => {
+                    worker_context
+                        .events
+                        .emit(HostEvent::CanonicalStateChanged(mutation.canonical));
+                    worker_context.events.emit(HostEvent::RecordingFinalized {
+                        directory: worker_directory.to_string_lossy().into_owned(),
+                        succeeded: true,
+                        message: None,
+                    });
+                }
+                Ok(None) => worker_context.events.emit(HostEvent::RecordingFinalized {
+                    directory: worker_directory.to_string_lossy().into_owned(),
+                    succeeded: true,
+                    message: None,
+                }),
+                Err(error) => worker_context.events.emit(HostEvent::RecordingFinalized {
+                    directory: worker_directory.to_string_lossy().into_owned(),
+                    succeeded: false,
+                    message: Some(error),
+                }),
+            }
+        })
+}
+
+fn persist_finalization_failure(directory: &Path, error: String) -> String {
+    match crate::recording::save_capture_finalization_failure(directory, &error) {
+        Ok(()) => error,
+        Err(recovery_error) => {
+            format!("{error}; recording recovery state could not be saved: {recovery_error}")
+        }
+    }
+}
+
 fn recording_stop_result(
-    context: &RecordingContext<'_>,
-    audio: AudioStatus,
+    context: &RecordingContext,
+    mut audio: AudioStatus,
     finalization: RecordingFinalizationOutcome,
 ) -> Result<RecordingStopResult, String> {
+    context.audio.overlay_diagnostics(&mut audio);
     let canonical = context
         .core
         .canonical_state()
@@ -279,19 +345,6 @@ fn recording_stop_result(
         projection: ArrangementProjectionOutcome::NotRequired,
         finalization,
     })
-}
-
-fn recording_stop_result_from_mutation(
-    audio: AudioStatus,
-    mutation: ArrangementMutationResult,
-    finalization: RecordingFinalizationOutcome,
-) -> RecordingStopResult {
-    RecordingStopResult {
-        canonical: mutation.canonical,
-        audio,
-        projection: mutation.projection,
-        finalization,
-    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -560,7 +613,7 @@ struct PreparedArrangeFinalization {
 }
 
 fn prepare_arrange_finalization(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     directory: &Path,
     source_manifest: &NativeArrangeManifest,
 ) -> Result<PreparedArrangeFinalization, String> {
@@ -587,7 +640,7 @@ fn prepare_arrange_finalization(
         .record_start_timeline_sample
         .map(sample_to_ticks)
         .unwrap_or(manifest.timeline_start_tick);
-    let listed = crate::recording::list(context.data_root, None)?
+    let listed = crate::recording::list(&context.data_root, None)?
         .into_iter()
         .find(|recording| recording.path == directory.to_string_lossy());
     let recording_id = listed
@@ -1101,13 +1154,13 @@ fn materialize_arrange_candidate(
 }
 
 fn finalize_arrange_recording(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     directory: &Path,
     manifest: &NativeArrangeManifest,
 ) -> Result<ArrangementMutationResult, String> {
     let prepared = prepare_arrange_finalization(context, directory, manifest)?;
     let outputs = register_track_outputs(
-        context.data_root,
+        &context.data_root,
         directory,
         &prepared.manifest,
         &prepared.files,
@@ -1120,16 +1173,16 @@ fn finalize_arrange_recording(
         .map_err(|error| error.to_string())?;
     commit::finalize_arrangement_mutation(
         canonical,
-        context.runtime,
-        context.data_root,
-        context.built_in_instruments,
+        context.runtime.as_ref(),
+        &context.data_root,
+        context.built_in_instruments.as_ref(),
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )
 }
 
 fn commit_recording_session(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     base: &CreativeSession,
     candidate: CreativeSession,
 ) -> Result<(), String> {
@@ -1138,7 +1191,7 @@ fn commit_recording_session(
         .application(&context.storage)
         .commit_recording(base, candidate)
         .map_err(|error| error.to_string())?;
-    crate::library::index::refresh(context.data_root, &context.storage, &committed);
+    crate::library::index::refresh(&context.data_root, &context.storage, &committed);
     Ok(())
 }
 
@@ -1270,12 +1323,12 @@ fn register_recording_outputs(
 }
 
 fn place_recording_on_timeline(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     directory: &Path,
     outputs: (Option<AssetId>, Option<AssetId>, Option<AssetId>),
 ) -> Result<Option<ArrangementMutationResult>, String> {
     let (raw_asset_id, processed_asset_id, midi_asset_id) = outputs;
-    let listed = crate::recording::list(context.data_root, None)?
+    let listed = crate::recording::list(&context.data_root, None)?
         .into_iter()
         .find(|recording| recording.path == directory.to_string_lossy());
     let armed_track_ids = listed
@@ -1311,7 +1364,7 @@ fn place_recording_on_timeline(
     let audio_path = processed_asset_id
         .as_ref()
         .or(raw_asset_id.as_ref())
-        .and_then(|asset_id| crate::asset::load(context.data_root, asset_id))
+        .and_then(|asset_id| crate::asset::load(&context.data_root, asset_id))
         .map(|asset| asset.content_location);
     let audio_source = audio_path
         .as_ref()
@@ -1582,9 +1635,9 @@ fn place_recording_on_timeline(
         .map_err(|error| error.to_string())?;
     Ok(Some(commit::finalize_arrangement_mutation(
         canonical,
-        context.runtime,
-        context.data_root,
-        context.built_in_instruments,
+        context.runtime.as_ref(),
+        &context.data_root,
+        context.built_in_instruments.as_ref(),
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )?))
@@ -1593,22 +1646,22 @@ fn place_recording_on_timeline(
 /// Lists Recording read models from the Inbox and re-syncs the Library Read
 /// Model so the UI reflects the filesystem state.
 pub fn list_recordings(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     query: Option<&str>,
 ) -> Result<Vec<RecordingAsset>, String> {
-    let assets = crate::recording::list(context.data_root, query)?;
-    library::sync_recordings(context.data_root, &assets)?;
+    let assets = crate::recording::list(&context.data_root, query)?;
+    library::sync_recordings(&context.data_root, &assets)?;
     Ok(assets)
 }
 
 /// Renames an Inbox take, then updates the canonical Asset content location
 /// and the Library Read Model so the take is still found under its new name.
 pub fn rename_recording(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     id: &str,
     new_name: &str,
 ) -> Result<String, String> {
-    let new_id = crate::recording::rename(context.data_root, id, new_name)?;
+    let new_id = crate::recording::rename(&context.data_root, id, new_name)?;
     relocate_take(context, id, &new_id)?;
     Ok(new_id)
 }
@@ -1616,37 +1669,37 @@ pub fn rename_recording(
 /// Deletes an Inbox take from the filesystem and removes its Library Read
 /// Model rows. Canonical Asset rows are left in place so takes that have
 /// already been promoted into the session (clips, pads) keep their references.
-pub fn delete_recording(context: &RecordingContext<'_>, id: &str) -> Result<(), String> {
-    crate::recording::delete(context.data_root, id)?;
-    library::remove_recording_assets(context.data_root, id)?;
+pub fn delete_recording(context: &RecordingContext, id: &str) -> Result<(), String> {
+    crate::recording::delete(&context.data_root, id)?;
+    library::remove_recording_assets(&context.data_root, id)?;
     Ok(())
 }
 
 /// Moves an Inbox take into the archive directory, then updates the Asset and
 /// Library Read Model to follow the new location.
-pub fn archive_recording(context: &RecordingContext<'_>, id: &str) -> Result<String, String> {
-    let new_id = crate::recording::archive(context.data_root, id)?;
+pub fn archive_recording(context: &RecordingContext, id: &str) -> Result<String, String> {
+    let new_id = crate::recording::archive(&context.data_root, id)?;
     relocate_take(context, id, &new_id)?;
     Ok(new_id)
 }
 
 /// Promotes an Inbox take into the library directory, then updates the Asset
 /// and Library Read Model to follow the new location.
-pub fn promote_recording(context: &RecordingContext<'_>, id: &str) -> Result<String, String> {
-    let new_id = crate::recording::promote(context.data_root, id)?;
+pub fn promote_recording(context: &RecordingContext, id: &str) -> Result<String, String> {
+    let new_id = crate::recording::promote(&context.data_root, id)?;
     relocate_take(context, id, &new_id)?;
     Ok(new_id)
 }
 
 /// Updates the Library Read Model tag/note for an Inbox take.
 pub fn tag_recording(
-    context: &RecordingContext<'_>,
+    context: &RecordingContext,
     id: &str,
     tag: Option<String>,
     note: Option<String>,
 ) -> Result<library::LibraryAsset, String> {
     library::update_metadata(
-        context.data_root,
+        &context.data_root,
         &library::recording_asset_id(id),
         tag,
         note,
@@ -1654,21 +1707,19 @@ pub fn tag_recording(
 }
 
 /// Groups Inbox takes by identical primary audio content.
-pub fn detect_duplicate_recordings(
-    context: &RecordingContext<'_>,
-) -> Result<Vec<Vec<String>>, String> {
-    crate::recording::detect_duplicates(context.data_root)
+pub fn detect_duplicate_recordings(context: &RecordingContext) -> Result<Vec<Vec<String>>, String> {
+    crate::recording::detect_duplicates(&context.data_root)
 }
 
 /// Shared helper for the rename/archive/promote flows: after the on-disk take
 /// directory has moved, refresh the Library Read Model row and rewrite the
 /// canonical Asset content-location so the index never points at a stale path.
-fn relocate_take(context: &RecordingContext<'_>, old_id: &str, new_id: &str) -> Result<(), String> {
+fn relocate_take(context: &RecordingContext, old_id: &str, new_id: &str) -> Result<(), String> {
     let (audio_path, _midi_path) = crate::recording::media_paths(new_id)?;
-    library::relocate_recording(context.data_root, old_id, new_id, audio_path.as_deref())?;
+    library::relocate_recording(&context.data_root, old_id, new_id, audio_path.as_deref())?;
     let old_directory = old_id.strip_prefix("recording:").unwrap_or(old_id);
     let new_directory = new_id.strip_prefix("recording:").unwrap_or(new_id);
-    asset::relocate_content_location(context.data_root, old_directory, new_directory)?;
+    asset::relocate_content_location(&context.data_root, old_directory, new_directory)?;
     Ok(())
 }
 
@@ -1681,7 +1732,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Arc, OnceLock},
+        sync::Arc,
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -1710,31 +1761,27 @@ mod tests {
             .unwrap()
     }
 
-    fn context_for<'a>(
-        data_root: &'a Path,
-        audio: &'a AudioSupervisor,
-        runtime: &'a RuntimeReconciler<AudioSupervisor>,
-        safe_mode: bool,
-    ) -> RecordingContext<'a> {
-        static TEST_CORE: OnceLock<AppCore<AudioSupervisor>> = OnceLock::new();
+    fn context_for(data_root: &Path, audio: &AudioSupervisor, safe_mode: bool) -> RecordingContext {
+        let core = Arc::new(AppCore::new(
+            data_root.to_path_buf(),
+            CreativeSession::new(0),
+            audio.clone(),
+            false,
+            false,
+        ));
+        let runtime = Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap());
         RecordingContext {
-            core: TEST_CORE.get_or_init(|| {
-                AppCore::new(
-                    PathBuf::new(),
-                    CreativeSession::new(0),
-                    AudioSupervisor::offline("test"),
-                    false,
-                    false,
-                )
-            }),
-            audio,
+            core,
+            audio: audio.clone(),
             runtime,
             storage: riffra_host::SessionStore::new(
                 data_root,
                 "01900000-0000-7000-8000-000000000001",
             ),
-            data_root,
-            built_in_instruments: crate::test_support::empty_built_in_catalog(),
+            data_root: data_root.to_path_buf(),
+            built_in_instruments: Arc::new(crate::test_support::empty_built_in_catalog().clone()),
+            events: Arc::new(crate::NoopHostEventSink),
+            jobs: crate::jobs::JobRegistry::default(),
             safe_mode,
         }
     }
@@ -1790,12 +1837,11 @@ mod tests {
     fn rename_relocates_take_and_updates_library_and_asset() {
         let root = temp_root("rename");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
         // Relocation requires the Library Read Model row to already exist, so
         // sync the Inbox before any rename/archive/promote just like production.
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, false);
         let new_id = rename_recording(&ctx, &id, "renamed").unwrap();
         assert!(new_id.ends_with("renamed"));
         assert!(root.join("recordings/inbox/renamed").is_dir());
@@ -1807,9 +1853,8 @@ mod tests {
     fn delete_removes_take_and_library_rows() {
         let root = temp_root("delete");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let id = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, false);
         delete_recording(&ctx, &id).unwrap();
         assert!(!root.join("recordings/inbox/take-a").exists());
         let _ = fs::remove_dir_all(root);
@@ -1819,10 +1864,9 @@ mod tests {
     fn archive_and_promote_relocate_out_of_inbox() {
         let root = temp_root("relocate");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let archive_id = seed_take(&root, "take-archive", b"a");
         library::sync_recordings(&root, &crate::recording::list(&root, None).unwrap()).unwrap();
-        let ctx = context_for(&root, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, false);
         let _ = archive_recording(&ctx, &archive_id).unwrap();
         assert!(root.join("recordings/archive/take-archive").is_dir());
         let _ = fs::remove_dir_all(root);
@@ -1832,8 +1876,7 @@ mod tests {
     fn safe_mode_blocks_start_recording() {
         let root = temp_root("safe");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
-        let ctx = context_for(&root, &audio, &runtime, true);
+        let ctx = context_for(&root, &audio, true);
         let error = start_recording(&ctx).unwrap_err();
         assert!(error.contains("Safe Mode"));
         let _ = fs::remove_dir_all(root);
@@ -1843,7 +1886,6 @@ mod tests {
     fn no_armed_track_rejects_recording_before_audio_start() {
         let root = temp_root("no-armed-track");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let mut session = CreativeSession::new(1);
         session
             .arrangement
@@ -1851,12 +1893,14 @@ mod tests {
             .push(Track::audio("track:unarmed".into(), "Unarmed".into()));
         let core = AppCore::new(root.clone(), session, audio.clone(), false, false);
         let ctx = RecordingContext {
-            core: &core,
-            audio: &audio,
-            runtime: &runtime,
+            core: Arc::new(core),
+            audio: audio.clone(),
+            runtime: Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap()),
             storage: riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001"),
-            data_root: &root,
-            built_in_instruments: crate::test_support::empty_built_in_catalog(),
+            data_root: root.clone(),
+            built_in_instruments: Arc::new(crate::test_support::empty_built_in_catalog().clone()),
+            events: Arc::new(crate::NoopHostEventSink),
+            jobs: crate::jobs::JobRegistry::default(),
             safe_mode: false,
         };
 
@@ -2124,9 +2168,8 @@ mod tests {
     fn list_syncs_library_read_model() {
         let root = temp_root("list");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"processed");
-        let ctx = context_for(&root, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, false);
         let recordings = list_recordings(&ctx, None).unwrap();
         assert_eq!(recordings.len(), 1);
         let _ = fs::remove_dir_all(root);
@@ -2136,11 +2179,10 @@ mod tests {
     fn detect_duplicates_returns_groups() {
         let root = temp_root("dupes");
         let audio = AudioSupervisor::offline("test");
-        let runtime = RuntimeReconciler::new(Arc::new(audio.clone()), None).unwrap();
         let _ = seed_take(&root, "take-a", b"identical");
         let _ = seed_take(&root, "take-b", b"identical");
         let _ = seed_take(&root, "take-c", b"different");
-        let ctx = context_for(&root, &audio, &runtime, false);
+        let ctx = context_for(&root, &audio, false);
         let groups = detect_duplicate_recordings(&ctx).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);

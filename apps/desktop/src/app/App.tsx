@@ -107,6 +107,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     query,
     recordings,
     transportPlaying,
+    transportStarting,
     recordingCommandPending,
     startRecordingNow,
     runtimeProjectionStatus,
@@ -140,6 +141,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     undo,
     redo,
     toggleMute,
+    resetFeedback,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     updateSelectedLibraryAsset,
@@ -313,12 +315,14 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onOpenProject={openProject}
         onRenameProject={renameProject}
         onToggleMute={() => void toggleMute()}
+        onResetFeedback={() => void resetFeedback()}
         onOpenCommand={() => setCommandOpen(true)}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}
         applyCanonicalState={applyCanonicalState}
         setAudio={setAudio}
         transportPlaying={transportPlaying}
+        transportStarting={transportStarting}
         onPlay={() => void playTransport()}
         onStop={() => void stopTransport()}
         onGoToStart={() => void goToStart()}
@@ -333,7 +337,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         audio={audio}
         probe={deviceProbe}
         safeMode={boot.safeMode}
-        recordingActive={audio.recording.active || recordingCommandPending}
+        recordingActive={
+          audio.recording.active || audio.recording.processing || recordingCommandPending
+        }
         onClose={() => setAudioSettingsOpen(false)}
         onRefresh={refreshAudioDevices}
         onProbeChannels={probeAudioChannels}
@@ -529,7 +535,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               setSelection={arrange.setSelection}
               api={nativeApi}
               audio={audio}
-              onToggleTransport={() => void (transportPlaying ? stopTransport() : playTransport())}
+              onToggleTransport={() =>
+                void (transportPlaying || transportStarting ? stopTransport() : playTransport())
+              }
               plugins={plugins}
               builtInInstruments={boot?.builtInInstruments ?? []}
               focusedTrackId={arrange.focusedTrackId}

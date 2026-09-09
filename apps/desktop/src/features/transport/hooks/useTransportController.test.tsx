@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession } from '@/native/browser-defaults';
@@ -18,22 +18,34 @@ function Harness({ api }: { api: FakeNativeApi }) {
       <button onClick={() => void transport.playTransport()}>Play</button>
       <button onClick={() => void transport.stopTransport()}>Stop</button>
       <button onClick={() => void transport.goToStart()}>Go to Start</button>
-      <output>{transport.transportPlaying ? 'transport-playing' : ''}</output>
+      <output>
+        {transport.transportStarting
+          ? 'transport-starting'
+          : transport.transportPlaying
+            ? 'transport-playing'
+            : ''}
+      </output>
     </>
   );
 }
 
 describe('useTransportController', () => {
+  it('reports Starting until the native Playing status arrives', async () => {
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(api.calls).toContain('playTimeline'));
+
+    act(() => api.emitTransportStatus({ state: 'starting' }));
+    expect(screen.getByText('transport-starting')).toBeInTheDocument();
+
+    act(() => api.emitTransportStatus({ state: 'playing' }));
+    await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
+  });
+
   it('stops a timeline play request before the playing status arrives', async () => {
     const api = new FakeNativeApi();
-    let playSequence = 0;
-    let stopSequence = 0;
-    api.setResponse('playTimeline', (sequence: unknown) => {
-      playSequence = Number(sequence);
-    });
-    api.setResponse('stopTimeline', (sequence: unknown) => {
-      stopSequence = Number(sequence);
-    });
     render(<Harness api={api} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
@@ -41,19 +53,12 @@ describe('useTransportController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
 
     await waitFor(() => expect(api.calls).toContain('stopTimeline'));
-    expect(stopSequence).toBeGreaterThan(playSequence);
+    expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'stopTimeline')).toHaveLength(1);
   });
 
   it('moves a timeline play request to the start before the playing status arrives', async () => {
     const api = new FakeNativeApi();
-    let playSequence = 0;
-    let startSequence = 0;
-    api.setResponse('playTimeline', (sequence: unknown) => {
-      playSequence = Number(sequence);
-    });
-    api.setResponse('goToStartTimeline', (sequence: unknown) => {
-      startSequence = Number(sequence);
-    });
     render(<Harness api={api} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
@@ -61,7 +66,8 @@ describe('useTransportController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to Start' }));
 
     await waitFor(() => expect(api.calls).toContain('goToStartTimeline'));
-    expect(startSequence).toBeGreaterThan(playSequence);
+    expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'goToStartTimeline')).toHaveLength(1);
   });
 
   it('starts a newer Play intent while Stop is still pending', async () => {

@@ -27,11 +27,14 @@ public:
                  const juce::MidiBuffer* midi,
                  const InstrumentProcessContext& context) noexcept override;
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept override;
+    [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
+                                                   juce::String& error) noexcept override;
     void allNotesOff() noexcept override;
     void resetForTransportDiscontinuity() noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;
     [[nodiscard]] int tailSamples() const noexcept override;
     void setBypassed(bool shouldBypass) noexcept override;
+    [[nodiscard]] const char* typeName() const noexcept override { return "Sonalloy"; }
 
     [[nodiscard]] std::uint32_t faultCode() const noexcept override;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;
@@ -66,9 +69,13 @@ private:
         std::uint32_t startedSampleOffset = 0;
     };
 
+    // The Sonalloy callback accepts at most 1024 events. Reserve the full
+    // live queue headroom so Timeline and live MIDI can share one callback.
     static constexpr std::size_t kMaximumEventsPerBlock = 1024;
     static constexpr std::size_t kMaximumActiveNotes = 4096;
     static constexpr std::size_t kMaximumPendingMidi = 256;
+    static constexpr std::size_t kMaximumTimelineEventsPerBlock =
+        kMaximumEventsPerBlock - kMaximumPendingMidi;
 
     SonalloyInstrumentRuntime(CompiledPtr compiled, RuntimePtr runtime, int blockSize,
                               int latencySamples) noexcept;

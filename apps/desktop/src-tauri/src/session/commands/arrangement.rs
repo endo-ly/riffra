@@ -5,7 +5,7 @@ pub async fn send_midi_to_track(
     track_id: String,
     bytes: Vec<u8>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), NativeCommandError> {
     dispatch(
         app,
         "midi.send",
@@ -15,7 +15,15 @@ pub async fn send_midi_to_track(
 }
 
 #[tauri::command]
-pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), String> {
+pub async fn set_live_midi_target(
+    track_id: Option<String>,
+    app: AppHandle,
+) -> Result<(), NativeCommandError> {
+    dispatch(app, "midi.target.set", json!({ "trackId": track_id })).await
+}
+
+#[tauri::command]
+pub async fn panic_midi_track(track_id: String, app: AppHandle) -> Result<(), NativeCommandError> {
     dispatch(app, "midi.panic", json!({ "trackId": track_id })).await
 }
 
@@ -26,7 +34,7 @@ pub async fn add_audio_clip_to_arrangement(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.add-asset",
@@ -47,7 +55,7 @@ pub async fn create_midi_clip(
     duration_ticks: u64,
     name: Option<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-clip.create",
@@ -68,7 +76,7 @@ pub async fn add_midi_clip_to_arrangement(
     start_tick: Option<TimelineTick>,
     track_id: Option<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-clip.add-asset",
@@ -87,7 +95,7 @@ pub async fn update_audio_clip(
     clip_id: String,
     patch: AudioClipPatch,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.update",
@@ -101,7 +109,7 @@ pub async fn remove_timeline_clips(
     audio_clip_ids: Vec<String>,
     midi_clip_ids: Vec<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "clip.remove",
@@ -116,7 +124,7 @@ pub async fn trim_audio_clip(
     start_tick: TimelineTick,
     source_range: FrameRange,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.trim",
@@ -130,7 +138,7 @@ pub async fn split_audio_clip(
     clip_id: String,
     split_tick: TimelineTick,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.split",
@@ -143,7 +151,7 @@ pub async fn split_audio_clip(
 pub async fn duplicate_audio_clip(
     clip_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "audio-clip.duplicate", json!({ "clipId": clip_id })).await
 }
 
@@ -151,7 +159,7 @@ pub async fn duplicate_audio_clip(
 pub async fn move_audio_clips(
     moves: Vec<AudioClipMove>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "audio-clip.move", json!({ "moves": moves })).await
 }
 
@@ -160,7 +168,7 @@ pub async fn update_midi_clip(
     clip_id: String,
     patch: MidiClipPatch,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-clip.update",
@@ -173,7 +181,7 @@ pub async fn update_midi_clip(
 pub async fn move_midi_clips(
     moves: Vec<MidiClipMove>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "midi-clip.move", json!({ "moves": moves })).await
 }
 
@@ -183,7 +191,7 @@ pub async fn trim_midi_clip(
     start_tick: TimelineTick,
     duration_ticks: u64,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-clip.trim",
@@ -197,7 +205,7 @@ pub async fn split_midi_clip(
     clip_id: String,
     split_tick: TimelineTick,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-clip.split",
@@ -210,7 +218,7 @@ pub async fn split_midi_clip(
 pub async fn duplicate_midi_clip(
     clip_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "midi-clip.duplicate", json!({ "clipId": clip_id })).await
 }
 
@@ -220,7 +228,7 @@ pub async fn paste_timeline_clips(
     midi_clip_ids: Vec<String>,
     start_tick: TimelineTick,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "clip.paste",
@@ -238,7 +246,7 @@ pub async fn crossfade_audio_clips(
     first_id: String,
     second_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.crossfade",
@@ -251,7 +259,7 @@ pub async fn crossfade_audio_clips(
 pub async fn update_arrangement_timebase(
     timebase: ProjectTimebase,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "timebase.update", timebase).await
 }
 
@@ -261,7 +269,7 @@ pub async fn update_timeline_loop_range(
     start_tick: TimelineTick,
     end_tick: TimelineTick,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "loop-range.set",
@@ -276,7 +284,7 @@ pub async fn update_timeline_punch_range(
     start_tick: TimelineTick,
     end_tick: TimelineTick,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "punch-range.set",
@@ -290,7 +298,7 @@ pub async fn add_track(
     name: String,
     kind: TrackKind,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "track.add", json!({ "name": name, "kind": kind })).await
 }
 
@@ -299,8 +307,9 @@ pub async fn update_track(
     track_id: String,
     patch: riffra_core::TrackPatch,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
-    let mut params = serde_json::to_value(patch).map_err(|error| error.to_string())?;
+) -> Result<ArrangementMutationResult, NativeCommandError> {
+    let mut params = serde_json::to_value(patch)
+        .map_err(|error| NativeCommandError::invalid_request(error.to_string()))?;
     params["trackId"] = Value::String(track_id);
     dispatch_json(app, "track.update", params).await
 }
@@ -311,7 +320,7 @@ pub async fn set_track_automation(
     parameter: AutomationParameter,
     points: Vec<AutomationPoint>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "automation.set",
@@ -325,7 +334,7 @@ pub async fn set_track_audio_input(
     track_id: String,
     channel_index: Option<u32>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     let command = if channel_index.is_some() {
         "track.audio-input.set"
     } else {
@@ -344,7 +353,7 @@ pub async fn set_track_midi_input(
     track_id: String,
     route: MidiInputRoute,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     let command = if route.device_id.is_some() || route.channel.is_some() {
         "track.midi-input.set"
     } else {
@@ -362,7 +371,7 @@ pub async fn set_track_midi_input(
 pub async fn remove_track(
     track_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "track.remove", json!({ "trackId": track_id })).await
 }
 
@@ -370,7 +379,7 @@ pub async fn remove_track(
 pub async fn duplicate_track(
     track_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "track.duplicate", json!({ "trackId": track_id })).await
 }
 
@@ -379,7 +388,7 @@ pub async fn reorder_track(
     track_id: String,
     target_index: usize,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "track.reorder",
@@ -393,7 +402,7 @@ pub async fn add_marker(
     tick: TimelineTick,
     name: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "marker.add", json!({ "tick": tick.0, "name": name })).await
 }
 
@@ -403,7 +412,7 @@ pub async fn update_marker(
     name: Option<String>,
     tick: Option<TimelineTick>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "marker.update",
@@ -416,7 +425,7 @@ pub async fn update_marker(
 pub async fn remove_marker(
     marker_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "marker.remove", json!({ "markerId": marker_id })).await
 }
 
@@ -429,7 +438,7 @@ pub async fn add_midi_note(
     velocity: u8,
     channel: u8,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.add",
@@ -450,7 +459,7 @@ pub async fn insert_midi_notes(
     clip_id: String,
     notes: Vec<MidiNoteInput>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.insert",
@@ -465,7 +474,7 @@ pub async fn update_midi_note(
     note_id: String,
     patch: MidiNotePatch,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.update",
@@ -479,7 +488,7 @@ pub async fn update_midi_notes(
     clip_id: String,
     updates: Vec<MidiNoteUpdate>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.update-many",
@@ -493,7 +502,7 @@ pub async fn remove_midi_note(
     clip_id: String,
     note_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.remove",
@@ -507,7 +516,7 @@ pub async fn remove_midi_notes(
     clip_id: String,
     note_ids: Vec<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.remove-many",
@@ -522,7 +531,7 @@ pub async fn quantize_midi_notes(
     note_ids: Vec<String>,
     grid_ticks: u64,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.quantize",
@@ -538,7 +547,7 @@ pub async fn transform_midi_notes(
     transpose_semitones: i16,
     velocity_offset: i16,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.transform",
@@ -558,7 +567,7 @@ pub async fn duplicate_midi_notes(
     note_ids: Vec<String>,
     offset_ticks: u64,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "midi-note.duplicate",
@@ -572,7 +581,7 @@ pub async fn set_audio_clip_take_variant(
     clip_id: String,
     variant: AudioTakeVariant,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "audio-clip.take-variant.set",
@@ -582,7 +591,10 @@ pub async fn set_audio_clip_take_variant(
 }
 
 #[tauri::command]
-pub async fn start_take_comparison(take_id: String, app: AppHandle) -> Result<AudioStatus, String> {
+pub async fn start_take_comparison(
+    take_id: String,
+    app: AppHandle,
+) -> Result<AudioStatus, NativeCommandError> {
     dispatch(app, "take.comparison.start", json!({ "takeId": take_id })).await
 }
 
@@ -590,12 +602,12 @@ pub async fn start_take_comparison(take_id: String, app: AppHandle) -> Result<Au
 pub async fn switch_take_comparison_variant(
     variant: AudioTakeVariant,
     app: AppHandle,
-) -> Result<AudioStatus, String> {
+) -> Result<AudioStatus, NativeCommandError> {
     dispatch(app, "take.comparison.switch", json!({ "variant": variant })).await
 }
 
 #[tauri::command]
-pub async fn stop_take_comparison(app: AppHandle) -> Result<AudioStatus, String> {
+pub async fn stop_take_comparison(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
     dispatch(app, "take.comparison.stop", json!({})).await
 }
 
@@ -604,7 +616,7 @@ pub async fn activate_take(
     session_id: String,
     take_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "take.activate",
@@ -617,7 +629,7 @@ pub async fn activate_take(
 pub async fn place_take_as_separate_clip(
     take_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "take.place-separate-clip",

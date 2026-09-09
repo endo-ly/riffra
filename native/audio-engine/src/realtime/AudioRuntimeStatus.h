@@ -2,6 +2,7 @@
 
 namespace riffra {
 
-[[nodiscard]] bool deviceLossRequiresFault(bool devicePresent, bool audioActive) noexcept;
+[[nodiscard]] bool deviceLossRequiresFault(bool devicePresent,
+                                           bool deviceTransitionActive) noexcept;
 
 }  // namespace riffra

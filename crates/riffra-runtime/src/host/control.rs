@@ -1,6 +1,8 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
+use crate::runtime_snapshot::runtime_timeline_snapshot;
+use std::time::Duration;
 
 impl HostState {
     fn response(
@@ -597,6 +599,17 @@ impl HostState {
                     current.sequence,
                 ))
             }
+            "audio.feedback-protection.reset" => Ok((
+                "audioStatus",
+                serde_json::to_value(
+                    self.core
+                        .audio()
+                        .reset_feedback_protection()
+                        .map_err(audio_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
             "midi.listening.enable" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable(
@@ -676,18 +689,28 @@ impl HostState {
                 current.sequence,
             )),
             "runtime.projection.retry" => {
-                if self.runtime.reset_for_repair() {
-                    Ok((
-                        "runtimeProjection",
-                        serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
-                        current.sequence,
-                    ))
-                } else {
-                    Err(ProtocolError::new(
-                        ErrorCode::CommandFailed,
-                        "runtime projection is not waiting for repair",
-                    ))
-                }
+                let target = self
+                    .canonical()
+                    .map_err(|error| command_error(error.to_string()))?;
+                self.runtime
+                    .apply_and_wait(
+                        runtime_timeline_snapshot(
+                            &self.data_root,
+                            self.built_in_instruments.as_ref(),
+                            &target.session,
+                        ),
+                        riffra_core::ProjectionKey {
+                            sequence: target.sequence,
+                            session_revision: target.session.arrangement.revision,
+                        },
+                        Duration::from_secs(60),
+                    )
+                    .map_err(runtime_error)?;
+                Ok((
+                    "runtimeProjection",
+                    serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
+                    target.sequence,
+                ))
             }
             "transport.play" => {
                 if self.core.safe_mode() {
@@ -695,21 +718,11 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
                 self.runtime
-                    .apply_and_play(
-                        params.transport_sequence,
-                        crate::runtime_snapshot::runtime_timeline_snapshot(
-                            &self.data_root,
-                            self.built_in_instruments.as_ref(),
-                            &current.session,
-                        ),
-                        riffra_core::ProjectionKey {
-                            sequence: current.sequence,
-                            session_revision: current.session.arrangement.revision,
-                        },
-                        std::time::Duration::from_secs(30),
-                    )
+                    .request_play_when_ready(riffra_core::ProjectionKey {
+                        sequence: current.sequence,
+                        session_revision: current.session.arrangement.revision,
+                    })
                     .map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
@@ -719,10 +732,7 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
-                self.runtime
-                    .stop(params.transport_sequence)
-                    .map_err(runtime_error)?;
+                self.runtime.stop().map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
             "transport.go-to-start" => {
@@ -731,9 +741,8 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                let params: TransportParams = decode(params)?;
                 self.runtime
-                    .stop_and_seek_to_start(params.transport_sequence, || {
+                    .stop_and_seek_to_start(|| {
                         self.core
                             .audio()
                             .seek_timeline(0)
@@ -761,6 +770,14 @@ impl HostState {
                     .map_err(serialize_error)?,
                 current.sequence,
             )),
+            "audio.diagnostics" => {
+                let params: AudioDiagnosticsParams = decode(params)?;
+                Ok((
+                    "audioDiagnostics",
+                    self.audio_diagnostics(params.debug)?,
+                    current.sequence,
+                ))
+            }
             "audio.probe" => Ok((
                 "audioProbe",
                 if self.core.safe_mode() {
@@ -910,6 +927,14 @@ impl HostState {
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
+            "midi.target.set" => {
+                let params: LiveMidiTargetParams = decode(params)?;
+                self.core
+                    .audio()
+                    .set_live_midi_target(params.track_id.as_deref())
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
             "midi.panic" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
@@ -987,15 +1012,17 @@ impl HostState {
                     .lock()
                     .map_err(|_| command_error("recording operation lock was poisoned"))?;
                 let context = RecordingContext {
-                    core: &self.core,
-                    audio: self.core.audio(),
-                    runtime: &self.runtime,
+                    core: Arc::clone(&self.core),
+                    audio: self.core.audio().clone(),
+                    runtime: Arc::clone(&self.runtime),
                     storage: self
                         .project_store
                         .active_session_store()
                         .map_err(|error| command_error(error.to_string()))?,
-                    data_root: &self.data_root,
-                    built_in_instruments: self.built_in_instruments.as_ref(),
+                    data_root: self.data_root.clone(),
+                    built_in_instruments: Arc::clone(&self.built_in_instruments),
+                    events: Arc::clone(&self.events),
+                    jobs: self.jobs.clone(),
                     safe_mode: self.core.safe_mode(),
                 };
                 let mut sequence = current.sequence;
@@ -1508,17 +1535,114 @@ fn runtime_unavailable(message: impl Into<String>) -> ProtocolError {
 fn runtime_error(error: RuntimeError) -> ProtocolError {
     match error {
         RuntimeError::RuntimeUnavailable(message) => {
-            ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
+            ProtocolError::new(ErrorCode::RuntimeUnavailable, message).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "runtimeUnavailable",
+                    "operation": "runtime",
+                }),
+            )
         }
         RuntimeError::ShuttingDown => {
             ProtocolError::new(ErrorCode::RuntimeUnavailable, "runtime is shutting down")
+                .with_details(serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "shuttingDown",
+                    "operation": "runtime.shutdown",
+                }))
         }
-        error => ProtocolError::new(ErrorCode::CommandFailed, error.to_string()),
+        RuntimeError::Native {
+            kind,
+            message,
+            operation,
+            details,
+        } => {
+            let code = match kind.as_str() {
+                "deviceLost" | "transportLost" | "process" | "safeMode" => {
+                    ErrorCode::RuntimeUnavailable
+                }
+                _ => ErrorCode::CommandFailed,
+            };
+            ProtocolError::new(code, message).with_details(serde_json::json!({
+                "domain": "nativeAudio",
+                "kind": kind,
+                "operation": operation,
+                "details": details,
+            }))
+        }
+        RuntimeError::Timeout { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message.clone()).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "projectionTimeout",
+                    "operation": "runtime.projection.prepare",
+                }),
+            )
+        }
+        RuntimeError::TransportLost { message } => {
+            ProtocolError::new(ErrorCode::RuntimeUnavailable, message.clone()).with_details(
+                serde_json::json!({
+                    "domain": "runtime",
+                    "kind": "transportLost",
+                    "operation": "runtime.transport",
+                }),
+            )
+        }
+        RuntimeError::GenerationChanged { expected, actual } => ProtocolError::new(
+            ErrorCode::RuntimeUnavailable,
+            format!("runtime generation changed (expected {expected}, actual {actual})"),
+        )
+        .with_details(serde_json::json!({
+            "domain": "runtime",
+            "kind": "generationChanged",
+            "operation": "runtime.generation",
+            "expected": expected,
+            "actual": actual,
+        })),
+        RuntimeError::Superseded { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "superseded",
+                "operation": "runtime.projection",
+            }))
+        }
+        RuntimeError::Cancelled { message } => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "cancelled",
+                "operation": "runtime.transport",
+            }))
+        }
+        RuntimeError::NativeRejected(message) => {
+            ProtocolError::new(ErrorCode::CommandFailed, message).with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "projectionRejected",
+                "operation": "runtime.projection.prepare",
+            }))
+        }
+        RuntimeError::Internal(message) => ProtocolError::new(ErrorCode::CommandFailed, message)
+            .with_details(serde_json::json!({
+                "domain": "runtime",
+                "kind": "internal",
+                "operation": "runtime",
+            })),
     }
 }
 
-fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
-    ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
+pub(super) fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
+    let descriptor = error.descriptor();
+    let code = match descriptor.kind.as_str() {
+        "deviceLost" | "transportLost" | "generationChanged" | "process" | "safeMode" => {
+            ErrorCode::RuntimeUnavailable
+        }
+        _ => ErrorCode::CommandFailed,
+    };
+    ProtocolError::new(code, descriptor.message).with_details(serde_json::json!({
+        "domain": "nativeAudio",
+        "kind": descriptor.kind,
+        "operation": descriptor.operation,
+        "details": descriptor.details,
+    }))
 }
 
 fn canonical_plugin_device(
@@ -1763,6 +1887,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "instrument.builtin.list"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
+            | "audio.feedback-protection.reset"
             | "midi.listening.enable"
             | "midi.listening.disable"
             | "runtime.projection.get"
@@ -1772,6 +1897,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "transport.go-to-start"
             | "transport.seek"
             | "audio.status"
+            | "audio.diagnostics"
             | "audio.probe"
             | "audio.channels.probe"
             | "audio.recover"
@@ -1781,6 +1907,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "asset.preview"
             | "asset.preview.stop"
             | "midi.send"
+            | "midi.target.set"
             | "midi.panic"
             | "plugin.catalog.list"
             | "plugin.scan"
@@ -1835,12 +1962,6 @@ struct BuiltInInstrumentParams {
 #[serde(rename_all = "camelCase")]
 struct SeekParams {
     tick: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TransportParams {
-    transport_sequence: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1922,6 +2043,12 @@ struct MidiSendParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LiveMidiTargetParams {
+    track_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PluginScanParams {
     path: Option<String>,
 }
@@ -1932,6 +2059,13 @@ struct AudioChannelsProbeParams {
     driver: String,
     input_device: String,
     output_device: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioDiagnosticsParams {
+    #[serde(default)]
+    debug: bool,
 }
 
 #[derive(Debug, Deserialize)]

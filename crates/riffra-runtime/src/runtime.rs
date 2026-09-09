@@ -2,10 +2,11 @@
 
 mod ports;
 mod projection_coordinator;
+mod transport;
 mod transport_executor;
 
 pub use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
-pub use self::projection_coordinator::{ProjectionStatusHook, RuntimeRecovery};
+pub use self::projection_coordinator::ProjectionStatusHook;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -30,6 +31,13 @@ pub enum RuntimeError {
     Cancelled { message: String },
     #[error("native runtime rejected the operation: {0}")]
     NativeRejected(String),
+    #[error("native runtime rejected operation `{operation}`: {message}")]
+    Native {
+        kind: String,
+        message: String,
+        operation: String,
+        details: Option<Value>,
+    },
     #[error("runtime is shutting down")]
     ShuttingDown,
     #[error("runtime state is unavailable: {0}")]
@@ -52,41 +60,74 @@ fn now_ms() -> u64 {
 }
 
 use self::projection_coordinator::ProjectionCoordinator;
+use self::transport::PlayDecision;
 use self::transport_executor::TransportExecutor;
-use crate::model::RuntimeProjectionStatus;
+use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
 use riffra_core::ProjectionKey;
-use riffra_core::application::transport::{PlayDecision, StopDecision, TransportSequence};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub struct RuntimeReconciler<D: RuntimeDriver> {
     projection: ProjectionCoordinator<D>,
     transport: Arc<TransportExecutor<D>>,
+    transport_failure: Arc<Mutex<Option<String>>>,
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
-    pub fn new(driver: Arc<D>, recovery: Option<RuntimeRecovery>) -> Result<Self, RuntimeError> {
-        Self::with_status_listener(driver, recovery, Arc::new(|_| {}))
+    pub fn new(driver: Arc<D>) -> Result<Self, RuntimeError> {
+        Self::with_status_listener(driver, Arc::new(|_| {}))
     }
 
     pub fn with_status_listener(
         driver: Arc<D>,
-        recovery: Option<RuntimeRecovery>,
         status_listener: ProjectionStatusHook,
     ) -> Result<Self, RuntimeError> {
         let transport = Arc::new(TransportExecutor::new(Arc::clone(&driver)));
-        let activation_transport = Arc::clone(&transport);
-        let on_activated = Arc::new(move |key| activation_transport.play_after_projection(key));
-        let projection = ProjectionCoordinator::new_with_status_hook(
-            driver,
-            recovery,
-            on_activated,
-            status_listener,
-        )?;
+        let transport_failure = Arc::new(Mutex::new(None));
+        let status_transport = Arc::clone(&transport);
+        let status_transport_failure = Arc::clone(&transport_failure);
+        let projection_status_listener = Arc::new(move |status: RuntimeProjectionStatus| {
+            let active_key = status
+                .active_projection_sequence
+                .zip(status.active_session_revision)
+                .map(|(sequence, session_revision)| ProjectionKey {
+                    sequence,
+                    session_revision,
+                });
+            let target_key = status
+                .target_projection_sequence
+                .zip(status.target_session_revision)
+                .map(|(sequence, session_revision)| ProjectionKey {
+                    sequence,
+                    session_revision,
+                });
+            match status.state {
+                RuntimeProjectionState::Active => {
+                    if let Some(key) = active_key
+                        && let Err(error) = status_transport.play_after_projection(key)
+                    {
+                        if let Ok(mut failure) = status_transport_failure.lock() {
+                            *failure = Some(error.to_string());
+                        }
+                        tracing::warn!(error = ?error, "transport could not start after graph activation");
+                    }
+                }
+                RuntimeProjectionState::Failed => {
+                    if let Some(key) = target_key {
+                        status_transport.fail_play_for_projection(key);
+                    }
+                }
+                _ => {}
+            }
+            status_listener(status);
+        });
+        let projection =
+            ProjectionCoordinator::new_with_status_hook(driver, projection_status_listener)?;
         Ok(Self {
             projection,
             transport,
+            transport_failure,
         })
     }
 
@@ -99,6 +140,11 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     }
 
     pub fn status(&self) -> RuntimeProjectionStatus {
+        if let Ok(mut failure) = self.transport_failure.lock()
+            && let Some(message) = failure.take()
+        {
+            self.projection.mark_failed(message);
+        }
         self.projection.status()
     }
 
@@ -106,23 +152,26 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.mark_failed(message)
     }
 
-    /// Clears a failed candidate projection before the canonical graph is
-    /// submitted again.
-    pub fn reset_for_repair(&self) -> bool {
-        self.projection.reset_for_repair()
-    }
-
     /// Invalidates the active graph after the native audio device environment
     /// changes, so the canonical Session is prepared with the new sample rate
     /// and block size.
-    pub fn invalidate_for_audio_device_change(&self) -> bool {
-        self.projection.invalidate_for_audio_device_change()
+    pub fn advance_audio_environment(&self) -> u64 {
+        self.projection.advance_audio_environment()
     }
 
-    /// Requeues the last active projection when a sidecar restart occurred
-    /// without an in-flight projection operation.
-    pub fn requeue_after_runtime_restart(&self, generation: u64) -> bool {
-        self.projection.requeue_after_runtime_restart(generation)
+    /// Stops transport and clears the pending Play intent before an audio
+    /// device environment is changed.
+    pub fn stop_for_audio_environment(&self) -> Result<(), RuntimeError> {
+        self.transport.stop_for_audio_environment()
+    }
+
+    /// Invalidates the prepared graph after stopping transport for a changed
+    /// audio environment.
+    pub fn invalidate_for_audio_environment(&self) -> Result<u64, RuntimeError> {
+        let stop_result = self.stop_for_audio_environment();
+        self.projection.notify();
+        let revision = self.projection.advance_audio_environment();
+        stop_result.map(|()| revision)
     }
 
     pub fn apply_and_wait(
@@ -158,90 +207,50 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             Some(deadline),
             canonical,
         )?;
-        self.projection.wait_for_operation(
-            operation.operation_id,
-            operation.key,
-            deadline,
-            timeout,
-            None,
-            None,
-        )
+        self.projection
+            .wait_for_operation(operation.operation_id, operation.key, deadline, timeout)
     }
 
-    pub fn apply_and_play(
-        &self,
-        sequence: u64,
-        snapshot: Value,
-        key: ProjectionKey,
-        timeout: Duration,
-    ) -> Result<bool, RuntimeError> {
+    /// Registers a Play intent without starting a new projection. Canonical
+    /// mutations submit projections independently; when that projection is
+    /// already active the native transport starts immediately, otherwise the
+    /// activation hook starts it after the prepared graph is committed.
+    pub fn request_play_when_ready(&self, projection: ProjectionKey) -> Result<bool, RuntimeError> {
+        if self.status().state == crate::model::RuntimeProjectionState::Failed {
+            return Err(RuntimeError::NativeRejected(
+                "The active Arrangement Graph is unavailable.".into(),
+            ));
+        }
         let lease = self.transport.acquire()?;
-        if matches!(
-            lease.request_play(sequence, Some(key)),
-            PlayDecision::Rejected
-        ) {
-            return Ok(false);
+        let PlayDecision { operation } = lease.request_play(Some(projection));
+        if self.projection.is_ready_for(projection) {
+            return match lease.play_if_current(Some(operation), Some(projection)) {
+                Ok(result) => Ok(result),
+                Err(error) => {
+                    self.projection.mark_failed(error.to_string());
+                    Err(error)
+                }
+            };
         }
-        let transport_sequence = TransportSequence::new(sequence);
-        let mut rollback = self.transport.play_intent_rollback(transport_sequence);
-        let deadline = Instant::now() + timeout;
-        let operation = match self
-            .projection
-            .submit_with_deadline(snapshot, key, Some(deadline))
-        {
-            Ok(operation) => operation,
-            Err(error) => {
-                drop(lease);
-                return Err(error);
-            }
-        };
-        let should_play_now = self.projection.is_ready_for(operation.key)
-            && lease.can_execute_play(transport_sequence, Some(operation.key));
-        if should_play_now
-            && let Err(error) = lease.play_if_current(Some(transport_sequence), Some(operation.key))
-        {
-            self.projection.notify();
-            drop(lease);
-            return Err(error);
-        }
-        drop(lease);
-
-        let is_current = || self.transport.is_play_requested(transport_sequence);
-        match self.projection.wait_for_operation(
-            operation.operation_id,
-            operation.key,
-            deadline,
-            timeout,
-            Some(sequence),
-            Some(&is_current),
-        ) {
-            Ok(_) => {
-                rollback.disarm();
-                Ok(true)
-            }
-            Err(error) => Err(error),
-        }
+        lease.set_transport_starting()?;
+        Ok(true)
     }
 
-    pub fn stop(&self, sequence: u64) -> Result<RuntimeProjectionStatus, RuntimeError> {
+    pub fn stop(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let lease = self.transport.acquire()?;
-        if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
-            return Ok(self.status());
-        }
+        let _ = lease.request_stop();
         self.projection.notify();
         lease.stop()?;
         drop(lease);
         Ok(self.status())
     }
 
-    pub fn stop_and_seek_to_start<F>(&self, sequence: u64, seek: F) -> Result<(), RuntimeError>
+    pub fn stop_and_seek_to_start<F>(&self, seek: F) -> Result<(), RuntimeError>
     where
         F: FnOnce() -> Result<(), RuntimeError>,
     {
         let lease = self.transport.acquire()?;
-        if !matches!(lease.request_stop(sequence), StopDecision::Accepted) {
-            return Ok(());
-        }
+        let _ = lease.request_stop();
         self.projection.notify();
         lease.stop()?;
         seek()
@@ -255,7 +264,7 @@ mod tests {
     use crate::model::RuntimeProjectionState;
     use crate::runtime::ports::{ProjectionDriver, TransportDriver};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -266,12 +275,13 @@ mod tests {
         prepare_delay: Duration,
         prepare_timeout_ms: AtomicU64,
         minimum_prepare_timeout_ms: AtomicU64,
-        emergency_muted: AtomicBool,
         prepare_started: AtomicU64,
         discarded: AtomicU64,
         timeout_once: AtomicU64,
+        transport_failure_once: AtomicU64,
         play_failure_once: AtomicU64,
         played: AtomicU64,
+        starting: AtomicU64,
         stopped: AtomicU64,
     }
 
@@ -284,12 +294,13 @@ mod tests {
                 prepare_delay: load_delay,
                 prepare_timeout_ms: AtomicU64::new(0),
                 minimum_prepare_timeout_ms: AtomicU64::new(0),
-                emergency_muted: AtomicBool::new(false),
                 prepare_started: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
                 timeout_once: AtomicU64::new(0),
+                transport_failure_once: AtomicU64::new(0),
                 play_failure_once: AtomicU64::new(0),
                 played: AtomicU64::new(0),
+                starting: AtomicU64::new(0),
                 stopped: AtomicU64::new(0),
             }
         }
@@ -321,6 +332,15 @@ mod tests {
                         .into(),
                 });
             }
+            if self
+                .transport_failure_once
+                .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Err(RuntimeError::TransportLost {
+                    message: "Native audio transport was lost.".into(),
+                });
+            }
             *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
             Ok(())
         }
@@ -345,6 +365,11 @@ mod tests {
     }
 
     impl TransportDriver for FakeDriver {
+        fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+            self.starting.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
         fn play_timeline(&self) -> Result<(), RuntimeError> {
             self.played.fetch_add(1, Ordering::Relaxed);
             if self
@@ -387,7 +412,7 @@ mod tests {
     #[test]
     fn does_not_publish_superseded_prepared_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(1), key(1, 1));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -403,7 +428,7 @@ mod tests {
     #[test]
     fn does_not_regress_an_active_revision_when_requests_arrive_out_of_order() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_session_revision == Some(10));
 
@@ -419,20 +444,20 @@ mod tests {
     #[test]
     fn ignores_a_response_from_an_old_runtime_generation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(4), key(4, 4));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         driver.generation.store(2, Ordering::Release);
 
-        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+        wait_until(|| {
+            matches!(
+                reconciler.status().state,
+                RuntimeProjectionState::Idle | RuntimeProjectionState::Failed
+            )
+        });
         assert!(driver.loaded.lock().unwrap().is_empty());
-        assert!(
-            reconciler
-                .status()
-                .last_error
-                .as_deref()
-                .is_some_and(|error| error.contains("generation"))
-        );
+        assert_eq!(reconciler.status().active_projection_sequence, None);
+        assert!(reconciler.status().audio_environment_revision > 0);
     }
 
     #[test]
@@ -446,7 +471,7 @@ mod tests {
             observed_states.lock().unwrap().push(status.state);
         });
         let reconciler =
-            RuntimeReconciler::with_status_listener(Arc::clone(&driver), None, listener).unwrap();
+            RuntimeReconciler::with_status_listener(Arc::clone(&driver), listener).unwrap();
 
         // Act
         reconciler.submit_nonblocking(snapshot(12), key(12, 12));
@@ -462,14 +487,32 @@ mod tests {
     }
 
     #[test]
+    fn projection_failure_after_starting_returns_native_transport_to_stopped() {
+        // Arrange
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        driver.transport_failure_once.store(1, Ordering::Release);
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+
+        // Act
+        reconciler.submit_nonblocking(snapshot(13), key(13, 13));
+        assert!(reconciler.request_play_when_ready(key(13, 13)).is_ok());
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
+
+        // Assert
+        assert_eq!(driver.starting.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn stop_does_not_wait_for_runtime_preparation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(5), key(5, 5));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
-        reconciler.stop(1).unwrap();
+        reconciler.stop().unwrap();
         assert!(started.elapsed() < Duration::from_millis(50));
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
@@ -477,7 +520,7 @@ mod tests {
     #[test]
     fn dropping_the_reconciler_does_not_join_a_stalled_runtime_worker() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(500)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(6), key(6, 6));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
@@ -489,11 +532,9 @@ mod tests {
     #[test]
     fn play_waits_for_the_latest_graph_before_native_playback() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
-        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
-        let caller = Arc::clone(&reconciler);
-        let play = thread::spawn(move || {
-            caller.apply_and_play(1, snapshot(7), key(7, 7), Duration::from_secs(1))
-        });
+        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
+        reconciler.submit_nonblocking(snapshot(7), key(7, 7));
+        let play = reconciler.request_play_when_ready(key(7, 7));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         let status = reconciler.status();
@@ -502,38 +543,22 @@ mod tests {
             RuntimeProjectionState::Queued | RuntimeProjectionState::Preparing
         ));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
-        assert!(play.join().unwrap().unwrap());
-        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        assert!(play.unwrap());
+        wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
     }
 
     #[test]
     fn stop_during_play_prepare_prevents_late_playback() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
-        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
-        let caller = Arc::clone(&reconciler);
-        let play = thread::spawn(move || {
-            caller.apply_and_play(1, snapshot(71), key(71, 71), Duration::from_secs(1))
-        });
+        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
+        reconciler.submit_nonblocking(snapshot(71), key(71, 71));
+        let play = reconciler.request_play_when_ready(key(71, 71));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.stop(2).unwrap();
+        reconciler.stop().unwrap();
 
-        assert!(play.join().unwrap().is_err());
-        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
-        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn newer_stop_wins_when_an_older_play_enters_after_it() {
-        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-
-        reconciler.stop(2).unwrap();
-        let played = reconciler
-            .apply_and_play(1, snapshot(72), key(72, 72), Duration::from_secs(1))
-            .unwrap();
-
-        assert!(!played);
+        assert!(play.is_ok());
+        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Active));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
@@ -541,12 +566,10 @@ mod tests {
     #[test]
     fn superseded_play_does_not_leave_play_intent_armed() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(2), key(2, 2));
 
-        let play = reconciler.apply_and_play(10, snapshot(1), key(1, 1), Duration::from_secs(1));
-
-        assert!(play.is_err());
+        assert!(reconciler.request_play_when_ready(key(1, 1)).is_ok());
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
     }
@@ -555,15 +578,16 @@ mod tests {
     fn failed_worker_play_does_not_autoplay_a_later_projection() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         driver.play_failure_once.store(1, Ordering::Release);
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
 
-        let _ = reconciler.apply_and_play(1, snapshot(30), key(30, 30), Duration::from_secs(1));
+        reconciler.submit_nonblocking(snapshot(30), key(30, 30));
+        assert!(reconciler.request_play_when_ready(key(30, 30)).is_ok());
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
 
         reconciler.submit_nonblocking(snapshot(31), key(31, 31));
         wait_until(|| reconciler.status().active_session_revision == Some(31));
-        thread::sleep(Duration::from_millis(20));
 
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
     }
@@ -571,47 +595,24 @@ mod tests {
     #[test]
     fn a_newer_play_can_start_after_stop_cancels_an_older_waiter() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
-        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver), None).unwrap());
-        let first = Arc::clone(&reconciler);
-        let old_play = thread::spawn(move || {
-            first.apply_and_play(1, snapshot(73), key(73, 73), Duration::from_secs(1))
-        });
+        let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
+        reconciler.submit_nonblocking(snapshot(73), key(73, 73));
+        let old_play = reconciler.request_play_when_ready(key(73, 73));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.stop(2).unwrap();
-        let new_play =
-            reconciler.apply_and_play(3, snapshot(73), key(73, 73), Duration::from_secs(1));
+        reconciler.stop().unwrap();
+        let new_play = reconciler.request_play_when_ready(key(73, 73));
 
-        assert!(old_play.join().unwrap().is_err());
+        assert!(old_play.is_ok());
         assert!(new_play.is_ok());
-        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn retries_once_after_native_deadline_through_recovery_callback() {
-        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        driver.timeout_once.store(1, Ordering::Release);
-        let recoveries = Arc::new(AtomicU64::new(0));
-        let recovery_count = Arc::clone(&recoveries);
-        let recovery_driver = Arc::clone(&driver);
-        let recovery: RuntimeRecovery = Arc::new(move |_generation, _timeout| {
-            recovery_count.fetch_add(1, Ordering::Relaxed);
-            recovery_driver.generation.store(2, Ordering::Release);
-            Ok(())
-        });
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
-        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
-
-        wait_until(|| reconciler.status().active_session_revision == Some(11));
-        assert_eq!(recoveries.load(Ordering::Relaxed), 1);
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[11]);
     }
 
     #[test]
     fn rejects_a_late_lower_projection_sequence_while_a_newer_graph_is_preparing() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(20), key(20, 20));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
@@ -624,7 +625,7 @@ mod tests {
     #[test]
     fn apply_and_wait_reports_a_stale_submission_instead_of_following_newer_work() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(11), key(11, 11));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
@@ -640,16 +641,13 @@ mod tests {
     #[test]
     fn reuses_an_active_projection_without_repreparing_before_play() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(20), key(20, 20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
-        let played = reconciler
-            .apply_and_play(1, snapshot(20), key(20, 20), Duration::from_secs(1))
-            .unwrap();
+        let played = reconciler.request_play_when_ready(key(20, 20)).unwrap();
         assert!(played);
-        thread::sleep(Duration::from_millis(20));
 
         assert_eq!(
             driver.prepare_started.load(Ordering::Acquire),
@@ -661,7 +659,7 @@ mod tests {
     #[test]
     fn accepts_a_restored_session_with_a_lower_arrangement_revision() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         reconciler.submit_nonblocking(snapshot(100), key(1, 100));
         wait_until(|| reconciler.status().active_projection_sequence == Some(1));
 
@@ -677,19 +675,7 @@ mod tests {
         driver
             .minimum_prepare_timeout_ms
             .store(15_000, Ordering::Release);
-        let recovery_calls = Arc::new(AtomicU64::new(0));
-        let recovery_count = Arc::clone(&recovery_calls);
-        let recovery_driver = Arc::clone(&driver);
-        let recovery: RuntimeRecovery = Arc::new(move |_generation, _timeout| {
-            recovery_count.fetch_add(1, Ordering::Release);
-            recovery_driver
-                .emergency_muted
-                .store(true, Ordering::Release);
-            Err(RuntimeError::NativeRejected(
-                "recovery was not expected".into(),
-            ))
-        });
-        let reconciler = RuntimeReconciler::new(Arc::clone(&driver), Some(recovery)).unwrap();
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
 
         let status = reconciler
             .apply_and_wait(snapshot(31), key(31, 31), Duration::from_secs(30))
@@ -698,7 +684,5 @@ mod tests {
         assert_eq!(status.active_session_revision, Some(31));
         assert!(driver.prepare_timeout_ms.load(Ordering::Acquire) > 15_000);
         assert_eq!(driver.runtime_generation(), 1);
-        assert_eq!(recovery_calls.load(Ordering::Acquire), 0);
-        assert!(!driver.emergency_muted.load(Ordering::Acquire));
     }
 }

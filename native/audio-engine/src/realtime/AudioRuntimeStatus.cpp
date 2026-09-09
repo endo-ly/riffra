@@ -2,8 +2,8 @@
 
 namespace riffra {
 
-bool deviceLossRequiresFault(const bool devicePresent, const bool audioActive) noexcept {
-    return !devicePresent && audioActive;
+bool deviceLossRequiresFault(const bool devicePresent, const bool deviceTransitionActive) noexcept {
+    return !devicePresent && !deviceTransitionActive;
 }
 
 }  // namespace riffra

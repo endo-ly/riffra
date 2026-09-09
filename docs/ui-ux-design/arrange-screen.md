@@ -102,6 +102,11 @@ Active MIDI Clip 内で選択している Note 群である。MIDI Editor の Po
 
 Play Surface、Computer Keyboard、演奏用 MIDI 入力の送り先である。Arrange Selection と Active MIDI Clip から独立して保持し、曲を編集しながら同じ Instrument を演奏できる。
 
+Focused Instrument Track への入力は、その Track の Arrangement MIDI と同じ Instrument Runtime、
+Effect Chain、Volume / Pan / Automation を通る。ライブ演奏専用の音源やエフェクト経路を持たないため、
+Play Surface で確認した音は再生・録音時の Track の処理経路と一致する。ライブ入力が処理できない
+場合は、Track の状態と Audio Status の診断値で確認できる。
+
 Record Arm は Track の録音状態として Focus と分けて扱う。録音時は Arm 状態と Focus / MIDI routing の関係を画面上で確認できるようにする。
 
 ---
@@ -555,7 +560,7 @@ Track: Synth Lead
 | Edit           | Plugin Editor を開く                      |
 | Recover        | Missing Plugin の再走査・差し替え・無効化 |
 
-Instrument Track では Instrument が信号列の先頭となり、その後へ Effect Chain が続く。Audio Track では Audio Input から Effect Chain へつながる。
+Instrument Track では Instrument が信号列の先頭となり、その後へ一つの Effect Chain が続く。Audio Track では Audio Input から同じ Track Effect Chain へつながる。Arrangement MIDI と Live MIDI は Instrument Runtime で合流し、Track の監視入力も同じ Effect Chain を一度だけ通る。現在の録音テイクに対する Post-FX の処理結果は、編集用の Effect Chain へ戻さず別の Processed Take として扱う。
 
 #### Add Browser
 
@@ -596,7 +601,7 @@ Play Surface の配置、Closed / Compact / Expanded の表示段階、Keyboard 
 
 ### 6.1 Focused Instrument Track
 
-Play Surface、Computer Keyboard、演奏用 MIDI 入力は Focused Instrument Track へ送る。
+Play Surface、Computer Keyboard、演奏用 MIDI 入力は Focused Instrument Track へ送る。これは入力先を選ぶ状態であり、別のランタイムグラフを生成する操作ではない。
 
 Arrange Toolbar の Play Surface で Play Surface を開閉し、Focused Instrument Track へ入力する。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
 
@@ -626,7 +631,7 @@ Play Surface
       └─ play and evaluate
 ```
 
-MIDI Editor と併用する場合は、MIDI Editor が Active MIDI Clip の演奏内容、Play Surface が Focused Instrument Track へのライブ入力を担当する。両者の対象は Header と Focus 表示から判別できる。
+MIDI Editor と併用する場合は、MIDI Editor が Active MIDI Clip の演奏内容、Play Surface が Focused Instrument Track へのライブ入力を担当する。両者の対象は Header と Focus 表示から判別でき、発音経路は同じ Instrument Runtime と Effect Chain へ統合される。
 
 ### 6.3 録音との関係
 
@@ -656,6 +661,8 @@ Loop / Metronome / Count-in / Tempo / Signature
 ```
 
 Timeline、Detail Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
+
+Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。準備中の Play は UI をブロックせず、Stop は保留中の Play より優先される。Stop 後に準備が終わっても自動再生せず、投影失敗時は Play 意図を解除して失敗を通知する。
 
 Track Arm は録音対象の Track を選択する操作であり、Focus とは分離する。Global Record は Arm された Track の Timeline Recording を開始する操作で、Count-in の設定に従い Recording 開始とともに Arrangement Transport も進行する。Arm された Track が存在しない場合は Recording と Transport を開始せず、録音対象を Arm するよう利用者へ通知する。
 
@@ -695,6 +702,11 @@ Missing source、Missing Plugin、Audio device fault、runtime out-of-sync な�
 | Missing Audio source   | Clip / Properties              |
 | Runtime sync           | Timeline status + retry action |
 | 一時的な編集結果       | Toast                          |
+
+Audio device、Runtime projection、Transport は別の状態として表示する。デバイスが利用可能でも
+投影が準備中なら Transport は `Starting` になり、投影が失敗した場合は Audio device の復旧と
+Runtime projection の再試行を同じ操作として扱わない。Global Control Bar では Audio Status の
+ミュート理由と診断値を確認でき、Track では Live MIDI の入力先とドロップなど処理状態を確認できる。
 
 復旧操作は問題が発生した対象の近くから辿れるようにする。
 

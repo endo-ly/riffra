@@ -10,7 +10,7 @@ const desktopRoot = join(repositoryRoot, 'apps/desktop/src-tauri');
 const binariesRoot = join(desktopRoot, 'binaries');
 const resourcesRoot = join(desktopRoot, 'resources');
 const runtimeStampPath = join(binariesRoot, '.riffra-desktop-runtime.json');
-const nativeBuildConfiguration = 'Debug';
+const nativeBuildConfiguration = 'RelWithDebInfo';
 const sidecarNames = ['riffra-audio', 'riffra-plugin-scan', 'riffra-render'];
 
 function getRustHostTriple() {

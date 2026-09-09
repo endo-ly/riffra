@@ -14,6 +14,7 @@ function Harness({
   api,
   onToggleRecording = () => undefined,
   transportPlaying = false,
+  transportStarting = false,
   onPlay = () => undefined,
   onStop = () => undefined,
   onGoToStart = () => undefined,
@@ -21,6 +22,7 @@ function Harness({
   api: FakeNativeApi;
   onToggleRecording?: () => void;
   transportPlaying?: boolean;
+  transportStarting?: boolean;
   onPlay?: () => void;
   onStop?: () => void;
   onGoToStart?: () => void;
@@ -36,6 +38,7 @@ function Harness({
       }}
       recordingActive={api.audio.recording.active}
       transportPlaying={transportPlaying}
+      transportStarting={transportStarting}
       onPlay={onPlay}
       onStop={onStop}
       onGoToStart={onGoToStart}

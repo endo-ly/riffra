@@ -3,7 +3,7 @@ use super::*;
 #[tauri::command]
 pub async fn list_built_in_instruments(
     app: AppHandle,
-) -> Result<Vec<riffra_runtime::BuiltInInstrumentSummary>, String> {
+) -> Result<Vec<riffra_runtime::BuiltInInstrumentSummary>, NativeCommandError> {
     dispatch(app, "instrument.builtin.list", ()).await
 }
 
@@ -12,7 +12,7 @@ pub async fn set_track_built_in_instrument(
     track_id: String,
     preset_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "instrument.builtin.set",
@@ -26,7 +26,7 @@ pub async fn set_track_vst3_instrument(
     track_id: String,
     plugin_path: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "instrument.vst3.set",
@@ -39,7 +39,7 @@ pub async fn set_track_vst3_instrument(
 pub async fn clear_track_instrument(
     track_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "instrument.clear", json!({ "trackId": track_id })).await
 }
 
@@ -48,7 +48,7 @@ pub async fn add_track_effect(
     track_id: String,
     plugin_path: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "effect.add",
@@ -62,7 +62,7 @@ pub async fn remove_track_effect(
     track_id: String,
     device_id: String,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "effect.remove",
@@ -76,7 +76,7 @@ pub async fn reorder_track_effects(
     track_id: String,
     ordered_device_ids: Vec<String>,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "effect.reorder",
@@ -91,7 +91,7 @@ pub async fn set_track_device_bypassed(
     device_id: String,
     bypassed: bool,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "device.bypass",
@@ -107,7 +107,7 @@ pub async fn set_track_device_parameter(
     parameter_index: u32,
     value: f32,
     app: AppHandle,
-) -> Result<ArrangementMutationResult, String> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(
         app,
         "device.parameter.set",
@@ -126,7 +126,7 @@ pub async fn open_track_plugin_editor(
     track_id: String,
     device_id: String,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), NativeCommandError> {
     dispatch(
         app,
         "plugin.editor.open",

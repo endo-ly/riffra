@@ -41,8 +41,10 @@ impl AudioSupervisor {
                 input_device: None,
                 input_channel: None,
                 input_channels: Vec::new(),
+                active_input_channels: Vec::new(),
                 output_device: None,
                 output_channels: Vec::new(),
+                active_output_channels: Vec::new(),
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -58,6 +60,8 @@ impl AudioSupervisor {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
+                mute_reasons: 0,
+                diagnostics: Default::default(),
                 message: message.into(),
             })),
             command_bus: Arc::new(CommandBus::new()),
@@ -74,6 +78,10 @@ impl AudioSupervisor {
                 std::path::PathBuf::new(),
             )),
             events,
+            audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            recording_finalization_pending: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -88,8 +96,10 @@ impl AudioSupervisor {
             input_device: None,
             input_channel: None,
             input_channels: Vec::new(),
+            active_input_channels: Vec::new(),
             output_device: None,
             output_channels: Vec::new(),
+            active_output_channels: Vec::new(),
             sample_rate: None,
             buffer_size: None,
             round_trip_ms: None,
@@ -105,7 +115,9 @@ impl AudioSupervisor {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
-            message: "Native audio sidecar is starting in emergency-mute state.".into(),
+            mute_reasons: 0,
+            diagnostics: Default::default(),
+            message: "Native audio sidecar is starting with the startup guard active.".into(),
         }));
         let process = Arc::new(SidecarProcess::new(false));
         let startup_transition_gate = Arc::clone(&process.startup_transition_gate);
@@ -121,6 +133,10 @@ impl AudioSupervisor {
             probe_coordinator: Arc::new(super::probe::ProbeCoordinator::default()),
             binaries: Arc::new(binaries.clone()),
             events,
+            audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            recording_finalization_pending: Arc::new(Mutex::new(None)),
         };
         let generation = supervisor.next_sidecar_generation();
         match supervisor.spawn_sidecar(generation) {
@@ -141,6 +157,7 @@ impl AudioSupervisor {
     }
 
     fn next_sidecar_generation(&self) -> u64 {
+        self.advance_audio_environment();
         self.process.next_generation()
     }
 
@@ -150,8 +167,10 @@ impl AudioSupervisor {
 
     /// Emits the latest audio status through the Host event sink.
     pub fn emit_status(&self) {
-        if let Ok(status) = self.status.lock() {
-            self.events.emit(HostEvent::AudioStatus(status.clone()));
+        if let Ok(mut status) = self.status.lock() {
+            self.overlay_diagnostics(&mut status);
+            self.events
+                .emit(HostEvent::AudioStatus(Box::new(status.clone())));
         }
     }
 
@@ -300,7 +319,9 @@ impl AudioSupervisor {
                         }
                     }
                     if let Some(response) = handle_native_stdout(&event_status, bytes) {
-                        event_supervisor.synchronize_mute_cause_from_status();
+                        if let Ok(mut status) = event_supervisor.status.lock() {
+                            event_supervisor.overlay_diagnostics(&mut status);
+                        }
                         if let Some(request_id) = response.request_id {
                             record_command_response(
                                 &event_responses,
@@ -315,7 +336,8 @@ impl AudioSupervisor {
                         match response.event {
                             NativeEvent::AudioStatus => {
                                 if let Ok(status) = event_status.lock() {
-                                    event_events.emit(HostEvent::AudioStatus(status.clone()));
+                                    event_events
+                                        .emit(HostEvent::AudioStatus(Box::new(status.clone())));
                                 }
                             }
                             NativeEvent::AudioMeters => {
@@ -326,6 +348,13 @@ impl AudioSupervisor {
                                         "invalidSamples": status.invalid_samples,
                                         "feedbackSuspected": status.feedback_suspected,
                                     })));
+                                }
+                            }
+                            NativeEvent::RecordingCompletion => {
+                                if let Err(error) =
+                                    event_supervisor.record_recording_completion(&response.value)
+                                {
+                                    event_supervisor.fail_recording_completion(error);
                                 }
                             }
                             NativeEvent::None => {}
@@ -367,7 +396,7 @@ impl AudioSupervisor {
                         ),
                     );
                     if let Ok(status) = stderr_status.lock() {
-                        stderr_events.emit(HostEvent::AudioStatus(status.clone()));
+                        stderr_events.emit(HostEvent::AudioStatus(Box::new(status.clone())));
                     }
                 }
             })
@@ -385,6 +414,7 @@ impl AudioSupervisor {
     fn handle_sidecar_exit(&self, generation: u64, error: NativeAudioError) {
         self.process.mark_terminated(generation);
         set_faulted(&self.status, error.to_string());
+        self.fail_recording_completion(error.clone());
         fail_pending_requests(&self.command_bus.responses, error);
         self.emit_status();
 
@@ -421,6 +451,7 @@ impl AudioSupervisor {
             starting_message,
             Duration::from_secs(15),
             Some(expected_generation),
+            false,
         )
     }
 
@@ -429,6 +460,7 @@ impl AudioSupervisor {
         starting_message: &str,
         timeout: Duration,
         expected_generation: Option<u64>,
+        notify_runtime_restart: bool,
     ) -> NativeAudioResult<()> {
         let _restart_gate =
             self.recovery
@@ -545,7 +577,7 @@ impl AudioSupervisor {
             Ok(())
         })();
         self.record_restart_outcome(previous_generation, &result);
-        if result.is_ok() && self.startup_completed() {
+        if notify_runtime_restart && result.is_ok() && self.startup_completed() {
             if let Some(handler) = self.runtime_restart_handler() {
                 handler(self, self.sidecar_generation());
             }
@@ -564,6 +596,7 @@ impl AudioSupervisor {
     pub fn force_shutdown(&self) {
         self.process.shutting_down.store(true, Ordering::Release);
         self.process.readiness.1.notify_all();
+        self.fail_recording_completion(NativeAudioError::ShuttingDown);
         fail_pending_requests(&self.command_bus.responses, NativeAudioError::ShuttingDown);
         let _command_gate = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()
@@ -584,6 +617,7 @@ impl AudioSupervisor {
             "The isolated audio runtime exceeded its lifecycle deadline and is restarting.",
             timeout,
             Some(expected_generation),
+            true,
         )
     }
 }

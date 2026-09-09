@@ -6,11 +6,6 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     original_error: String,
 ) -> String {
-    if !context.runtime.reset_for_repair() {
-        return format!(
-            "Arrangement Runtime rejected the instrument or device candidate and could not be reset for the canonical Session: {original_error}"
-        );
-    }
     match sync_arrangement_runtime(context) {
         Ok(_) => format!(
             "Arrangement Runtime rejected the instrument or device candidate; the canonical Session was restored: {original_error}"
@@ -602,8 +597,7 @@ mod tests {
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     struct CandidateRuntimeDriver {
         fail_prepare: AtomicBool,
@@ -668,6 +662,10 @@ mod tests {
     }
 
     impl crate::TransportDriver for CandidateRuntimeDriver {
+        fn set_transport_starting(&self) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
+
         fn play_timeline(&self) -> Result<(), crate::RuntimeError> {
             Ok(())
         }
@@ -771,7 +769,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let catalog = built_in_catalog(&root);
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(
             root.clone(),
@@ -813,7 +811,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let catalog = built_in_catalog(&root);
         let driver = Arc::new(CandidateRuntimeDriver::new(true));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(
             root.clone(),
@@ -849,7 +847,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let catalog = built_in_catalog(&root);
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(
             root.clone(),
@@ -876,19 +874,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if predicate() {
-                return;
-            }
-            if Instant::now() >= deadline {
-                panic!("condition was not met within {timeout:?}");
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-
     #[test]
     fn rejected_plugin_candidate_restores_the_canonical_runtime() {
         // Arrange
@@ -899,7 +884,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(true));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
         let context = candidate_context(&root, &runtime, &audio, &core);
@@ -921,38 +906,6 @@ mod tests {
     }
 
     #[test]
-    fn rejected_plugin_candidate_is_not_requeued_after_runtime_restart() {
-        // Arrange
-        let root = std::env::temp_dir().join(format!(
-            "riffra-plugin-candidate-restart-{}",
-            riffra_host::now_ms()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let session = plugin_base_session();
-        let driver = Arc::new(CandidateRuntimeDriver::new(true));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
-        let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
-        let context = candidate_context(&root, &runtime, &audio, &core);
-        let candidate = prepared_plugin_candidate(&context);
-        assert!(commit_device_arrangement(&context, candidate).is_err());
-        let loaded_before_restart = driver.loaded.lock().unwrap().len();
-        driver.generation.store(2, Ordering::Release);
-
-        // Act
-        let requeued = runtime.requeue_after_runtime_restart(2);
-
-        // Assert
-        assert!(requeued);
-        wait_until(Duration::from_secs(1), || {
-            driver.loaded.lock().unwrap().len() > loaded_before_restart
-        });
-        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&0));
-        assert!(!driver.loaded.lock().unwrap().contains(&1));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
     fn candidate_sequence_conflict_restores_the_newer_canonical_session() {
         // Arrange
         let root = std::env::temp_dir().join(format!(
@@ -962,7 +915,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = Arc::new(riffra_core::AppCore::new(
             root.clone(),
@@ -1011,7 +964,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(
             root.clone(),
@@ -1052,7 +1005,7 @@ mod tests {
         std::fs::write(&root, b"not a directory").unwrap();
         let session = plugin_base_session();
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
-        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver), None).unwrap();
+        let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
         let context = candidate_context(&root, &runtime, &audio, &core);

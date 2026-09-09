@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "ArrangementGraph.h"
+#include "AutomationRuntime.h"
 
 namespace riffra {
 
@@ -44,15 +45,17 @@ TEST(ArrangementGraphTest, IntersectsCaptureWithNativeClockWindow) {
     EXPECT_EQ(intersection.second, 512);
 }
 
-TEST(ArrangementGraphTest, InterpolatesAutomationValues) {
-    const std::vector<ArrangementGraph::AutomationPoint> automation{
+TEST(ArrangementGraphTest, EvaluatesPreparedAutomationBlocks) {
+    AutomationRuntime automationRuntime;
+    automationRuntime.setPoints({
         {100, -12.0f},
         {200, 0.0f},
-    };
+    });
+    auto cursor = automationRuntime.cursorAt(50);
 
-    EXPECT_FLOAT_EQ(ArrangementGraph::automationValueAt(automation, 50, -6.0f), -12.0f);
-    EXPECT_FLOAT_EQ(ArrangementGraph::automationValueAt(automation, 150, -6.0f), -6.0f);
-    EXPECT_FLOAT_EQ(ArrangementGraph::automationValueAt(automation, 250, -6.0f), 0.0f);
+    EXPECT_FLOAT_EQ(cursor.valueAt(50, -6.0f), -12.0f);
+    EXPECT_FLOAT_EQ(cursor.valueAt(150, -6.0f), -6.0f);
+    EXPECT_FLOAT_EQ(cursor.valueAt(250, -6.0f), 0.0f);
 }
 
 }  // namespace riffra

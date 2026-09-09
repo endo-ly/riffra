@@ -5,14 +5,18 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include "ArrangementCaptureSink.h"
 #include "ArrangementGraph.h"
+#include "AutomationRuntime.h"
+#include "MidiScheduler.h"
 #include "PluginChain.h"
 #include "RecordingCaptureRuntime.h"
 #include "TimelineTimebase.h"
+#include "TrackRuntime.h"
 #include "instrument/InstrumentRuntime.h"
 
 namespace riffra {
@@ -30,6 +34,8 @@ class TimelineSnapshotBuilder;
 
 class TimelineEngine final {
 public:
+    using ProcessingProgressCallback = std::function<void()>;
+
     explicit TimelineEngine(bool offline = false);
     ~TimelineEngine();
 
@@ -41,17 +47,25 @@ public:
                       bool commitImmediately = true);
     bool commitPreparedSnapshot(juce::String& error) noexcept;
     void discardPreparedSnapshot() noexcept;
+    void startPreparing() noexcept;
     void play() noexcept;
     void stop() noexcept;
     void audioDeviceStarted() noexcept;
     void seekToTick(std::uint64_t tick) noexcept;
     bool startRecording(int countInBeats, juce::String& error) noexcept;
     bool cancelRecordingIfCountingIn() noexcept;
+    /// Closes realtime capture segments at the audio graph boundary.
     void stopRecording() noexcept;
-    bool flushRecordingTail(juce::String& error) noexcept;
+    /// Finalizes raw capture metadata without performing offline DSP.
+    bool finalizeRecording(juce::String& error) noexcept;
+    /// Generates processed recording variants after the realtime graph is stopped.
+    bool processFinalizedRecording(juce::String& error) noexcept;
+    bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress = {}) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
+    bool setLiveMidiTarget(const juce::String& trackId, juce::String& error) noexcept;
     [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message,
                                        const juce::String& deviceId = {}) noexcept;
     [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
@@ -94,6 +108,8 @@ public:
     /// Returns whether the active graph routes the physical input channel to a monitored Audio
     /// Track.
     [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
+    /// Reclaims retired graphs from a non-realtime control path.
+    void serviceDeferredCleanup() noexcept;
     [[nodiscard]] bool recordingWindow(int sampleCount, int& sampleOffset,
                                        int& capturedSamples) noexcept;
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
@@ -108,9 +124,8 @@ private:
     friend class TimelineSnapshotBuilder;
 
     class AudioReadScope;
-    class AudioPublishScope;
 
-    enum class State { stopped, playing, faulted };
+    enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
 
     struct Clip final {
@@ -128,90 +143,29 @@ private:
         double sourceSampleRate = 0.0;
         float gain = 1.0f;
         float pan = 0.0f;
+        float leftGain = 1.0f;
+        float rightGain = 1.0f;
         std::int64_t fadeInSamples = 0;
         std::int64_t fadeOutSamples = 0;
         int fadeShape = 1;
         bool loop = false;
         bool muted = false;
-        bool trackEffectsAlreadyApplied = false;
-    };
-
-    struct MidiNote final {
-        std::uint64_t startTick = 0;
-        std::uint64_t durationTicks = 1;
-        int note = 0;
-        int velocity = 0;
-        int channel = 1;
-    };
-
-    struct MidiEvent final {
-        juce::String kind;
-        std::uint64_t tick = 0;
-        int channel = 1;
-        int data1 = 0;
-        int data2 = 0;
-    };
-
-    struct MidiClip final {
-        std::uint64_t startTick = 0;
-        std::uint64_t durationTicks = 1;
-        bool loop = false;
-        bool muted = false;
-        std::vector<MidiNote> notes;
-        std::vector<MidiEvent> events;
+        ProcessingStage processingStage = ProcessingStage::PreEffects;
     };
 
     struct Track final {
         juce::String id;
         std::vector<std::unique_ptr<Clip>> clips;
-        std::vector<MidiClip> midiClips;
-        std::unique_ptr<InstrumentRuntime> instrumentRuntime;
-        // Timeline MIDI is rendered by instrumentRuntime; Play Surface and
-        // external-live MIDI is rendered by liveInstrumentRuntime so it reaches
-        // the output without the inter-track delay compensation line.
-        std::unique_ptr<InstrumentRuntime> liveInstrumentRuntime;
+        std::unique_ptr<TrackRuntime> runtime;
         juce::String instrumentDeviceId;
         juce::String effectTopologySignature;
         juce::String instrumentTopologySignature;
         juce::var effectState;
         juce::var instrumentState;
-        bool liveEffectRuntimeRequired = false;
-        bool recordingEffectRuntimeRequired = false;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
         bool reuseRuntimeDevices = false;
-        PluginChain effectChain;
-        PluginChain liveEffectChain;
-        juce::AudioBuffer<float> mixBuffer;
-        juce::AudioBuffer<float> processedBuffer;
-        juce::AudioBuffer<float> postEffectClipBuffer;
-        juce::AudioBuffer<float> liveInputBuffer;
-        juce::AudioBuffer<float> liveProcessedBuffer;
-        RecordingCaptureTrackState recordingCapture;
-        juce::AudioBuffer<float> delayBuffer;
-        juce::AudioBuffer<float> postEffectDelayBuffer;
-        std::int64_t delayWritePosition = 0;
-        std::int64_t postEffectDelayWritePosition = 0;
-        std::int64_t compensationDelaySamples = 0;
-        std::int64_t postEffectCompensationDelaySamples = 0;
-        std::int64_t pluginDelaySamples = 0;
-        std::int64_t pluginTailSamples = 0;
-        double outputSampleRate = 0.0;
-        int preparedBlockSize = 0;
-        float gainDb = 0.0f;
-        float pan = 0.0f;
-        std::vector<ArrangementGraph::AutomationPoint> volumeAutomation;
-        std::vector<ArrangementGraph::AutomationPoint> panAutomation;
-        bool muted = false;
-        bool solo = false;
-        bool instrument = false;
-        bool armed = false;
-        int audioInputChannel = -1;
-        bool monitorInput = false;
-        juce::String midiDeviceId;
-        int midiChannel = 0;
-        juce::MidiBuffer midiBuffer;
     };
 
     struct PreparedTimeline final {
@@ -226,6 +180,7 @@ private:
         std::int64_t punchStartSample = 0;
         std::int64_t punchEndSample = 0;
         bool metronomeEnabled = false;
+        bool hasSolo = false;
         std::int64_t beatSamples = 0;
         std::int64_t beatsPerBar = 4;
         std::uint16_t timeSignatureNumerator = 4;
@@ -233,6 +188,11 @@ private:
         juce::Array<juce::var> unavailableClipIds;
         juce::Array<juce::var> missingDeviceIds;
         std::vector<std::unique_ptr<Track>> tracks;
+    };
+
+    struct OfflineRecordingTrack final {
+        juce::String id;
+        juce::var effectState;
     };
 
     void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
@@ -246,7 +206,8 @@ private:
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
-                                int sampleCount) noexcept;
+                                int sampleCount, bool renderOutput = false) noexcept;
+    void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
     void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
                                 const juce::MidiBuffer* timelineMidi,
                                 std::int64_t rangeStart) noexcept;
@@ -254,44 +215,56 @@ private:
                                     std::int64_t rangeStart, bool playing) noexcept;
     void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
                         std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
-    void mixLiveTrack(Track& track, bool audible, float* const* outputChannels, int channelCount,
-                      std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
                       int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    void requestPlaybackReset() noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
-    bool generateLoopProcessedVariants(PreparedTimeline& timeline,
-                                       ArrangementCaptureSink* sink) noexcept;
+    bool generateProcessedVariants(double sampleRate, int blockSize,
+                                   const std::vector<OfflineRecordingTrack>& tracks,
+                                   ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress) noexcept;
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
+    [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
+    void reclaimRetiredTimelines() noexcept;
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
     mutable juce::SpinLock timelineLock;
     std::unique_ptr<PreparedTimeline> timeline;
     std::unique_ptr<PreparedTimeline> pendingTimeline;
+    // Owned only by the control/projection thread. A retired graph remains
+    // alive until every callback that could have loaded its pointer has left.
+    std::vector<std::unique_ptr<PreparedTimeline>> retiredTimelines;
     std::atomic<PreparedTimeline*> activeTimeline{nullptr};
     std::atomic<bool> runtimeDevicesNeedReprepare{false};
     std::atomic<std::uint32_t> activeAudioReaders{0};
-    std::atomic<bool> publishInProgress{false};
+    std::atomic<bool> resetPlaybackPending{false};
+    std::atomic<bool> seekPending{false};
+    std::atomic<std::int64_t> pendingSeekSample{0};
     std::atomic<bool> panicAllPending{false};
     bool pendingMonitorLiveInput = false;
     std::uint32_t pendingMonitoringInputChannels = 0;
     bool pendingArmedInstrumentTrack = false;
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
+    std::vector<OfflineRecordingTrack> finalizedRecordingTracks;
+    double finalizedRecordingSampleRate = 0.0;
+    int finalizedRecordingBlockSize = 0;
+    juce::String liveMidiTargetTrackId;
     std::atomic<State> state{State::stopped};
     std::atomic<std::int64_t> timelineSample{0};
     std::atomic<std::int64_t> lastMixStartSample{0};
     std::atomic<std::uint64_t> audioClockSample{0};
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
-    std::atomic<std::uint64_t> callbackLockMisses{0};
-    std::atomic<std::uint64_t> callbackPublishMisses{0};
+    std::atomic<std::uint64_t> graphPublishCount{0};
     std::atomic<std::uint64_t> clockGeneration{0};
     std::atomic<std::uint64_t> discontinuity{1};
     std::atomic<bool> monitorLiveInput{false};

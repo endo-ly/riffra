@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <utility>
-#include <vector>
 
 namespace riffra {
 
@@ -14,11 +13,6 @@ namespace riffra {
 /// and capture taps independent from the master/playback buses.
 class ArrangementGraph final {
 public:
-    struct AutomationPoint final {
-        std::int64_t sample = 0;
-        float value = 0.0f;
-    };
-
     [[nodiscard]] static bool midiRouteMatches(const juce::String& configuredDeviceId,
                                                int configuredChannel,
                                                const juce::String& sourceDeviceId,
@@ -33,8 +27,6 @@ public:
     [[nodiscard]] static std::pair<int, int> captureIntersection(int chunkStart, int chunkSamples,
                                                                  int captureStart,
                                                                  int captureSamples) noexcept;
-    [[nodiscard]] static float automationValueAt(const std::vector<AutomationPoint>& points,
-                                                 std::int64_t sample, float fallback) noexcept;
 };
 
 }  // namespace riffra

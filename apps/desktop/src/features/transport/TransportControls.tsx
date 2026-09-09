@@ -14,6 +14,7 @@ interface TransportControlsProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   recordingActive: boolean;
   transportPlaying: boolean;
+  transportStarting?: boolean;
   onPlay: () => void;
   onStop: () => void;
   onGoToStart: () => void;
@@ -28,6 +29,7 @@ export function TransportControls(props: TransportControlsProps) {
     applyCanonicalState,
     recordingActive,
     transportPlaying,
+    transportStarting = false,
     onPlay,
     onStop,
     onGoToStart,
@@ -98,6 +100,7 @@ export function TransportControls(props: TransportControlsProps) {
     : recordingActive
       ? 'Stop recording'
       : 'Start recording';
+  const transportActive = transportPlaying || transportStarting;
 
   return (
     <div className={styles.transport}>
@@ -136,12 +139,12 @@ export function TransportControls(props: TransportControlsProps) {
         <div className={styles.transportGroup}>
           <button
             type="button"
-            className={clsx(styles.playButton, transportPlaying && styles.playing)}
-            aria-label={transportPlaying ? 'Stop playback' : 'Play'}
-            title={transportPlaying ? 'Stop playback' : 'Play'}
-            onClick={() => void (transportPlaying ? onStop() : onPlay())}
+            className={clsx(styles.playButton, transportActive && styles.playing)}
+            aria-label={transportActive ? 'Stop playback' : 'Play'}
+            title={transportActive ? 'Stop playback' : 'Play'}
+            onClick={() => void (transportActive ? onStop() : onPlay())}
           >
-            <TransportIcon name={transportPlaying ? 'stop' : 'play'} />
+            <TransportIcon name={transportActive ? 'stop' : 'play'} />
           </button>
           <button
             type="button"

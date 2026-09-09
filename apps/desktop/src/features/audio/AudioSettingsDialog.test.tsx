@@ -234,6 +234,78 @@ describe('AudioSettingsDialog', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('probe failed');
   });
 
+  it('re-probes a device after a passive refresh clears its channel details', async () => {
+    const passiveProbe: AudioDeviceProbe = {
+      ...probe,
+      drivers: probe.drivers.map((driver) => ({
+        ...driver,
+        inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
+        outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
+      })),
+    };
+    const refreshedPassiveProbe = { ...passiveProbe, refreshedAtMs: 2 };
+    const onProbeChannels = vi.fn(
+      async (driver: string, inputDevice: string, outputDevice: string) => ({
+        driver,
+        inputDevice,
+        inputChannels: [
+          { index: 0, name: 'Input 1' },
+          { index: 1, name: 'Input 2' },
+        ],
+        outputDevice,
+        outputChannels: [{ index: 0, name: 'Output 1' }],
+      }),
+    );
+    const audio = fakeAudioStatus({
+      driver: 'Windows Audio',
+      inputDevice: 'Mic',
+      inputChannel: 0,
+      inputChannels: [
+        { index: 0, name: 'Mic 1' },
+        { index: 1, name: 'Mic 2' },
+      ],
+      outputDevice: 'Speakers',
+      outputChannels: [{ index: 0, name: 'Left' }],
+    });
+    const view = render(
+      <AudioSettingsDialog
+        open
+        audio={audio}
+        probe={refreshedPassiveProbe}
+        safeMode={false}
+        recordingActive={false}
+        onClose={vi.fn()}
+        onRefresh={async () => refreshedPassiveProbe}
+        onProbeChannels={onProbeChannels}
+        onApply={async () => fakeAudioStatus()}
+        onRecover={async () => fakeAudioStatus()}
+      />,
+    );
+    const user = userEvent.setup();
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Audio driver' }), 'ASIO');
+    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledOnce());
+    expect(screen.getByRole('option', { name: 'Input 2' })).toBeInTheDocument();
+
+    view.rerender(
+      <AudioSettingsDialog
+        open
+        audio={audio}
+        probe={passiveProbe}
+        safeMode={false}
+        recordingActive={false}
+        onClose={vi.fn()}
+        onRefresh={async () => passiveProbe}
+        onProbeChannels={onProbeChannels}
+        onApply={async () => fakeAudioStatus()}
+        onRecover={async () => fakeAudioStatus()}
+      />,
+    );
+
+    await waitFor(() => expect(onProbeChannels).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('option', { name: 'Input 2' })).toBeInTheDocument();
+  });
+
   it('uses one Audio device selector for same-device drivers', async () => {
     renderDialog();
     const user = userEvent.setup();

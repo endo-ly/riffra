@@ -26,10 +26,28 @@ bool RuntimeLifecycleExecutor::submit(Task task, std::chrono::milliseconds timeo
     {
         const std::lock_guard lock(mutex);
         if (stopping) return false;
-        lifecycleTasks.push_back(TimedTask{std::move(task), timeout});
+        lifecycleTasks.push_back(TimedTask{std::move(task), timeout, false});
     }
     wake.notify_one();
     return true;
+}
+
+bool RuntimeLifecycleExecutor::submitWithProgress(Task task,
+                                                  const std::chrono::milliseconds stallTimeout) {
+    if (!task || stallTimeout <= std::chrono::milliseconds::zero()) return false;
+    {
+        const std::lock_guard lock(mutex);
+        if (stopping) return false;
+        lifecycleTasks.push_back(TimedTask{std::move(task), stallTimeout, true});
+    }
+    wake.notify_one();
+    return true;
+}
+
+void RuntimeLifecycleExecutor::reportProgress() noexcept {
+    const std::lock_guard lock(mutex);
+    if (running && currentTaskUsesProgressWatchdog)
+        currentTaskLastProgress = std::chrono::steady_clock::now();
 }
 
 RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitState(
@@ -40,7 +58,7 @@ RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitStat
         const std::lock_guard lock(mutex);
         if (stopping) return StateSubmitResult::stopping;
         if (const auto existing = stateTasks.find(key); existing != stateTasks.end()) {
-            existing->second = TimedTask{std::move(task), timeout};
+            existing->second = TimedTask{std::move(task), timeout, false};
             return StateSubmitResult::coalesced;
         } else {
             StateSubmitResult result = StateSubmitResult::accepted;
@@ -53,7 +71,7 @@ RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitStat
                 result = StateSubmitResult::droppedCapacity;
             }
             stateOrder.push_back(key);
-            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout});
+            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout, false});
             wake.notify_one();
             return result;
         }
@@ -108,7 +126,9 @@ void RuntimeLifecycleExecutor::watch() {
             std::unique_lock lock(mutex);
             if (stopping) return;
             if (!running || currentTaskTimedOut) continue;
-            if (std::chrono::steady_clock::now() - currentTaskStarted > currentTaskTimeout) {
+            const auto reference =
+                currentTaskUsesProgressWatchdog ? currentTaskLastProgress : currentTaskStarted;
+            if (std::chrono::steady_clock::now() - reference > currentTaskTimeout) {
                 timedOut = true;
                 currentTaskTimedOut = true;
             }
@@ -152,7 +172,9 @@ void RuntimeLifecycleExecutor::run() {
             }
             running = true;
             currentTaskTimedOut = false;
+            currentTaskUsesProgressWatchdog = timedTask.usesProgressWatchdog;
             currentTaskStarted = std::chrono::steady_clock::now();
+            currentTaskLastProgress = currentTaskStarted;
             currentTaskTimeout = timedTask.timeout;
         }
         try {

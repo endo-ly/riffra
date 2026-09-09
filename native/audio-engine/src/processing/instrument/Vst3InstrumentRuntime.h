@@ -25,11 +25,15 @@ public:
                  const juce::MidiBuffer* midi,
                  const InstrumentProcessContext& context) noexcept override;
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept override;
+    [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
+                                                   juce::String& error) noexcept override;
     void allNotesOff() noexcept override;
     void resetForTransportDiscontinuity() noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;
     [[nodiscard]] int tailSamples() const noexcept override;
+    [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;
     void setBypassed(bool shouldBypass) noexcept override;
+    [[nodiscard]] const char* typeName() const noexcept override { return "VST3"; }
     [[nodiscard]] PluginRack* vst3Rack() noexcept override;
     [[nodiscard]] const PluginRack* vst3Rack() const noexcept override;
 

@@ -78,42 +78,28 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
-pub fn play_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    // Playback is the boundary where an eventually-consistent projection is
-    // no longer sufficient. Register the Play intent before waiting for the
-    // graph so a concurrent Stop can cancel the pending start.
+pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+    // Projection starts when canonical state changes. Play only registers a
+    // transport intent and either starts the already-active graph or waits for
+    // the projection activation hook; it never begins graph preparation.
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    context.runtime.apply_and_play(
-        transport_sequence,
-        runtime_timeline_snapshot(
-            context.data_root,
-            context.built_in_instruments,
-            &projection.session,
-        ),
-        riffra_core::ProjectionKey {
+    context
+        .runtime
+        .request_play_when_ready(riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
-        },
-        std::time::Duration::from_secs(30),
-    )?;
+        })?;
     Ok(())
 }
 
-pub fn stop_timeline(context: &SessionContext<'_>, transport_sequence: u64) -> Result<(), String> {
-    context
-        .runtime
-        .stop(transport_sequence)
-        .map(|_| ())
-        .map_err(String::from)
+pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
+    context.runtime.stop().map(|_| ()).map_err(String::from)
 }
 
-pub fn go_to_start_timeline(
-    context: &SessionContext<'_>,
-    transport_sequence: u64,
-) -> Result<(), String> {
+pub fn go_to_start_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     context
         .runtime
-        .stop_and_seek_to_start(transport_sequence, || {
+        .stop_and_seek_to_start(|| {
             context
                 .audio
                 .seek_timeline(0)

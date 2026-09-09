@@ -28,7 +28,7 @@ mod session;
 mod types;
 
 use host_commands::*;
-use host_connection::{EmbeddedHostSettings, HostConnectionManager};
+use host_connection::{EmbeddedHostSettings, HostConnectionManager, NativeCommandError};
 use model::{AudioDeviceProbe, AudioStatus, BootstrapState};
 use riffra_runtime::RuntimeBinaries;
 use std::sync::Arc;
@@ -136,11 +136,13 @@ pub fn run() {
             get_audio_status,
             preview_master_gain_db,
             set_emergency_mute,
+            reset_feedback_protection,
             recover_audio_device,
             retry_startup_runtime,
             enable_midi_listening,
             disable_midi_listening,
             session::commands::send_midi_to_track,
+            session::commands::set_live_midi_target,
             session::commands::panic_midi_track,
             stop_preview,
             // Session Application Operations.

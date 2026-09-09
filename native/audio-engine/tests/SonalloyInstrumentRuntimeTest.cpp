@@ -430,7 +430,7 @@ TEST(SonalloyInstrumentRuntimeTest, EventCapacityOverflowFailsSafely) {
 
     juce::AudioBuffer<float> output(2, 256);
     juce::MidiBuffer midi;
-    for (int index = 0; index < 1'025; ++index)
+    for (int index = 0; index < 1'281; ++index)
         midi.addEvent(juce::MidiMessage::noteOn(1, 60 + (index % 12), 0.5f), 0);
 
     processBlock(*runtime, output, &midi);
@@ -438,6 +438,27 @@ TEST(SonalloyInstrumentRuntimeTest, EventCapacityOverflowFailsSafely) {
     expectFinite(output);
     EXPECT_NE(runtime->faultCode(), 0u);
     EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
+}
+
+TEST(SonalloyInstrumentRuntimeTest, TimelineAndLiveMidiSharePreparedCallbackCapacity) {
+    juce::String error;
+    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    ASSERT_NE(runtime, nullptr) << error.toStdString();
+    ASSERT_TRUE(runtime->prepareTimelineMidiCapacity(768, error)) << error.toStdString();
+    EXPECT_FALSE(runtime->prepareTimelineMidiCapacity(769, error));
+
+    for (int index = 0; index < 256; ++index)
+        ASSERT_TRUE(runtime->enqueueMidi(juce::MidiMessage::pitchWheel(1, 8'192 + index)));
+
+    juce::AudioBuffer<float> output(2, 256);
+    juce::MidiBuffer timelineMidi;
+    for (int index = 0; index < 768; ++index)
+        ASSERT_TRUE(timelineMidi.addEvent(juce::MidiMessage::pitchWheel(1, 8'192 + index), 0));
+
+    processBlock(*runtime, output, &timelineMidi);
+
+    expectFinite(output);
+    EXPECT_EQ(runtime->faultCode(), 0u);
 }
 
 TEST(SonalloyInstrumentRuntimeTest, ReportsQueuedMidiOverflowOnce) {

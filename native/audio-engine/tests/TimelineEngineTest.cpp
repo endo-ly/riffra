@@ -22,6 +22,12 @@ namespace riffra {
 
 namespace {
 
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
+    if (!engine.finalizeRecording(error)) return false;
+    engine.stop();
+    return engine.processFinalizedRecording(error);
+}
+
 juce::var makeInstrumentSnapshot(const juce::String& trackId,
                                  const juce::String& instrumentDeviceId = {}) {
     auto* timebase = new juce::DynamicObject();
@@ -246,34 +252,33 @@ public:
         return true;
     }
 
-    static bool installLiveChainDevice(TimelineEngine& engine, const juce::String& trackId,
-                                       const juce::String& deviceId,
-                                       std::unique_ptr<juce::AudioProcessor> processor,
-                                       const double sampleRate, const int blockSize,
-                                       juce::String& error) {
+    static bool installTrackChainDevice(TimelineEngine& engine, const juce::String& trackId,
+                                        const juce::String& deviceId,
+                                        std::unique_ptr<juce::AudioProcessor> processor,
+                                        const double sampleRate, const int blockSize,
+                                        juce::String& error) {
         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
         if (engine.timeline == nullptr) return false;
         const auto found =
             std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
         if (found == engine.timeline->tracks.end()) return false;
-        return addChainDevice((*found)->liveEffectChain, deviceId, std::move(processor), sampleRate,
+        auto& track = *(*found);
+        return track.runtime != nullptr &&
+               addChainDevice(track.runtime->effects(), deviceId, std::move(processor), sampleRate,
                               blockSize, error);
     }
 
-    static bool installTimelineChainDevice(TimelineEngine& engine, const juce::String& trackId,
-                                           const juce::String& deviceId,
-                                           std::unique_ptr<juce::AudioProcessor> processor,
-                                           const double sampleRate, const int blockSize,
-                                           juce::String& error) {
+    static bool installTrackInstrument(TimelineEngine& engine, const juce::String& trackId,
+                                       std::unique_ptr<PluginRack> rack) {
         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
         if (engine.timeline == nullptr) return false;
         const auto found =
             std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end()) return false;
-        return addChainDevice((*found)->effectChain, deviceId, std::move(processor), sampleRate,
-                              blockSize, error);
+        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        (*found)->runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
+        return true;
     }
 
     static bool setPlaybackCompensationForTest(TimelineEngine& engine, const juce::String& trackId,
@@ -285,17 +290,42 @@ public:
                          [&trackId](const auto& item) { return item->id == trackId; });
         if (found == engine.timeline->tracks.end()) return false;
         auto& track = *(*found);
-        track.compensationDelaySamples = samples;
-        track.postEffectCompensationDelaySamples = samples;
-        const auto bufferSize = static_cast<int>(samples + track.preparedBlockSize + 1);
-        track.delayBuffer.setSize(2, bufferSize, false, true, false);
-        track.delayBuffer.clear();
-        track.postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
-        track.postEffectDelayBuffer.clear();
+        if (track.runtime == nullptr) return false;
+        track.runtime->compensationDelaySamples = samples;
+        track.runtime->postEffectCompensationDelaySamples = samples;
+        const auto bufferSize = static_cast<int>(samples + track.runtime->preparedBlockSize + 1);
+        track.runtime->delayBuffer.setSize(2, bufferSize, false, true, false);
+        track.runtime->delayBuffer.clear();
+        track.runtime->postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
+        track.runtime->postEffectDelayBuffer.clear();
         return true;
     }
 
-    static bool instrumentEffectChainsProcessOnce() {
+    static bool cachePluginTailForTest(TimelineEngine& engine, const juce::String& trackId) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr) return false;
+        const auto found =
+            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+                         [&trackId](const auto& item) { return item->id == trackId; });
+        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        auto& runtime = *(*found)->runtime;
+        runtime.pluginTailSamples = runtime.totalPluginTailSamples();
+        return true;
+    }
+
+    static void beginAudioReadForTest(TimelineEngine& engine) {
+        TimelineEngine::PreparedTimeline* active = nullptr;
+        engine.beginAudioRead(active);
+    }
+
+    static void endAudioReadForTest(TimelineEngine& engine) { engine.endAudioRead(); }
+
+    static std::size_t retiredTimelineCount(const TimelineEngine& engine) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        return engine.retiredTimelines.size();
+    }
+
+    static bool trackEffectChainProcessesOnce() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -309,10 +339,11 @@ public:
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            if (!addChainDevice(track.effectChain, "effect:timeline",
+            if (track.runtime == nullptr ||
+                !addChainDevice(track.runtime->effects(), "effect:first",
                                 std::make_unique<TestChainProcessor>(1, 1.0f, 0, processOrder),
                                 48'000.0, 32, error) ||
-                !addChainDevice(track.liveEffectChain, "effect:live",
+                !addChainDevice(track.runtime->effects(), "effect:second",
                                 std::make_unique<TestChainProcessor>(2, 1.0f, 0, processOrder),
                                 48'000.0, 32, error))
                 return false;
@@ -329,7 +360,83 @@ public:
         return processOrder == std::vector<int>{1, 2};
     }
 
-    static bool editorParameterMirrorsLiveInstrument() {
+    static bool canonicalTrackStateSurvivesReusableDeviceCommit() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        const auto first = makeInstrumentSnapshot("track:state", "instrument:state");
+        if (!engine.loadSnapshot(first, formats, 48'000.0, 32, error)) return false;
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
+        if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:state", std::move(rack)))
+            return false;
+
+        auto second = makeInstrumentSnapshot("track:state", "instrument:state");
+        auto* secondObject = second.getDynamicObject();
+        if (secondObject == nullptr) return false;
+        auto tracks = secondObject->getProperty("tracks");
+        if (!tracks.isArray() || tracks.size() != 1) return false;
+        auto* track = tracks[0].getDynamicObject();
+        if (track == nullptr) return false;
+        track->setProperty("gainDb", -6.0);
+        track->setProperty("pan", 0.5);
+        track->setProperty("muted", true);
+        track->setProperty("solo", true);
+        track->setProperty("armed", true);
+
+        auto* note = new juce::DynamicObject();
+        note->setProperty("startTick", 0);
+        note->setProperty("durationTicks", 120);
+        note->setProperty("note", 64);
+        note->setProperty("velocity", 100);
+        note->setProperty("channel", 1);
+        juce::Array<juce::var> notes;
+        notes.add(juce::var(note));
+        auto* midiClip = new juce::DynamicObject();
+        midiClip->setProperty("startTick", 0);
+        midiClip->setProperty("durationTicks", 960);
+        midiClip->setProperty("loopEnabled", false);
+        midiClip->setProperty("muted", false);
+        midiClip->setProperty("notes", notes);
+        midiClip->setProperty("events", juce::Array<juce::var>{});
+        juce::Array<juce::var> midiClips;
+        midiClips.add(juce::var(midiClip));
+        track->setProperty("midiClips", midiClips);
+
+        auto* point = new juce::DynamicObject();
+        point->setProperty("tick", 480);
+        point->setProperty("value", -3.0);
+        juce::Array<juce::var> points;
+        points.add(juce::var(point));
+        auto* lane = new juce::DynamicObject();
+        lane->setProperty("parameter", "volume");
+        lane->setProperty("points", points);
+        juce::Array<juce::var> automation;
+        automation.add(juce::var(lane));
+        track->setProperty("automation", automation);
+        secondObject->setProperty("revision", 2);
+
+        // Act
+        if (!engine.loadSnapshot(second, formats, 48'000.0, 32, error, false) ||
+            !engine.preparedTrackReusesRuntimeDevices("track:state") ||
+            !engine.commitPreparedSnapshot(error))
+            return false;
+
+        // Assert
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
+        const auto& runtime = *engine.timeline->tracks.front()->runtime;
+        return runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() == rackPointer &&
+               runtime.gainDb == -6.0f && runtime.pan == 0.5f && runtime.muted && runtime.solo &&
+               runtime.armed && runtime.midiClips.size() == 1 && !runtime.volumeAutomation.empty();
+    }
+
+    static bool editorParameterUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -339,21 +446,17 @@ public:
                 makeInstrumentSnapshot("track:editor-instrument", "instrument:editor"), formats,
                 48'000.0, 32, error))
             return false;
-        auto timelineRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                        48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
-        auto* timelineRackPointer = timelineRack.get();
-        auto* liveRackPointer = liveRack.get();
+        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
-        if (!timelineRackPointer->setParameter(0, 0.75f, error)) return false;
 
         // Act
         if (!engine.mirrorEditorDeviceParameter("track:editor-instrument", "instrument:editor", 0,
@@ -366,13 +469,13 @@ public:
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
         // Assert
-        const auto liveState = liveRackPointer->persistedState(error);
-        const auto liveValues = liveState.getProperty("parameterValues", {});
-        return liveValues.isArray() && liveValues.size() > 0 &&
-               std::abs(static_cast<float>(liveValues[0]) - 0.75f) <= 0.0001f;
+        const auto state = rackPointer->persistedState(error);
+        const auto values = state.getProperty("parameterValues", {});
+        return values.isArray() && values.size() > 0 &&
+               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
     }
 
-    static bool persistedStateRollsBackWhenRuntimeUnavailable() {
+    static bool persistedStateUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -383,42 +486,35 @@ public:
                 48'000.0, 32, error))
             return false;
 
-        auto timelineRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                        48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
-        auto* timelineRackPointer = timelineRack.get();
-        auto* liveRackPointer = liveRack.get();
+        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
+        auto* rackPointer = rack.get();
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
-        if (!timelineRackPointer->setParameter(0, 0.25f, error) ||
-            !liveRackPointer->setParameter(0, 0.5f, error))
-            return false;
+        if (!rackPointer->setParameter(0, 0.25f, error)) return false;
 
         auto* desiredState = new juce::DynamicObject();
         desiredState->setProperty("parameterValues", juce::Array<juce::var>{0.75f});
         desiredState->setProperty("bypassed", false);
-        liveRackPointer->clear();
-
         // Act
         const auto changed = engine.setDevicePersistedState(
             "track:plugin-state", "instrument:plugin-state", juce::var(desiredState), error);
 
         // Assert
-        if (changed) return false;
-        const auto restored = timelineRackPointer->persistedState(error);
+        if (!changed) return false;
+        const auto restored = rackPointer->persistedState(error);
         const auto values = restored.getProperty("parameterValues", {});
         return values.isArray() && values.size() > 0 &&
-               std::abs(static_cast<float>(values[0]) - 0.25f) <= 0.0001f;
+               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
     }
 
-    static bool programChangeRollsBackWhenRuntimeFails() {
+    static bool programChangeUpdatesInstrumentRuntime() {
         // Arrange
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
@@ -429,20 +525,16 @@ public:
                 formats, 48'000.0, 32, error))
             return false;
 
-        ProcessorTrace timelineTrace;
-        ProcessorTrace liveTrace;
-        liveTrace.failProgramChange = true;
-        auto timelineRack = PluginRackTestPeer::install(
-            std::make_unique<TestProcessor>(timelineTrace), 48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(liveTrace),
-                                                    48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
+        ProcessorTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace), 48'000.0,
+                                                32, error);
+        if (rack == nullptr) return false;
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& track = *engine.timeline->tracks.front();
-            track.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            track.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (track.runtime == nullptr) return false;
+            track.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
 
         // Act
@@ -450,7 +542,7 @@ public:
             engine.setDeviceProgram("track:plugin-program", "instrument:plugin-program", 1, error);
 
         // Assert
-        return !changed && timelineTrace.currentProgram == 0 && liveTrace.currentProgram == 0;
+        return changed && trace.currentProgram == 1;
     }
 
     static bool liveInstrumentProcessesWhileStopped() {
@@ -470,17 +562,16 @@ public:
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& liveTrack = *engine.timeline->tracks.front();
-            liveTrack.liveInstrumentRuntime =
-                Vst3InstrumentRuntime::fromRack(std::move(instrumentRack));
+            if (liveTrack.runtime == nullptr) return false;
+            liveTrack.runtime->setInstrument(
+                Vst3InstrumentRuntime::fromRack(std::move(instrumentRack)));
             // Simulate a Project where another Track's plugin is the latency
-            // leader. The live instrument track would normally be delayed by
-            // this compensation on the timeline path.
-            liveTrack.pluginDelaySamples = 0;
-            liveTrack.compensationDelaySamples = 4;
-            liveTrack.delayBuffer.setSize(
-                2, static_cast<int>(liveTrack.compensationDelaySamples + 33), false, true, false);
-            liveTrack.delayBuffer.clear();
+            // leader while the Play Surface targets this Instrument Track.
+            liveTrack.runtime->pluginDelaySamples = 0;
+            liveTrack.runtime->compensationDelaySamples = 4;
         }
+
+        if (!engine.setLiveMidiTarget("track:live-instrument", error)) return false;
 
         if (!engine.enqueueTargetedMidi("track:live-instrument",
                                         juce::MidiMessage::noteOn(1, 60, 0.8f), error))
@@ -492,14 +583,72 @@ public:
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
         const auto peak = std::max(*std::max_element(left.begin(), left.end()),
                                    *std::max_element(right.begin(), right.end()));
-        // The live voice must start at the first output sample instead of being
-        // pushed right by the inter-track compensation delay.
+        // The focused Play Surface target bypasses inter-track compensation delay.
         const auto immediate = std::max(left[0], right[0]);
         return trace.lastMidiMessage.isNoteOn() && trace.noteHeld && peak > 0.0f &&
                immediate > 0.0f;
     }
 
-    static bool panicClosesEveryInstrumentRack() {
+    static bool timelineMidiUsesCurrentTransportContext() {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine;
+        juce::String error;
+        auto snapshot = makeInstrumentSnapshot("track:pdc", "instrument:pdc");
+        auto* snapshotObject = snapshot.getDynamicObject();
+        if (snapshotObject == nullptr) return false;
+        auto tracks = snapshotObject->getProperty("tracks");
+        if (!tracks.isArray() || tracks.size() != 1) return false;
+        auto* track = tracks[0].getDynamicObject();
+        if (track == nullptr) return false;
+        auto* note = new juce::DynamicObject();
+        note->setProperty("startTick", 0);
+        note->setProperty("durationTicks", 120);
+        note->setProperty("note", 60);
+        note->setProperty("velocity", 100);
+        note->setProperty("channel", 1);
+        juce::Array<juce::var> notes;
+        notes.add(juce::var(note));
+        auto* midiClip = new juce::DynamicObject();
+        midiClip->setProperty("startTick", 0);
+        midiClip->setProperty("durationTicks", 960);
+        midiClip->setProperty("loopEnabled", false);
+        midiClip->setProperty("muted", false);
+        midiClip->setProperty("notes", notes);
+        midiClip->setProperty("events", juce::Array<juce::var>{});
+        juce::Array<juce::var> midiClips;
+        midiClips.add(juce::var(midiClip));
+        track->setProperty("midiClips", midiClips);
+        if (!engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) return false;
+
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr || !rack->prepareTimelineMidiCapacity(2, error)) return false;
+        if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:pdc", std::move(rack)))
+            return false;
+        {
+            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+            if (engine.timeline == nullptr || engine.timeline->tracks.empty()) return false;
+            engine.timeline->tracks.front()->runtime->compensationDelaySamples = 4;
+        }
+        if (!engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f), error))
+            return false;
+
+        // Act
+        engine.play();
+        std::array<float, 32> left{};
+        std::array<float, 32> right{};
+        const std::array<float*, 2> outputs{left.data(), right.data()};
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+        // Assert
+        return trace.midiSamplePositions.size() >= 2 && trace.midiSamplePositions[0] == 0 &&
+               trace.midiSamplePositions[1] == 0;
+    }
+
+    static bool panicClosesInstrumentRuntime() {
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
         TimelineEngine engine;
@@ -508,37 +657,29 @@ public:
                                  48'000.0, 32, error))
             return false;
 
-        InstrumentTrace timelineTrace;
-        InstrumentTrace liveTrace;
-        auto timelineRack = PluginRackTestPeer::install(
-            std::make_unique<TestInstrumentProcessor>(timelineTrace), 48'000.0, 32, error);
-        auto liveRack = PluginRackTestPeer::install(
-            std::make_unique<TestInstrumentProcessor>(liveTrace), 48'000.0, 32, error);
-        if (timelineRack == nullptr || liveRack == nullptr) return false;
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                48'000.0, 32, error);
+        if (rack == nullptr) return false;
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
             if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
             auto& panicTrack = *engine.timeline->tracks.front();
-            panicTrack.instrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(timelineRack));
-            panicTrack.liveInstrumentRuntime = Vst3InstrumentRuntime::fromRack(std::move(liveRack));
+            if (panicTrack.runtime == nullptr) return false;
+            panicTrack.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
 
         // Act
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         std::array<float*, 2> outputs{left.data(), right.data()};
-        engine.publishInProgress.store(true, std::memory_order_release);
-        {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            engine.panicAllInstrumentTracks();
-            engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-        }
-        engine.publishInProgress.store(false, std::memory_order_release);
+        engine.panicAllInstrumentTracks();
+        engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
         engine.play();
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
         // Assert
-        return timelineTrace.midiMessages.size() == 48u && liveTrace.midiMessages.size() == 48u;
+        return trace.midiMessages.size() == 48u;
     }
 
     static bool audioDeviceRestartRebuildsRuntimeFormat() {
@@ -568,7 +709,7 @@ public:
                 return false;
             preparedSampleRate = engine.pendingTimeline->outputSampleRate;
             preparedBlockSize = engine.pendingTimeline->preparedBlockSize;
-            trackSampleRate = engine.pendingTimeline->tracks.front()->outputSampleRate;
+            trackSampleRate = engine.pendingTimeline->tracks.front()->runtime->outputSampleRate;
             reusesRuntimeDevices = engine.pendingTimeline->tracks.front()->reuseRuntimeDevices;
         }
         if (reusesRuntimeDevices || std::abs(preparedSampleRate - 44'100.0) > 0.1 ||
@@ -616,7 +757,7 @@ public:
         bool productionWriterPassed = false;
         bool productionWriterPartialPassed = false;
         const auto liveInstrumentWhileStopped = liveInstrumentProcessesWhileStopped();
-        const auto panicClosesRacks = panicClosesEveryInstrumentRack();
+        const auto panicClosesRuntime = panicClosesInstrumentRuntime();
         int diagPartialSegments = 0;
         int diagPartialRaw = 0;
         int diagPartialProcessed = 0;
@@ -859,14 +1000,15 @@ public:
                     engine.mix(physicalInputs.data(), 1, captureOutputs.data(), 2,
                                static_cast<int>(physicalInput.size()));
                 engine.stopRecording();
-                engine.stop();
+                const auto captureFinalized = finalizeCapturedRecording(engine, error);
                 engine.clearRecordingSink();
                 recordingTapIsolated =
-                    captureWindow && captureOffset == 0 &&
+                    captureWindow && captureFinalized && captureOffset == 0 &&
                     captureSamples == static_cast<int>(physicalInput.size()) &&
                     captureSink.receivedTrack == "track:test" &&
                     captureSink.receivedSamples == static_cast<int>(physicalInput.size()) &&
-                    captureSink.isolated;
+                    captureSink.totalProcessedSamples == static_cast<int>(physicalInput.size()) &&
+                    captureSink.offlineProcessedWriteCalls > 0;
 
                 auto* loopSnapshot = new juce::DynamicObject();
                 auto* loopTimebase = new juce::DynamicObject();
@@ -939,8 +1081,7 @@ public:
                     if (loopWindowed && loopRemaining > 0)
                         engine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, loopRemaining);
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     loopCaptureSegments =
                         loopWindowed && loopCaptureOffset == 0 &&
@@ -963,12 +1104,9 @@ public:
                                 static_cast<std::uint64_t>(loopPassSamples);
                     }
                 }
-                // Synthetic Plugin Loop Recording test:
-                // Latency 256, Tail 48000, Loop 24000, 3 passes with distinct impulses
+                // Synthetic loop recording test with distinct impulses per pass.
                 if (loopSnapshotLoaded &&
                     engine.loadSnapshot(loopSnapshotValue, formats, 48000.0, 512, error)) {
-                    constexpr int kSynthDelay = 256;
-                    constexpr int kSynthTail = 48'000;
                     constexpr int kSynthLoopLength = 24'000;
                     constexpr int kSynthPasses = 3;
                     constexpr int kSynthTotal = kSynthLoopLength * kSynthPasses;
@@ -976,18 +1114,6 @@ public:
                     constexpr float kImpulseAmplitude = 0.9f;
                     // Impulse positions within each pass (must be >= kSynthDelay)
                     constexpr int kImpulsePos[kSynthPasses] = {256, 1256, 2256};
-                    // Set synthetic plugin delay and tail on the armed track
-                    {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = kSynthDelay;
-                                    trackPtr->pluginTailSamples = kSynthTail;
-                                }
-                            }
-                        }
-                    }
                     LoopDataCaptureSink synthSink(directory, "synth");
                     engine.setRecordingSink(&synthSink);
                     engine.seekToTick(0);
@@ -1026,8 +1152,7 @@ public:
                         synthMixed += block;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     const auto clockAfter = engine.audioClockSample.load(std::memory_order_acquire);
                     // Verify: audio clock advanced continuously by total mixed samples
@@ -1058,10 +1183,9 @@ public:
                         synthImpulseOk = base + impulseAt < synthSink.rawBuffer.size() &&
                                          std::abs(synthSink.rawBuffer[base + impulseAt] -
                                                   kImpulseAmplitude) < 0.001f;
-                        // Processed impulse at P - delay (passthrough chain + delay compensation)
-                        // For a real plugin with latency D, output aligns at P.
-                        // For passthrough test chain, compensation shifts left by D.
-                        const auto processedPos = impulseAt - static_cast<std::size_t>(kSynthDelay);
+                        // The offline chain is empty for this synthetic capture, so the
+                        // processed variant preserves the raw impulse position.
+                        const auto processedPos = impulseAt;
                         synthImpulseOk = synthImpulseOk &&
                                          base + processedPos < synthSink.processedLeft.size() &&
                                          std::abs(synthSink.processedLeft[base + processedPos] -
@@ -1091,9 +1215,11 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = 0;
-                                    trackPtr->pluginTailSamples = 0;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack &&
+                                    trackPtr->runtime->armed) {
+                                    trackPtr->runtime->pluginDelaySamples = 0;
+                                    trackPtr->runtime->pluginTailSamples = 0;
                                 }
                             }
                         }
@@ -1121,8 +1247,7 @@ public:
                         partialMixed += block;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Expected: 3 segments (partial 12000, full 24000, full 24000)
                     const bool partialSegmentsOk = partialSink.segmentCount == 3;
@@ -1166,18 +1291,8 @@ public:
                     // preparedBlockSize = 128; chain must be fed in <= 128 sample chunks
                     constexpr int kBsTotal = 24'000;  // 1 pass
                     constexpr int kBsBlock = 128;
-                    constexpr int kBsDelay = 64;
                     constexpr float kBsImpulse = 0.8f;
                     constexpr int kBsImpulsePos = 500;
-                    {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed)
-                                    trackPtr->pluginDelaySamples = kBsDelay;
-                            }
-                        }
-                    }
                     LoopDataCaptureSink bsSink(directory, "blocksize");
                     engine.setRecordingSink(&bsSink);
                     engine.seekToTick(0);
@@ -1201,13 +1316,12 @@ public:
                         bsMixed += kBsBlock;
                     }
                     engine.stopRecording();
-                    engine.flushRecordingTail(error);
-                    engine.stop();
+                    finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Verify: processed length matches raw, impulse at correct position
                     const bool bsLengthOk =
                         bsSink.totalRaw == kBsTotal && bsSink.totalProcessed == kBsTotal;
-                    const auto bsProcessedPos = kBsImpulsePos - kBsDelay;
+                    const auto bsProcessedPos = kBsImpulsePos;
                     const bool bsImpulseOk =
                         bsProcessedPos >= 0 &&
                         static_cast<std::size_t>(bsProcessedPos) < bsSink.processedLeft.size() &&
@@ -1232,9 +1346,11 @@ public:
                         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
                         if (engine.timeline != nullptr) {
                             for (auto& trackPtr : engine.timeline->tracks) {
-                                if (!trackPtr->instrument && trackPtr->armed) {
-                                    trackPtr->pluginDelaySamples = 0;
-                                    trackPtr->pluginTailSamples = 0;
+                                if (trackPtr->runtime != nullptr &&
+                                    !trackPtr->runtime->instrumentTrack &&
+                                    trackPtr->runtime->armed) {
+                                    trackPtr->runtime->pluginDelaySamples = 0;
+                                    trackPtr->runtime->pluginTailSamples = 0;
                                 }
                             }
                         }
@@ -1269,8 +1385,7 @@ public:
                             longMixed += block;
                         }
                         engine.stopRecording();
-                        engine.flushRecordingTail(error);
-                        engine.stop();
+                        finalizeCapturedRecording(engine, error);
                         engine.clearRecordingSink();
                         // Verify: all 130 passes recorded, raw/processed match
                         longRecordingPassed =
@@ -1330,8 +1445,8 @@ public:
                         constexpr int kProdTotal = kProdLoopLength * kProdPasses;
                         constexpr int kProdBlock = 512;
 
-                        // 3 full passes
-                        // SafetyAudioCallback owns stop, tail flush, sink clear and session finish.
+                        // 3 full passes. SafetyAudioCallback owns transport stop and capture
+                        // detachment; this test completes the detached offline job explicitly.
                         engine.seekToTick(0);
                         auto prodDir = directory.getChildFile("prod-writer");
                         SafetyAudioCallback prodCallback;
@@ -1364,6 +1479,17 @@ public:
                             juce::String stopError;
                             const auto stopOk =
                                 prodCallback.stopArrangeRecording(engine, stopError);
+                            auto detached = prodCallback.takeFinalizedRecording();
+                            const auto processed =
+                                detached != nullptr &&
+                                engine.processFinalizedRecording(detached.get(), stopError);
+                            juce::String finishError;
+                            const auto finished =
+                                detached != nullptr && detached->finish(processed, finishError);
+                            if (finishError.isNotEmpty()) {
+                                if (stopError.isNotEmpty()) stopError << " ";
+                                stopError << finishError;
+                            }
                             engine.stop();
 
                             const auto rawFile = prodDir.getChildFile("tracks/0000/raw.wav");
@@ -1398,10 +1524,11 @@ public:
                             }
 
                             productionWriterPassed =
-                                prodWindowed && stopOk && rawFile.existsAsFile() &&
-                                processedFile.existsAsFile() && rawLength == kProdTotal &&
-                                processedLength == kProdTotal && completed &&
-                                diagProductionMissing == 0 && diagProductionDropped == 0;
+                                prodWindowed && stopOk && processed && finished &&
+                                rawFile.existsAsFile() && processedFile.existsAsFile() &&
+                                rawLength == kProdTotal && processedLength == kProdTotal &&
+                                completed && diagProductionMissing == 0 &&
+                                diagProductionDropped == 0;
 
                             // Verify capture segment ranges match
                             if (productionWriterPassed && manifestValue.isObject()) {
@@ -1466,11 +1593,10 @@ public:
                                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             }
                             engine.stopRecording();
-                            const auto tailOk = engine.flushRecordingTail(error);
-                            engine.stop();
+                            const auto finalized = finalizeCapturedRecording(engine, error);
                             engine.clearRecordingSink();
                             juce::String finishError;
-                            const auto finished = partialSession->finish(finishError);
+                            const auto finished = partialSession->finish(finalized, finishError);
 
                             const auto rawFile = partialDir.getChildFile("tracks/0000/raw.wav");
                             const auto processedFile =
@@ -1496,9 +1622,10 @@ public:
                                 static_cast<std::uint64_t>(processedLength);
 
                             productionWriterPartialPassed =
-                                partialWindowed && tailOk && finished && rawFile.existsAsFile() &&
-                                processedFile.existsAsFile() && rawLength == kPartialTotal &&
-                                processedLength == kPartialTotal && completed;
+                                partialWindowed && finalized && finished &&
+                                rawFile.existsAsFile() && processedFile.existsAsFile() &&
+                                rawLength == kPartialTotal && processedLength == kPartialTotal &&
+                                completed;
 
                             // Verify 3 segments and raw/processed ranges
                             if (productionWriterPartialPassed && manifestValue.isObject()) {
@@ -1652,12 +1779,12 @@ public:
         addCheck("Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
                  longRecordingPassed);
         addCheck(
-            "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns stop, tail flush, "
-            "sink clear and session finish)",
+            "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns transport stop, "
+            "capture detachment; lifecycle worker owns offline processing and session finish)",
             productionWriterPassed);
         addCheck("Production ThreadedWriter Partial Pass", productionWriterPartialPassed);
         addCheck("Stopped Transport processes live Instrument MIDI", liveInstrumentWhileStopped);
-        addCheck("Timeline panic closes arranged and live Instrument racks", panicClosesRacks);
+        addCheck("Timeline panic closes the Instrument runtime", panicClosesRuntime);
         result->setProperty("checks", checks);
         result->setProperty("message", error);
         result->setProperty("partialSegments", diagPartialSegments);
@@ -1695,7 +1822,7 @@ public:
                           recordingTapIsolated && loopCaptureSegments && syntheticLoopPassed &&
                           partialPassPassed && blockSizePassed && longRecordingPassed &&
                           productionWriterPassed && productionWriterPartialPassed &&
-                          liveInstrumentWhileStopped && panicClosesRacks);
+                          liveInstrumentWhileStopped && panicClosesRuntime);
         mono.deleteFile();
         stereo.deleteFile();
         directory.getChildFile("offline-selection.wav").deleteFile();
@@ -1716,6 +1843,47 @@ TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender) {
         EXPECT_TRUE(static_cast<bool>(check.getProperty("passed", false))) << name.toStdString();
     }
     EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
+}
+
+TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:tail"), formats, 48'000.0, 32, error));
+    InstrumentTrace instrumentTrace;
+    auto instrument = PluginRackTestPeer::install(
+        std::make_unique<TestInstrumentProcessor>(instrumentTrace), 48'000.0, 32, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:tail",
+                                                               std::move(instrument)));
+    std::vector<int> effectCalls;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
+        engine, "track:tail", "effect:tail",
+        std::make_unique<TestChainProcessor>(1, 1.0f, 0, effectCalls, 0.25), 48'000.0, 32, error))
+        << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::cachePluginTailForTest(engine, "track:tail"));
+
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    ASSERT_TRUE(
+        engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+    const auto callsWithNoteHeld = effectCalls.size();
+
+    // Act
+    ASSERT_TRUE(engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOff(1, 60), error));
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+    const auto callsAtNoteOff = effectCalls.size();
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert
+    EXPECT_GT(callsWithNoteHeld, 0u);
+    EXPECT_GT(callsAtNoteOff, callsWithNoteHeld);
+    EXPECT_GT(effectCalls.size(), callsAtNoteOff);
 }
 
 TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
@@ -1747,7 +1915,7 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
                                     formats, 48'000.0, 32, error))
         << error.toStdString();
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTimelineChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:audio", "effect:double",
         std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 32, error))
         << error.toStdString();
@@ -1791,36 +1959,90 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[4], expected, 0.002f);
 }
 
-TEST(TimelineEngineTest, ProcessesTimelineAndLiveEffectChainsOnce) {
+TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("raw-monitor.wav");
+    const auto processedFile = directory.get().getChildFile("processed-monitor.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    track->setProperty("monitoring", "on");
+    auto* input = new juce::DynamicObject();
+    input->setProperty("channelIndex", 0);
+    track->setProperty("audioInput", juce::var(input));
+
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
+
+    std::array<float, 32> inputSamples{};
+    inputSamples.fill(0.25f);
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<const float*, 1> inputs{inputSamples.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert
+    // Audio monitoring bypasses only inter-track compensation delay.
+    EXPECT_GT(left[0], 0.23f);
+    EXPECT_NEAR(right[0], left[0], 0.002f);
+    EXPECT_NEAR(left[4], left[0], 0.002f);
+    EXPECT_NEAR(right[4], left[4], 0.002f);
+}
+
+TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::instrumentEffectChainsProcessOnce();
+    const auto passed = TimelineEngineTestPeer::trackEffectChainProcessesOnce();
 
     // Assert
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, MirrorsEditorParameterToLiveInstrument) {
+TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
+    EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
+}
+
+TEST(TimelineEngineTest, ProcessesTimelineAndLiveMidiInTheSameTrackContext) {
+    EXPECT_TRUE(TimelineEngineTestPeer::timelineMidiUsesCurrentTransportContext());
+}
+
+TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::editorParameterMirrorsLiveInstrument();
+    const auto passed = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
 
     // Assert
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, RollsBackPluginStateWhenOneRuntimeCannotBeUpdated) {
-    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateRollsBackWhenRuntimeUnavailable());
+TEST(TimelineEngineTest, AppliesPluginStateToTheInstrumentRuntime) {
+    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime());
 }
 
-TEST(TimelineEngineTest, RollsBackPluginProgramWhenOneRuntimeCannotBeUpdated) {
-    EXPECT_TRUE(TimelineEngineTestPeer::programChangeRollsBackWhenRuntimeFails());
+TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
+    EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
 }
 
-TEST(TimelineEngineTest, RetainsEmergencyPanicUntilAReadableGraphIsAvailable) {
+TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::panicClosesEveryInstrumentRack();
+    const auto passed = TimelineEngineTestPeer::panicClosesInstrumentRuntime();
 
     // Assert
     EXPECT_TRUE(passed);
@@ -1835,6 +2057,28 @@ TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat) {
     EXPECT_TRUE(passed);
 }
 
+TEST(TimelineEngineTest, ReclaimsRetiredGraphsAfterAudioReadersLeave) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:first"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    TimelineEngineTestPeer::beginAudioReadForTest(engine);
+
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:second"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 1u);
+
+    TimelineEngineTestPeer::endAudioReadForTest(engine);
+    engine.serviceDeferredCleanup();
+
+    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 0u);
+}
+
 TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths) {
     // Arrange
     juce::AudioFormatManager formats;
@@ -1846,7 +2090,7 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
         << error.toStdString();
 
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTimelineChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:builtin", "effect:builtin",
         std::make_unique<TestChainProcessor>(7, 2.0f, 0, processOrder), 48'000.0, 512, error))
         << error.toStdString();
@@ -2092,12 +2336,11 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
     engine.stopRecording();
-    const auto flushed = engine.flushRecordingTail(error);
-    engine.stop();
+    const auto finalized = finalizeCapturedRecording(engine, error);
     engine.clearRecordingSink();
 
     // Assert
-    EXPECT_TRUE(flushed);
+    EXPECT_TRUE(finalized);
     EXPECT_EQ(captureOffset, 0);
     EXPECT_EQ(captureSamples, kBlockSamples);
     EXPECT_EQ(rawSamplesAfterCallback, kBlockSamples);
@@ -2108,7 +2351,53 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     EXPECT_EQ(captureSink.endCount, 1);
 }
 
-TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain) {
+TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    constexpr int kRecordingSamples = 100'000;
+    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, false, true), formats, 48'000.0,
+                                    kBlockSamples, error));
+    test::TemporaryDirectory directory;
+    CaptureIsolationSink captureSink(directory.get());
+    engine.setRecordingSink(&captureSink);
+    std::array<float, kBlockSamples> input{};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> outputLeft{};
+    std::array<float, kBlockSamples> outputRight{};
+    const std::array<const float*, 1> inputChannels{input.data()};
+    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
+    int captureOffset = 0;
+    int captureSamples = 0;
+    ASSERT_TRUE(engine.startRecording(0, error));
+    ASSERT_TRUE(engine.recordingWindow(kRecordingSamples, captureOffset, captureSamples));
+
+    // Act
+    auto remaining = kRecordingSamples;
+    while (remaining > 0) {
+        const auto block = std::min(kBlockSamples, remaining);
+        engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, block);
+        remaining -= block;
+    }
+    const auto finalized = finalizeCapturedRecording(engine, error);
+    engine.clearRecordingSink();
+
+    // Assert
+    EXPECT_TRUE(finalized);
+    EXPECT_EQ(captureOffset, 0);
+    EXPECT_EQ(captureSamples, kRecordingSamples);
+    EXPECT_EQ(captureSink.beginCount, 1);
+    EXPECT_EQ(captureSink.endCount, 1);
+    EXPECT_EQ(captureSink.totalRawSamples, kRecordingSamples);
+    EXPECT_EQ(captureSink.totalProcessedSamples, kRecordingSamples);
+    EXPECT_GT(captureSink.offlineProcessedWriteCalls, 1);
+    EXPECT_LE(captureSink.maxOfflineProcessedWriteSize, kBlockSamples);
+}
+
+TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -2149,7 +2438,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughALiveEffectChain) {
 
     ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
     std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installLiveChainDevice(
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:guitar", "device:amp",
         std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 512, error));
 

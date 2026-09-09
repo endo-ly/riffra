@@ -6,7 +6,6 @@ mod music;
 mod rack;
 mod recording;
 mod session;
-pub mod transport;
 
 use crate::PreparedSession;
 use crate::app::AppCore;

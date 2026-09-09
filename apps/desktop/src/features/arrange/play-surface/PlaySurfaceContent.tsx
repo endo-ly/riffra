@@ -26,7 +26,7 @@ interface SurfaceState {
 interface PlaySurfaceContentProps {
   track: Track | null;
   audio: AudioStatus;
-  api: Pick<AudioApi, 'sendMidiToTrack'>;
+  api: Pick<AudioApi, 'sendMidiToTrack' | 'setLiveMidiTarget'>;
   runtimeReady: boolean;
   missingDeviceIds: string[];
   onChooseInstrument: () => void;
@@ -58,6 +58,14 @@ export function PlaySurfaceContent({
   useEffect(() => {
     setComputerKeys(false);
   }, [targetTrackId]);
+  useEffect(() => {
+    void api.setLiveMidiTarget(runtimeReady ? targetTrackId : null);
+  }, [api, runtimeReady, targetTrackId]);
+  useEffect(() => {
+    return () => {
+      void api.setLiveMidiTarget(null);
+    };
+  }, [api]);
   const instrumentMissing = Boolean(
     track?.instrument?.source.type === 'vst3' &&
     (track.instrument.source.disabledPlaceholder || missingDeviceIds.includes(track.instrument.id)),

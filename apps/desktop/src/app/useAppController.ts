@@ -5,7 +5,7 @@ import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useHostConnection } from '@/app/runtime/useHostConnection';
-import { useStartupRuntimeRecovery } from '@/app/runtime/useStartupRuntimeRecovery';
+import { useStartupRuntimeRestore } from '@/app/runtime/useStartupRuntimeRestore';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
@@ -69,7 +69,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runBackgroundJob,
   });
   const { plugins, scanPlugins } = pluginCatalog;
-  useStartupRuntimeRecovery({
+  useStartupRuntimeRestore({
     hostGeneration: hostConnection.state.generation,
     hostReady,
     boot,
@@ -103,12 +103,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
   });
 
-  const { transportPlaying, playTransport, stopTransport, goToStart } = useTransportController({
-    api,
-    sessionRef,
-    hostGeneration: hostConnection.state.generation,
-    projectId,
-  });
+  const { transportPlaying, transportStarting, playTransport, stopTransport, goToStart } =
+    useTransportController({
+      api,
+      sessionRef,
+      hostGeneration: hostConnection.state.generation,
+    });
 
   const audioHook = useAudioSettings(api, {
     audio,
@@ -124,6 +124,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     selectAudioDriver,
     enableMidi,
     toggleMute,
+    resetFeedback,
   } = audioHook;
   const recording = useRecording(api, {
     hostGeneration: hostConnection.state.generation,
@@ -272,6 +273,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     ignoreMissing,
     recordings,
     transportPlaying,
+    transportStarting,
     recordingCommandPending,
     exportMessage,
     deviceProbe,
@@ -309,6 +311,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     updateSelectedLibraryAsset,
     previewSelectedLibraryAsset,
     toggleMute,
+    resetFeedback,
     toggleRecording,
     query,
     visiblePlugins,

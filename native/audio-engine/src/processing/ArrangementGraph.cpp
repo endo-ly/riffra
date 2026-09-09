@@ -41,22 +41,4 @@ std::pair<int, int> ArrangementGraph::captureIntersection(const int chunkStart,
     return {start, std::max(start, end)};
 }
 
-float ArrangementGraph::automationValueAt(const std::vector<AutomationPoint>& points,
-                                          const std::int64_t sample,
-                                          const float fallback) noexcept {
-    if (points.empty()) return fallback;
-    const auto right =
-        std::upper_bound(points.begin(), points.end(), sample,
-                         [](const std::int64_t position, const AutomationPoint& point) {
-                             return position < point.sample;
-                         });
-    if (right == points.begin()) return right->value;
-    if (right == points.end()) return points.back().value;
-    const auto& left = *(right - 1);
-    const auto distance = right->sample - left.sample;
-    if (distance <= 0) return right->value;
-    const auto amount = static_cast<float>(sample - left.sample) / static_cast<float>(distance);
-    return left.value + (right->value - left.value) * amount;
-}
-
 }  // namespace riffra

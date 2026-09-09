@@ -348,4 +348,31 @@ describe('useRecording', () => {
     expect(result.current.session).toBe(stoppedSession);
     expect(result.current.finalizationError).toBe('manifest invalid');
   });
+
+  it('keeps recording controls blocked until native finalization completes', async () => {
+    const processingAudio = fakeAudioStatus();
+    processingAudio.recording.processing = true;
+    const api = new FakeNativeApi({ recordings: [], audio: processingAudio });
+    const { result } = renderHook(() =>
+      useRecordingHarness(api, sessionWithTrack(true), processingAudio),
+    );
+
+    await act(async () => {
+      await result.current.toggleRecording();
+    });
+
+    expect(api.calls).not.toContain('startArrangeRecording');
+    expect(api.calls).toContain('onRecordingFinalized');
+
+    act(() => {
+      api.emitRecordingFinalized({
+        directory: 'recordings/inbox/take-1',
+        succeeded: false,
+        message: 'processed output failed',
+      });
+    });
+
+    await waitFor(() => expect(result.current.finalizationError).toBe('processed output failed'));
+    expect(api.calls).toContain('listRecordings');
+  });
 });

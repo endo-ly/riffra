@@ -54,6 +54,12 @@ export interface RuntimeStartupFinishedEvent {
   succeeded: boolean;
 }
 
+export interface RecordingFinalizedEvent {
+  directory: string;
+  succeeded: boolean;
+  message: string | null;
+}
+
 export interface HostConnectionBootstrap {
   state: HostConnectionState;
   bootstrap: BootstrapState;
@@ -176,6 +182,8 @@ export interface AudioApi {
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
+  /** Explicitly releases the Native feedback-protection latch. */
+  resetFeedbackProtection(): Promise<AudioStatus>;
   /**
    * Sets the master gain on the Audio Runtime and persists the clamped value
    * into the canonical session settings. One Rust Application Operation
@@ -197,6 +205,8 @@ export interface AudioApi {
   disableMidiListening(): Promise<AudioStatus>;
   /** Sends a live MIDI message to the specified Instrument Track. */
   sendMidiToTrack(trackId: string, bytes: number[]): Promise<AudioStatus | null>;
+  /** Sets the runtime-only low-latency target for live MIDI input. */
+  setLiveMidiTarget(trackId: string | null): Promise<AudioStatus | null>;
   /** Sends the targeted Instrument Track panic messages without changing the session. */
   panicMidiTrack(trackId: string): Promise<AudioStatus | null>;
 }
@@ -373,9 +383,9 @@ export interface ArrangeApi {
 export interface TransportApi {
   getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
-  playTimeline(transportSequence: number): Promise<void>;
-  stopTimeline(transportSequence: number): Promise<void>;
-  goToStartTimeline(transportSequence: number): Promise<void>;
+  playTimeline(): Promise<void>;
+  stopTimeline(): Promise<void>;
+  goToStartTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;
 }
 
@@ -425,6 +435,7 @@ export interface NativeEventApi {
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
+  onRecordingFinalized(callback: (event: RecordingFinalizedEvent) => void): () => void;
 }
 
 export interface NativeApi

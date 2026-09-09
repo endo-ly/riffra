@@ -5,9 +5,7 @@
 //! same sidecar generation is still alive. A failed candidate or a generation
 //! change never exposes partially restored audio.
 
-use crate::audio::{
-    AudioSupervisor, MuteCause, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT,
-};
+use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT};
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
@@ -390,38 +388,24 @@ fn release_startup_mute(
         ));
     }
 
-    let released = audio
-        .release_startup_mute_if_allowed(generation)
-        .map_err(|error| {
-            if sidecar_transitioned(audio, generation) {
-                StartupRuntimeError::GenerationChanged(generation_changed_message(
-                    audio, generation,
-                ))
-            } else {
-                StartupRuntimeError::Feature(format!(
-                    "startup emergency mute could not be released: {error}"
-                ))
-            }
-        })?;
-
+    if !safe_for_startup_restore(muted_status) {
+        return Err(StartupRuntimeError::Safety(
+            "audio status is unsafe after arrangement restoration".into(),
+        ));
+    }
+    audio.set_engine_transition_mute(false).map_err(|error| {
+        StartupRuntimeError::Feature(format!(
+            "engine transition mute could not be released: {error}"
+        ))
+    })?;
     if sidecar_transitioned(audio, generation) {
         return Err(StartupRuntimeError::GenerationChanged(
             generation_changed_message(audio, generation),
         ));
     }
-
-    if released.is_none()
-        && audio.current_mute_cause().map_err(|error| {
-            StartupRuntimeError::Safety(format!(
-                "startup emergency mute cause could not be read: {error}"
-            ))
-        })? != Some(MuteCause::User)
-    {
-        return Err(StartupRuntimeError::Safety(
-            "startup emergency mute remains engaged because the audio status is unsafe".into(),
-        ));
-    }
-    Ok(released.unwrap_or_else(|| muted_status.clone()))
+    audio.refresh_status().map_err(|error| {
+        StartupRuntimeError::Feature(format!("audio status could not be refreshed: {error}"))
+    })
 }
 
 fn sidecar_transitioned(audio: &AudioSupervisor, generation: u64) -> bool {
@@ -485,8 +469,10 @@ mod tests {
                 input_device: None,
                 input_channel: None,
                 input_channels: Vec::new(),
+                active_input_channels: Vec::new(),
                 output_device: None,
                 output_channels: Vec::new(),
+                active_output_channels: Vec::new(),
                 sample_rate: None,
                 buffer_size: None,
                 round_trip_ms: None,
@@ -502,6 +488,8 @@ mod tests {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
+                mute_reasons: 0,
+                diagnostics: Default::default(),
                 message: "fake".into(),
             }
         }
