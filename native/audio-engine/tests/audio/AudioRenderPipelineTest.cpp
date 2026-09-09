@@ -5,8 +5,10 @@
 #include <limits>
 #include <memory>
 
+#include "ArrangeRecordingSession.h"
 #include "AudioRuntimeStatus.h"
-#include "SafetyAudioCallback.h"
+#include "audio/AudioRenderPipeline.h"
+#include "TimelineEngine.h"
 
 namespace riffra {
 namespace {
@@ -50,8 +52,9 @@ juce::var makeMonitoringSnapshot(const int channelIndex = 0, const bool armed = 
 
 }  // namespace
 
-TEST(SafetyAudioCallbackTest, HoldsInputTransientUntilStatusCollection) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, HoldsInputTransientUntilStatusCollection) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> silence{};
     std::array<float, kBlockSize> output{};
@@ -61,16 +64,15 @@ TEST(SafetyAudioCallbackTest, HoldsInputTransientUntilStatusCollection) {
     const std::array<float*, 1> outputs{output.data()};
     const juce::AudioIODeviceCallbackContext context{};
 
-    callback.audioDeviceIOCallbackWithContext(signalInput.data(), 1, outputs.data(), 1, kBlockSize,
-                                              context);
-    callback.audioDeviceIOCallbackWithContext(silentInput.data(), 1, outputs.data(), 1, kBlockSize,
-                                              context);
+    callback.processBlock(signalInput.data(), 1, outputs.data(), 1, kBlockSize, context);
+    callback.processBlock(silentInput.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     EXPECT_GE(callback.getInputPeak(), 0.5f);
 }
 
-TEST(SafetyAudioCallbackTest, SilencesOutputWhenEmergencyMuted) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, SilencesOutputWhenEmergencyMuted) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> output{};
     input.fill(0.5f);
@@ -79,14 +81,14 @@ TEST(SafetyAudioCallbackTest, SilencesOutputWhenEmergencyMuted) {
     const std::array<float*, 1> outputs{output.data()};
     const juce::AudioIODeviceCallbackContext context{};
 
-    callback.audioDeviceIOCallbackWithContext(inputs.data(), 1, outputs.data(), 1, kBlockSize,
-                                              context);
+    callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
 }
 
-TEST(SafetyAudioCallbackTest, ReportsInvalidAudioSamples) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, ReportsInvalidAudioSamples) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(false);
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> output{};
@@ -95,15 +97,15 @@ TEST(SafetyAudioCallbackTest, ReportsInvalidAudioSamples) {
     const std::array<float*, 1> outputs{output.data()};
     const juce::AudioIODeviceCallbackContext context{};
 
-    callback.audioDeviceIOCallbackWithContext(inputs.data(), 1, outputs.data(), 1, kBlockSize,
-                                              context);
+    callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     EXPECT_GT(callback.getInvalidSampleCount(), 0u);
     EXPECT_TRUE(std::isfinite(output.front()));
 }
 
-TEST(SafetyAudioCallbackTest, DoesNotMuteForAHotInputWhenMonitoringIsOff) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, DoesNotMuteForAHotInputWhenMonitoringIsOff) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(false);
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> output{};
@@ -113,14 +115,13 @@ TEST(SafetyAudioCallbackTest, DoesNotMuteForAHotInputWhenMonitoringIsOff) {
     const juce::AudioIODeviceCallbackContext context{};
 
     for (int block = 0; block < 400; ++block)
-        callback.audioDeviceIOCallbackWithContext(inputs.data(), 1, outputs.data(), 1, kBlockSize,
-                                                  context);
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     EXPECT_FALSE(callback.isMuted());
     EXPECT_FALSE(callback.isFeedbackSuspected());
 }
 
-TEST(SafetyAudioCallbackTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
+TEST(AudioRenderPipelineTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -128,8 +129,7 @@ TEST(SafetyAudioCallbackTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
     juce::String error;
     ASSERT_TRUE(
         timeline.loadSnapshot(makeMonitoringSnapshot(), formats, 48'000.0, kBlockSize, error));
-    SafetyAudioCallback callback;
-    callback.setTimelineEngine(&timeline);
+    AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(false);
     std::array<float, kBlockSize> input{};
     std::array<float, kBlockSize> output{};
@@ -139,8 +139,7 @@ TEST(SafetyAudioCallbackTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
     const juce::AudioIODeviceCallbackContext context{};
 
     for (int block = 0; block < 400; ++block)
-        callback.audioDeviceIOCallbackWithContext(inputs.data(), 1, outputs.data(), 1, kBlockSize,
-                                                  context);
+        callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     ASSERT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
     ASSERT_TRUE(callback.isFeedbackSuspected());
@@ -153,7 +152,7 @@ TEST(SafetyAudioCallbackTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
     EXPECT_FALSE(callback.isFeedbackSuspected());
 }
 
-TEST(SafetyAudioCallbackTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
+TEST(AudioRenderPipelineTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -161,8 +160,7 @@ TEST(SafetyAudioCallbackTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
     juce::String error;
     ASSERT_TRUE(
         timeline.loadSnapshot(makeMonitoringSnapshot(1), formats, 48'000.0, kBlockSize, error));
-    SafetyAudioCallback callback;
-    callback.setTimelineEngine(&timeline);
+    AudioRenderPipeline callback(timeline);
     callback.setInputChannel(0);
     callback.setUserEmergencyMute(false);
     std::array<float, kBlockSize> selectedInput{};
@@ -175,15 +173,14 @@ TEST(SafetyAudioCallbackTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
 
     // Act
     for (int block = 0; block < 400; ++block)
-        callback.audioDeviceIOCallbackWithContext(inputs.data(), 2, outputs.data(), 1, kBlockSize,
-                                                  context);
+        callback.processBlock(inputs.data(), 2, outputs.data(), 1, kBlockSize, context);
 
     // Assert
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
     EXPECT_TRUE(callback.isFeedbackSuspected());
 }
 
-TEST(SafetyAudioCallbackTest, DetachesRecordingBeforeFinalizationCompletes) {
+TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -191,8 +188,7 @@ TEST(SafetyAudioCallbackTest, DetachesRecordingBeforeFinalizationCompletes) {
     juce::String error;
     ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                       kBlockSize, error));
-    SafetyAudioCallback callback;
-    callback.setTimelineEngine(&timeline);
+    AudioRenderPipeline callback(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     callback.setRecordingFinalizationDispatcher(
         [&detached](std::unique_ptr<ArrangeRecordingSession> session) {
@@ -203,24 +199,25 @@ TEST(SafetyAudioCallbackTest, DetachesRecordingBeforeFinalizationCompletes) {
                                .getChildFile(juce::Uuid().toString());
 
     // Act
-    ASSERT_TRUE(callback.startArrangeRecording(directory, timeline, error));
+    ASSERT_TRUE(callback.recording().start(directory, error));
     ASSERT_TRUE(timeline.startRecording(0, error));
-    ASSERT_TRUE(callback.stopArrangeRecording(timeline, error));
+    ASSERT_TRUE(callback.recording().stop(error));
 
     // Assert
     ASSERT_NE(detached, nullptr);
-    const auto processingStatus = callback.recordingStatus();
+    const auto processingStatus = callback.recording().status();
     EXPECT_FALSE(static_cast<bool>(processingStatus.getProperty("active", false)));
     EXPECT_TRUE(static_cast<bool>(processingStatus.getProperty("processing", false)));
 
-    callback.completeArrangeRecordingProcessing(detached->status(), {});
-    EXPECT_FALSE(static_cast<bool>(callback.recordingStatus().getProperty("processing", true)));
+    callback.recording().completeProcessing(detached->status(), {});
+    EXPECT_FALSE(static_cast<bool>(callback.recording().status().getProperty("processing", true)));
     detached.reset();
     directory.deleteRecursively();
 }
 
-TEST(SafetyAudioCallbackTest, DeviceFaultRemainsAfterUserMuteRelease) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, DeviceFaultRemainsAfterUserMuteRelease) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(false);
     ASSERT_FALSE(callback.isMuted());
 
@@ -237,8 +234,9 @@ TEST(SafetyAudioCallbackTest, DeviceFaultRemainsAfterUserMuteRelease) {
     EXPECT_FALSE(callback.isMuted());
 }
 
-TEST(SafetyAudioCallbackTest, MuteReasonsAreIndependent) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, MuteReasonsAreIndependent) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     callback.setUserEmergencyMute(true);
     callback.setEngineTransitionMute(true);
@@ -253,8 +251,9 @@ TEST(SafetyAudioCallbackTest, MuteReasonsAreIndependent) {
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
 }
 
-TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearEngineTransition) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, ClearingUserMuteDoesNotClearEngineTransition) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     callback.setEngineTransitionMute(true);
     callback.setUserEmergencyMute(false);
@@ -262,8 +261,9 @@ TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearEngineTransition) {
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
 }
 
-TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearFeedbackProtection) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, ClearingUserMuteDoesNotClearFeedbackProtection) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     callback.setFeedbackProtection(true);
     callback.setUserEmergencyMute(false);
@@ -271,8 +271,9 @@ TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearFeedbackProtection) {
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
 }
 
-TEST(SafetyAudioCallbackTest, MasterGainClampsToMinus90AndZero) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, MasterGainClampsToMinus90AndZero) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     callback.setMasterGainDb(-120.0f);
     EXPECT_FLOAT_EQ(callback.getMasterGainDb(), -90.0f);
@@ -281,8 +282,9 @@ TEST(SafetyAudioCallbackTest, MasterGainClampsToMinus90AndZero) {
     EXPECT_FLOAT_EQ(callback.getMasterGainDb(), 0.0f);
 }
 
-TEST(SafetyAudioCallbackTest, PreviewUsesExistingVoiceForSameKey) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, PreviewUsesExistingVoiceForSameKey) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     juce::AudioBuffer<float> source(1, 16);
     source.clear();
     juce::String error;
@@ -293,8 +295,9 @@ TEST(SafetyAudioCallbackTest, PreviewUsesExistingVoiceForSameKey) {
     EXPECT_TRUE(callback.isPreviewing());
 }
 
-TEST(SafetyAudioCallbackTest, PreviewUsesFreeVoicesBeforeStealing) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, PreviewUsesFreeVoicesBeforeStealing) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     juce::AudioBuffer<float> source(1, 16);
     source.clear();
     juce::String error;
@@ -307,8 +310,9 @@ TEST(SafetyAudioCallbackTest, PreviewUsesFreeVoicesBeforeStealing) {
     EXPECT_TRUE(callback.isPreviewing());
 }
 
-TEST(SafetyAudioCallbackTest, PreviewSwitchPreservesRelativeCursor) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     juce::AudioBuffer<float> source(1, 16);
     juce::AudioBuffer<float> replacement(1, 32);
     source.clear();
@@ -318,82 +322,83 @@ TEST(SafetyAudioCallbackTest, PreviewSwitchPreservesRelativeCursor) {
     std::array<float*, 1> output{replacement.getWritePointer(0)};
     const juce::AudioIODeviceCallbackContext context{};
 
-    callback.audioDeviceIOCallbackWithContext(nullptr, 0, output.data(), 1, 3, context);
+    callback.processBlock(nullptr, 0, output.data(), 1, 3, context);
 
     ASSERT_TRUE(callback.switchPreviewBuffer(7, replacement, error));
     EXPECT_TRUE(callback.isPreviewing());
 }
 
-TEST(SafetyAudioCallbackTest, SecondRecordingIsRejectedWhileProcessing) {
+TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
     ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                       kBlockSize, error));
-    SafetyAudioCallback callback;
-    callback.setTimelineEngine(&timeline);
-    callback.setRecordingFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
+    AudioRenderPipeline callback(timeline);
+    callback.recording().setFinalizationDispatcher(
+        [](std::unique_ptr<ArrangeRecordingSession>) {});
     const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                     .getChildFile("riffra-recording-busy-test")
                                     .getChildFile(juce::Uuid().toString());
     const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.startArrangeRecording(firstDirectory, timeline, error));
+    ASSERT_TRUE(callback.recording().start(firstDirectory, error));
     ASSERT_TRUE(timeline.startRecording(0, error));
-    ASSERT_TRUE(callback.stopArrangeRecording(timeline, error));
-    EXPECT_FALSE(callback.startArrangeRecording(secondDirectory, timeline, error));
+    ASSERT_TRUE(callback.recording().stop(error));
+    EXPECT_FALSE(callback.recording().start(secondDirectory, error));
 
-    callback.completeArrangeRecordingProcessing({}, {});
+    callback.recording().completeProcessing({}, {});
     firstDirectory.deleteRecursively();
     secondDirectory.deleteRecursively();
 }
 
-TEST(SafetyAudioCallbackTest, CancelClearsRecordingSink) {
+TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
     ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                       kBlockSize, error));
-    SafetyAudioCallback callback;
-    callback.setTimelineEngine(&timeline);
+    AudioRenderPipeline callback(timeline);
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                .getChildFile("riffra-recording-cancel-test")
                                .getChildFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.startArrangeRecording(directory, timeline, error));
-    ASSERT_TRUE(callback.cancelArrangeRecording(timeline, error));
-    EXPECT_TRUE(callback.recordingStatus().getProperty("cancelled", false));
+    ASSERT_TRUE(callback.recording().start(directory, error));
+    ASSERT_TRUE(callback.recording().cancel(error));
+    EXPECT_TRUE(callback.recording().status().getProperty("cancelled", false));
 
     directory.deleteRecursively();
 }
 
-TEST(SafetyAudioCallbackTest, FinalizationFailurePreservesStatus) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, FinalizationFailurePreservesStatus) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     auto* status = new juce::DynamicObject();
     status->setProperty("directory", "recording");
     status->setProperty("active", true);
     status->setProperty("processing", true);
 
-    callback.completeArrangeRecordingProcessing(juce::var(status), "finalization failed");
-    const auto result = callback.recordingStatus();
+    callback.recording().completeProcessing(juce::var(status), "finalization failed");
+    const auto result = callback.recording().status();
 
     EXPECT_FALSE(static_cast<bool>(result.getProperty("processing", true)));
     EXPECT_EQ(result.getProperty("error", {}).toString(), "finalization failed");
 }
 
-TEST(SafetyAudioCallbackTest, RequiresFaultWhenActiveDeviceDisappears) {
+TEST(AudioRenderPipelineTest, RequiresFaultWhenActiveDeviceDisappears) {
     EXPECT_TRUE(deviceLossRequiresFault(false, false));
     EXPECT_FALSE(deviceLossRequiresFault(true, false));
 }
 
-TEST(SafetyAudioCallbackTest, DeviceTransitionSuppressesFault) {
+TEST(AudioRenderPipelineTest, DeviceTransitionSuppressesFault) {
     EXPECT_FALSE(deviceLossRequiresFault(false, true));
 }
 
-TEST(SafetyAudioCallbackTest, DeviceTransitionSuppressesFaultWithoutInspectingMuteState) {
-    SafetyAudioCallback callback;
+TEST(AudioRenderPipelineTest, DeviceTransitionSuppressesFaultWithoutInspectingMuteState) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(true);
     callback.setDeviceTransitionActive(true);
 
@@ -403,12 +408,13 @@ TEST(SafetyAudioCallbackTest, DeviceTransitionSuppressesFaultWithoutInspectingMu
     EXPECT_TRUE(deviceLossRequiresFault(false, callback.isDeviceTransitionActive()));
 }
 
-TEST(SafetyAudioCallbackTest, ReportsDisconnectedDeviceAsFaultedStatus) {
-    SafetyAudioCallback callback;
-    callback.audioDeviceError("disconnected");
+TEST(AudioRenderPipelineTest, DeviceFaultEngagesDeviceFault) {
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.setDeviceFaulted(true);
 
     EXPECT_TRUE(callback.isMuted());
-    EXPECT_EQ(callback.takeLastDeviceError(), "disconnected");
+    EXPECT_TRUE(callback.isDeviceFaulted());
 }
 
 }  // namespace riffra

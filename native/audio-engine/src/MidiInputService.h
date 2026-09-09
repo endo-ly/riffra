@@ -11,14 +11,14 @@
 
 namespace riffra {
 
-class SafetyAudioCallback;
+class PreviewEngine;
 class TimelineEngine;
 
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
     // Control thread only. The callback reads the installed targets without
     // taking a lock.
-    void setAudioCallback(SafetyAudioCallback* callback) noexcept;
+    void setPreviewEngine(PreviewEngine* preview) noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
 
     // JUCE MIDI callback threads. This path must remain non-blocking.
@@ -34,7 +34,7 @@ private:
     std::atomic<bool> active{false};
     std::atomic<std::uint64_t> messageCount{0};
     std::atomic<int> lastNote{-1};
-    SafetyAudioCallback* audioCallback = nullptr;
+    PreviewEngine* previewEngine = nullptr;
     TimelineEngine* timelineEngine = nullptr;
 };
 
@@ -42,7 +42,7 @@ class MidiInputService final {
 public:
     // Control thread only. MIDI device open/close is never performed from an
     // audio callback.
-    MidiInputService(SafetyAudioCallback& audioCallback, TimelineEngine& timelineEngine);
+    MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine);
     ~MidiInputService();
 
     MidiInputService(const MidiInputService&) = delete;

@@ -7,8 +7,8 @@
 
 #include "AudioProtocol.h"
 #include "AudioRuntimeStatus.h"
+#include "audio/AudioRenderPipeline.h"
 #include "MidiInputService.h"
-#include "SafetyAudioCallback.h"
 #include "TimelineEngine.h"
 
 namespace riffra {
@@ -193,45 +193,45 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
 }
 
 juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
-                                            const SafetyAudioCallback& callback,
+                                            const AudioRenderPipeline& pipeline,
                                             const MidiMonitor* midi, const juce::String& message,
                                             TimelineEngine* timeline) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state =
-        callback.isDeviceFaulted() ? "faulted" : (callback.isMuted() ? "muted" : "ready");
+        pipeline.isDeviceFaulted() ? "faulted" : (pipeline.isMuted() ? "muted" : "ready");
     status->setProperty("state", state);
-    if (callback.isDeviceFaulted())
+    if (pipeline.isDeviceFaulted())
         status->setProperty(
             "message",
             "Audio device disconnected; output is muted and any captured take is preserved.");
-    status->setProperty("muteReasons", static_cast<juce::int64>(callback.getMuteReasons()));
-    status->setProperty("masterGainDb", callback.getMasterGainDb());
-    status->setProperty("inputPeak", callback.getInputPeak());
-    status->setProperty("outputPeak", callback.getOutputPeak());
+    status->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
+    status->setProperty("masterGainDb", pipeline.getMasterGainDb());
+    status->setProperty("inputPeak", pipeline.getInputPeak());
+    status->setProperty("outputPeak", pipeline.getOutputPeak());
     status->setProperty("invalidSamples",
-                        static_cast<juce::int64>(callback.getInvalidSampleCount()));
-    status->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
-    status->setProperty("previewing", callback.isPreviewing());
+                        static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
+    status->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
+    status->setProperty("previewing", pipeline.isPreviewing());
     if (midi != nullptr) {
         status->setProperty("midiInputActive", midi->isActive());
         status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
         status->setProperty("lastMidiNote", midi->getLastNote());
     }
-    status->setProperty("recording", callback.recordingStatus());
+    status->setProperty("recording", pipeline.recordingStatus());
     auto* diagnostics = new juce::DynamicObject();
     diagnostics->setProperty("callbackCount",
-                             static_cast<juce::int64>(callback.getCallbackCount()));
+                             static_cast<juce::int64>(pipeline.getCallbackCount()));
     diagnostics->setProperty("averageCallbackDurationUs",
-                             static_cast<juce::int64>(callback.getAverageCallbackDurationUs()));
+                             static_cast<juce::int64>(pipeline.getAverageCallbackDurationUs()));
     diagnostics->setProperty("maximumCallbackDurationUs",
-                             static_cast<juce::int64>(callback.getMaximumCallbackDurationUs()));
+                             static_cast<juce::int64>(pipeline.getMaximumCallbackDurationUs()));
     diagnostics->setProperty("callbackOverruns",
-                             static_cast<juce::int64>(callback.getCallbackOverruns()));
-    diagnostics->setProperty("preLimiterPeak", callback.getPreLimiterPeak());
-    diagnostics->setProperty("limiterGainReductionDb", callback.getLimiterGainReductionDb());
+                             static_cast<juce::int64>(pipeline.getCallbackOverruns()));
+    diagnostics->setProperty("preLimiterPeak", pipeline.getPreLimiterPeak());
+    diagnostics->setProperty("limiterGainReductionDb", pipeline.getLimiterGainReductionDb());
     diagnostics->setProperty("hardClipSamples",
-                             static_cast<juce::int64>(callback.getHardClipSamples()));
+                             static_cast<juce::int64>(pipeline.getHardClipSamples()));
     if (timeline != nullptr) {
         timeline->serviceDeferredCleanup();
         const auto timelineStatus = timeline->status();
@@ -268,7 +268,7 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
         status->setProperty("driver", device->getTypeName());
         status->setProperty("inputDevice", setup.inputDeviceName);
         status->setProperty("outputDevice", setup.outputDeviceName);
-        status->setProperty("inputChannel", callback.getInputChannel());
+        status->setProperty("inputChannel", pipeline.getInputChannel());
         juce::Array<juce::var> inputChannels;
         const auto channelNames = device->getInputChannelNames();
         const auto activeInputChannels = device->getActiveInputChannels();
@@ -312,19 +312,19 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
     return juce::var(status);
 }
 
-juce::var AudioDeviceService::currentMeters(const SafetyAudioCallback& callback) {
+juce::var AudioDeviceService::currentMeters(const AudioRenderPipeline& pipeline) {
     auto* meters = new juce::DynamicObject();
     meters->setProperty("type", "audioMeters");
-    meters->setProperty("inputPeak", callback.getInputPeak());
-    meters->setProperty("outputPeak", callback.getOutputPeak());
+    meters->setProperty("inputPeak", pipeline.getInputPeak());
+    meters->setProperty("outputPeak", pipeline.getOutputPeak());
     meters->setProperty("invalidSamples",
-                        static_cast<juce::int64>(callback.getInvalidSampleCount()));
-    meters->setProperty("preLimiterPeak", callback.getPreLimiterPeak());
-    meters->setProperty("limiterGainReductionDb", callback.getLimiterGainReductionDb());
-    meters->setProperty("hardClipSamples", static_cast<juce::int64>(callback.getHardClipSamples()));
-    meters->setProperty("muteReasons", static_cast<juce::int64>(callback.getMuteReasons()));
-    meters->setProperty("feedbackSuspected", callback.isFeedbackSuspected());
-    meters->setProperty("previewing", callback.isPreviewing());
+                        static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
+    meters->setProperty("preLimiterPeak", pipeline.getPreLimiterPeak());
+    meters->setProperty("limiterGainReductionDb", pipeline.getLimiterGainReductionDb());
+    meters->setProperty("hardClipSamples", static_cast<juce::int64>(pipeline.getHardClipSamples()));
+    meters->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
+    meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
+    meters->setProperty("previewing", pipeline.isPreviewing());
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));
@@ -381,17 +381,17 @@ juce::String AudioDeviceService::initialise(juce::AudioDeviceManager& manager,
 }
 
 DeviceFaultWatcher::DeviceFaultWatcher(juce::AudioDeviceManager& manager,
-                                       SafetyAudioCallback& callback, TimelineEngine& timeline)
-    : deviceManager(manager), audioCallback(callback), timelineEngine(timeline) {}
+                                       AudioRenderPipeline& pipeline, TimelineEngine& timeline)
+    : deviceManager(manager), renderPipeline(pipeline), timelineEngine(timeline) {}
 
 void DeviceFaultWatcher::changeListenerCallback(juce::ChangeBroadcaster*) {
     const bool present = deviceManager.getCurrentAudioDevice() != nullptr;
-    if (!riffra::deviceLossRequiresFault(present, audioCallback.isDeviceTransitionActive())) return;
-    if (audioCallback.isDeviceFaulted()) return;
-    audioCallback.setDeviceFaulted(true);
+    if (!riffra::deviceLossRequiresFault(present, renderPipeline.isDeviceTransitionActive())) return;
+    if (renderPipeline.isDeviceFaulted()) return;
+    renderPipeline.setDeviceFaulted(true);
     juce::String ignored;
-    audioCallback.stopArrangeRecording(timelineEngine, ignored);
-    writeJson(AudioDeviceService::currentStatus(deviceManager, audioCallback, nullptr, {},
+    (void)renderPipeline.recording().stop(ignored);
+    writeJson(AudioDeviceService::currentStatus(deviceManager, renderPipeline, nullptr, {},
                                                 &timelineEngine));
 }
 

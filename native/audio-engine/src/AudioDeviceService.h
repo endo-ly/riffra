@@ -9,7 +9,7 @@
 namespace riffra {
 
 class MidiMonitor;
-class SafetyAudioCallback;
+class AudioRenderPipeline;
 class TimelineEngine;
 
 struct AudioConfiguration {
@@ -32,11 +32,11 @@ public:
     [[nodiscard]] static juce::String initialise(juce::AudioDeviceManager& manager,
                                                  const AudioConfiguration& configuration);
     [[nodiscard]] static juce::var currentStatus(juce::AudioDeviceManager& manager,
-                                                 const SafetyAudioCallback& callback,
+                                                 const AudioRenderPipeline& pipeline,
                                                  const MidiMonitor* midi = nullptr,
                                                  const juce::String& message = {},
                                                  TimelineEngine* timeline = nullptr);
-    [[nodiscard]] static juce::var currentMeters(const SafetyAudioCallback& callback);
+    [[nodiscard]] static juce::var currentMeters(const AudioRenderPipeline& pipeline);
 
 private:
     [[nodiscard]] static juce::String accessModeForDriver(const juce::String& driver);
@@ -46,14 +46,14 @@ private:
 
 class DeviceFaultWatcher final : public juce::ChangeListener {
 public:
-    DeviceFaultWatcher(juce::AudioDeviceManager& manager, SafetyAudioCallback& callback,
+    DeviceFaultWatcher(juce::AudioDeviceManager& manager, AudioRenderPipeline& pipeline,
                        TimelineEngine& timeline);
 
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
 
 private:
     juce::AudioDeviceManager& deviceManager;
-    SafetyAudioCallback& audioCallback;
+    AudioRenderPipeline& renderPipeline;
     TimelineEngine& timelineEngine;
 };
 

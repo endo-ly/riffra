@@ -11,7 +11,7 @@
 
 #include "ArrangeRecordingSession.h"
 #include "OfflineRenderer.h"
-#include "SafetyAudioCallback.h"
+#include "audio/AudioRenderPipeline.h"
 #include "TestAudioProcessor.h"
 #include "TestSupport.h"
 #include "TimelineEngine.h"
@@ -1445,15 +1445,14 @@ public:
                         constexpr int kProdTotal = kProdLoopLength * kProdPasses;
                         constexpr int kProdBlock = 512;
 
-                        // 3 full passes. SafetyAudioCallback owns transport stop and capture
+                         // 3 full passes. AudioRenderPipeline owns transport stop and capture
                         // detachment; this test completes the detached offline job explicitly.
                         engine.seekToTick(0);
                         auto prodDir = directory.getChildFile("prod-writer");
-                        SafetyAudioCallback prodCallback;
-                        prodCallback.setTimelineEngine(&engine);
+                         AudioRenderPipeline prodCallback(engine);
                         juce::String sessionError;
                         const auto prodArrangeStarted =
-                            prodCallback.startArrangeRecording(prodDir, engine, sessionError);
+                            prodCallback.recording().start(prodDir, sessionError);
                         if (prodArrangeStarted) {
                             int prodOffset = 0;
                             int prodSamples = 0;
@@ -1475,10 +1474,10 @@ public:
                                 prodMixed += block;
                                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             }
-                            const auto preStopStatus = prodCallback.recordingStatus();
+                            const auto preStopStatus = prodCallback.recording().status();
                             juce::String stopError;
                             const auto stopOk =
-                                prodCallback.stopArrangeRecording(engine, stopError);
+                                prodCallback.recording().stop(stopError);
                             auto detached = prodCallback.takeFinalizedRecording();
                             const auto processed =
                                 detached != nullptr &&
@@ -1779,7 +1778,7 @@ public:
         addCheck("Long Recording (130 passes) matches Raw/Processed without RAM pre-allocation",
                  longRecordingPassed);
         addCheck(
-            "Production ThreadedWriter 4小節×3 Pass (SafetyAudioCallback owns transport stop, "
+            "Production ThreadedWriter 4小節×3 Pass (AudioRenderPipeline owns transport stop, "
             "capture detachment; lifecycle worker owns offline processing and session finish)",
             productionWriterPassed);
         addCheck("Production ThreadedWriter Partial Pass", productionWriterPartialPassed);

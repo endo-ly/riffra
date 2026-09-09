@@ -23,13 +23,13 @@
 
 #include "AudioDeviceService.h"
 #include "AudioProtocol.h"
-#include "AudioRuntimeStatus.h"
 #include "FaultInjection.h"
 #include "MidiInputService.h"
 #include "PluginEditorHost.h"
 #include "RuntimeLifecycleExecutor.h"
-#include "SafetyAudioCallback.h"
 #include "TimelineEngine.h"
+#include "audio/AudioRenderPipeline.h"
+#include "device/AudioDeviceCallback.h"
 
 #if JUCE_WINDOWS
 #ifndef NOMINMAX
@@ -44,6 +44,8 @@ using riffra::AudioConfiguration;
 using riffra::AudioDeviceService;
 using riffra::clearCurrentRequestId;
 using riffra::currentRequestId;
+using riffra::AudioDeviceCallback;
+using riffra::AudioRenderPipeline;
 using riffra::DeviceFaultWatcher;
 using riffra::makeError;
 using riffra::MidiInputService;
@@ -51,7 +53,6 @@ using riffra::OutputKind;
 using riffra::parseMidiBytes;
 using riffra::PluginEditorHost;
 using riffra::RuntimeLifecycleExecutor;
-using riffra::SafetyAudioCallback;
 using riffra::setCurrentRequestId;
 using riffra::TimelineEngine;
 using riffra::writeJson;
@@ -77,15 +78,22 @@ int serve(const std::optional<std::uint32_t> parentPid,
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
     TimelineEngine timelineEngine;
-    SafetyAudioCallback callback;
+    AudioRenderPipeline pipeline(timelineEngine);
+    auto& callback = pipeline;
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
-    MidiInputService midiInputs(callback, timelineEngine);
-    callback.setTimelineEngine(&timelineEngine);
-    callback.setEngineTransitionMute(true);
+    MidiInputService midiInputs(pipeline.preview(), timelineEngine);
+    pipeline.setEngineTransitionMute(true);
+
+    AudioDeviceCallback deviceCallback(pipeline, [&pipeline] {
+        juce::MessageManager::callAsync([&pipeline] {
+            juce::String ignored;
+            (void)pipeline.recording().stop(ignored);
+        });
+    });
 
     auto error = AudioDeviceService::initialise(manager, startupConfiguration);
     juce::String startupMessage;
@@ -109,9 +117,9 @@ int serve(const std::optional<std::uint32_t> parentPid,
         manager.closeAudioDevice();
         return 2;
     }
-    callback.setInputChannel(startupInputChannel);
-    manager.addAudioCallback(&callback);
-    DeviceFaultWatcher deviceWatcher(manager, callback, timelineEngine);
+    pipeline.setInputChannel(startupInputChannel);
+    manager.addAudioCallback(&deviceCallback);
+    DeviceFaultWatcher deviceWatcher(manager, pipeline, timelineEngine);
     manager.addChangeListener(&deviceWatcher);
     writeJson(AudioDeviceService::currentStatus(manager, callback, &midiInputs.monitor(),
                                                 startupMessage, &timelineEngine));
@@ -975,7 +983,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 juce::AudioDeviceManager::AudioDeviceSetup recoverySetup;
                 manager.getAudioDeviceSetup(recoverySetup);
                 callback.setDeviceTransitionActive(true);
-                manager.removeAudioCallback(&callback);
+                manager.removeAudioCallback(&deviceCallback);
                 manager.closeAudioDevice();
                 callback.setEngineTransitionMute(true);
                 const auto recoveryError = manager.setAudioDeviceSetup(recoverySetup, true);
@@ -986,7 +994,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     writeJson(makeError("deviceLost", recoveryError, "audioDevice.recover"));
                     continue;
                 }
-                manager.addAudioCallback(&callback);
+                manager.addAudioCallback(&deviceCallback);
                 callback.setDeviceFaulted(false);
                 callback.setDeviceTransitionActive(false);
                 writeJson(AudioDeviceService::currentStatus(
@@ -1019,7 +1027,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 juce::AudioDeviceManager::AudioDeviceSetup previousSetup;
                 manager.getAudioDeviceSetup(previousSetup);
                 callback.setDeviceTransitionActive(true);
-                manager.removeAudioCallback(&callback);
+                manager.removeAudioCallback(&deviceCallback);
                 manager.closeAudioDevice();
                 callback.setEngineTransitionMute(true);
                 bool restoredPreviousDevice = false;
@@ -1035,7 +1043,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     const auto restoreError = AudioDeviceService::initialise(manager, previous);
                     if (restoreError.isEmpty()) {
                         callback.setInputChannel(previousInputChannel);
-                        manager.addAudioCallback(&callback);
+                        manager.addAudioCallback(&deviceCallback);
                         callback.setDeviceFaulted(false);
                         callback.setDeviceTransitionActive(false);
                         restoredPreviousDevice = true;
@@ -1084,7 +1092,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     continue;
                 }
                 callback.setInputChannel(requested.inputChannel);
-                manager.addAudioCallback(&callback);
+                manager.addAudioCallback(&deviceCallback);
                 callback.setDeviceFaulted(false);
                 callback.setDeviceTransitionActive(false);
                 writeJson(AudioDeviceService::currentStatus(
@@ -1176,7 +1184,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
     midiInputs.monitor().setActive(false);
     midiInputs.setListening(false);
     midiInputs.reopenAll();
-    manager.removeAudioCallback(&callback);
+    manager.removeAudioCallback(&deviceCallback);
     manager.removeChangeListener(&deviceWatcher);
     manager.closeAudioDevice();
     watchdogRunning.store(false, std::memory_order_release);

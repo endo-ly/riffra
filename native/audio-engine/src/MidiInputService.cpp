@@ -1,12 +1,12 @@
 #include "MidiInputService.h"
 
-#include "SafetyAudioCallback.h"
-#include "TimelineEngine.h"
+#include "audio/PreviewEngine.h"
+#include "processing/TimelineEngine.h"
 
 namespace riffra {
 
-void MidiMonitor::setAudioCallback(SafetyAudioCallback* const callback) noexcept {
-    audioCallback = callback;
+void MidiMonitor::setPreviewEngine(PreviewEngine* const preview) noexcept {
+    previewEngine = preview;
 }
 
 void MidiMonitor::setTimelineEngine(TimelineEngine* const engine) noexcept {
@@ -30,12 +30,12 @@ void MidiMonitor::handleIncomingMidiMessage(juce::MidiInput* source,
     lastNote.store(message.getNoteNumber(), std::memory_order_release);
 
     if (message.isNoteOff()) {
-        if (audioCallback != nullptr) audioCallback->stopSynthNote(message.getNoteNumber());
+        if (previewEngine != nullptr) previewEngine->stopSynthNote(message.getNoteNumber());
         return;
     }
 
-    if (audioCallback != nullptr)
-        audioCallback->startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
+    if (previewEngine != nullptr)
+        previewEngine->startSynthNote(message.getNoteNumber(), message.getFloatVelocity());
 }
 
 void MidiMonitor::setActive(const bool value) noexcept {
@@ -50,9 +50,9 @@ std::uint64_t MidiMonitor::getMessageCount() const noexcept {
 
 int MidiMonitor::getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
 
-MidiInputService::MidiInputService(SafetyAudioCallback& audioCallback,
+MidiInputService::MidiInputService(PreviewEngine& previewEngine,
                                    TimelineEngine& timelineEngine) {
-    midiMonitor.setAudioCallback(&audioCallback);
+    midiMonitor.setPreviewEngine(&previewEngine);
     midiMonitor.setTimelineEngine(&timelineEngine);
 }
 

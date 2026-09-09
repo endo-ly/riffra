@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-#include "AudioSafetyDsp.h"
+#include "audio/AudioSafetyDsp.h"
 
 namespace riffra {
 namespace {

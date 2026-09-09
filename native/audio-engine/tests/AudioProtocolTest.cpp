@@ -3,7 +3,7 @@
 #include "AudioDeviceService.h"
 #include "AudioProtocol.h"
 #include "MidiInputService.h"
-#include "SafetyAudioCallback.h"
+#include "audio/AudioRenderPipeline.h"
 #include "TimelineEngine.h"
 
 namespace riffra {
@@ -50,7 +50,8 @@ TEST(AudioProtocolTest, CreatesSafeErrorPayload) {
 }
 
 TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
-    SafetyAudioCallback callback;
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     const auto meters = AudioDeviceService::currentMeters(callback);
 
@@ -62,7 +63,8 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
 
 TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
     juce::AudioDeviceManager manager;
-    SafetyAudioCallback callback;
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
 
     const auto status = AudioDeviceService::currentStatus(manager, callback);
 
@@ -93,9 +95,9 @@ TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
 }
 
 TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
-    SafetyAudioCallback callback;
     TimelineEngine timeline;
-    MidiInputService service(callback, timeline);
+    AudioRenderPipeline callback(timeline);
+    MidiInputService service(callback.preview(), timeline);
     auto& monitor = service.monitor();
 
     monitor.setActive(true);
@@ -107,9 +109,9 @@ TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
 }
 
 TEST(MidiInputServiceTest, StartsWithoutListeningForDevices) {
-    SafetyAudioCallback callback;
     TimelineEngine timeline;
-    MidiInputService service(callback, timeline);
+    AudioRenderPipeline callback(timeline);
+    MidiInputService service(callback.preview(), timeline);
 
     EXPECT_FALSE(service.isListening());
     EXPECT_FALSE(service.deviceSetChanged());

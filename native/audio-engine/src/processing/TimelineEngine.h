@@ -22,7 +22,7 @@
 namespace riffra {
 
 class TimelineEngineTestPeer;
-class SafetyAudioCallback;
+class AudioRenderPipeline;
 class TimelineSnapshotBuilder;
 
 /// Envelope multiplier for a normalized fade progress in [0, 1].
@@ -122,7 +122,7 @@ public:
 
 private:
     friend class TimelineEngineTestPeer;
-    friend class SafetyAudioCallback;
+    friend class AudioRenderPipeline;
     friend class TimelineSnapshotBuilder;
 
     class AudioReadScope;

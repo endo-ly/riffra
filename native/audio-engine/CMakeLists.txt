@@ -181,9 +181,17 @@ target_sources(riffra-audio-core PRIVATE
   src/AudioDeviceService.h
   src/MidiInputService.cpp
   src/MidiInputService.h
-  src/realtime/SafetyAudioCallback.cpp
-  src/realtime/SafetyAudioCallback.h
-  src/realtime/AudioSafetyDsp.h
+  src/audio/AudioMetrics.cpp
+  src/audio/AudioMetrics.h
+  src/audio/PreviewEngine.cpp
+  src/audio/PreviewEngine.h
+  src/audio/AudioRenderPipeline.cpp
+  src/audio/AudioRenderPipeline.h
+  src/app/RecordingController.cpp
+  src/app/RecordingController.h
+  src/device/AudioDeviceCallback.cpp
+  src/device/AudioDeviceCallback.h
+  src/audio/AudioSafetyDsp.h
   src/realtime/AudioRuntimeStatus.cpp
   src/realtime/AudioRuntimeStatus.h
   src/realtime/RecordingSession.cpp
@@ -452,7 +460,7 @@ if(BUILD_TESTING)
   target_sources(riffra-audio-tests PRIVATE
     tests/ArrangementGraphTest.cpp
     tests/AudioSafetyDspTest.cpp
-    tests/SafetyAudioCallbackTest.cpp
+    tests/audio/AudioRenderPipelineTest.cpp
     tests/PluginRackTest.cpp
     tests/PluginChainTest.cpp
     tests/RecordingSessionTest.cpp
