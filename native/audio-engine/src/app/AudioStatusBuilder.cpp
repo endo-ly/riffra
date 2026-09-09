@@ -1,8 +1,8 @@
 #include "AudioStatusBuilder.h"
 
-#include "protocol/AudioProtocol.h"
-#include "midi/MidiInputService.h"
 #include "audio/AudioRenderPipeline.h"
+#include "midi/MidiInputService.h"
+#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

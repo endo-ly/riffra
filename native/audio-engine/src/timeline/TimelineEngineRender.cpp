@@ -1,9 +1,9 @@
-#include "TimelineEngine.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+
+#include "TimelineEngine.h"
 
 namespace riffra {
 
@@ -588,4 +588,3 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
 }
 
 }  // namespace riffra
-

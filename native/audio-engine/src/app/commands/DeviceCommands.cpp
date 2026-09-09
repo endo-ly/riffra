@@ -1,7 +1,7 @@
 #include "../AudioCommandDispatcher.h"
-#include "protocol/AudioProtocol.h"
-#include "midi/MidiInputService.h"
 #include "device/AudioDeviceController.h"
+#include "midi/MidiInputService.h"
+#include "protocol/AudioProtocol.h"
 
 namespace riffra {
 

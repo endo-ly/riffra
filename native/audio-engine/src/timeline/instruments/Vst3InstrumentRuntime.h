@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include "plugins/PluginRack.h"
 #include "InstrumentRuntime.h"
+#include "plugins/PluginRack.h"
 
 namespace riffra {
 

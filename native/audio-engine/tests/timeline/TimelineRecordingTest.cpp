@@ -94,4 +94,3 @@ TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment)
 }
 
 }  // namespace riffra
-

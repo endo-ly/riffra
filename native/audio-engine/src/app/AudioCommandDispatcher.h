@@ -7,9 +7,9 @@
 #include <memory>
 
 #include "AudioStatusBuilder.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceController.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
 
 namespace riffra {
 

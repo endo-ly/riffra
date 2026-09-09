@@ -7,7 +7,8 @@
 
 namespace riffra {
 
-RecordingController::RecordingController(TimelineEngine& timelineIn) noexcept : timeline(timelineIn) {}
+RecordingController::RecordingController(TimelineEngine& timelineIn) noexcept
+    : timeline(timelineIn) {}
 
 RecordingController::~RecordingController() {
     juce::String ignored;
@@ -20,7 +21,8 @@ bool RecordingController::start(const juce::File& directory, juce::String& error
         error = "A recording is already active.";
         return false;
     }
-    auto candidate = ArrangeRecordingSession::create(directory, timeline.recordingConfiguration(), error);
+    auto candidate =
+        ArrangeRecordingSession::create(directory, timeline.recordingConfiguration(), error);
     if (candidate == nullptr) return false;
     arrangeRecording = std::move(candidate);
     cancelled.store(false, std::memory_order_release);
@@ -110,7 +112,8 @@ juce::var RecordingController::status() const {
     const juce::ScopedLock guard(lock);
     if (arrangeRecording != nullptr) {
         auto result = arrangeRecording->status();
-        if (auto* statusObject = result.getDynamicObject()) statusObject->setProperty("processing", false);
+        if (auto* statusObject = result.getDynamicObject())
+            statusObject->setProperty("processing", false);
         return result;
     }
     if (finalizationStatus.isObject()) return finalizationStatus;

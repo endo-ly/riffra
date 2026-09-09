@@ -1,7 +1,7 @@
-#include "TimelineEngine.h"
-
 #include <algorithm>
 #include <utility>
+
+#include "TimelineEngine.h"
 
 namespace riffra {
 
@@ -560,4 +560,3 @@ bool TimelineEngine::monitoringInputChannel(const int channel) const noexcept {
 }
 
 }  // namespace riffra
-

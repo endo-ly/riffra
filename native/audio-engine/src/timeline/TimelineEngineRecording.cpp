@@ -1,6 +1,6 @@
-#include "TimelineEngine.h"
-
 #include <algorithm>
+
+#include "TimelineEngine.h"
 
 namespace riffra {
 
@@ -344,4 +344,3 @@ bool TimelineEngine::recordingWindow(const int sampleCount, int& sampleOffset,
 }
 
 }  // namespace riffra
-

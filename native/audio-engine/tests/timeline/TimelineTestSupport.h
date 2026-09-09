@@ -13,18 +13,17 @@
 #include <utility>
 #include <vector>
 
+#include "../support/TestAudioProcessor.h"
+#include "../support/TestSupport.h"
 #include "audio/AudioRenderPipeline.h"
 #include "recording/ArrangeRecordingSession.h"
 #include "recording/ArrangementCaptureSink.h"
 #include "render/OfflineRenderer.h"
-#include "../support/TestAudioProcessor.h"
-#include "../support/TestSupport.h"
 #include "timeline/TimelineEngine.h"
 #include "timeline/instruments/Vst3InstrumentRuntime.h"
 
 namespace riffra {
 namespace {
-
 
 juce::String pluginTopologySignature(const juce::var& values) {
     juce::Array<juce::var> topology;
@@ -1697,11 +1696,11 @@ public:
                         constexpr int kProdTotal = kProdLoopLength * kProdPasses;
                         constexpr int kProdBlock = 512;
 
-                         // 3 full passes. AudioRenderPipeline owns transport stop and capture
+                        // 3 full passes. AudioRenderPipeline owns transport stop and capture
                         // detachment; this test completes the detached offline job explicitly.
                         engine.seekToTick(0);
                         auto prodDir = directory.getChildFile("prod-writer");
-                         AudioRenderPipeline prodCallback(engine);
+                        AudioRenderPipeline prodCallback(engine);
                         juce::String sessionError;
                         const auto prodArrangeStarted =
                             prodCallback.recording().start(prodDir, sessionError);
@@ -1728,8 +1727,7 @@ public:
                             }
                             const auto preStopStatus = prodCallback.recording().status();
                             juce::String stopError;
-                            const auto stopOk =
-                                prodCallback.recording().stop(stopError);
+                            const auto stopOk = prodCallback.recording().stop(stopError);
                             auto detached = prodCallback.takeFinalizedRecording();
                             const auto processed =
                                 detached != nullptr &&

@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include "protocol/AudioProtocol.h"
-#include "midi/MidiInputService.h"
-#include "timeline/TimelineEngine.h"
 #include "app/AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceService.h"
+#include "midi/MidiInputService.h"
+#include "protocol/AudioProtocol.h"
+#include "timeline/TimelineEngine.h"
 
 namespace riffra {
 

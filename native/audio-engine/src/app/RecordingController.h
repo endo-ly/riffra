@@ -15,8 +15,7 @@ class TimelineEngine;
 /// Owns arrange-recording control state and finalization hand-off.
 class RecordingController final {
 public:
-    using FinalizationDispatcher =
-        std::function<void(std::unique_ptr<ArrangeRecordingSession>)>;
+    using FinalizationDispatcher = std::function<void(std::unique_ptr<ArrangeRecordingSession>)>;
 
     explicit RecordingController(TimelineEngine& timeline) noexcept;
     ~RecordingController();

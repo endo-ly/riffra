@@ -9,4 +9,3 @@ TEST(TimelineEngineTest, ProcessesTimelineAndLiveMidiInTheSameTrackContext) {
 }
 
 }  // namespace riffra
-

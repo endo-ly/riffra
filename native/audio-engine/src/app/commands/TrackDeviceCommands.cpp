@@ -1,6 +1,6 @@
 #include "../AudioCommandDispatcher.h"
-#include "protocol/AudioProtocol.h"
 #include "plugins/PluginEditorHost.h"
+#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {

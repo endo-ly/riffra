@@ -3,8 +3,8 @@
 #include <array>
 #include <vector>
 
-#include "recording/RecordingSession.h"
 #include "../support/TestSupport.h"
+#include "recording/RecordingSession.h"
 
 namespace riffra {
 namespace {

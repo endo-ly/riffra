@@ -35,4 +35,3 @@ TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
 }
 
 }  // namespace riffra
-

@@ -1,11 +1,10 @@
-#include "PluginRack.h"
-
 #include <algorithm>
 #include <cmath>
 #include <new>
 #include <vector>
 
 #include "FaultInjection.h"
+#include "PluginRack.h"
 
 namespace riffra {
 
@@ -350,4 +349,3 @@ bool PluginRack::hasEditor() const noexcept {
 }
 
 }  // namespace riffra
-

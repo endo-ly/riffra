@@ -11,6 +11,54 @@ Windows uses ASIO and WASAPI. Linux uses ALSA.
 
 The safety chain is deliberately small and auditable: owner-specific mute reasons, a 50 ms fade-in after an engine transition, non-finite sample rejection, a prepared limiter followed by a 0.98 final ceiling, DC offset blocking on the output path, and acoustic feedback detection that engages `FeedbackProtection` when sustained near-peak input is observed on a software-monitored input. The callback reports the pre-limiter peak, limiter gain reduction, final hard clips, callback overruns, and graph diagnostics. The session master gain defaults to 0 dB and is applied by the safety callback. Host Runtime releases `EngineTransition` only after the device and the canonical graph are both ready; a failed VST graph remains passive and the transition mute is kept. Instrument and effect plugins live on individual Tracks and are configured through the Arrangement Timeline Snapshot and targeted Track Device commands. Plugin scanning uses the same PluginRack load and prepare path as the Arrangement Runtime.
 
+## Ownership
+
+The native engine keeps the realtime path, device lifecycle, and third-party plugin lifecycle in separate owners. The owner is the place where the state transition belongs; callers forward requests across that boundary instead of reaching into another subsystem's state.
+
+| Owner                   | Responsibility                                                                                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AudioEngine`           | Owns `--serve`, command dispatch, periodic status publication, the parent-process watchdog, and the long-lived runtime objects.                                               |
+| `AudioDeviceController` | Owns live JUCE device setup, attachment, recovery, device-change notifications, and transition/fault state. `AudioDeviceService` is limited to discovery and setup data.      |
+| `AudioRenderPipeline`   | Owns the ordered device-callback render and safety chain, including meters, preview voices, recording control, mute reasons, gain, and limiter state.                         |
+| `TimelineEngine`        | Owns the prepared Arrangement graph, transport clock, timeline rendering, recording windows, and graph publication. Timeline instruments remain under `timeline/instruments`. |
+| Recording classes       | `RecordingController` owns arrange-capture state at the pipeline boundary; recording sessions own capture segments, manifests, and offline finalization.                      |
+| Plugin classes          | `PluginRack` and `PluginChain` own plugin processing and state; `RuntimeLifecycleExecutor` and `PluginEditorHost` own serialized third-party lifecycle and editor access.     |
+| MIDI classes            | `MidiInputService` owns physical MIDI input/output access; `MidiScheduler` compiles timeline events into callback sample positions.                                           |
+
+## Thread model
+
+The labels below describe the allowed entry point for each owner. The command reader and periodic publishers are control-side threads; they do not become part of the audio callback.
+
+| Thread                                | Work                                                                                                                                                           |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JUCE message thread                   | Starts and stops the device, handles device lifecycle notifications, and executes third-party plugin lifecycle tasks dispatched by `RuntimeLifecycleExecutor`. |
+| Audio callback thread                 | Runs `AudioDeviceCallback`, `AudioRenderPipeline::processBlock`, the `TimelineEngine` mix, and the safety chain.                                               |
+| Command reader thread                 | Reads one JSON command per stdin line and invokes `AudioCommandDispatcher`.                                                                                    |
+| Runtime lifecycle worker and watchdog | Serializes queued plugin/timeline lifecycle work and observes its deadline; the work itself is marshalled to the JUCE message thread.                          |
+| MIDI callback threads                 | Receive device MIDI and enqueue bounded, non-blocking work for the preview and timeline targets.                                                               |
+| Status and supervision threads        | Publish meters and transport status periodically, poll MIDI device changes, and monitor the parent process.                                                    |
+
+## Realtime rules
+
+The audio callback is intentionally a narrow data path. Code reached from `AudioDeviceCallback` must obey all of these rules:
+
+- no allocation
+- no blocking wait
+- no device lifecycle
+- no plugin lifecycle
+- no file I/O
+- no JSON or stdout
+
+Control-side code prepares graphs, buffers, plugin instances, and recording sessions before the callback can observe them. The callback only exchanges the prepared state and bounded telemetry through the existing atomic and lock-free boundaries.
+
+## Regression contract
+
+Refactoring the native engine must preserve the externally visible contract. JSON Lines command names, response types, error operation names, error messages, status fields, meter fields, and mute-reason ownership remain stable. Device transitions keep the existing ordering: enter transition mute, prepare or recover the device and canonical graph, then release the transition only after both are ready.
+
+The timing and safety behavior is also part of the contract: the transition fade remains 50 ms, the final limiter ceiling remains 0.98, meter and transport telemetry remain 50 ms, MIDI device polling and parent supervision remain 1 s, and timeline VST lifecycle work remains bounded by its existing 45 s timeout. Preview voice selection, recording capture/finalization, timeline graph publication, plugin publication, MIDI routing, and invalid-sample handling must remain behaviorally equivalent.
+
+Run the native regression suite from this directory with `cmake -S . -B build` followed by `cmake --build build --config Debug` and `ctest --test-dir build -C Debug --output-on-failure`. The suite covers the protocol, device, realtime safety, timeline, recording, plugin, MIDI, concurrency, and built-in instrument boundaries.
+
 ## Protocol examples
 
 ```json

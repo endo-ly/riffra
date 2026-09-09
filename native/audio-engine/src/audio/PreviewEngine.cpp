@@ -142,9 +142,7 @@ bool PreviewEngine::isPreviewing() const noexcept {
     return false;
 }
 
-void PreviewEngine::prepare() noexcept {
-    (void)lookupSine(0.0f);
-}
+void PreviewEngine::prepare() noexcept { (void)lookupSine(0.0f); }
 
 bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputChannels,
                            const int numSamples, const double sampleRate) noexcept {
@@ -213,8 +211,7 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
     }
 }
 
-bool PreviewEngine::switchPreviewBuffer(const int voiceKey,
-                                        const juce::AudioBuffer<float>& buffer,
+bool PreviewEngine::switchPreviewBuffer(const int voiceKey, const juce::AudioBuffer<float>& buffer,
                                         juce::String& error) {
     const PreviewControlGuard lock(*this);
     if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0) {

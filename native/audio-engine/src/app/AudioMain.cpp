@@ -4,10 +4,10 @@
 #include <limits>
 #include <optional>
 
-#include "protocol/AudioProtocol.h"
 #include "app/AudioEngine.h"
 #include "device/AudioConfiguration.h"
 #include "device/AudioDeviceService.h"
+#include "protocol/AudioProtocol.h"
 
 namespace {
 

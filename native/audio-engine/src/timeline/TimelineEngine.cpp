@@ -24,8 +24,6 @@ float fadeEnvelope(const float progress, const int fadeShape) noexcept {
     }
 }
 
-
-
 bool TimelineEngine::beginAudioRead(PreparedTimeline*& active) noexcept {
     // Enter the reader section before loading the pointer. A publisher swaps
     // the pointer first and only reclaims retired graphs after this counter
@@ -336,4 +334,3 @@ juce::var TimelineEngine::status() const {
 }
 
 }  // namespace riffra
-

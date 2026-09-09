@@ -480,4 +480,3 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
 }
 
 }  // namespace riffra
-

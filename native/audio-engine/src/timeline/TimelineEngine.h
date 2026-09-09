@@ -9,15 +9,15 @@
 #include <memory>
 #include <vector>
 
-#include "recording/ArrangementCaptureSink.h"
 #include "ArrangementGraph.h"
 #include "AutomationRuntime.h"
 #include "MidiScheduler.h"
-#include "plugins/PluginChain.h"
-#include "recording/RecordingCaptureRuntime.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
 #include "instruments/InstrumentRuntime.h"
+#include "plugins/PluginChain.h"
+#include "recording/ArrangementCaptureSink.h"
+#include "recording/RecordingCaptureRuntime.h"
 
 namespace riffra {
 

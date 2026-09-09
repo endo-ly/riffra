@@ -21,16 +21,16 @@
 #include <utility>
 #include <vector>
 
-#include "protocol/AudioProtocol.h"
-#include "plugins/FaultInjection.h"
-#include "midi/MidiInputService.h"
-#include "plugins/PluginEditorHost.h"
-#include "plugins/RuntimeLifecycleExecutor.h"
-#include "timeline/TimelineEngine.h"
 #include "app/AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceController.h"
 #include "device/AudioDeviceService.h"
+#include "midi/MidiInputService.h"
+#include "plugins/FaultInjection.h"
+#include "plugins/PluginEditorHost.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
+#include "protocol/AudioProtocol.h"
+#include "timeline/TimelineEngine.h"
 
 #if JUCE_WINDOWS
 #ifndef NOMINMAX

@@ -50,8 +50,7 @@ std::uint64_t MidiMonitor::getMessageCount() const noexcept {
 
 int MidiMonitor::getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
 
-MidiInputService::MidiInputService(PreviewEngine& previewEngine,
-                                   TimelineEngine& timelineEngine) {
+MidiInputService::MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine) {
     midiMonitor.setPreviewEngine(&previewEngine);
     midiMonitor.setTimelineEngine(&timelineEngine);
 }
