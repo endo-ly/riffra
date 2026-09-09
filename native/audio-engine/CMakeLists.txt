@@ -208,7 +208,15 @@ target_sources(riffra-audio-core PRIVATE
 )
 
 target_sources(riffra-audio PRIVATE
-  src/AudioMain.cpp
+  src/app/AudioMain.cpp
+  src/app/AudioEngine.cpp
+  src/app/AudioCommandDispatcher.cpp
+  src/app/commands/DeviceCommands.cpp
+  src/app/commands/TimelineCommands.cpp
+  src/app/commands/TrackDeviceCommands.cpp
+  src/app/commands/RecordingCommands.cpp
+  src/app/commands/PreviewCommands.cpp
+  src/app/commands/MidiCommands.cpp
 )
 
 target_sources(riffra-plugin-scan PRIVATE
