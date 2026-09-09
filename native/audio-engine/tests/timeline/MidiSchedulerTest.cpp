@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "MidiScheduler.h"
+#include "timeline/MidiScheduler.h"
 
 namespace riffra {
 namespace {

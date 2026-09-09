@@ -5,8 +5,8 @@
 #include <limits>
 #include <memory>
 
-#include "ArrangeRecordingSession.h"
-#include "TimelineEngine.h"
+#include "recording/ArrangeRecordingSession.h"
+#include "timeline/TimelineEngine.h"
 #include "audio/AudioRenderPipeline.h"
 
 namespace riffra {

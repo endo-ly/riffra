@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "AudioProtocol.h"
-#include "MidiInputService.h"
-#include "TimelineEngine.h"
+#include "protocol/AudioProtocol.h"
+#include "midi/MidiInputService.h"
+#include "timeline/TimelineEngine.h"
 #include "app/AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceService.h"

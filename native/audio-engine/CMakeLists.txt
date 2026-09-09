@@ -398,7 +398,7 @@ if(BUILD_TESTING)
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE)
   target_sources(riffra-test-effect PRIVATE
-    tests/TestVstPlugin.cpp)
+    tests/support/TestVstPlugin.cpp)
   target_compile_definitions(riffra-test-effect PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_USE_CURL=0
@@ -421,7 +421,7 @@ if(BUILD_TESTING)
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE)
   target_sources(riffra-test-instrument PRIVATE
-    tests/TestVstPlugin.cpp)
+    tests/support/TestVstPlugin.cpp)
   target_compile_definitions(riffra-test-instrument PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_USE_CURL=0
@@ -433,7 +433,7 @@ if(BUILD_TESTING)
     juce::juce_recommended_warning_flags)
 
   add_executable(riffra-real-vst-runtime-test
-    tests/RealVstRuntimeTest.cpp)
+    tests/plugins/RealVstRuntimeTest.cpp)
   target_link_libraries(riffra-real-vst-runtime-test PRIVATE
     riffra-render-core)
   add_dependencies(riffra-real-vst-runtime-test
@@ -471,22 +471,27 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
-    tests/ArrangementGraphTest.cpp
-    tests/AudioSafetyDspTest.cpp
+    tests/timeline/ArrangementGraphTest.cpp
+    tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
+    tests/audio/AudioSafetyDspTest.cpp
     tests/device/AudioDeviceControllerTest.cpp
-    tests/PluginRackTest.cpp
-    tests/PluginChainTest.cpp
-    tests/RecordingSessionTest.cpp
-    tests/ArrangeRecordingSessionTest.cpp
-    tests/AutomationRuntimeTest.cpp
-    tests/BoundedMpmcQueueTest.cpp
-    tests/MidiSchedulerTest.cpp
-    tests/RuntimeLifecycleExecutorTest.cpp
-    tests/TimelineEngineTest.cpp
-    tests/SonalloyInstrumentRuntimeTest.cpp
-    tests/SonalloyInstrumentRuntimeBenchmarkTest.cpp
-    tests/AudioProtocolTest.cpp
+    tests/plugins/PluginRackTest.cpp
+    tests/plugins/PluginChainTest.cpp
+    tests/plugins/RuntimeLifecycleExecutorTest.cpp
+    tests/recording/RecordingSessionTest.cpp
+    tests/recording/ArrangeRecordingSessionTest.cpp
+    tests/timeline/MidiSchedulerTest.cpp
+    tests/concurrency/BoundedMpmcQueueTest.cpp
+    tests/timeline/TimelineSnapshotTest.cpp
+    tests/timeline/TimelineTransportTest.cpp
+    tests/timeline/TimelineRenderTest.cpp
+    tests/timeline/TimelineRecordingTest.cpp
+    tests/timeline/TimelineDeviceTest.cpp
+    tests/timeline/TimelineMidiTest.cpp
+    tests/timeline/instruments/SonalloyInstrumentRuntimeTest.cpp
+    tests/timeline/instruments/SonalloyInstrumentRuntimeBenchmarkTest.cpp
+    tests/protocol/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
     riffra-audio-core

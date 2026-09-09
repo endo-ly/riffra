@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "instrument/SonalloyInstrumentRuntime.h"
+#include "timeline/instruments/SonalloyInstrumentRuntime.h"
 
 namespace riffra {
 namespace {

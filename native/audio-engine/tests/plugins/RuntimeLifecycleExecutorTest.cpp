@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "RuntimeLifecycleExecutor.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
 
 namespace riffra {
 

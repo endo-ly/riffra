@@ -4,8 +4,8 @@
 #include <memory>
 #include <vector>
 
-#include "PluginChain.h"
-#include "TestAudioProcessor.h"
+#include "plugins/PluginChain.h"
+#include "../support/TestAudioProcessor.h"
 
 namespace riffra {
 

@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "PluginRack.h"
+#include "plugins/PluginRack.h"
 
 namespace riffra {
 

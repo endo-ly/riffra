@@ -3,7 +3,7 @@
 #include <array>
 #include <cmath>
 
-#include "TestAudioProcessor.h"
+#include "../support/TestAudioProcessor.h"
 
 namespace riffra {
 namespace {

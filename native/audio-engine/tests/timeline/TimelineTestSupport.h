@@ -1,24 +1,276 @@
-#include <gtest/gtest.h>
+#pragma once
+
+#include <JuceHeader.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 
-#include "ArrangeRecordingSession.h"
-#include "OfflineRenderer.h"
 #include "audio/AudioRenderPipeline.h"
-#include "TestAudioProcessor.h"
-#include "TestSupport.h"
-#include "TimelineEngine.h"
-#include "TimelineTestSupport.h"
-#include "instrument/Vst3InstrumentRuntime.h"
+#include "recording/ArrangeRecordingSession.h"
+#include "recording/ArrangementCaptureSink.h"
+#include "render/OfflineRenderer.h"
+#include "../support/TestAudioProcessor.h"
+#include "../support/TestSupport.h"
+#include "timeline/TimelineEngine.h"
+#include "timeline/instruments/Vst3InstrumentRuntime.h"
 
 namespace riffra {
+namespace {
+
+
+juce::String pluginTopologySignature(const juce::var& values) {
+    juce::Array<juce::var> topology;
+    const auto append = [&topology](const juce::var& value) {
+        if (!value.isObject()) return;
+        auto* device = new juce::DynamicObject();
+        device->setProperty("id", value.getProperty("id", {}));
+        device->setProperty("kind", value.getProperty("kind", {}));
+        device->setProperty("path", value.getProperty("path", {}));
+        device->setProperty("disabledPlaceholder", value.getProperty("disabledPlaceholder", false));
+        topology.add(juce::var(device));
+    };
+    if (values.isArray()) {
+        for (const auto& value : *values.getArray()) append(value);
+    } else if (values.isObject()) {
+        append(values);
+    }
+    return juce::JSON::toString(juce::var(topology), false);
+}
+
+bool writePcmWave(const juce::File& file, const std::uint32_t sampleRate,
+                  const std::uint16_t channels, const std::uint32_t frames,
+                  const std::int16_t sample) {
+    std::ofstream stream(file.getFullPathName().toStdString(), std::ios::binary | std::ios::trunc);
+    if (!stream) return false;
+    const auto dataBytes = frames * channels * static_cast<std::uint32_t>(sizeof(std::int16_t));
+    const auto byteRate = sampleRate * channels * static_cast<std::uint32_t>(sizeof(std::int16_t));
+    const auto blockAlign = static_cast<std::uint16_t>(channels * sizeof(std::int16_t));
+    const auto writeU16 = [&stream](const std::uint16_t value) {
+        stream.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    const auto writeU32 = [&stream](const std::uint32_t value) {
+        stream.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    stream.write("RIFF", 4);
+    writeU32(36 + dataBytes);
+    stream.write("WAVEfmt ", 8);
+    writeU32(16);
+    writeU16(1);
+    writeU16(channels);
+    writeU32(sampleRate);
+    writeU32(byteRate);
+    writeU16(blockAlign);
+    writeU16(16);
+    stream.write("data", 4);
+    writeU32(dataBytes);
+    for (std::uint64_t index = 0; index < static_cast<std::uint64_t>(frames) * channels; ++index)
+        stream.write(reinterpret_cast<const char*>(&sample), sizeof(sample));
+    return stream.good();
+}
+
+class CaptureIsolationSink final : public ArrangementCaptureSink {
+public:
+    explicit CaptureIsolationSink(juce::File dir = {}) : testDirectory(std::move(dir)) {}
+
+    bool beginAudioTrackCapture(const juce::String& trackId,
+                                const std::uint64_t audioClockStartSample,
+                                const std::uint64_t timelineStartSample) noexcept override {
+        receivedTrack = trackId;
+        if (beginCount < static_cast<int>(beginAudioSamples.size())) {
+            beginAudioSamples[static_cast<std::size_t>(beginCount)] = audioClockStartSample;
+            beginTimelineSamples[static_cast<std::size_t>(beginCount)] = timelineStartSample;
+            segmentRawSamples[static_cast<std::size_t>(beginCount)] = 0;
+        }
+        ++beginCount;
+        currentRawSamples = 0;
+        segmentStartSample = rawBuffer.size();
+        return true;
+    }
+    void writeAudioTrack(const juce::String& trackId, const float* raw,
+                         const int rawSampleCount) noexcept override {
+        receivedTrack = trackId;
+        receivedSamples = rawSampleCount;
+        currentRawSamples += std::max(0, rawSampleCount);
+        totalRawSamples += std::max(0, rawSampleCount);
+        if (raw != nullptr && rawSampleCount > 0)
+            rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
+    }
+    bool writeProcessedAudioTrackOffline(const juce::String&, const float* const* processed,
+                                         const int sampleCount, int) noexcept override {
+        if (processed != nullptr && sampleCount > 0 && processed[0] != nullptr &&
+            processed[1] != nullptr) {
+            totalProcessedSamples += sampleCount;
+            maxOfflineProcessedWriteSize = std::max(maxOfflineProcessedWriteSize, sampleCount);
+            ++offlineProcessedWriteCalls;
+        }
+        return true;
+    }
+
+    bool endAudioTrackCapture(const juce::String&, const std::uint64_t audioClockEndSample,
+                              const std::uint64_t timelineEndSample) noexcept override {
+        if (endCount < static_cast<int>(endAudioSamples.size())) {
+            endAudioSamples[static_cast<std::size_t>(endCount)] = audioClockEndSample;
+            endTimelineSamples[static_cast<std::size_t>(endCount)] = timelineEndSample;
+            segmentRawSamples[static_cast<std::size_t>(endCount)] = currentRawSamples;
+        }
+        segmentRanges.emplace_back(segmentStartSample, rawBuffer.size());
+        ++endCount;
+        return true;
+    }
+    void markLoopBoundary(const std::uint64_t audioClockSample) noexcept override {
+        if (loopBoundaryCount < static_cast<int>(loopBoundarySamples.size()))
+            loopBoundarySamples[static_cast<std::size_t>(loopBoundaryCount)] = audioClockSample;
+        ++loopBoundaryCount;
+    }
+    void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
+                        std::uint64_t) noexcept override {}
+    void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
+                         std::uint64_t) noexcept override {}
+
+    juce::File prepareRawForReading(const juce::String&) noexcept override {
+        if (testDirectory == juce::File{} || rawBuffer.empty()) return {};
+        const auto file = testDirectory.getChildFile("capture-isolation-raw.wav");
+        file.deleteFile();
+        std::unique_ptr<juce::OutputStream> os(file.createOutputStream());
+        if (os == nullptr) return {};
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor(
+            os, juce::AudioFormatWriterOptions()
+                    .withSampleRate(48000.0)
+                    .withNumChannels(1)
+                    .withBitsPerSample(32)
+                    .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+        if (writer == nullptr) return {};
+        const auto numSamples = static_cast<int>(rawBuffer.size());
+        juce::AudioBuffer<float> writeBuffer(1, numSamples);
+        writeBuffer.copyFrom(0, 0, rawBuffer.data(), numSamples);
+        writer->writeFromAudioSampleBuffer(writeBuffer, 0, numSamples);
+        writer->flush();
+        return file;
+    }
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> getRawSegmentRanges(
+        const juce::String&) noexcept override {
+        return segmentRanges;
+    }
+
+    juce::String receivedTrack;
+    int receivedSamples = 0;
+    int beginCount = 0;
+    int endCount = 0;
+    int loopBoundaryCount = 0;
+    int currentRawSamples = 0;
+    int totalRawSamples = 0;
+    int totalProcessedSamples = 0;
+    int maxOfflineProcessedWriteSize = 0;
+    int offlineProcessedWriteCalls = 0;
+    std::array<std::uint64_t, 8> beginAudioSamples{};
+    std::array<std::uint64_t, 8> beginTimelineSamples{};
+    std::array<std::uint64_t, 8> endAudioSamples{};
+    std::array<std::uint64_t, 8> endTimelineSamples{};
+    std::array<int, 8> segmentRawSamples{};
+    std::array<std::uint64_t, 8> loopBoundarySamples{};
+
+private:
+    juce::File testDirectory;
+    std::vector<float> rawBuffer;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> segmentRanges;
+    std::uint64_t segmentStartSample = 0;
+};
+
+class LoopDataCaptureSink final : public ArrangementCaptureSink {
+public:
+    explicit LoopDataCaptureSink(juce::File dir, juce::String name = "loop-data")
+        : testDirectory(std::move(dir)), fileName(std::move(name)) {}
+
+    bool beginAudioTrackCapture(const juce::String&, std::uint64_t,
+                                std::uint64_t) noexcept override {
+        ++segmentCount;
+        segmentStartSample = rawBuffer.size();
+        return true;
+    }
+    void writeAudioTrack(const juce::String&, const float* raw,
+                         int rawSampleCount) noexcept override {
+        if (raw != nullptr && rawSampleCount > 0)
+            rawBuffer.insert(rawBuffer.end(), raw, raw + rawSampleCount);
+        totalRaw += std::max(0, rawSampleCount);
+    }
+    bool writeProcessedAudioTrackOffline(const juce::String&, const float* const* processed,
+                                         const int sampleCount, int) noexcept override {
+        if (processed != nullptr && sampleCount > 0 && processed[0] != nullptr &&
+            processed[1] != nullptr) {
+            processedLeft.insert(processedLeft.end(), processed[0], processed[0] + sampleCount);
+            processedRight.insert(processedRight.end(), processed[1], processed[1] + sampleCount);
+            maxOfflineProcessedWriteSize = std::max(maxOfflineProcessedWriteSize, sampleCount);
+            ++offlineProcessedWriteCalls;
+        }
+        totalProcessed += std::max(0, sampleCount);
+        return true;
+    }
+    bool endAudioTrackCapture(const juce::String&, std::uint64_t, std::uint64_t) noexcept override {
+        segmentRanges.emplace_back(segmentStartSample, rawBuffer.size());
+        return true;
+    }
+    void markLoopBoundary(std::uint64_t) noexcept override { ++boundaryCount; }
+    void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
+                        std::uint64_t) noexcept override {}
+    void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
+                         std::uint64_t) noexcept override {}
+
+    juce::File prepareRawForReading(const juce::String&) noexcept override {
+        if (rawBuffer.empty()) return {};
+        const auto file = testDirectory.getChildFile(fileName + "-raw.wav");
+        file.deleteFile();
+        std::unique_ptr<juce::OutputStream> os(file.createOutputStream());
+        if (os == nullptr) return {};
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor(
+            os, juce::AudioFormatWriterOptions()
+                    .withSampleRate(48000.0)
+                    .withNumChannels(2)
+                    .withBitsPerSample(32)
+                    .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint));
+        if (writer == nullptr) return {};
+        const auto numSamples = static_cast<int>(rawBuffer.size());
+        juce::AudioBuffer<float> writeBuffer(2, numSamples);
+        writeBuffer.copyFrom(0, 0, rawBuffer.data(), numSamples);
+        writeBuffer.copyFrom(1, 0, rawBuffer.data(), numSamples);
+        writer->writeFromAudioSampleBuffer(writeBuffer, 0, numSamples);
+        writer->flush();
+        return file;
+    }
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> getRawSegmentRanges(
+        const juce::String&) noexcept override {
+        return segmentRanges;
+    }
+
+    std::vector<float> rawBuffer;
+    std::vector<float> processedLeft;
+    std::vector<float> processedRight;
+    int totalRaw = 0;
+    int totalProcessed = 0;
+    int segmentCount = 0;
+    int boundaryCount = 0;
+    int maxOfflineProcessedWriteSize = 0;
+    int offlineProcessedWriteCalls = 0;
+
+private:
+    juce::File testDirectory;
+    juce::String fileName;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> segmentRanges;
+    std::uint64_t segmentStartSample = 0;
+};
+
+}  // namespace
 
 namespace {
 
@@ -1829,651 +2081,4 @@ public:
         return juce::var(result);
     }
 };
-
-TEST(TimelineEngineTest, CoversTimelinePlaybackRecordingAndRender) {
-    test::TemporaryDirectory directory;
-    const auto result = TimelineEngineTestPeer::run(directory.get());
-    ASSERT_TRUE(result.isObject());
-
-    const auto checks = result.getProperty("checks", {});
-    ASSERT_TRUE(checks.isArray());
-    for (const auto& check : *checks.getArray()) {
-        const auto name = check.getProperty("name", {}).toString();
-        EXPECT_TRUE(static_cast<bool>(check.getProperty("passed", false))) << name.toStdString();
-    }
-    EXPECT_TRUE(static_cast<bool>(result.getProperty("passed", false)));
-}
-
-TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:tail"), formats, 48'000.0, 32, error));
-    InstrumentTrace instrumentTrace;
-    auto instrument = PluginRackTestPeer::install(
-        std::make_unique<TestInstrumentProcessor>(instrumentTrace), 48'000.0, 32, error);
-    ASSERT_NE(instrument, nullptr) << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:tail",
-                                                               std::move(instrument)));
-    std::vector<int> effectCalls;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
-        engine, "track:tail", "effect:tail",
-        std::make_unique<TestChainProcessor>(1, 1.0f, 0, effectCalls, 0.25), 48'000.0, 32, error))
-        << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::cachePluginTailForTest(engine, "track:tail"));
-
-    std::array<float, 32> left{};
-    std::array<float, 32> right{};
-    const std::array<float*, 2> outputs{left.data(), right.data()};
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOn(1, 60, 0.8f), error));
-    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-    const auto callsWithNoteHeld = effectCalls.size();
-
-    // Act
-    ASSERT_TRUE(engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOff(1, 60), error));
-    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-    const auto callsAtNoteOff = effectCalls.size();
-    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-
-    // Assert
-    EXPECT_GT(callsWithNoteHeld, 0u);
-    EXPECT_GT(callsAtNoteOff, callsWithNoteHeld);
-    EXPECT_GT(effectCalls.size(), callsAtNoteOff);
-}
-
-TEST(TimelineEngineTest, FadeShapeEnvelopeMatchesTheRustContract) {
-    // Arrange
-    // Act / Assert
-    // Rust `FadeShape`: 0 linear, 1 equal power, 2 smoothstep.
-    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 0), 0.25f, 1e-6f);
-    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 1), 0.38268343f, 1e-6f);
-    EXPECT_NEAR(riffra::fadeEnvelope(0.25f, 2), 0.15625f, 1e-6f);
-    for (const int shape : {0, 1, 2}) {
-        EXPECT_NEAR(riffra::fadeEnvelope(1.0f, shape), 1.0f, 1e-6f);
-        EXPECT_NEAR(riffra::fadeEnvelope(0.0f, shape), 0.0f, 1e-6f);
-    }
-}
-
-TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
-    // Arrange
-    test::TemporaryDirectory directory;
-    const auto rawFile = directory.get().getChildFile("raw.wav");
-    const auto processedFile = directory.get().getChildFile("processed.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
-
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine(true);
-    juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(makeRawAndProcessedClipSnapshot(rawFile, processedFile),
-                                    formats, 48'000.0, 32, error))
-        << error.toStdString();
-    std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
-        engine, "track:audio", "effect:double",
-        std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 32, error))
-        << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
-
-    constexpr int kBlockSamples = 32;
-    std::array<float, kBlockSamples> left{};
-    std::array<float, kBlockSamples> right{};
-    const std::array<float*, 2> outputChannels{left.data(), right.data()};
-
-    // Act
-    engine.play();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-    const auto expected = (0.05f * 2.0f + 0.10f) * 0.5f;
-
-    // Assert
-    EXPECT_EQ(processOrder, std::vector<int>{1});
-    for (int sample = 0; sample < 4; ++sample) {
-        EXPECT_FLOAT_EQ(left[static_cast<std::size_t>(sample)], 0.0f);
-        EXPECT_FLOAT_EQ(right[static_cast<std::size_t>(sample)], 0.0f);
-    }
-    EXPECT_NEAR(left[4], expected, 0.002f);
-    EXPECT_NEAR(right[4], expected, 0.002f);
-    EXPECT_NEAR(left[31], expected, 0.002f);
-    EXPECT_NEAR(right[31], expected, 0.002f);
-
-    // Act: a transport discontinuity must clear both compensation lines.
-    engine.stop();
-    engine.seekToTick(0);
-    std::fill(left.begin(), left.end(), 0.0f);
-    std::fill(right.begin(), right.end(), 0.0f);
-    engine.play();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-
-    // Assert
-    for (int sample = 0; sample < 4; ++sample) {
-        EXPECT_FLOAT_EQ(left[static_cast<std::size_t>(sample)], 0.0f);
-        EXPECT_FLOAT_EQ(right[static_cast<std::size_t>(sample)], 0.0f);
-    }
-    EXPECT_NEAR(left[4], expected, 0.002f);
-    EXPECT_NEAR(right[4], expected, 0.002f);
-}
-
-TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
-    // Arrange
-    test::TemporaryDirectory directory;
-    const auto rawFile = directory.get().getChildFile("raw-monitor.wav");
-    const auto processedFile = directory.get().getChildFile("processed-monitor.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
-
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    track->setProperty("monitoring", "on");
-    auto* input = new juce::DynamicObject();
-    input->setProperty("channelIndex", 0);
-    track->setProperty("audioInput", juce::var(input));
-
-    TimelineEngine engine;
-    juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
-
-    std::array<float, 32> inputSamples{};
-    inputSamples.fill(0.25f);
-    std::array<float, 32> left{};
-    std::array<float, 32> right{};
-    const std::array<const float*, 1> inputs{inputSamples.data()};
-    const std::array<float*, 2> outputs{left.data(), right.data()};
-
-    // Act
-    engine.play();
-    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
-
-    // Assert
-    // Audio monitoring bypasses only inter-track compensation delay.
-    EXPECT_GT(left[0], 0.23f);
-    EXPECT_NEAR(right[0], left[0], 0.002f);
-    EXPECT_NEAR(left[4], left[0], 0.002f);
-    EXPECT_NEAR(right[4], left[4], 0.002f);
-}
-
-TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
-    // Arrange
-    // Act
-    const auto passed = TimelineEngineTestPeer::trackEffectChainProcessesOnce();
-
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
-    EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
-}
-
-TEST(TimelineEngineTest, ProcessesTimelineAndLiveMidiInTheSameTrackContext) {
-    EXPECT_TRUE(TimelineEngineTestPeer::timelineMidiUsesCurrentTransportContext());
-}
-
-TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
-    // Arrange
-    // Act
-    const auto passed = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
-
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, AppliesPluginStateToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime());
-}
-
-TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
-}
-
-TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
-    // Arrange
-    // Act
-    const auto passed = TimelineEngineTestPeer::panicClosesInstrumentRuntime();
-
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat) {
-    // Arrange
-    // Act
-    const auto passed = TimelineEngineTestPeer::audioDeviceRestartRebuildsRuntimeFormat();
-
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, ReclaimsRetiredGraphsAfterAudioReadersLeave) {
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:first"), formats, 48'000.0, 32, error))
-        << error.toStdString();
-    TimelineEngineTestPeer::beginAudioReadForTest(engine);
-
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:second"), formats, 48'000.0, 32, error))
-        << error.toStdString();
-    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 1u);
-
-    TimelineEngineTestPeer::endAudioReadForTest(engine);
-    engine.serviceDeferredCleanup();
-
-    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 0u);
-}
-
-TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(makeBuiltInInstrumentSnapshot("track:builtin", true, true),
-                                    formats, 48'000.0, 512, error))
-        << error.toStdString();
-
-    std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
-        engine, "track:builtin", "effect:builtin",
-        std::make_unique<TestChainProcessor>(7, 2.0f, 0, processOrder), 48'000.0, 512, error))
-        << error.toStdString();
-
-    constexpr int kBlockSamples = 512;
-    std::array<float, kBlockSamples> left{};
-    std::array<float, kBlockSamples> right{};
-    const std::array<float*, 2> outputChannels{left.data(), right.data()};
-    const auto outputMagnitude = [&] {
-        return std::max(std::max(std::abs(*std::max_element(left.begin(), left.end())),
-                                 std::abs(*std::min_element(left.begin(), left.end()))),
-                        std::max(std::abs(*std::max_element(right.begin(), right.end())),
-                                 std::abs(*std::min_element(right.begin(), right.end()))));
-    };
-    const auto clearOutput = [&] {
-        std::fill(left.begin(), left.end(), 0.0f);
-        std::fill(right.begin(), right.end(), 0.0f);
-    };
-
-    // Act: timeline MIDI is rendered through the built-in runtime and its
-    // effect chain, then a loop boundary resets and schedules it again.
-    engine.play();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-    const auto timelinePeak = outputMagnitude();
-    auto loopPeak = 0.0f;
-    for (int block = 0; block < 16; ++block) {
-        clearOutput();
-        engine.mix(outputChannels.data(), 2, kBlockSamples);
-        loopPeak = std::max(loopPeak, outputMagnitude());
-    }
-
-    // A seek must reset the built-in runtime before the next timeline note.
-    engine.seekToTick(0);
-    engine.play();
-    clearOutput();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-    const auto seekPeak = outputMagnitude();
-
-    // Stopped transport still accepts targeted live MIDI, including directly
-    // after stop/reset.
-    engine.stop();
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 64, 0.8f), error))
-        << error.toStdString();
-    clearOutput();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-    const auto livePeak = outputMagnitude();
-
-    engine.stop();
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 67, 0.7f), error))
-        << error.toStdString();
-    clearOutput();
-    engine.mix(outputChannels.data(), 2, kBlockSamples);
-    const auto liveAfterStopPeak = outputMagnitude();
-
-    // Assert
-    EXPECT_GT(timelinePeak, 0.0f);
-    EXPECT_GT(loopPeak, 0.0f);
-    EXPECT_GT(seekPeak, 0.0f);
-    EXPECT_GT(livePeak, 0.0f);
-    EXPECT_GT(liveAfterStopPeak, 0.0f);
-    ASSERT_FALSE(processOrder.empty());
-    EXPECT_EQ(processOrder.front(), 7);
-    const auto armedTrackIds = engine.status().getProperty("armedTrackIds", {});
-    ASSERT_TRUE(armedTrackIds.isArray());
-    EXPECT_EQ(armedTrackIds.size(), 1);
-}
-
-TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughOfflineRenderer) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    test::TemporaryDirectory directory;
-    const auto destination = directory.get().getChildFile("built-in.wav");
-    OfflineRenderer renderer;
-    OfflineRenderer::Result result;
-    juce::String error;
-
-    // Act
-    const auto rendered =
-        renderer.render(makeBuiltInInstrumentSnapshot("track:offline"), formats, destination, 0,
-                        960, 48'000.0, 512, 0.0f, false, result, error);
-
-    // Assert
-    ASSERT_TRUE(rendered) << error.toStdString();
-    ASSERT_TRUE(destination.existsAsFile());
-    ASSERT_GT(result.frames, 0u);
-    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
-    ASSERT_NE(reader, nullptr);
-    ASSERT_EQ(reader->numChannels, 2u);
-    ASSERT_GT(reader->lengthInSamples, 0);
-    const auto frameCount = static_cast<int>(reader->lengthInSamples);
-    juce::AudioBuffer<float> output(2, frameCount);
-    ASSERT_TRUE(reader->read(&output, 0, frameCount, 0, true, true));
-    for (int channel = 0; channel < output.getNumChannels(); ++channel)
-        for (int sample = 0; sample < output.getNumSamples(); ++sample)
-            ASSERT_TRUE(std::isfinite(output.getSample(channel, sample)));
-    EXPECT_GT(
-        std::max(output.getMagnitude(0, 0, frameCount), output.getMagnitude(1, 0, frameCount)),
-        0.0f);
-}
-
-TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    const auto makeTrack = [&timebase](const juce::String& id, const bool muted) {
-        auto* track = new juce::DynamicObject();
-        track->setProperty("id", id);
-        track->setProperty("kind", "audio");
-        track->setProperty("gainDb", 0.0);
-        track->setProperty("pan", 0.0);
-        track->setProperty("muted", muted);
-        track->setProperty("solo", false);
-        track->setProperty("armed", false);
-        track->setProperty("monitoring", "on");
-        auto* audioInput = new juce::DynamicObject();
-        audioInput->setProperty("channelIndex", 0);
-        track->setProperty("audioInput", juce::var(audioInput));
-        auto* rack = new juce::DynamicObject();
-        rack->setProperty("devices", juce::Array<juce::var>{});
-        track->setProperty("rack", juce::var(rack));
-        track->setProperty("audioClips", juce::Array<juce::var>{});
-        track->setProperty("midiClips", juce::Array<juce::var>{});
-        track->setProperty("automation", juce::Array<juce::var>{});
-        return juce::var(track);
-    };
-
-    juce::Array<juce::var> tracks;
-    tracks.add(makeTrack("track:guitar", false));
-    tracks.add(makeTrack("track:muted-guitar", true));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-
-    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
-
-    constexpr int kBlockSamples = 512;
-    std::array<float, kBlockSamples> input{};
-    input.fill(0.05f);
-    std::array<float, kBlockSamples> outputLeft{};
-    std::array<float, kBlockSamples> outputRight{};
-    const std::array<const float*, 1> inputChannels{input.data()};
-    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
-    const auto outputMagnitude = [&] {
-        return std::max(
-            juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
-            juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
-    };
-
-    // Act: monitor the physical input without starting the transport.
-    engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-
-    // Assert: the stopped transport still routes the Audio Track input to the
-    // output, while a muted track stays silent. Pan law halves the level.
-    EXPECT_GT(outputMagnitude(), 0.02f);
-    EXPECT_LT(outputMagnitude(), 0.08f);
-
-    engine.play();
-    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
-    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
-    engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-    EXPECT_GT(outputMagnitude(), 0.02f);
-    EXPECT_LT(outputMagnitude(), 0.08f);
-}
-
-TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    constexpr int kBlockSamples = 512;
-    const auto measurePeak = [&](const int trackCount, float& peak) {
-        TimelineEngine engine;
-        juce::String error;
-        if (!engine.loadSnapshot(makeAudioTrackSnapshot(trackCount, true, false), formats, 48'000.0,
-                                 kBlockSamples, error))
-            return false;
-        std::array<float, kBlockSamples> input{};
-        input.fill(0.05f);
-        std::array<float, kBlockSamples> outputLeft{};
-        std::array<float, kBlockSamples> outputRight{};
-        const std::array<const float*, 1> inputChannels{input.data()};
-        const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
-
-        engine.play();
-        engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-        peak =
-            std::max(juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
-                     juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
-        return true;
-    };
-    float oneTrackPeak = 0.0f;
-    float twoTrackPeak = 0.0f;
-    float tenTrackPeak = 0.0f;
-
-    // Act
-    ASSERT_TRUE(measurePeak(1, oneTrackPeak));
-    ASSERT_TRUE(measurePeak(2, twoTrackPeak));
-    ASSERT_TRUE(measurePeak(10, tenTrackPeak));
-
-    // Assert
-    EXPECT_GT(oneTrackPeak, 0.02f);
-    EXPECT_NEAR(twoTrackPeak, oneTrackPeak, 0.0001f);
-    EXPECT_NEAR(tenTrackPeak, oneTrackPeak, 0.0001f);
-}
-
-TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(10, false, true), formats, 48'000.0,
-                                    kBlockSamples, error));
-    CaptureIsolationSink captureSink;
-    engine.setRecordingSink(&captureSink);
-    std::array<float, kBlockSamples> input{};
-    input.fill(0.05f);
-    std::array<float, kBlockSamples> outputLeft{};
-    std::array<float, kBlockSamples> outputRight{};
-    const std::array<const float*, 1> inputChannels{input.data()};
-    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
-    int captureOffset = 0;
-    int captureSamples = 0;
-    ASSERT_TRUE(engine.startRecording(0, error));
-    ASSERT_TRUE(engine.recordingWindow(kBlockSamples, captureOffset, captureSamples));
-
-    // Act
-    engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-    const auto rawSamplesAfterCallback = captureSink.totalRawSamples;
-    const auto beginCountAfterCallback = captureSink.beginCount;
-    const auto endCountAfterCallback = captureSink.endCount;
-    engine.stopRecording();
-    const auto finalized = finalizeCapturedRecording(engine, error);
-    engine.clearRecordingSink();
-
-    // Assert
-    EXPECT_TRUE(finalized);
-    EXPECT_EQ(captureOffset, 0);
-    EXPECT_EQ(captureSamples, kBlockSamples);
-    EXPECT_EQ(rawSamplesAfterCallback, kBlockSamples);
-    EXPECT_EQ(beginCountAfterCallback, 1);
-    EXPECT_EQ(endCountAfterCallback, 0);
-    EXPECT_EQ(captureSink.totalRawSamples, kBlockSamples);
-    EXPECT_EQ(captureSink.beginCount, 1);
-    EXPECT_EQ(captureSink.endCount, 1);
-}
-
-TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    constexpr int kBlockSamples = 512;
-    constexpr int kRecordingSamples = 100'000;
-    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, false, true), formats, 48'000.0,
-                                    kBlockSamples, error));
-    test::TemporaryDirectory directory;
-    CaptureIsolationSink captureSink(directory.get());
-    engine.setRecordingSink(&captureSink);
-    std::array<float, kBlockSamples> input{};
-    input.fill(0.05f);
-    std::array<float, kBlockSamples> outputLeft{};
-    std::array<float, kBlockSamples> outputRight{};
-    const std::array<const float*, 1> inputChannels{input.data()};
-    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
-    int captureOffset = 0;
-    int captureSamples = 0;
-    ASSERT_TRUE(engine.startRecording(0, error));
-    ASSERT_TRUE(engine.recordingWindow(kRecordingSamples, captureOffset, captureSamples));
-
-    // Act
-    auto remaining = kRecordingSamples;
-    while (remaining > 0) {
-        const auto block = std::min(kBlockSamples, remaining);
-        engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, block);
-        remaining -= block;
-    }
-    const auto finalized = finalizeCapturedRecording(engine, error);
-    engine.clearRecordingSink();
-
-    // Assert
-    EXPECT_TRUE(finalized);
-    EXPECT_EQ(captureOffset, 0);
-    EXPECT_EQ(captureSamples, kRecordingSamples);
-    EXPECT_EQ(captureSink.beginCount, 1);
-    EXPECT_EQ(captureSink.endCount, 1);
-    EXPECT_EQ(captureSink.totalRawSamples, kRecordingSamples);
-    EXPECT_EQ(captureSink.totalProcessedSamples, kRecordingSamples);
-    EXPECT_GT(captureSink.offlineProcessedWriteCalls, 1);
-    EXPECT_LE(captureSink.maxOfflineProcessedWriteSize, kBlockSamples);
-}
-
-TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    auto* track = new juce::DynamicObject();
-    track->setProperty("id", "track:guitar");
-    track->setProperty("kind", "audio");
-    track->setProperty("gainDb", 0.0);
-    track->setProperty("pan", 0.0);
-    track->setProperty("muted", false);
-    track->setProperty("solo", false);
-    track->setProperty("armed", false);
-    track->setProperty("monitoring", "on");
-    auto* audioInput = new juce::DynamicObject();
-    audioInput->setProperty("channelIndex", 0);
-    track->setProperty("audioInput", juce::var(audioInput));
-    auto* rack = new juce::DynamicObject();
-    rack->setProperty("devices", juce::Array<juce::var>{});
-    track->setProperty("rack", juce::var(rack));
-    track->setProperty("audioClips", juce::Array<juce::var>{});
-    track->setProperty("midiClips", juce::Array<juce::var>{});
-    track->setProperty("automation", juce::Array<juce::var>{});
-
-    juce::Array<juce::var> tracks;
-    tracks.add(juce::var(track));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-
-    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
-    std::vector<int> processOrder;
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
-        engine, "track:guitar", "device:amp",
-        std::make_unique<TestChainProcessor>(1, 2.0f, 0, processOrder), 48'000.0, 512, error));
-
-    constexpr int kBlockSamples = 512;
-    std::array<float, kBlockSamples> input{};
-    input.fill(0.05f);
-    std::array<float, kBlockSamples> outputLeft{};
-    std::array<float, kBlockSamples> outputRight{};
-    const std::array<const float*, 1> inputChannels{input.data()};
-    const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
-
-    // Act: monitor the physical input through the amplifier device first
-    // without the transport, then with the transport playing.
-    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
-    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
-    engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-    const auto stoppedPeak =
-        std::max(juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
-                 juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
-    std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
-    std::fill(outputRight.begin(), outputRight.end(), 0.0f);
-    engine.seekToTick(0);
-    engine.play();
-    engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
-
-    // Assert: the live chain processed the input (2x gain, pan law) and the
-    // monitored signal reaches the output while the transport is stopped and
-    // while it is playing, instead of being turned into silence.
-    const auto playingPeak =
-        std::max(juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
-                 juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
-    EXPECT_GT(stoppedPeak, 0.05f);
-    EXPECT_LT(stoppedPeak, 0.2f);
-    EXPECT_GT(playingPeak, 0.05f);
-    EXPECT_LT(playingPeak, 0.2f);
-    EXPECT_EQ(processOrder.size(), 2u);
-}
-
 }  // namespace riffra
