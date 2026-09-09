@@ -27,7 +27,6 @@ public:
 
     // Audio thread only, except for resetForDevice which is called by the
     // device lifecycle thread before callbacks resume.
-    void recordInputPeak(float peak) noexcept;
     void recordSilencedBlock(float inputPeak) noexcept;
     void recordBlock(float inputPeak, float preLimiterPeak, float outputPeak,
                      float limiterGainReductionDb, std::uint64_t hardClipSamples,

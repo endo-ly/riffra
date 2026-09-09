@@ -62,17 +62,7 @@ bool AudioRenderPipeline::isDeviceFaulted() const noexcept {
     return hasMuteReason(MuteReason::DeviceFault);
 }
 
-void AudioRenderPipeline::setDeviceTransitionActive(const bool active) noexcept {
-    deviceTransitionActive.store(active, std::memory_order_release);
-}
-
-bool AudioRenderPipeline::isDeviceTransitionActive() const noexcept {
-    return deviceTransitionActive.load(std::memory_order_acquire);
-}
-
-bool AudioRenderPipeline::isPreviewing() const noexcept {
-    return previewEngine.isPreviewing();
-}
+bool AudioRenderPipeline::isPreviewing() const noexcept { return previewEngine.isPreviewing(); }
 
 void AudioRenderPipeline::setMasterGainDb(const float gainDb) noexcept {
     const auto safeGain = juce::jlimit(kMinimumGainDb, kMaximumGainDb, gainDb);
@@ -105,15 +95,15 @@ void AudioRenderPipeline::silenceAndCommit(float* const* outputChannelData,
     audioMetrics.recordSilencedBlock(rawInputPeak);
 }
 
-void AudioRenderPipeline::processBlock(
-    const float* const* inputChannelData, const int numInputChannels,
-    float* const* outputChannelData, const int numOutputChannels, const int numSamples,
-    const juce::AudioIODeviceCallbackContext&) noexcept {
+void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
+                                       const int numInputChannels, float* const* outputChannelData,
+                                       const int numOutputChannels, const int numSamples,
+                                       const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
         audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
-                                             activeSampleRate.load(std::memory_order_relaxed));
+                                            activeSampleRate.load(std::memory_order_relaxed));
     };
     if (panicRequested.exchange(false, std::memory_order_acq_rel))
         timelineEngine.panicAllInstrumentTracks();
@@ -149,12 +139,13 @@ void AudioRenderPipeline::processBlock(
         for (int channel = 0; channel < numInputChannels; ++channel) {
             if (!timelineEngine.monitoringInputChannel(channel)) continue;
             monitoringActive = true;
-            monitoredInputPeak =
-                std::max(monitoredInputPeak,
-                         peakForInput(inputChannelData[channel], inputChannelData[channel] != selectedInput));
+            monitoredInputPeak = std::max(monitoredInputPeak,
+                                          peakForInput(inputChannelData[channel],
+                                                       inputChannelData[channel] != selectedInput));
         }
     }
-    if (invalidInputSamples > 0) audioMetrics.recordBlock(0.0f, 0.0f, 0.0f, 0.0f, 0, invalidInputSamples);
+    if (invalidInputSamples > 0)
+        audioMetrics.recordBlock(0.0f, 0.0f, 0.0f, 0.0f, 0, invalidInputSamples);
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
@@ -183,7 +174,8 @@ void AudioRenderPipeline::processBlock(
     }
 
     const auto target = targetGainLinear.load(std::memory_order_acquire);
-    if (resetGainOnNextCallback.exchange(false, std::memory_order_acq_rel)) currentGainLinear = 0.0f;
+    if (resetGainOnNextCallback.exchange(false, std::memory_order_acq_rel))
+        currentGainLinear = 0.0f;
     float blockPreLimiterPeak = 0.0f;
     float blockOutputPeak = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
@@ -229,9 +221,9 @@ void AudioRenderPipeline::processBlock(
         }
     }
     if (limiterReady) {
-        juce::dsp::AudioBlock<float> block(
-            limiterChannels.data(), static_cast<std::size_t>(numOutputChannels),
-            static_cast<std::size_t>(numSamples));
+        juce::dsp::AudioBlock<float> block(limiterChannels.data(),
+                                           static_cast<std::size_t>(numOutputChannels),
+                                           static_cast<std::size_t>(numSamples));
         limiter.process(juce::dsp::ProcessContextReplacing<float>(block));
     }
 
@@ -254,9 +246,8 @@ void AudioRenderPipeline::processBlock(
 
     float reductionDb = 0.0f;
     if (blockPreLimiterPeak > 0.0f && blockOutputPeak > 0.0f) {
-        reductionDb = juce::jmax(
-            0.0f, juce::Decibels::gainToDecibels(
-                      juce::jmax(0.000001f, blockPreLimiterPeak / blockOutputPeak)));
+        reductionDb = juce::jmax(0.0f, juce::Decibels::gainToDecibels(juce::jmax(
+                                           0.000001f, blockPreLimiterPeak / blockOutputPeak)));
     }
     audioMetrics.recordBlock(rawInputPeak, blockPreLimiterPeak, blockOutputPeak, reductionDb,
                              blockHardClipSamples, blockInvalidSamples);
@@ -273,9 +264,10 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
     resetGainOnNextCallback.store(true, std::memory_order_release);
     fadeStep = sampleRate > 0.0 ? static_cast<float>(1.0 / (sampleRate * kFadeInSeconds)) : 0.0f;
     audioMetrics.resetForDevice();
-    dcBlocker.prepare(device != nullptr
-                          ? static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits())
-                          : 0);
+    dcBlocker.prepare(
+        device != nullptr
+            ? static_cast<int>(device->getActiveOutputChannels().countNumberOfSetBits())
+            : 0);
     feedbackDetector.prepare(sampleRate);
     const auto outputChannels =
         device != nullptr ? device->getActiveOutputChannels().countNumberOfSetBits() : 0;
@@ -283,7 +275,7 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
     limiterPrepared = sampleRate > 0.0 && outputChannels > 0 && blockSize > 0;
     if (limiterPrepared) {
         limiter.prepare({sampleRate, static_cast<juce::uint32>(blockSize),
-                          static_cast<juce::uint32>(outputChannels)});
+                         static_cast<juce::uint32>(outputChannels)});
         limiter.setThreshold(juce::Decibels::gainToDecibels(kLimiterCeiling));
         limiter.setRelease(50.0f);
         limiter.reset();

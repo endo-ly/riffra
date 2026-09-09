@@ -2,15 +2,15 @@
 
 #include <JuceHeader.h>
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <utility>
 
 #include "AudioMetrics.h"
+#include "AudioSafetyDsp.h"
 #include "PreviewEngine.h"
 #include "app/RecordingController.h"
-#include "AudioSafetyDsp.h"
 
 namespace riffra {
 
@@ -42,8 +42,6 @@ public:
     [[nodiscard]] bool hasMuteReason(MuteReason reason) const noexcept;
     void setDeviceFaulted(bool faulted) noexcept;
     [[nodiscard]] bool isDeviceFaulted() const noexcept;
-    void setDeviceTransitionActive(bool active) noexcept;
-    [[nodiscard]] bool isDeviceTransitionActive() const noexcept;
     void setMasterGainDb(float gainDb) noexcept;
     void setInputChannel(int channel) noexcept;
     [[nodiscard]] int getInputChannel() const noexcept;
@@ -65,9 +63,7 @@ public:
     [[nodiscard]] std::uint64_t getCallbackOverruns() const noexcept {
         return audioMetrics.callbackOverruns();
     }
-    [[nodiscard]] float getPreLimiterPeak() const noexcept {
-        return audioMetrics.preLimiterPeak();
-    }
+    [[nodiscard]] float getPreLimiterPeak() const noexcept { return audioMetrics.preLimiterPeak(); }
     [[nodiscard]] float getLimiterGainReductionDb() const noexcept {
         return audioMetrics.limiterGainReductionDb();
     }
@@ -93,7 +89,8 @@ public:
         juce::ignoreUnused(timeline);
         return recordingController.start(directory, error);
     }
-    void setRecordingFinalizationDispatcher(RecordingController::FinalizationDispatcher dispatcher) {
+    void setRecordingFinalizationDispatcher(
+        RecordingController::FinalizationDispatcher dispatcher) {
         recordingController.setFinalizationDispatcher(std::move(dispatcher));
     }
     bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
@@ -159,7 +156,6 @@ private:
     std::atomic<bool> panicRequested{false};
     std::atomic<bool> resetGainOnNextCallback{true};
     std::atomic<bool> feedbackSuspected{false};
-    std::atomic<bool> deviceTransitionActive{false};
     std::atomic<double> activeSampleRate{0.0};
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;

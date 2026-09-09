@@ -52,18 +52,13 @@ void AudioMetrics::holdPeak(std::atomic<float>& peak, const float value) noexcep
     }
 }
 
-void AudioMetrics::recordInputPeak(const float peak) noexcept {
-    holdPeak(inputPeakValue, peak);
-}
-
 void AudioMetrics::recordSilencedBlock(const float peak) noexcept {
     holdPeak(inputPeakValue, peak);
     outputPeakValue.store(0.0f, std::memory_order_release);
 }
 
 void AudioMetrics::recordBlock(const float blockInputPeak, const float blockPreLimiterPeak,
-                               const float blockOutputPeak,
-                               const float blockLimiterGainReductionDb,
+                               const float blockOutputPeak, const float blockLimiterGainReductionDb,
                                const std::uint64_t blockHardClipSamples,
                                const std::uint64_t blockInvalidSamples) noexcept {
     holdPeak(inputPeakValue, blockInputPeak);
@@ -77,13 +72,11 @@ void AudioMetrics::recordBlock(const float blockInputPeak, const float blockPreL
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
 }
 
-void AudioMetrics::recordCallbackDuration(
-    const std::chrono::steady_clock::time_point started, const int numSamples,
-    const double sampleRate) noexcept {
-    const auto duration =
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - started)
-            .count();
+void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_point started,
+                                          const int numSamples, const double sampleRate) noexcept {
+    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - started)
+                              .count();
     const auto durationUs = static_cast<std::uint64_t>(std::max<std::int64_t>(0, duration));
     callbackCountValue.fetch_add(1, std::memory_order_relaxed);
     callbackDurationUs.fetch_add(durationUs, std::memory_order_relaxed);

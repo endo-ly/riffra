@@ -1,10 +1,11 @@
 #include <gtest/gtest.h>
 
-#include "AudioDeviceService.h"
 #include "AudioProtocol.h"
 #include "MidiInputService.h"
-#include "audio/AudioRenderPipeline.h"
 #include "TimelineEngine.h"
+#include "app/AudioStatusBuilder.h"
+#include "audio/AudioRenderPipeline.h"
+#include "device/AudioDeviceService.h"
 
 namespace riffra {
 
@@ -53,7 +54,7 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
 
-    const auto meters = AudioDeviceService::currentMeters(callback);
+    const auto meters = AudioStatusBuilder::currentMeters(callback);
 
     ASSERT_TRUE(meters.isObject());
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
@@ -66,7 +67,7 @@ TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
 
-    const auto status = AudioDeviceService::currentStatus(manager, callback);
+    const auto status = AudioStatusBuilder::currentStatus(manager, callback);
 
     ASSERT_TRUE(status.isObject());
     EXPECT_EQ(status.getProperty("type", {}).toString(), "audioStatus");

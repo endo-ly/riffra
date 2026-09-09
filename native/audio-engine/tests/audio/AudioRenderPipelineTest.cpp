@@ -6,9 +6,8 @@
 #include <memory>
 
 #include "ArrangeRecordingSession.h"
-#include "AudioRuntimeStatus.h"
-#include "audio/AudioRenderPipeline.h"
 #include "TimelineEngine.h"
+#include "audio/AudioRenderPipeline.h"
 
 namespace riffra {
 namespace {
@@ -336,8 +335,7 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                       kBlockSize, error));
     AudioRenderPipeline callback(timeline);
-    callback.recording().setFinalizationDispatcher(
-        [](std::unique_ptr<ArrangeRecordingSession>) {});
+    callback.recording().setFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
     const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                     .getChildFile("riffra-recording-busy-test")
                                     .getChildFile(juce::Uuid().toString());
@@ -385,27 +383,6 @@ TEST(AudioRenderPipelineTest, FinalizationFailurePreservesStatus) {
 
     EXPECT_FALSE(static_cast<bool>(result.getProperty("processing", true)));
     EXPECT_EQ(result.getProperty("error", {}).toString(), "finalization failed");
-}
-
-TEST(AudioRenderPipelineTest, RequiresFaultWhenActiveDeviceDisappears) {
-    EXPECT_TRUE(deviceLossRequiresFault(false, false));
-    EXPECT_FALSE(deviceLossRequiresFault(true, false));
-}
-
-TEST(AudioRenderPipelineTest, DeviceTransitionSuppressesFault) {
-    EXPECT_FALSE(deviceLossRequiresFault(false, true));
-}
-
-TEST(AudioRenderPipelineTest, DeviceTransitionSuppressesFaultWithoutInspectingMuteState) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-    callback.setUserEmergencyMute(true);
-    callback.setDeviceTransitionActive(true);
-
-    EXPECT_FALSE(deviceLossRequiresFault(false, callback.isDeviceTransitionActive()));
-
-    callback.setDeviceTransitionActive(false);
-    EXPECT_TRUE(deviceLossRequiresFault(false, callback.isDeviceTransitionActive()));
 }
 
 TEST(AudioRenderPipelineTest, DeviceFaultEngagesDeviceFault) {
