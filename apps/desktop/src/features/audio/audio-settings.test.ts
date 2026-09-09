@@ -81,6 +81,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
       audioEnvironmentRevision: 0,
       graphRevision: 0,
       graphPublishCount: 0,
+      instrumentFaults: [],
     },
     message: 'Native audio is connected and muted.',
     ...overrides,

@@ -34,9 +34,11 @@ use riffra_runtime::jobs::{BackgroundJobStatus, JobKind, JobState};
 use riffra_runtime::missing::MissingDependency;
 use riffra_runtime::projects::ProjectExport;
 use riffra_runtime::{
-    ArrangementProjectionOutcome, DeviceCapabilities, DeviceInspection, DeviceParameterInfo,
-    PluginPresetInfo, PluginStateSnapshot, RuntimeProjectionState, TrackDeviceSummary,
-    TrackRackSummary, TrackSummary,
+    ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
+    AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
+    DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
+    PluginStateSnapshot, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
+    TrackSummary,
 };
 use ts_rs::{Config, TS};
 
@@ -99,6 +101,13 @@ fn export_types() {
     RecoveryCandidate::export_all(&cfg).expect("RecoveryCandidate bindings");
     ProjectRecoveryState::export_all(&cfg).expect("ProjectRecoveryState bindings");
     AudioStatus::export_all(&cfg).expect("AudioStatus bindings");
+    AudioDiagnostics::export_all(&cfg).expect("AudioDiagnostics bindings");
+    AudioInstrumentFault::export_all(&cfg).expect("AudioInstrumentFault bindings");
+    AudioDiagnosticsReport::export_all(&cfg).expect("AudioDiagnosticsReport bindings");
+    AudioDiagnosticsDevice::export_all(&cfg).expect("AudioDiagnosticsDevice bindings");
+    AudioDiagnosticsMute::export_all(&cfg).expect("AudioDiagnosticsMute bindings");
+    AudioDiagnosticsRealtime::export_all(&cfg).expect("AudioDiagnosticsRealtime bindings");
+    AudioDiagnosticsOutput::export_all(&cfg).expect("AudioDiagnosticsOutput bindings");
     RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
     RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");
     SessionAudioPair::export_all(&cfg).expect("SessionAudioPair bindings");

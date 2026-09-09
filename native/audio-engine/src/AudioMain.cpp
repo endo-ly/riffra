@@ -254,7 +254,14 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 break;
             }
             if (type == "setEmergencyMute") {
-                const auto muted = static_cast<bool>(command.getProperty("muted", true));
+                const auto mutedValue = command.getProperty("muted", {});
+                if (!mutedValue.isBool()) {
+                    writeJson(makeError("invalidCommand",
+                                        "setEmergencyMute requires a boolean muted field.",
+                                        "safety.userEmergencyMute"));
+                    continue;
+                }
+                const auto muted = static_cast<bool>(mutedValue);
                 callback.setUserEmergencyMute(muted);
                 writeJson(AudioDeviceService::currentStatus(
                     manager, callback, &midiInputs.monitor(), {}, &timelineEngine));
@@ -975,6 +982,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 if (recoveryError.isNotEmpty()) {
                     callback.setDeviceTransitionActive(false);
                     callback.setDeviceFaulted(true);
+                    callback.setEngineTransitionMute(false);
                     writeJson(makeError("deviceLost", recoveryError, "audioDevice.recover"));
                     continue;
                 }
@@ -1040,6 +1048,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                 auto setupError = AudioDeviceService::initialise(manager, requested);
                 if (setupError.isNotEmpty()) {
                     const auto restoreError = restorePreviousDevice();
+                    callback.setEngineTransitionMute(false);
                     auto* details = new juce::DynamicObject();
                     details->setProperty("driver", requested.driver);
                     details->setProperty("inputDevice", requested.inputDevice);
@@ -1059,6 +1068,7 @@ int serve(const std::optional<std::uint32_t> parentPid,
                     activeDevice != nullptr ? activeDevice->getInputChannelNames().size() : 0;
                 if (requested.inputChannel >= physicalInputs) {
                     const auto restoreError = restorePreviousDevice();
+                    callback.setEngineTransitionMute(false);
                     auto* details = new juce::DynamicObject();
                     details->setProperty("driver", requested.driver);
                     details->setProperty("inputDevice", requested.inputDevice);

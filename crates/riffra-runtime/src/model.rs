@@ -457,6 +457,114 @@ pub struct AudioDiagnostics {
     pub maximum_latency_samples: u64,
     pub projection_duration_ms: u64,
     pub audio_environment_revision: u64,
+    #[serde(default)]
+    pub instrument_faults: Vec<AudioInstrumentFault>,
+}
+
+/// Fault counters for one instrument runtime in the active graph.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInstrumentFault {
+    pub track_id: String,
+    pub instrument_type: String,
+    pub fault_code: u32,
+    pub dropped_midi_events: u64,
+}
+
+/// Read-only diagnostic snapshot assembled from the live Host and Native
+/// audio status without changing runtime state or resetting counters.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnosticsReport {
+    pub device: AudioDiagnosticsDevice,
+    pub mute: AudioDiagnosticsMute,
+    pub realtime: AudioDiagnosticsRealtime,
+    pub output: AudioDiagnosticsOutput,
+    pub instrument_faults: Vec<AudioInstrumentFault>,
+}
+
+/// Device values included in an audio diagnostic snapshot.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnosticsDevice {
+    pub state: AudioState,
+    pub driver: Option<String>,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub buffer_size: Option<u32>,
+    pub round_trip_ms: Option<f64>,
+    pub active_input_channels: Vec<u32>,
+    pub active_output_channels: Vec<u32>,
+}
+
+/// Native mute ownership expanded into stable named flags for diagnosis.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnosticsMute {
+    pub state: AudioState,
+    pub raw_reasons: u32,
+    pub user_emergency: bool,
+    pub engine_transition: bool,
+    pub device_fault: bool,
+    pub feedback_protection: bool,
+}
+
+/// Internal projection values used while diagnosing audio lifecycle failures.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AudioDiagnosticsProjection {
+    pub state: RuntimeProjectionState,
+    pub target_sequence: Option<u64>,
+    pub active_sequence: Option<u64>,
+    pub session_revision: Option<u64>,
+    pub audio_environment_revision: u64,
+    pub generation: u64,
+    pub last_error: Option<String>,
+    pub last_projection_duration_ms: u64,
+}
+
+/// Realtime callback values included in a stable audio diagnostic snapshot.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnosticsRealtime {
+    pub callback_count: u64,
+    pub average_callback_duration_us: u64,
+    pub maximum_callback_duration_us: u64,
+    pub callback_overruns: u64,
+}
+
+/// Output safety values included in a stable audio diagnostic snapshot.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDiagnosticsOutput {
+    pub pre_limiter_peak: f64,
+    pub limiter_gain_reduction_db: f64,
+    pub hard_clip_samples: u64,
+    pub output_peak: f64,
+    pub invalid_samples: u64,
+}
+
+/// Internal graph and MIDI values used while diagnosing projection failures.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AudioDiagnosticsTimeline {
+    pub track_count: u64,
+    pub instrument_runtime_count: u64,
+    pub plugin_count: u64,
+    pub maximum_latency_samples: u64,
+    pub graph_revision: u64,
+    pub graph_publish_count: u64,
+    pub live_midi_drops: u64,
+}
+
+/// Internal diagnostic details that are intentionally outside the stable
+/// `audio.diagnostics` contract.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AudioDiagnosticsDebug {
+    pub(crate) projection: AudioDiagnosticsProjection,
+    pub(crate) timeline: AudioDiagnosticsTimeline,
 }
 
 /// Latest-wins state of canonical arrangement projection.

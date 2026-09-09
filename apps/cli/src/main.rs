@@ -7,7 +7,7 @@ mod serve;
 use args::{Cli, CliCommand};
 use attached::AttachedBackend;
 use clap::Parser;
-use output::compact_agent_response;
+use output::{compact_agent_response, write_audio_diagnostics};
 use riffra_control::{
     CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
     LocalHostRegistry, ProtocolError,
@@ -32,6 +32,7 @@ fn run() -> Result<(), String> {
     let attach = cli.attach;
     let data_root = cli.data_root.clone();
     let plugin_state_output = cli.plugin_state_save_output();
+    let audio_diagnostics_options = cli.audio_diagnostics_options();
     let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
     let is_host_list = matches!(
@@ -109,6 +110,9 @@ fn run() -> Result<(), String> {
             attached.request(&request)?,
         )?;
         let response = compact_agent_response(&request.command, &request.params, response);
+        if let Some((json, _)) = audio_diagnostics_options {
+            return write_audio_diagnostics(&response, json);
+        }
         if response.ok {
             return write_response(&response);
         }
@@ -144,6 +148,9 @@ fn run() -> Result<(), String> {
         },
     );
     let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
+    if let Some((json, _)) = audio_diagnostics_options {
+        return write_audio_diagnostics(&response, json);
+    }
     write_response(&compact_agent_response(
         &request.command,
         &request.params,

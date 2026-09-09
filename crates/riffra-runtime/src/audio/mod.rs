@@ -30,6 +30,7 @@ use sidecar_process::SidecarProcess;
 
 pub(crate) const SIDECAR_READY_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const AUDIO_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]

@@ -1248,12 +1248,23 @@ pub enum AudioCommand {
     Status,
     Probe,
     ChannelsProbe(AudioChannelsProbeArgs),
+    Diagnostics(AudioDiagnosticsArgs),
     Driver {
         #[command(subcommand)]
         command: AudioDriverCommand,
     },
     Recover,
     StartupRetry,
+}
+
+#[derive(Debug, Args)]
+pub struct AudioDiagnosticsArgs {
+    /// Emit the machine-readable diagnostic object without the control envelope.
+    #[arg(long)]
+    pub json: bool,
+    /// Include unstable lifecycle and graph details for focused debugging.
+    #[arg(long)]
+    pub debug: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1573,6 +1584,15 @@ impl Cli {
             _ => None,
         }
     }
+
+    pub(crate) fn audio_diagnostics_options(&self) -> Option<(bool, bool)> {
+        match self.command.as_ref() {
+            Some(CliCommand::Audio {
+                command: AudioCommand::Diagnostics(args),
+            }) => Some((args.json, args.debug)),
+            _ => None,
+        }
+    }
 }
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
@@ -1840,6 +1860,9 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             AudioCommand::Status => simple("audio.status"),
             AudioCommand::Probe => simple("audio.probe"),
             AudioCommand::ChannelsProbe(args) => value("audio.channels.probe", args),
+            AudioCommand::Diagnostics(args) => {
+                value("audio.diagnostics", json!({"debug": args.debug}))
+            }
             AudioCommand::Driver { command } => match command {
                 AudioDriverCommand::Get => simple("audio.driver.get"),
                 AudioDriverCommand::Set(args) => value("audio.driver.set", args),
@@ -2335,6 +2358,17 @@ mod tests {
                 json!({"trackId":"track:keys","deviceId":"device:synth"})
             )
         );
+    }
+
+    #[test]
+    fn audio_diagnostics_keeps_output_mode_local_to_the_cli() {
+        let cli =
+            Cli::try_parse_from(["riffra", "audio", "diagnostics", "--json", "--debug"]).unwrap();
+
+        assert_eq!(cli.audio_diagnostics_options(), Some((true, true)));
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "audio.diagnostics");
+        assert_eq!(request.params, json!({"debug": true}));
     }
 
     #[test]

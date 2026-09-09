@@ -337,7 +337,7 @@ Runtime 系コマンドのうち、次のグループが `runtimeUnavailable` �
 
 | 不可                                                                          | 可能                                                          |
 | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| transport 全般(play / stop / go-to-start / seek)                              | `audio status` / `audio driver get`                           |
+| transport 全般(play / stop / go-to-start / seek)                              | `audio status` / `audio diagnostics` / `audio driver get`     |
 | `audio probe` / `channels-probe` / `recover` / `startup-retry` / `driver set` | `plugin catalog list` / `missing list`                        |
 | `midi send` / `midi panic` / `asset preview`                                  | `render start` と job 管理                                    |
 | `plugin scan` / `scan-start` / `record start`                                 | `record list` / `status` などの管理系、`library` / `analysis` |
@@ -358,12 +358,21 @@ Runtime 系コマンドのうち、次のグループが `runtimeUnavailable` �
 | コマンド                          | 主要引数                                                                                                           |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `audio status`                    | -                                                                                                                  |
+| `audio diagnostics`               | [`--json`] [`--debug`]                                                                                             |
 | `audio probe`                     | -                                                                                                                  |
 | `audio channels-probe`            | `--driver` `--input-device` `--output-device`                                                                      |
 | `audio driver get` / `driver set` | `set` は `--driver` [`--input-device`] [`--input-channel`] [`--output-device`] [`--sample-rate`] [`--buffer-size`] |
 | `audio recover` / `startup-retry` | -                                                                                                                  |
 
 デバイス異常からの回復は `status` で状態(faulted 等)を確認し、`recover`、改善しなければ `startup-retry` の順で試す。
+
+`audio diagnostics` はデバイス、Safetyのミュート理由、Realtime負荷、出力状態、InstrumentごとのfaultとMIDI dropをまとめて返す読み取り専用コマンドである。通常は人間向けの表示になり、`--json` を付けるとControl responseの外側を除いた診断オブジェクトだけをJSONで出力する。`--debug` はASIO切替などの調査に必要なProjectionとGraphの内部情報を追加するが、安定した公開項目ではない。
+
+```powershell
+riffra --attach audio diagnostics
+riffra --attach audio diagnostics --json
+riffra --attach audio diagnostics --json --debug
+```
 
 ### 録音
 

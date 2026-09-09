@@ -1,6 +1,6 @@
-use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::AudioDeviceReopenOutcome;
+use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor};
 use crate::model::AudioStatus;
 use crate::preferences::AudioDriverConfig;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
@@ -8,6 +8,40 @@ use riffra_core::AudioTakeVariant;
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
+
+pub(super) fn emergency_mute_command(muted: bool) -> Value {
+    serde_json::json!({
+        "type": "setEmergencyMute",
+        "muted": muted,
+    })
+}
+
+fn device_command_requires_restart(error: &NativeAudioError) -> bool {
+    error.requires_restart() || matches!(error, NativeAudioError::Timeout { .. })
+}
+
+fn restored_previous_device_error(error: NativeAudioError, operation: &str) -> NativeAudioError {
+    let descriptor = error.descriptor();
+    let kind = if descriptor.kind == "timeout" {
+        "deviceTimeout"
+    } else {
+        "deviceRejected"
+    };
+    let mut details = match descriptor.details {
+        Some(Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("restoredPreviousDevice".into(), Value::Bool(true));
+    NativeAudioError::structured(
+        kind,
+        format!(
+            "{} The previous audio environment was restored.",
+            descriptor.message
+        ),
+        operation,
+        Some(Value::Object(details)),
+    )
+}
 
 fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
     if bytes.is_empty() {
@@ -488,18 +522,22 @@ impl AudioSupervisor {
     pub fn recover_audio_device(&self) -> NativeAudioResult<AudioDeviceReopenOutcome> {
         let command = serde_json::json!({"type": "recoverAudioDevice"});
         let expected_generation = self.sidecar_generation();
-        match self.send_command(
+        match self.send_command_with_timeout(
             command,
             "Audio device recovery requested; output remains muted until the device is ready.",
+            AUDIO_DEVICE_COMMAND_TIMEOUT,
         ) {
             Ok(status) => Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)),
-            Err(error) if error.requires_restart() => {
+            Err(error) if device_command_requires_restart(&error) => {
                 self.restart_sidecar(
                     "Native audio sidecar is restarting with the startup guard active.",
                     expected_generation,
                 )?;
                 let status = self.refresh_status()?;
-                Ok(AudioDeviceReopenOutcome::SidecarRestarted(status))
+                Ok(AudioDeviceReopenOutcome::RestoredPrevious {
+                    status,
+                    error: restored_previous_device_error(error, "audioDevice.recover"),
+                })
             }
             Err(error) => Err(error),
         }
@@ -524,22 +562,22 @@ impl AudioSupervisor {
             command["bufferSize"] = serde_json::json!(buffer_size);
         }
         let expected_generation = self.sidecar_generation();
-        match self.send_command(
+        match self.send_command_with_timeout(
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
+            AUDIO_DEVICE_COMMAND_TIMEOUT,
         ) {
             Ok(status) => Ok(AudioDeviceReopenOutcome::ReopenedInPlace(status)),
-            Err(error) if error.requires_restart() => {
+            Err(error) if device_command_requires_restart(&error) => {
                 self.restart_sidecar(
                     "The audio driver switch stalled; the isolated engine is restarting.",
                     expected_generation,
                 )?;
-                let mut status = self.refresh_status()?;
-                status.message = format!("The requested audio driver did not respond: {error}");
-                if let Ok(mut current) = self.status.lock() {
-                    current.message = status.message.clone();
-                }
-                Ok(AudioDeviceReopenOutcome::SidecarRestarted(status))
+                let status = self.refresh_status()?;
+                Ok(AudioDeviceReopenOutcome::RestoredPrevious {
+                    status,
+                    error: restored_previous_device_error(error, "audioDevice.activate"),
+                })
             }
             Err(error) => Err(error),
         }
@@ -584,7 +622,7 @@ impl AudioSupervisor {
         muted: bool,
     ) -> NativeAudioResult<AudioStatus> {
         let status = self.send_command(
-            serde_json::json!({"type": "setEmergencyMute", "muted": muted}),
+            emergency_mute_command(muted),
             if muted {
                 "User mute is engaged; saved and recorded data is unaffected."
             } else {
@@ -592,5 +630,42 @@ impl AudioSupervisor {
             },
         )?;
         Ok(status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emergency_mute_command_uses_only_the_muted_field() {
+        let unmuted = emergency_mute_command(false);
+        let muted = emergency_mute_command(true);
+
+        assert_eq!(unmuted["type"], "setEmergencyMute");
+        assert_eq!(unmuted["muted"], false);
+        assert!(unmuted.get("active").is_none());
+        assert_eq!(muted["muted"], true);
+    }
+
+    #[test]
+    fn device_timeout_becomes_a_failed_restore_result() {
+        let error = restored_previous_device_error(
+            NativeAudioError::Timeout {
+                message: "device did not acknowledge".into(),
+            },
+            "audioDevice.activate",
+        );
+        let descriptor = error.descriptor();
+
+        assert_eq!(descriptor.kind, "deviceTimeout");
+        assert_eq!(
+            descriptor
+                .details
+                .as_ref()
+                .and_then(|details| details.get("restoredPreviousDevice"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 }

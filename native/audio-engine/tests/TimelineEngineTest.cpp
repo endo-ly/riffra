@@ -313,6 +313,18 @@ public:
         return true;
     }
 
+    static void beginAudioReadForTest(TimelineEngine& engine) {
+        TimelineEngine::PreparedTimeline* active = nullptr;
+        engine.beginAudioRead(active);
+    }
+
+    static void endAudioReadForTest(TimelineEngine& engine) { engine.endAudioRead(); }
+
+    static std::size_t retiredTimelineCount(const TimelineEngine& engine) {
+        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
+        return engine.retiredTimelines.size();
+    }
+
     static bool trackEffectChainProcessesOnce() {
         // Arrange
         juce::AudioFormatManager formats;
@@ -2043,6 +2055,28 @@ TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat) {
 
     // Assert
     EXPECT_TRUE(passed);
+}
+
+TEST(TimelineEngineTest, ReclaimsRetiredGraphsAfterAudioReadersLeave) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:first"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    TimelineEngineTestPeer::beginAudioReadForTest(engine);
+
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeInstrumentSnapshot("track:second"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 1u);
+
+    TimelineEngineTestPeer::endAudioReadForTest(engine);
+    engine.serviceDeferredCleanup();
+
+    EXPECT_EQ(TimelineEngineTestPeer::retiredTimelineCount(engine), 0u);
 }
 
 TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths) {

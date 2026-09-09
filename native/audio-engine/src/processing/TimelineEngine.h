@@ -108,6 +108,8 @@ public:
     /// Returns whether the active graph routes the physical input channel to a monitored Audio
     /// Track.
     [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
+    /// Reclaims retired graphs from a non-realtime control path.
+    void serviceDeferredCleanup() noexcept;
     [[nodiscard]] bool recordingWindow(int sampleCount, int& sampleOffset,
                                        int& capturedSamples) noexcept;
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;

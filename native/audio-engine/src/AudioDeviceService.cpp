@@ -195,7 +195,7 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
 juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
                                             const SafetyAudioCallback& callback,
                                             const MidiMonitor* midi, const juce::String& message,
-                                            const TimelineEngine* timeline) {
+                                            TimelineEngine* timeline) {
     auto* status = new juce::DynamicObject();
     status->setProperty("type", "audioStatus");
     const juce::String state =
@@ -233,6 +233,7 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
     diagnostics->setProperty("hardClipSamples",
                              static_cast<juce::int64>(callback.getHardClipSamples()));
     if (timeline != nullptr) {
+        timeline->serviceDeferredCleanup();
         const auto timelineStatus = timeline->status();
         status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
         diagnostics->setProperty("liveMidiDrops", timelineStatus.getProperty("liveMidiDrops", 0));
@@ -245,6 +246,9 @@ juce::var AudioDeviceService::currentStatus(juce::AudioDeviceManager& manager,
         diagnostics->setProperty("graphRevision", timelineStatus.getProperty("graphRevision", 0));
         diagnostics->setProperty("graphPublishCount",
                                  timelineStatus.getProperty("graphPublishCount", 0));
+        diagnostics->setProperty(
+            "instrumentFaults",
+            timelineStatus.getProperty("instrumentFaults", juce::Array<juce::var>{}));
     }
     status->setProperty("diagnostics", juce::var(diagnostics));
     if (message.isNotEmpty()) status->setProperty("message", message);

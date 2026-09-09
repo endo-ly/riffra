@@ -770,6 +770,14 @@ impl HostState {
                     .map_err(serialize_error)?,
                 current.sequence,
             )),
+            "audio.diagnostics" => {
+                let params: AudioDiagnosticsParams = decode(params)?;
+                Ok((
+                    "audioDiagnostics",
+                    self.audio_diagnostics(params.debug)?,
+                    current.sequence,
+                ))
+            }
             "audio.probe" => Ok((
                 "audioProbe",
                 if self.core.safe_mode() {
@@ -1621,7 +1629,7 @@ fn runtime_error(error: RuntimeError) -> ProtocolError {
     }
 }
 
-fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
+pub(super) fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     let descriptor = error.descriptor();
     let code = match descriptor.kind.as_str() {
         "deviceLost" | "transportLost" | "generationChanged" | "process" | "safeMode" => {
@@ -1889,6 +1897,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "transport.go-to-start"
             | "transport.seek"
             | "audio.status"
+            | "audio.diagnostics"
             | "audio.probe"
             | "audio.channels.probe"
             | "audio.recover"
@@ -2050,6 +2059,13 @@ struct AudioChannelsProbeParams {
     driver: String,
     input_device: String,
     output_device: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioDiagnosticsParams {
+    #[serde(default)]
+    debug: bool,
 }
 
 #[derive(Debug, Deserialize)]

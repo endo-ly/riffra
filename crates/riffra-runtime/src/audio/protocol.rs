@@ -1,5 +1,8 @@
 use super::error::{NativeAudioError, NativeAudioResult};
-use crate::model::{AudioChannelInfo, AudioDiagnostics, AudioState, AudioStatus, RecordingStatus};
+use crate::model::{
+    AudioChannelInfo, AudioDiagnostics, AudioInstrumentFault, AudioState, AudioStatus,
+    RecordingStatus,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -85,6 +88,17 @@ struct NativeDiagnostics {
     maximum_latency_samples: Option<u64>,
     projection_duration_ms: Option<u64>,
     audio_environment_revision: Option<u64>,
+    instrument_faults: Option<Vec<NativeInstrumentFault>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeInstrumentFault {
+    track_id: String,
+    #[serde(default)]
+    instrument_type: String,
+    fault_code: u32,
+    dropped_midi_events: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,6 +298,17 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
                 audio_environment_revision: diagnostics
                     .audio_environment_revision
                     .unwrap_or_default(),
+                instrument_faults: diagnostics
+                    .instrument_faults
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|fault| AudioInstrumentFault {
+                        track_id: fault.track_id,
+                        instrument_type: fault.instrument_type,
+                        fault_code: fault.fault_code,
+                        dropped_midi_events: fault.dropped_midi_events,
+                    })
+                    .collect(),
             }),
         message,
     }

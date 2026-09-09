@@ -115,6 +115,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       maximumLatencySamples: 0,
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
+      instrumentFaults: [],
     },
     message: 'Fake audio supervisor is ready through the safety limiter.',
     ...overrides,

@@ -66,9 +66,12 @@ bool TimelineEngine::waitForAudioReaders(const std::chrono::milliseconds timeout
 }
 
 void TimelineEngine::reclaimRetiredTimelines() noexcept {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (activeAudioReaders.load(std::memory_order_acquire) != 0) return;
     retiredTimelines.clear();
 }
+
+void TimelineEngine::serviceDeferredCleanup() noexcept { reclaimRetiredTimelines(); }
 
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
@@ -1804,6 +1807,7 @@ juce::var TimelineEngine::status() const {
             if (track->runtime == nullptr || track->runtime->instrument() == nullptr) continue;
             auto* fault = new juce::DynamicObject();
             fault->setProperty("trackId", track->id);
+            fault->setProperty("instrumentType", track->runtime->instrument()->typeName());
             fault->setProperty("faultCode",
                                static_cast<juce::int64>(track->runtime->instrument()->faultCode()));
             const auto droppedMidi = track->runtime->instrument()->droppedMidiEvents();

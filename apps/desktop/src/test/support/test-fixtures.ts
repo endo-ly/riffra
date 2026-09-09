@@ -74,6 +74,7 @@ export function makeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       maximumLatencySamples: 0,
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
+      instrumentFaults: [],
     },
     message: '',
     ...overrides,

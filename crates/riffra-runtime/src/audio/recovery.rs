@@ -14,7 +14,10 @@ pub type RuntimeRestartHandler = Arc<dyn Fn(&AudioSupervisor, u64) + Send + Sync
 #[derive(Debug)]
 pub enum AudioDeviceReopenOutcome {
     ReopenedInPlace(AudioStatus),
-    SidecarRestarted(AudioStatus),
+    RestoredPrevious {
+        status: AudioStatus,
+        error: NativeAudioError,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -134,10 +137,7 @@ impl AudioSupervisor {
             super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         self.wait_for_command(
-            serde_json::json!({
-                "type": "setEmergencyMute",
-                "active": controls.user_emergency_muted,
-            }),
+            super::commands::emergency_mute_command(controls.user_emergency_muted),
             super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
         )?;
         Ok(())

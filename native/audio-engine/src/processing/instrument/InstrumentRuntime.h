@@ -37,6 +37,8 @@ public:
     [[nodiscard]] virtual int latencySamples() const noexcept = 0;
     [[nodiscard]] virtual int tailSamples() const noexcept = 0;
     virtual void setBypassed(bool shouldBypass) noexcept = 0;
+    /// Stable runtime family name used by read-only diagnostics.
+    [[nodiscard]] virtual const char* typeName() const noexcept { return "unknown"; }
     [[nodiscard]] virtual std::uint32_t faultCode() const noexcept { return 0; }
     [[nodiscard]] virtual std::uint64_t droppedMidiEvents() const noexcept { return 0; }
 

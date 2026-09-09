@@ -34,6 +34,7 @@ public:
     [[nodiscard]] int latencySamples() const noexcept override;
     [[nodiscard]] int tailSamples() const noexcept override;
     void setBypassed(bool shouldBypass) noexcept override;
+    [[nodiscard]] const char* typeName() const noexcept override { return "Sonalloy"; }
 
     [[nodiscard]] std::uint32_t faultCode() const noexcept override;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;

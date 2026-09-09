@@ -451,6 +451,7 @@ impl AudioSupervisor {
             starting_message,
             Duration::from_secs(15),
             Some(expected_generation),
+            false,
         )
     }
 
@@ -459,6 +460,7 @@ impl AudioSupervisor {
         starting_message: &str,
         timeout: Duration,
         expected_generation: Option<u64>,
+        notify_runtime_restart: bool,
     ) -> NativeAudioResult<()> {
         let _restart_gate =
             self.recovery
@@ -575,7 +577,7 @@ impl AudioSupervisor {
             Ok(())
         })();
         self.record_restart_outcome(previous_generation, &result);
-        if result.is_ok() && self.startup_completed() {
+        if notify_runtime_restart && result.is_ok() && self.startup_completed() {
             if let Some(handler) = self.runtime_restart_handler() {
                 handler(self, self.sidecar_generation());
             }
@@ -615,6 +617,7 @@ impl AudioSupervisor {
             "The isolated audio runtime exceeded its lifecycle deadline and is restarting.",
             timeout,
             Some(expected_generation),
+            true,
         )
     }
 }

@@ -43,13 +43,15 @@ pub use instrument::{
 };
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
-    AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDriverInfo, AudioState,
-    AudioStatus, DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterInfo,
-    MidiDeviceInfo, PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult,
-    ProjectRecoveryState, ProjectState, ProjectSummary, RecordingFinalizationOutcome,
-    RecordingStatus, RecordingStopResult, RecoveryCandidate, RuntimeProjectionState,
-    RuntimeProjectionStatus, SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary,
-    TrackInstrumentSummarySource, TrackRackSummary, TrackSummary,
+    AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDiagnostics,
+    AudioDiagnosticsDevice, AudioDiagnosticsMute, AudioDiagnosticsOutput, AudioDiagnosticsRealtime,
+    AudioDiagnosticsReport, AudioDriverInfo, AudioInstrumentFault, AudioState, AudioStatus,
+    DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterInfo, MidiDeviceInfo,
+    PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult, ProjectRecoveryState,
+    ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary, TrackInstrumentSummarySource,
+    TrackRackSummary, TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,

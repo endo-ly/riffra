@@ -77,6 +77,7 @@ export function offlineAudioStatus(
       maximumLatencySamples: 0,
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
+      instrumentFaults: [],
     },
     message,
   };

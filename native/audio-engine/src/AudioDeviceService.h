@@ -33,7 +33,7 @@ public:
                                                  const SafetyAudioCallback& callback,
                                                  const MidiMonitor* midi = nullptr,
                                                  const juce::String& message = {},
-                                                 const TimelineEngine* timeline = nullptr);
+                                                 TimelineEngine* timeline = nullptr);
     [[nodiscard]] static juce::var currentMeters(const SafetyAudioCallback& callback);
 
 private:
