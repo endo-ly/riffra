@@ -515,6 +515,7 @@ void SafetyAudioCallback::audioDeviceIOCallbackWithContext(
     const float* const* inputChannelData, const int numInputChannels,
     float* const* outputChannelData, const int numOutputChannels, const int numSamples,
     const juce::AudioIODeviceCallbackContext&) {
+    juce::ScopedNoDenormals noDenormals;
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
         recordCallbackDuration(callbackStarted, numSamples);

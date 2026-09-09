@@ -58,7 +58,7 @@ export function AudioSettingsDialog({
   const [applying, setApplying] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const wasOpen = useRef(false);
-  const probedDeviceKeys = useRef(new Set<string>());
+  const inFlightDeviceKeys = useRef(new Set<string>());
   const audioRef = useRef(audio);
   audioRef.current = audio;
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -132,18 +132,25 @@ export function AudioSettingsDialog({
     if (refreshing || applying || recovering) return;
     const outputDevice = draft.outputDevice ?? inputDevice;
     const deviceKey = `${driver}\u0000${inputDevice}\u0000${outputDevice}`;
-    if (probedDeviceKeys.current.has(deviceKey)) return;
-    probedDeviceKeys.current.add(deviceKey);
+    if (inFlightDeviceKeys.current.has(deviceKey)) return;
+    inFlightDeviceKeys.current.add(deviceKey);
     let cancelled = false;
     setError(null);
     void onProbeChannels(driver, inputDevice, outputDevice)
       .then((detail) => {
         if (cancelled) return;
+        if (detail.inputChannels.length === 0) {
+          setError('Device channel details returned no input channels.');
+          return;
+        }
         setAvailableProbe((current) => mergeDeviceChannels(current, detail));
       })
       .catch((reason) => {
         if (!cancelled)
           setError(errorMessage(reason, 'Device channel details could not be loaded.'));
+      })
+      .finally(() => {
+        inFlightDeviceKeys.current.delete(deviceKey);
       });
     return () => {
       cancelled = true;
@@ -210,7 +217,6 @@ export function AudioSettingsDialog({
     setError(null);
     try {
       const nextProbe = await onRefresh();
-      probedDeviceKeys.current.clear();
       const effectiveProbe = mergeAudioStatusChannels(nextProbe, audio);
       setAvailableProbe(effectiveProbe);
       setDraft((current) => normalizeAudioSettingsDraft(current, effectiveProbe));

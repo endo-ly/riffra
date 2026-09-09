@@ -115,7 +115,7 @@ impl HostState {
         let operation_result = operation(self);
         if operation_result
             .as_ref()
-            .is_err_and(|error| is_graph_failed(error))
+            .is_err_and(is_graph_failed)
         {
             return operation_result;
         }
