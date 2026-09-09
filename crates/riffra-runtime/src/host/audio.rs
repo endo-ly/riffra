@@ -113,6 +113,12 @@ impl HostState {
     ) -> Result<T, ProtocolError> {
         self.begin_audio_transition().map_err(command_error)?;
         let operation_result = operation(self);
+        if operation_result
+            .as_ref()
+            .is_err_and(|error| is_graph_failed(error))
+        {
+            return operation_result;
+        }
         let finish_result = self.end_audio_transition();
         match (operation_result, finish_result) {
             (Ok(value), Ok(())) => Ok(value),
@@ -174,7 +180,7 @@ impl HostState {
     }
 
     pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {
-        let status = self.core.audio().status().map_err(audio_error)?;
+        let status = self.core.audio().refresh_status().map_err(audio_error)?;
         let report = audio_diagnostics_report(&status);
         let mut value = serde_json::to_value(report).map_err(|error| {
             command_error(format!("audio diagnostics could not be encoded: {error}"))
@@ -334,6 +340,15 @@ fn graph_failed(error: String) -> ProtocolError {
     )
 }
 
+fn is_graph_failed(error: &ProtocolError) -> bool {
+    error
+        .details
+        .as_ref()
+        .and_then(|details| details.get("kind"))
+        .and_then(Value::as_str)
+        == Some("graphFailed")
+}
+
 fn native_restored_previous_device(error: &NativeAudioError) -> bool {
     let descriptor = error.descriptor();
     descriptor
@@ -366,6 +381,17 @@ fn native_audio_error(error: NativeAudioError) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_failed_errors_are_distinguished_from_other_transition_errors() {
+        let error = graph_failed("projection failed".into());
+
+        assert!(is_graph_failed(&error));
+        assert!(!is_graph_failed(&ProtocolError::new(
+            ErrorCode::CommandFailed,
+            "device failed",
+        )));
+    }
 
     #[test]
     fn stable_audio_diagnostics_excludes_internal_projection_details() {
