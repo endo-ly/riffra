@@ -30,6 +30,7 @@ public:
     SafetyAudioCallback() = default;
     ~SafetyAudioCallback() override;
 
+    // Control thread only. The audio callback reads the resulting atomics.
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
     void setFeedbackProtection(bool active) noexcept;
@@ -76,10 +77,13 @@ public:
     [[nodiscard]] bool isPreviewing() const noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
 
+    // Audio thread only. No allocation, blocking wait, device lifecycle, or
+    // plugin lifecycle work may be introduced on this path.
     void audioDeviceIOCallbackWithContext(
         const float* const* inputChannelData, int numInputChannels, float* const* outputChannelData,
         int numOutputChannels, int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
+    // Main / JUCE message thread only.
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     void audioDeviceError(const juce::String& errorMessage) override;
@@ -141,6 +145,7 @@ private:
 
     void setMuteReason(MuteReason reason, bool active) noexcept;
 
+    // Thread-safe state shared by the control and audio threads.
     std::atomic<std::uint32_t> muteReasons{0};
     std::atomic<float> targetGainLinear{1.0f};
     std::atomic<float> masterGainDb{0.0f};

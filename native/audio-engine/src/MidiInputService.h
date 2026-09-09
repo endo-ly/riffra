@@ -16,9 +16,12 @@ class TimelineEngine;
 
 class MidiMonitor final : public juce::MidiInputCallback {
 public:
+    // Control thread only. The callback reads the installed targets without
+    // taking a lock.
     void setAudioCallback(SafetyAudioCallback* callback) noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
 
+    // JUCE MIDI callback threads. This path must remain non-blocking.
     void handleIncomingMidiMessage(juce::MidiInput* source,
                                    const juce::MidiMessage& message) override;
 
@@ -37,6 +40,8 @@ private:
 
 class MidiInputService final {
 public:
+    // Control thread only. MIDI device open/close is never performed from an
+    // audio callback.
     MidiInputService(SafetyAudioCallback& audioCallback, TimelineEngine& timelineEngine);
     ~MidiInputService();
 

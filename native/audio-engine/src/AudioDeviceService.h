@@ -23,6 +23,8 @@ struct AudioConfiguration {
 
 class AudioDeviceService final {
 public:
+    // Control thread only. This service discovers devices and prepares setup
+    // data; it does not own the live device lifecycle.
     [[nodiscard]] static juce::var discover();
     [[nodiscard]] static std::optional<juce::var> probeDeviceChannels(
         const juce::String& driver, const juce::String& inputDevice,

@@ -50,6 +50,7 @@ public:
     void startPreparing() noexcept;
     void play() noexcept;
     void stop() noexcept;
+    // Control thread only unless explicitly marked Audio thread below.
     void audioDeviceStarted() noexcept;
     void seekToTick(std::uint64_t tick) noexcept;
     bool startRecording(int countInBeats, juce::String& error) noexcept;
@@ -112,6 +113,7 @@ public:
     void serviceDeferredCleanup() noexcept;
     [[nodiscard]] bool recordingWindow(int sampleCount, int& sampleOffset,
                                        int& capturedSamples) noexcept;
+    // Audio thread only. These methods use preallocated realtime state.
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
