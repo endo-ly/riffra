@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "ArrangementCaptureSink.h"
-#include "BoundedMpmcQueue.h"
+#include "concurrency/BoundedMpmcQueue.h"
 #include "RecordingSession.h"
 
 namespace riffra {

@@ -144,39 +144,43 @@ add_library(riffra-render-core STATIC)
 add_library(riffra-audio-core STATIC)
 
 target_sources(riffra-render-core PRIVATE
-  src/processing/TimelineEngine.cpp
-  src/processing/TimelineEngine.h
-  src/processing/TimelineSnapshotBuilder.cpp
-  src/processing/TimelineSnapshotBuilder.h
-  src/processing/TimelineTimebase.h
-  src/processing/RecordingCaptureRuntime.cpp
-  src/processing/RecordingCaptureRuntime.h
-  src/processing/ArrangementGraph.cpp
-  src/processing/ArrangementGraph.h
-  src/processing/AutomationRuntime.h
-  src/processing/MidiScheduler.cpp
-  src/processing/MidiScheduler.h
-  src/processing/TrackRuntime.h
-  src/processing/OfflineRenderer.cpp
-  src/processing/OfflineRenderer.h
-  src/processing/ArrangementCaptureSink.h
-  src/processing/PluginRack.cpp
-  src/processing/PluginRack.h
-  src/processing/instrument/InstrumentRuntime.h
-  src/processing/instrument/Vst3InstrumentRuntime.cpp
-  src/processing/instrument/Vst3InstrumentRuntime.h
-  src/processing/instrument/SonalloyInstrumentRuntime.cpp
-  src/processing/instrument/SonalloyInstrumentRuntime.h
-  src/processing/BoundedMpmcQueue.h
-  src/processing/PluginChain.cpp
-  src/processing/PluginChain.h
-  src/realtime/FaultInjection.cpp
-  src/realtime/FaultInjection.h
+  src/timeline/TimelineEngine.cpp
+  src/timeline/TimelineEngineRecording.cpp
+  src/timeline/TimelineEngineDevices.cpp
+  src/timeline/TimelineEngineRender.cpp
+  src/timeline/TimelineEngine.h
+  src/timeline/TimelineSnapshotBuilder.cpp
+  src/timeline/TimelineSnapshotBuilder.h
+  src/timeline/TimelineTimebase.h
+  src/recording/RecordingCaptureRuntime.cpp
+  src/recording/RecordingCaptureRuntime.h
+  src/timeline/ArrangementGraph.cpp
+  src/timeline/ArrangementGraph.h
+  src/timeline/AutomationRuntime.h
+  src/timeline/MidiScheduler.cpp
+  src/timeline/MidiScheduler.h
+  src/timeline/TrackRuntime.h
+  src/render/OfflineRenderer.cpp
+  src/render/OfflineRenderer.h
+  src/recording/ArrangementCaptureSink.h
+  src/plugins/PluginRack.cpp
+  src/plugins/PluginRackState.cpp
+  src/plugins/PluginRack.h
+  src/timeline/instruments/InstrumentRuntime.h
+  src/timeline/instruments/Vst3InstrumentRuntime.cpp
+  src/timeline/instruments/Vst3InstrumentRuntime.h
+  src/timeline/instruments/SonalloyInstrumentRuntime.cpp
+  src/timeline/instruments/SonalloyInstrumentRuntime.h
+  src/concurrency/BoundedMpmcQueue.h
+  src/plugins/PluginChain.cpp
+  src/plugins/PluginChain.h
+  src/plugins/FaultInjection.cpp
+  src/plugins/FaultInjection.h
 )
 
 target_sources(riffra-audio-core PRIVATE
-  src/AudioProtocol.cpp
-  src/AudioProtocol.h
+  src/protocol/AudioProtocol.cpp
+  src/protocol/AudioProtocol.h
   src/app/AudioStatusBuilder.cpp
   src/app/AudioStatusBuilder.h
   src/device/AudioConfiguration.h
@@ -184,8 +188,8 @@ target_sources(riffra-audio-core PRIVATE
   src/device/AudioDeviceController.h
   src/device/AudioDeviceService.cpp
   src/device/AudioDeviceService.h
-  src/MidiInputService.cpp
-  src/MidiInputService.h
+  src/midi/MidiInputService.cpp
+  src/midi/MidiInputService.h
   src/audio/AudioMetrics.cpp
   src/audio/AudioMetrics.h
   src/audio/PreviewEngine.cpp
@@ -197,14 +201,14 @@ target_sources(riffra-audio-core PRIVATE
   src/device/AudioDeviceCallback.cpp
   src/device/AudioDeviceCallback.h
   src/audio/AudioSafetyDsp.h
-  src/realtime/RecordingSession.cpp
-  src/realtime/RecordingSession.h
-  src/realtime/ArrangeRecordingSession.cpp
-  src/realtime/ArrangeRecordingSession.h
-  src/realtime/PluginEditorHost.cpp
-  src/realtime/PluginEditorHost.h
-  src/realtime/RuntimeLifecycleExecutor.cpp
-  src/realtime/RuntimeLifecycleExecutor.h
+  src/recording/RecordingSession.cpp
+  src/recording/RecordingSession.h
+  src/recording/ArrangeRecordingSession.cpp
+  src/recording/ArrangeRecordingSession.h
+  src/plugins/PluginEditorHost.cpp
+  src/plugins/PluginEditorHost.h
+  src/plugins/RuntimeLifecycleExecutor.cpp
+  src/plugins/RuntimeLifecycleExecutor.h
 )
 
 target_sources(riffra-audio PRIVATE
@@ -220,15 +224,16 @@ target_sources(riffra-audio PRIVATE
 )
 
 target_sources(riffra-plugin-scan PRIVATE
-  src/PluginScannerMain.cpp
-  src/processing/PluginRack.cpp
-  src/processing/PluginRack.h
-  src/realtime/FaultInjection.cpp
-  src/realtime/FaultInjection.h
+  tools/plugin-scanner/PluginScannerMain.cpp
+  src/plugins/PluginRack.cpp
+  src/plugins/PluginRackState.cpp
+  src/plugins/PluginRack.h
+  src/plugins/FaultInjection.cpp
+  src/plugins/FaultInjection.h
 )
 
 target_sources(riffra-render PRIVATE
-  src/RenderMain.cpp
+  tools/render/RenderMain.cpp
 )
 
 set(RIFFRA_AUDIO_PLATFORM_DEFINITIONS)
@@ -331,21 +336,18 @@ juce_generate_juce_header(riffra-plugin-scan)
 juce_generate_juce_header(riffra-render)
 
 target_include_directories(riffra-render-core PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${sonalloy_SOURCE_DIR}/crates/sonalloy-capi/include
 )
 
 add_dependencies(riffra-render-core riffra-builtin-resource-stage)
 
 target_include_directories(riffra-plugin-scan PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/processing
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_include_directories(riffra-audio-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/realtime
 )
 
 if(MSVC)

@@ -21,12 +21,12 @@
 #include <utility>
 #include <vector>
 
-#include "AudioProtocol.h"
-#include "FaultInjection.h"
-#include "MidiInputService.h"
-#include "PluginEditorHost.h"
-#include "RuntimeLifecycleExecutor.h"
-#include "TimelineEngine.h"
+#include "protocol/AudioProtocol.h"
+#include "plugins/FaultInjection.h"
+#include "midi/MidiInputService.h"
+#include "plugins/PluginEditorHost.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
+#include "timeline/TimelineEngine.h"
 #include "app/AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceController.h"

@@ -4,7 +4,7 @@
 #include <limits>
 #include <optional>
 
-#include "AudioProtocol.h"
+#include "protocol/AudioProtocol.h"
 #include "app/AudioEngine.h"
 #include "device/AudioConfiguration.h"
 #include "device/AudioDeviceService.h"

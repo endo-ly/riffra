@@ -8,8 +8,8 @@
 #include "ArrangementGraph.h"
 #include "MidiScheduler.h"
 #include "TrackRuntime.h"
-#include "instrument/SonalloyInstrumentRuntime.h"
-#include "instrument/Vst3InstrumentRuntime.h"
+#include "instruments/SonalloyInstrumentRuntime.h"
+#include "instruments/Vst3InstrumentRuntime.h"
 
 namespace riffra {
 namespace {

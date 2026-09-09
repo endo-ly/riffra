@@ -9,10 +9,10 @@
 #include <thread>
 
 #include "AudioCommandDispatcher.h"
-#include "MidiInputService.h"
-#include "PluginEditorHost.h"
-#include "RuntimeLifecycleExecutor.h"
-#include "TimelineEngine.h"
+#include "midi/MidiInputService.h"
+#include "plugins/PluginEditorHost.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
+#include "timeline/TimelineEngine.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceController.h"
 

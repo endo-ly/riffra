@@ -9,7 +9,7 @@
 #include <optional>
 #include <vector>
 
-#include "BoundedMpmcQueue.h"
+#include "concurrency/BoundedMpmcQueue.h"
 
 namespace riffra {
 

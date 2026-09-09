@@ -5,8 +5,8 @@
 #include <cmath>
 #include <memory>
 
-#include "TimelineEngine.h"
-#include "TimelineTimebase.h"
+#include "timeline/TimelineEngine.h"
+#include "timeline/TimelineTimebase.h"
 
 namespace riffra {
 

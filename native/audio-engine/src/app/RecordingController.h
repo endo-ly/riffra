@@ -6,7 +6,7 @@
 #include <functional>
 #include <memory>
 
-#include "realtime/ArrangeRecordingSession.h"
+#include "recording/ArrangeRecordingSession.h"
 
 namespace riffra {
 

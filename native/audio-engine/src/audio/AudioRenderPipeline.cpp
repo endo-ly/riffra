@@ -4,7 +4,7 @@
 #include <cmath>
 
 #include "PreviewEngine.h"
-#include "processing/TimelineEngine.h"
+#include "timeline/TimelineEngine.h"
 
 namespace riffra {
 

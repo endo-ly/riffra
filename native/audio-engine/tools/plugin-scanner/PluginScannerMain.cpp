@@ -3,7 +3,7 @@
 #include <iostream>
 #include <optional>
 
-#include "PluginRack.h"
+#include "plugins/PluginRack.h"
 
 namespace {
 

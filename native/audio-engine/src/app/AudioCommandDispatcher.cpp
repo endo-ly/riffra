@@ -3,10 +3,10 @@
 #include <cstdlib>
 #include <string>
 
-#include "AudioProtocol.h"
-#include "MidiInputService.h"
-#include "PluginEditorHost.h"
-#include "TimelineEngine.h"
+#include "protocol/AudioProtocol.h"
+#include "midi/MidiInputService.h"
+#include "plugins/PluginEditorHost.h"
+#include "timeline/TimelineEngine.h"
 
 namespace riffra {
 

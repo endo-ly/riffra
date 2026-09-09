@@ -2,8 +2,8 @@
 
 #include <utility>
 
-#include "realtime/ArrangeRecordingSession.h"
-#include "processing/TimelineEngine.h"
+#include "recording/ArrangeRecordingSession.h"
+#include "timeline/TimelineEngine.h"
 
 namespace riffra {
 

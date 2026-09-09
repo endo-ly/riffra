@@ -9,15 +9,15 @@
 #include <memory>
 #include <vector>
 
-#include "ArrangementCaptureSink.h"
+#include "recording/ArrangementCaptureSink.h"
 #include "ArrangementGraph.h"
 #include "AutomationRuntime.h"
 #include "MidiScheduler.h"
-#include "PluginChain.h"
-#include "RecordingCaptureRuntime.h"
+#include "plugins/PluginChain.h"
+#include "recording/RecordingCaptureRuntime.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
-#include "instrument/InstrumentRuntime.h"
+#include "instruments/InstrumentRuntime.h"
 
 namespace riffra {
 
@@ -124,8 +124,6 @@ private:
     friend class TimelineEngineTestPeer;
     friend class AudioRenderPipeline;
     friend class TimelineSnapshotBuilder;
-
-    class AudioReadScope;
 
     enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
@@ -236,6 +234,27 @@ private:
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
     void reclaimRetiredTimelines() noexcept;
+
+    class AudioReadScope final {
+    public:
+        explicit AudioReadScope(TimelineEngine& owner) : engine(owner) {
+            entered = engine.beginAudioRead(active);
+        }
+
+        ~AudioReadScope() {
+            if (entered) engine.endAudioRead();
+        }
+
+        [[nodiscard]] PreparedTimeline* get() const noexcept { return active; }
+        [[nodiscard]] bool enteredSuccessfully() const noexcept {
+            return entered && active != nullptr;
+        }
+
+    private:
+        TimelineEngine& engine;
+        PreparedTimeline* active = nullptr;
+        bool entered = false;
+    };
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;

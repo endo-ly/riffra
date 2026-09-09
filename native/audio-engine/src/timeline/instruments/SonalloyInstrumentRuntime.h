@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "../BoundedMpmcQueue.h"
+#include "concurrency/BoundedMpmcQueue.h"
 #include "InstrumentRuntime.h"
 
 namespace riffra {

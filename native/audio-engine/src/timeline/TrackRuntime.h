@@ -11,9 +11,9 @@
 
 #include "AutomationRuntime.h"
 #include "MidiScheduler.h"
-#include "PluginChain.h"
-#include "RecordingCaptureRuntime.h"
-#include "instrument/InstrumentRuntime.h"
+#include "plugins/PluginChain.h"
+#include "recording/RecordingCaptureRuntime.h"
+#include "instruments/InstrumentRuntime.h"
 
 namespace riffra {
 

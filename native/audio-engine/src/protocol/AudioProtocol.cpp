@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "FaultInjection.h"
+#include "plugins/FaultInjection.h"
 
 namespace riffra {
 namespace {

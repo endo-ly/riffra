@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "AudioStatusBuilder.h"
-#include "RuntimeLifecycleExecutor.h"
+#include "plugins/RuntimeLifecycleExecutor.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceController.h"
 
