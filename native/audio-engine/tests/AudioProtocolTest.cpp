@@ -60,6 +60,28 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
 }
 
+TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
+    juce::AudioDeviceManager manager;
+    SafetyAudioCallback callback;
+
+    const auto status = AudioDeviceService::currentStatus(manager, callback);
+
+    ASSERT_TRUE(status.isObject());
+    EXPECT_EQ(status.getProperty("type", {}).toString(), "audioStatus");
+    EXPECT_TRUE(status.hasProperty("state"));
+    EXPECT_TRUE(status.hasProperty("muteReasons"));
+    EXPECT_TRUE(status.hasProperty("masterGainDb"));
+    EXPECT_TRUE(status.hasProperty("inputPeak"));
+    EXPECT_TRUE(status.hasProperty("outputPeak"));
+    EXPECT_TRUE(status.hasProperty("invalidSamples"));
+    EXPECT_TRUE(status.hasProperty("feedbackSuspected"));
+    EXPECT_TRUE(status.hasProperty("previewing"));
+    EXPECT_TRUE(status.hasProperty("recording"));
+    EXPECT_TRUE(status.hasProperty("diagnostics"));
+    EXPECT_TRUE(status.hasProperty("midiInputs"));
+    EXPECT_TRUE(status.hasProperty("midiOutputs"));
+}
+
 TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
     const auto probe = AudioDeviceService::discover();
 

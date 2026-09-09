@@ -237,6 +237,152 @@ TEST(SafetyAudioCallbackTest, DeviceFaultRemainsAfterUserMuteRelease) {
     EXPECT_FALSE(callback.isMuted());
 }
 
+TEST(SafetyAudioCallbackTest, MuteReasonsAreIndependent) {
+    SafetyAudioCallback callback;
+
+    callback.setUserEmergencyMute(true);
+    callback.setEngineTransitionMute(true);
+    callback.setDeviceFaulted(true);
+    callback.setFeedbackProtection(true);
+
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::UserEmergency));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::DeviceFault));
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+}
+
+TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearEngineTransition) {
+    SafetyAudioCallback callback;
+
+    callback.setEngineTransitionMute(true);
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
+}
+
+TEST(SafetyAudioCallbackTest, ClearingUserMuteDoesNotClearFeedbackProtection) {
+    SafetyAudioCallback callback;
+
+    callback.setFeedbackProtection(true);
+    callback.setUserEmergencyMute(false);
+
+    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+}
+
+TEST(SafetyAudioCallbackTest, MasterGainClampsToMinus90AndZero) {
+    SafetyAudioCallback callback;
+
+    callback.setMasterGainDb(-120.0f);
+    EXPECT_FLOAT_EQ(callback.getMasterGainDb(), -90.0f);
+
+    callback.setMasterGainDb(12.0f);
+    EXPECT_FLOAT_EQ(callback.getMasterGainDb(), 0.0f);
+}
+
+TEST(SafetyAudioCallbackTest, PreviewUsesExistingVoiceForSameKey) {
+    SafetyAudioCallback callback;
+    juce::AudioBuffer<float> source(1, 16);
+    source.clear();
+    juce::String error;
+
+    ASSERT_TRUE(callback.startPreview(source, 2, 10, 1.0f, true, error, 7));
+    ASSERT_TRUE(callback.startPreview(source, 4, 12, 1.0f, true, error, 7));
+
+    EXPECT_TRUE(callback.isPreviewing());
+}
+
+TEST(SafetyAudioCallbackTest, PreviewUsesFreeVoicesBeforeStealing) {
+    SafetyAudioCallback callback;
+    juce::AudioBuffer<float> source(1, 16);
+    source.clear();
+    juce::String error;
+
+    for (int key = 0; key < 8; ++key)
+        ASSERT_TRUE(
+            callback.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+
+    ASSERT_TRUE(callback.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, 8));
+    EXPECT_TRUE(callback.isPreviewing());
+}
+
+TEST(SafetyAudioCallbackTest, PreviewSwitchPreservesRelativeCursor) {
+    SafetyAudioCallback callback;
+    juce::AudioBuffer<float> source(1, 16);
+    juce::AudioBuffer<float> replacement(1, 32);
+    source.clear();
+    replacement.clear();
+    juce::String error;
+    ASSERT_TRUE(callback.startPreview(source, 2, 10, 1.0f, true, error, 7));
+    std::array<float*, 1> output{replacement.getWritePointer(0)};
+    const juce::AudioIODeviceCallbackContext context{};
+
+    callback.audioDeviceIOCallbackWithContext(nullptr, 0, output.data(), 1, 3, context);
+
+    ASSERT_TRUE(callback.switchPreviewBuffer(7, replacement, error));
+    EXPECT_TRUE(callback.isPreviewing());
+}
+
+TEST(SafetyAudioCallbackTest, SecondRecordingIsRejectedWhileProcessing) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                      kBlockSize, error));
+    SafetyAudioCallback callback;
+    callback.setTimelineEngine(&timeline);
+    callback.setRecordingFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
+    const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                    .getChildFile("riffra-recording-busy-test")
+                                    .getChildFile(juce::Uuid().toString());
+    const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
+
+    ASSERT_TRUE(callback.startArrangeRecording(firstDirectory, timeline, error));
+    ASSERT_TRUE(timeline.startRecording(0, error));
+    ASSERT_TRUE(callback.stopArrangeRecording(timeline, error));
+    EXPECT_FALSE(callback.startArrangeRecording(secondDirectory, timeline, error));
+
+    callback.completeArrangeRecordingProcessing({}, {});
+    firstDirectory.deleteRecursively();
+    secondDirectory.deleteRecursively();
+}
+
+TEST(SafetyAudioCallbackTest, CancelClearsRecordingSink) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine timeline;
+    juce::String error;
+    ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                      kBlockSize, error));
+    SafetyAudioCallback callback;
+    callback.setTimelineEngine(&timeline);
+    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("riffra-recording-cancel-test")
+                               .getChildFile(juce::Uuid().toString());
+
+    ASSERT_TRUE(callback.startArrangeRecording(directory, timeline, error));
+    ASSERT_TRUE(callback.cancelArrangeRecording(timeline, error));
+    EXPECT_TRUE(callback.recordingStatus().getProperty("cancelled", false));
+
+    directory.deleteRecursively();
+}
+
+TEST(SafetyAudioCallbackTest, FinalizationFailurePreservesStatus) {
+    SafetyAudioCallback callback;
+    auto* status = new juce::DynamicObject();
+    status->setProperty("directory", "recording");
+    status->setProperty("active", true);
+    status->setProperty("processing", true);
+
+    callback.completeArrangeRecordingProcessing(juce::var(status), "finalization failed");
+    const auto result = callback.recordingStatus();
+
+    EXPECT_FALSE(static_cast<bool>(result.getProperty("processing", true)));
+    EXPECT_EQ(result.getProperty("error", {}).toString(), "finalization failed");
+}
+
 TEST(SafetyAudioCallbackTest, RequiresFaultWhenActiveDeviceDisappears) {
     EXPECT_TRUE(deviceLossRequiresFault(false, false));
     EXPECT_FALSE(deviceLossRequiresFault(true, false));
