@@ -1,0 +1,306 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <vector>
+
+#include "ArrangementGraph.h"
+#include "AutomationRuntime.h"
+#include "MidiScheduler.h"
+#include "TimelineTimebase.h"
+#include "TrackRuntime.h"
+#include "instruments/InstrumentRuntime.h"
+#include "plugins/PluginChain.h"
+#include "recording/ArrangementCaptureSink.h"
+#include "recording/RecordingCaptureRuntime.h"
+
+namespace riffra {
+
+class TimelineEngineTestPeer;
+class AudioRenderPipeline;
+class TimelineSnapshotBuilder;
+
+/// Envelope multiplier for a normalized fade progress in [0, 1].
+///
+/// Shapes mirror the Rust `FadeShape` contract: 0 linear, 1 equal power
+/// (half-sine), 2 smoothstep. Snapshot loading clamps stored values into
+/// that range before they reach playback.
+[[nodiscard]] float fadeEnvelope(float progress, int fadeShape) noexcept;
+
+class TimelineEngine final {
+public:
+    using ProcessingProgressCallback = std::function<void()>;
+
+    explicit TimelineEngine(bool offline = false);
+    ~TimelineEngine();
+
+    TimelineEngine(const TimelineEngine&) = delete;
+    TimelineEngine& operator=(const TimelineEngine&) = delete;
+
+    bool loadSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
+                      double outputSampleRate, int maximumBlockSize, juce::String& error,
+                      bool commitImmediately = true);
+    bool commitPreparedSnapshot(juce::String& error) noexcept;
+    void discardPreparedSnapshot() noexcept;
+    void startPreparing() noexcept;
+    void play() noexcept;
+    void stop() noexcept;
+    // Control thread only unless explicitly marked Audio thread below.
+    void audioDeviceStarted() noexcept;
+    void seekToTick(std::uint64_t tick) noexcept;
+    bool startRecording(int countInBeats, juce::String& error) noexcept;
+    bool cancelRecordingIfCountingIn() noexcept;
+    /// Closes realtime capture segments at the audio graph boundary.
+    void stopRecording() noexcept;
+    /// Finalizes raw capture metadata without performing offline DSP.
+    bool finalizeRecording(juce::String& error) noexcept;
+    /// Generates processed recording variants after the realtime graph is stopped.
+    bool processFinalizedRecording(juce::String& error) noexcept;
+    bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress = {}) noexcept;
+    [[nodiscard]] juce::var recordingConfiguration() const;
+    void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
+    void clearRecordingSink() noexcept;
+    bool setLiveMidiTarget(const juce::String& trackId, juce::String& error) noexcept;
+    [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message,
+                                       const juce::String& deviceId = {}) noexcept;
+    [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
+                                           const juce::MidiMessage& message,
+                                           juce::String& error) noexcept;
+    [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
+    /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
+    /// Instrument Track runtime so a host-level emergency mute also silences
+    /// VST instruments instead of only hiding their output.
+    void panicAllInstrumentTracks() noexcept;
+    bool setDeviceBypassed(const juce::String& trackId, const juce::String& deviceId, bool bypassed,
+                           juce::String& error) noexcept;
+    bool setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
+                            int parameterIndex, float value, juce::String& error) noexcept;
+    bool setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
+                          int programIndex, juce::String& error);
+    bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
+                                 const juce::var& persistedState, juce::String& error);
+    [[nodiscard]] juce::var deviceStatus(const juce::String& trackId, const juce::String& deviceId,
+                                         juce::String& error) const;
+    [[nodiscard]] juce::var deviceParameterStatus(const juce::String& trackId,
+                                                  const juce::String& deviceId,
+                                                  juce::String& error) const;
+    [[nodiscard]] juce::var deviceProgramStatus(const juce::String& trackId,
+                                                const juce::String& deviceId,
+                                                juce::String& error) const;
+    [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
+                                         const juce::String& deviceId) noexcept;
+    bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,
+                                 const juce::var& persistedState, juce::String& error) noexcept;
+    bool mirrorEditorDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
+                                     int parameterIndex, float value, juce::String& error) noexcept;
+    [[nodiscard]] juce::var devicePersistedState(const juce::String& trackId,
+                                                 const juce::String& deviceId,
+                                                 juce::String& error) const;
+    [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
+        const juce::String& trackId) const noexcept;
+    [[nodiscard]] bool hasPreparedSnapshot() const noexcept;
+    [[nodiscard]] bool monitoringEnabled() const noexcept;
+    /// Returns whether the active graph routes the physical input channel to a monitored Audio
+    /// Track.
+    [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
+    /// Reclaims retired graphs from a non-realtime control path.
+    void serviceDeferredCleanup() noexcept;
+    [[nodiscard]] bool recordingWindow(int sampleCount, int& sampleOffset,
+                                       int& capturedSamples) noexcept;
+    // Audio thread only. These methods use preallocated realtime state.
+    void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
+    void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
+    void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
+             int outputChannelCount, int sampleCount) noexcept;
+    [[nodiscard]] juce::var status() const;
+
+private:
+    friend class TimelineEngineTestPeer;
+    friend class AudioRenderPipeline;
+    friend class TimelineSnapshotBuilder;
+
+    enum class State { stopped, starting, playing, faulted };
+    enum class RecordingPhase { idle, countingIn, recording, stopping };
+
+    struct Clip final {
+        juce::String id;
+        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
+        juce::PositionableAudioSource* positionableSource = nullptr;
+        std::unique_ptr<juce::ResamplingAudioSource> resamplingSource;
+        juce::AudioBuffer<float> scratch;
+        std::int64_t startSample = 0;
+        std::int64_t sourceStartFrame = 0;
+        std::int64_t sourceEndFrame = 0;
+        std::int64_t durationSamples = 0;
+        std::int64_t expectedSourceFrame = -1;
+        double sourceSampleRate = 0.0;
+        float gain = 1.0f;
+        float pan = 0.0f;
+        float leftGain = 1.0f;
+        float rightGain = 1.0f;
+        std::int64_t fadeInSamples = 0;
+        std::int64_t fadeOutSamples = 0;
+        int fadeShape = 1;
+        bool loop = false;
+        bool muted = false;
+        ProcessingStage processingStage = ProcessingStage::PreEffects;
+    };
+
+    struct Track final {
+        juce::String id;
+        std::vector<std::unique_ptr<Clip>> clips;
+        std::unique_ptr<TrackRuntime> runtime;
+        juce::String instrumentDeviceId;
+        juce::String effectTopologySignature;
+        juce::String instrumentTopologySignature;
+        juce::var effectState;
+        juce::var instrumentState;
+        // Runtime devices are reusable only when both topology and persisted
+        // state match the active graph. A state change receives newly prepared
+        // plugin instances so state application never mutates the active graph.
+        bool reuseRuntimeDevices = false;
+    };
+
+    struct PreparedTimeline final {
+        std::uint64_t revision = 0;
+        TimelineTimebase timebase;
+        double outputSampleRate = 0.0;
+        int preparedBlockSize = 512;
+        bool loopEnabled = false;
+        std::int64_t loopStartSample = 0;
+        std::int64_t loopEndSample = 0;
+        bool punchEnabled = false;
+        std::int64_t punchStartSample = 0;
+        std::int64_t punchEndSample = 0;
+        bool metronomeEnabled = false;
+        bool hasSolo = false;
+        std::int64_t beatSamples = 0;
+        std::int64_t beatsPerBar = 4;
+        std::uint16_t timeSignatureNumerator = 4;
+        std::uint16_t timeSignatureDenominator = 4;
+        juce::Array<juce::var> unavailableClipIds;
+        juce::Array<juce::var> missingDeviceIds;
+        std::vector<std::unique_ptr<Track>> tracks;
+    };
+
+    struct OfflineRecordingTrack final {
+        juce::String id;
+        juce::var effectState;
+    };
+
+    void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
+                  int sampleCount) noexcept;
+    void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
+                       int inputChannelCount, float* const* outputChannels, int channelCount,
+                       std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+    void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
+                                     int channelCount, std::int64_t rangeStart,
+                                     int sampleCount) noexcept;
+    void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
+                                int inputChannelCount, float* const* outputChannels,
+                                int channelCount, std::int64_t rangeStart, int destinationStart,
+                                int sampleCount, bool renderOutput = false) noexcept;
+    void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
+    void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
+                                const juce::MidiBuffer* timelineMidi,
+                                std::int64_t rangeStart) noexcept;
+    void processLiveInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
+                                    std::int64_t rangeStart, bool playing) noexcept;
+    void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
+                        std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+    void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
+                      int sampleCount) noexcept;
+    void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
+    void requestPlaybackReset() noexcept;
+    void servicePendingPanic() noexcept;
+    void applyPendingPanic(PreparedTimeline& timeline) noexcept;
+    bool generateProcessedVariants(double sampleRate, int blockSize,
+                                   const std::vector<OfflineRecordingTrack>& tracks,
+                                   ArrangementCaptureSink* sink, juce::String& error,
+                                   const ProcessingProgressCallback& progress) noexcept;
+    [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
+        const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
+    [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;
+    bool beginAudioRead(PreparedTimeline*& active) noexcept;
+    void endAudioRead() noexcept;
+    bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
+    void reclaimRetiredTimelines() noexcept;
+
+    class AudioReadScope final {
+    public:
+        explicit AudioReadScope(TimelineEngine& owner) : engine(owner) {
+            entered = engine.beginAudioRead(active);
+        }
+
+        ~AudioReadScope() {
+            if (entered) engine.endAudioRead();
+        }
+
+        [[nodiscard]] PreparedTimeline* get() const noexcept { return active; }
+        [[nodiscard]] bool enteredSuccessfully() const noexcept {
+            return entered && active != nullptr;
+        }
+
+    private:
+        TimelineEngine& engine;
+        PreparedTimeline* active = nullptr;
+        bool entered = false;
+    };
+
+    juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
+    bool offlineMode = false;
+    mutable juce::SpinLock timelineLock;
+    std::unique_ptr<PreparedTimeline> timeline;
+    std::unique_ptr<PreparedTimeline> pendingTimeline;
+    // Owned only by the control/projection thread. A retired graph remains
+    // alive until every callback that could have loaded its pointer has left.
+    std::vector<std::unique_ptr<PreparedTimeline>> retiredTimelines;
+    std::atomic<PreparedTimeline*> activeTimeline{nullptr};
+    std::atomic<bool> runtimeDevicesNeedReprepare{false};
+    std::atomic<std::uint32_t> activeAudioReaders{0};
+    std::atomic<bool> resetPlaybackPending{false};
+    std::atomic<bool> seekPending{false};
+    std::atomic<std::int64_t> pendingSeekSample{0};
+    std::atomic<bool> panicAllPending{false};
+    bool pendingMonitorLiveInput = false;
+    std::uint32_t pendingMonitoringInputChannels = 0;
+    bool pendingArmedInstrumentTrack = false;
+    std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
+    std::vector<OfflineRecordingTrack> finalizedRecordingTracks;
+    double finalizedRecordingSampleRate = 0.0;
+    int finalizedRecordingBlockSize = 0;
+    juce::String liveMidiTargetTrackId;
+    std::atomic<State> state{State::stopped};
+    std::atomic<std::int64_t> timelineSample{0};
+    std::atomic<std::int64_t> lastMixStartSample{0};
+    std::atomic<std::uint64_t> audioClockSample{0};
+    std::atomic<std::uint64_t> callbackAudioStartSample{0};
+    mutable std::atomic<std::uint64_t> sequence{0};
+    std::atomic<std::uint64_t> graphPublishCount{0};
+    std::atomic<std::uint64_t> clockGeneration{0};
+    std::atomic<std::uint64_t> discontinuity{1};
+    std::atomic<bool> monitorLiveInput{false};
+    std::atomic<std::uint32_t> monitoringInputChannels{0};
+    std::atomic<bool> armedInstrumentTrack{false};
+    std::atomic<RecordingPhase> recordingPhase{RecordingPhase::idle};
+    std::atomic<std::int64_t> countInRemainingSamples{0};
+    std::atomic<std::int64_t> countInBlockStartRemainingSamples{0};
+    std::atomic<std::uint64_t> recordingStartAudioSample{0};
+    std::atomic<std::uint64_t> recordingStartTick{0};
+    std::atomic<std::uint32_t> recordingPassOrdinal{0};
+    std::atomic<int> captureBlockOffset{0};
+    std::atomic<int> captureBlockSamples{0};
+    std::atomic<int> playbackBlockOffset{0};
+    std::atomic<int> lastMixPlaybackOffset{0};
+};
+
+}  // namespace riffra
