@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type {
   AudioClip,
   AutomationParameter,
@@ -38,7 +30,6 @@ import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import {
-  BASE_PIXELS_PER_QUARTER,
   buildTrackTimeline,
   timelineObjectEndTick,
   clipDurationTicks,
@@ -61,6 +52,7 @@ import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hook
 import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeDetailController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
+import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
 import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
@@ -93,7 +85,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { onToggleTransport } = props;
   const [tool, setTool] = useState<ArrangeTool>('select');
   const [snap, setSnap] = useState<SnapGrid>('1/16');
-  const [zoom, setZoom] = useState(1);
   const trackSize: TrackSize = 'normal';
   const [trackSizes, setTrackSizes] = useState<Record<string, TrackSize>>({});
   const [automationParameters, setAutomationParameters] = useState<
@@ -112,7 +103,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     danger?: boolean;
     onConfirm: () => void;
   } | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
   const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
@@ -120,19 +110,18 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     trackId: string;
     kind: 'effect' | 'instrument';
   } | null>(null);
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const programmaticScrollRef = useRef(false);
   const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
     props.api,
     timebase,
     props.hostGeneration ?? 0,
   );
+  const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
+    useArrangeViewport({ timebase, transport, displayTickRef });
   const analyses = useWaveformAnalyses(
     props.api,
     arrangement.audioClips,
     props.hostGeneration ?? 0,
   );
-  const pixelsPerTick = (BASE_PIXELS_PER_QUARTER * zoom) / timebase.ppq;
   const barTicks = ticksPerBar(timebase);
   const timelineTicks = useMemo(() => {
     const contentEnd = Math.max(
@@ -333,41 +322,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     </>
   );
 
-  const applyZoom = (next: number, clientX?: number) => {
-    const bounded = Math.min(4, Math.max(0.35, next));
-    const scroller = scrollerRef.current;
-    if (!scroller) return setZoom(bounded);
-    const bounds = scroller.getBoundingClientRect();
-    const cursor = (clientX ?? bounds.left + bounds.width / 2) - bounds.left;
-    const tick = Math.max(0, (scroller.scrollLeft + cursor - TRACK_HEADER_WIDTH) / pixelsPerTick);
-    setZoom(bounded);
-    requestAnimationFrame(() => {
-      const nextPixels = (BASE_PIXELS_PER_QUARTER * bounded) / timebase.ppq;
-      programmaticScrollRef.current = true;
-      scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + tick * nextPixels - cursor);
-    });
-  };
-
-  const zoomToRange = useCallback(
-    (startTick: number, endTick: number) => {
-      const scroller = scrollerRef.current;
-      if (!scroller) return;
-      const span = Math.max(1, endTick - startTick);
-      const usableWidth = Math.max(1, scroller.clientWidth - TRACK_HEADER_WIDTH - 32);
-      const bounded = Math.min(
-        4,
-        Math.max(0.35, (usableWidth / span / BASE_PIXELS_PER_QUARTER) * timebase.ppq),
-      );
-      setZoom(bounded);
-      requestAnimationFrame(() => {
-        const nextPixels = (BASE_PIXELS_PER_QUARTER * bounded) / timebase.ppq;
-        programmaticScrollRef.current = true;
-        scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + startTick * nextPixels - 16);
-      });
-    },
-    [timebase.ppq],
-  );
-
   // One shell-level keyboard boundary coordinates transport, zoom, and the
   // ruler controller without adding competing window listeners in child hooks.
   useEffect(() => {
@@ -412,81 +366,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     timebase,
     zoomToRange,
   ]);
-
-  // Track vertical scroll so the ruler and ruler corner stay sticky to the top
-  // of the scrolling viewport without leaving the timeline's horizontal flow.
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    let frame = 0;
-    const onScroll = () => {
-      if (frame) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => setScrollTop(scroller.scrollTop));
-    };
-    scroller.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      scroller.removeEventListener('scroll', onScroll);
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, []);
-
-  // Follow the playhead during playback: once the playhead crosses the follow
-  // line the view scrolls continuously to keep it there. A manual scroll pauses
-  // the follow while the playhead stays in view; when it leaves the viewport the
-  // follow resumes automatically.
-  const followPausedRef = useRef(false);
-  useEffect(() => {
-    if (transport?.state !== 'playing') return;
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    let frame = 0;
-    const update = () => {
-      const playheadX = TRACK_HEADER_WIDTH + displayTickRef.current * pixelsPerTick;
-      const left = scroller.scrollLeft;
-      const followOffset = scroller.clientWidth * 0.32;
-      if (followPausedRef.current) {
-        if (playheadX < left || playheadX > left + scroller.clientWidth) {
-          followPausedRef.current = false;
-        }
-      }
-      if (!followPausedRef.current && (playheadX < left || playheadX >= left + followOffset)) {
-        programmaticScrollRef.current = true;
-        scroller.scrollLeft = Math.max(0, playheadX - followOffset);
-      }
-      frame = requestAnimationFrame(update);
-    };
-    frame = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(frame);
-  }, [displayTickRef, pixelsPerTick, transport?.state]);
-
-  useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    const onScroll = () => {
-      if (programmaticScrollRef.current) {
-        programmaticScrollRef.current = false;
-        return;
-      }
-      followPausedRef.current = true;
-    };
-    scroller.addEventListener('scroll', onScroll, { passive: true });
-    return () => scroller.removeEventListener('scroll', onScroll);
-  }, []);
-
-  const previousDiscontinuityRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!transport) return;
-    const previous = previousDiscontinuityRef.current;
-    previousDiscontinuityRef.current = transport.discontinuity;
-    if (previous === null || previous === transport.discontinuity) return;
-
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    const playheadX = TRACK_HEADER_WIDTH + transport.timelineTick * pixelsPerTick;
-    programmaticScrollRef.current = true;
-    scroller.scrollLeft = Math.max(0, playheadX - scroller.clientWidth * 0.32);
-    followPausedRef.current = false;
-  }, [pixelsPerTick, transport]);
 
   const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
     event.preventDefault();
