@@ -2,23 +2,23 @@
 
 ## 1. スコープ
 
-本書はRiffraのIPC境界とその契約を正準化する。「どうやり取りするか」を示し、「何がやり取りされるか」の詳細は各言語のコードを真実源とする。
+本書は Riffra の IPC 境界とその契約を正準化する。「どうやり取りするか」を示し、「何がやり取りされるか」の詳細は各言語のコードを真実源とする。
 
 ### 書くこと
 
-- IPC境界の全体像と使い分け基準
-- Tauri命令のカタログ（領域ごとの分類と責務、実行モード）
-- NativeApi TS契約とTauri命令との対応規則
+- IPC 境界の全体像と使い分け基準
+- Tauri 命令のカタログ（領域ごとの分類と責務、実行モード）
+- NativeApi TS 契約と Tauri 命令との対応規則
 - サイドカー JSON Lines プロトコルの構造と規則（音声・レンダー・プローブ）
-- CLIとRiffra Host制御のプロトコル境界
+- CLI と Riffra Host 制御のプロトコル境界
 - 境界ごとのエラー・状態遷移の契約
 - 権限・ケイパビリティ設定
 
 ### 書かないこと
 
-- 各Tauri命令の引数・戻り値の詳細（code参照）
-- サイドカーコマンドの全シグネチャ（code参照）
-- 各メッセージの全フィールド（code参照）
+- 各 Tauri 命令の引数・戻り値の詳細（code 参照）
+- サイドカーコマンドの全シグネチャ（code 参照）
+- 各メッセージの全フィールド（code 参照）
 
 層構造の全体像は `architecture.md`、エンティティの定義は `data-model.md` を参照。
 
@@ -28,16 +28,16 @@
 
 ```text
 ┌────────────────────────────── WebView ──────────────────────────────┐
-│ React（src/native/native-api.ts）                                    │
+│ React（src/native/）                                                 │
 └────┬───────────────────────┬───────────────────────┬───────────────┘
-     │ A: Tauri 命令          │ B: イベント購読        │
-     │ invoke 系             │ listen(9種)           │
+      │ A: Tauri 命令          │ B: イベント購読        │
+      │ invoke 系             │ listen 系            │
 ┌────▼───────────────────────▼───────────────────────▼───────────────┐
 │ Rust バックエンド（src-tauri）                                          │
 │ 命令層 → Host Adapter → riffra-core / RuntimeReconciler / 永続化       │
 └────┬───────────────┬───────────────┬──────────────────────────────┘
-     │ C: JSON Lines  │ D: JSON 1行   │ E: JSON 1行
-     │ stdin/stdout   │ stdin/stdout  │ stdout
+      │ C: JSON Lines  │ D: JSON 1行   │ E: JSON 1行
+      │ stdin/stdout   │ stdin/stdout  │ stdout
 ┌────▼───────┐  ┌─────▼────────┐  ┌──▼──────────┐
 │riffra-audio│  │riffra-render │  │riffra-audio │
 │ --serve    │  │ オフライン    │  │ --probe系   │
@@ -64,7 +64,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | E    | Rust ↔ riffra-audio（probe）                  | 子プロセスの stdout（JSON 1行）/ 引数                   | デバイス・チャンネル列挙、VST3スキャン                   |
 | F    | 外部クライアント ↔ Riffra Host Control Server | Windows Named Pipe / Unix Domain Socket（長さ付きJSON） | Hostの正準状態・Runtime操作とHost event購読              |
 
-低レイテンシの音声処理はC、時間のかかるバッチはD、デバイスやプラグインの列挙はEを使う。起動中のRiffra Hostを外部クライアントから操作する経路がFで、WebViewからの操作はAを使う。Standalone CLIの標準入出力はFを使わない。
+使い分け: 低遅延の音声は C、時間のかかる一括処理は D、列挙は E、WebView 操作は A。F の利用者は Host 外部操作に限る。
 
 ---
 
@@ -72,7 +72,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ### 3.1 実行モード
 
-命令は責務に応じて3つの実行モードを使い分ける。すべて `spawn_blocking` で async ワーカーを塞がない。
+命令は責務に応じて 3 つの実行モードを使い分ける。すべて `spawn_blocking` 経由で async ワーカーから分離して実行する。
 
 | モード                              | 挙動                                                                                                                | 使う命令                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -111,13 +111,10 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | 素材入出力         | `import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                                                                                 |
 | 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                                       |
 
-Project一覧の項目を選ぶ `open_project` は、同じDataRoot内のProject containerを切り替える命令であり、
-ファイルダイアログを開かない。外部packageを扱うのは `import_project` と `export_project` だけである。
-DesktopのImport dialogは `.riffra` packageだけを選択でき、Importは現在のProjectを上書きせず新しい
-Project containerをActiveにする。ExportはDesktopのSave dialogで指定された `.riffra` pathへ一度だけ
-portable packageを書き出し、DataRoot内にExport専用ディレクトリを作らない。
+- `open_project` は同一 DataRoot 内の Project container を直接切り替える
+- 外部 package を扱うのは `import_project` と `export_project` のみ。Import は既存 Project を残したまま新規 container を Active にし、Export の出力先は指定 path のみとする
 
-**プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタからのstate / parameter変更はHost内のpersistence coordinatorがイベントをcoalesceしてCanonical stateへ保存する。
+**プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタ由来の state / parameter 変更は Host 内の coalesce と正準保存で完結する。
 
 **録音（recording/commands.rs）**
 
@@ -142,10 +139,10 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ### 3.3 エラー規約
 
-- Tauri command の失敗は `NativeCommandError` として `code`、`message`、`details` を返す。`message` は表示用、`code` と `details` は機械判定用であり、UI はメッセージ文字列を解析しない
-- Native 音声エラーは `kind`、`operation`、`details` を保ったまま `NativeAudioError`、Host の `ProtocolError`、Tauri の `NativeCommandError` へ渡される。境界ごとに情報を文字列へ潰さない
+- 失敗は `NativeCommandError` として `code`、`message`、`details` を返す。`message` は表示用、`code` と `details` は機械判定用であり、UI はメッセージ文字列を解析しない
+- Native 音声エラーは `kind`、`operation`、`details` を保ったまま `NativeAudioError`、Host の `ProtocolError`、Tauri の `NativeCommandError` へ渡す。境界ごとに情報を文字列へ潰さない
 - セーフモード中の音声系・プラグイン系命令は明示エラーを返す（`architecture.md §7`）
-- Native 実行時に音声デバイスやランタイムを別の既定値へ黙って切り替えない。要求された操作に失敗した場合は、エラーと現在の状態を返す
+- 要求された操作に失敗した場合は、現在の状態を保ったままエラーと状態を返す
 - 制作状態を変更する命令の応答に含まれる `CanonicalState` は「その操作を含む最新の正準状態」であり、UI は `canonical.session` を表示状態へ反映する
 
 ```json
@@ -161,13 +158,11 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 }
 ```
 
-### 3.4 UI呼び出しの順序
+### 3.4 UI 呼び出しの順序
 
-制作状態を変更する命令の順序はCoreとHost command gateが所有する。応答に含まれる `CanonicalState` はCoreの確定順序を表すため、フロントエンド独自の直列化、時刻比較、セッション全体のマージは行わない。
-
-連続操作で中間値を送る意味がない制御は、同じ対象への要求を集約して最後の値を送る。集約された要求を待つ呼び出し元には、同じ確定応答を返す。
-
-`invokeHostOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）でフォールバック値を返す。ネイティブ実行時は実害のないフォールバックをせず、失敗はそのまま reject する。
+- 順序の所有者は Core と Host command gate。フロントエンドは応答の `CanonicalState` を確定順序として受け入れる
+- 中間値を捨ててよい連続制御は集約して最終値のみ送信する。集約された待機者には同一の確定応答を返す
+- `invokeHostOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）専用のフォールバック。ネイティブ実行時は失敗をそのまま reject する
 
 ---
 
@@ -186,8 +181,8 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                 |
 | `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する      |
 
-購読は全て `src/native/api/events.ts` の `listen` ラッパを経由する。イベントは Rust が正準状態に基づいて発行する投影通知であり、UI はこれを表示の更新にのみ使う（これは楽曲編集の入力経路ではない）。
-プラグインエディタ由来のstate / parameter変更はHostEventHubの内部subscriberが受け取り、Host内でCanonical stateへ保存するため、WebViewイベントとしては公開しない。
+- 購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
+- エディタ由来の state / parameter 変更は Host 内の正準保存で完結する
 
 ---
 
@@ -195,10 +190,10 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 ### 5.1 接続とフレーミング
 
-- 起動: `riffra-audio.exe --serve`。`riffra-runtime::AudioSupervisor`が起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
-- 送受信: Rust は **1コマンド = 1行のJSON** を stdin に書き、サイドカーは **1行のJSON** で応答する（JSON Lines）
-- 相関: コマンドバス（`command_bus.rs`）が各コマンドに `requestId`（原子カウンタ）を付与する。応答は同一 `requestId` を返し、`Condvar` で待機側へ届く
-- 応答待ち: 通常コマンドには `COMMAND_ACK_TIMEOUT` を設ける。投影の `prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` を境界として失敗を報告するが、待ち時間を延ばすことや暗黙の再試行を成功条件にはしない
+- 起動: `riffra-audio --serve`。`AudioSupervisor` が起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
+- 送受信: JSON Lines（1 コマンド = stdin 1 行、1 応答 = stdout 1 行）
+- 相関: `command_bus.rs` が `requestId`（原子カウンタ）を付与し、応答は同一 ID を返す。`Condvar` で待機側へ配送する
+- 期限: 通常は `COMMAND_ACK_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT`。期限切れは失敗報告で確定する
 
 ### 5.2 コマンド分類
 
@@ -209,23 +204,63 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                    |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`（Rawをリアルタイムに保存し、Transport停止後にProcessed Variantを生成）            |
+| 録音                | `startArrangeRecording`、`stopArrangeRecording`                                                                                   |
 | プレビュー          | `previewSample`、`stopPreview`、`stopPreviewForKey`                                                                               |
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                        |
-| MIDI                | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                                  |
+| MIDI                | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`、`sendTrackMidi`、`panicTrackMidi`                             |
 | トランスポート準備  | `setTransportStarting`                                                                                                            |
 
-### 5.3 応答とエラー
+MIDI 系の意味づけは次の通り。
 
-- 成功応答: `{"type":"audioStatus","requestId":N, ...}`（状態スナップショット）または `{"type":"audioMeters","requestId":N, ...}`
-- 失敗応答: `{"type":"error","requestId":N,"kind":"...","message":"...","operation":"...","details":{...}}`。`kind` は分類、`operation` は失敗した操作、`details` は機械的に扱える追加情報を表す
-- `setAudioDriver` のデバイス切替と以前のデバイスへの復元は Native が一つのトランザクションとして行う。Host は操作の開始前に `EngineTransition` を有効にし、デバイスの応答後に正準グラフを新しい音声環境へ投影する。要求が拒否されても以前のデバイスを復元できた場合は `details.restoredPreviousDevice: true` を返し、Host は以前の環境へグラフを再投影してから遷移ミュートを解除する。復元できない場合は `deviceLost` として扱う
-- `set_live_midi_target` はPlay SurfaceのフォーカスをRuntime-only状態として設定する。対象Instrument Trackは同じTrack Runtimeを使い、遅延バッファを更新しながらトラック間補償遅延だけを迂回する。`sendTrackMidi` と `panicTrackMidi` は、要求に含まれるTrack IDへ直接ライブMIDIを送る。`reset_feedback_protection` はフィードバック保護だけを明示的に解除する
-- `stopArrangeRecording` はRawキャプチャを短いグラフ境界で閉じてTransportを停止し、`recording.processing: true` の状態を返してすぐに応答する。RackのProcessed Variant生成とテイク確定はグラフ境界の外でライフサイクル実行器およびHost workerが行う。offline処理はブロック単位で進み、録音全体をメモリへ読み込まない。処理時間に上限は設けず、各ブロックとVST処理境界の進捗が一定時間止まった場合だけ、Nativeサイドカーを終了してRustの復旧経路へ移す
-- Nativeのoffline処理が完了すると `recordingComplete` を通知する。成功時はHostがRaw / Processed / MIDIをAssetへ登録し、必要なArrangement変更を確定してから `recording-finalized` を境界Bのイベントとして配信する。処理失敗またはNativeサイドカー終了時も、Hostは`RecordingCapture`を`Completing`のまま残さず、Rawが利用可能なら`recoverable`、Rawも利用できなければ`failed`へ確定してから失敗の`recording-finalized`を配信する。`processing` 中は新しい録音とProject切替を受け付けない
-- ack 待ちの間も状態イベントは流れ続ける。Play の投影準備は呼び出し元を待たせず、`transportStatus: starting` と `runtime-projection-status` で進行を通知する。Stop は保留中の Play を取り消す
+| コマンド                           | 意味                                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `setLiveMidiTarget`                | Play Surface のフォーカスを Runtime-only 状態に設定する。対象トラックは同一 Track Runtime を使い、トラック間補償遅延のみ迂回する |
+| `sendTrackMidi` / `panicTrackMidi` | 要求内の Track ID へライブ MIDI を直接送る                                                                                       |
+| `setFeedbackProtection`            | フィードバック保護の切替。解除は `active: false` で行う                                                                          |
 
-### 5.4 サイドカー → Rust イベント
+### 5.3 応答形式
+
+```jsonc
+// 成功: 状態かメーターのいずれか
+{"type": "audioStatus", "requestId": N, ...}
+{"type": "audioMeters", "requestId": N, ...}
+// 失敗: 構造化エラー
+{"type": "error", "requestId": N, "kind": "...", "message": "...", "operation": "...", "details": {...}}
+```
+
+- `kind` は分類、`operation` は失敗した操作、`details` は機械可読の追加情報
+- ack 待ちの間も状態イベントは流れ続ける
+
+### 5.4 デバイス切替（`setAudioDriver`）
+
+Native が切替と旧デバイスへの復元を 1 トランザクションで行う。
+
+```text
+Host: EngineTransition を有効化
+  → Native: デバイス切替を試行
+    → 成功: 正準グラフを新環境へ投影 → 遷移ミュート解除
+    → 拒否＋復元成功（details.restoredPreviousDevice: true）: 旧環境へ再投影 → 遷移ミュート解除
+    → 復元失敗: deviceLost 扱い
+```
+
+### 5.5 録音フロー
+
+```text
+stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing: true で即応答
+  → グラフ外で Processed をブロック単位に逐次生成する
+  → recordingComplete → Asset 登録＋Arrangement 確定 → recording-finalized（境界 B）
+```
+
+- 失敗時は Raw あり → `recoverable`、Raw なし → `failed` へ必ず確定してから失敗を通知する
+- `processing` 中の新規録音と Project 切替は排他する
+- 進捗停滞（ブロック・VST 処理境界が一定時間停止）の場合のみ Native を終了して Rust の復旧経路へ移す
+
+### 5.6 再生の非同期
+
+- Play の投影準備は非同期に行い、`transportStatus: starting` と `runtime-projection-status` で進捗を通知する
+- Stop は保留中の Play を取り消す
+
+### 5.7 サイドカー → Rust イベント
 
 | type                                                      | 内容                                                                                                                       |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -237,17 +272,20 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
 | `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
 
-フィードバック検知（`feedbackSuspected`）は `FeedbackProtection` のミュート理由と連動する。ミュート理由は Native の bitmask を正本とし、ユーザー操作、エンジン遷移、デバイス障害、フィードバック保護を所有者ごとに解除する。Rust はこの bitmask を複製せず、ユーザー緊急ミュートの意図だけを保持する。
+- `feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
+- ミュート理由は Native の bitmask を正本とし、所有者（ユーザー・遷移・障害・保護）ごとに解除する。Rust が保持するのはユーザー緊急ミュートの意図のみとする
 
 ---
 
 ## 6. 境界 D: オフラインレンダリング（riffra-render）
 
-- 起動: `render_timeline` 命令のたびに、`riffra-runtime::render` がComposition Rootから渡された `RuntimeBinaries` の `riffra-render` executableを1回起動する。DesktopとHeadlessで同じ配置規則を使う
-- 要求: stdin に JSON 1行（`{"type":"renderTimelineOffline","protocolVersion":1,"snapshot":...,"destination":...,"startTick":...,"endTick":...,"sampleRate":...,"blockSize":...,"masterGainDb":...,"normalize":...}`）を書いて stdin を閉じる
-- 応答: stdout の JSON 1行。成功は `{"type":"offlineRenderComplete"}`、失敗は `{"type":"error","kind":"renderRejected","operation":"renderTimelineOffline","message":...,"details":{...}}`
-- プロセスが異常終了・応答タイプ不一致の場合はエラーとして扱う（部分的な WAV は残さない）
-- レンダー計画（開始・終了ティック、レンジ解決、出力パス `renders/render-{ms}/timeline.wav`、manifest）はシェル側で組み立て、ワーカーは計画の実行だけを担う
+| 項目 | 内容                                                                                                                                                                                                |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 起動 | `render_timeline` 命令ごとに `riffra-runtime::render` が `RuntimeBinaries` の executable を 1 プロセス起動する。配置規則は Desktop / Headless 共通                                                  |
+| 要求 | stdin へ JSON 1 行を書いて閉じる。`renderTimelineOffline` + `protocolVersion: 1` + `snapshot` / `destination` / `startTick` / `endTick` / `sampleRate` / `blockSize` / `masterGainDb` / `normalize` |
+| 応答 | stdout へ JSON 1 行。成功は `offlineRenderComplete`、失敗は `error`（`kind: renderRejected`、`operation: renderTimelineOffline`）                                                                   |
+| 異常 | プロセス異常終了・応答不一致はエラー扱いとし、部分的な WAV は破棄する                                                                                                                               |
+| 分担 | 計画（範囲・出力先 `renders/render-{ms}/timeline.wav`・manifest）はシェル側で組み立て、ワーカーは実行のみ                                                                                           |
 
 ---
 
@@ -255,11 +293,13 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 
 | 起動引数                                              | 応答                                     | 用途                                                            |
 | ----------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------- |
-| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイスを列挙（ストリームを開かない）  |
+| `riffra-audio --probe`                                | `{"type":"audioDeviceProbe", ...}` を1行 | ASIO/WASAPI のドライバ・デバイスの列挙専用                      |
 | `riffra-audio --probe-channels <driver> <device> ...` | `{"type":"deviceChannels", ...}`         | 指定デバイスのチャンネル構成                                    |
 | `riffra-plugin-scan <args>`                           | 型タグ付き JSON Lines                    | VST3 の列挙・検証（スキャン結果は `ScanReport` としてジョブ化） |
 
-プローブは共有RuntimeのProbe Coordinatorを通して直列に起動し、コーディネータの待機とプロセス実行の双方にタイムアウトを適用する。タイムアウト・異常終了は「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用の起動なので通常の音声セッション（`--serve`）には影響を与えない。プラグインスキャンの失敗も `kind`、`operation`、`details` を持つ構造化応答として扱う。
+- 直列化: 共有 Runtime の Probe Coordinator 経由。待機と実行の双方にタイムアウトを適用する
+- 失敗時: 「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用起動であり、実行中の `--serve` セッションとは独立する
+- 失敗も `kind` / `operation` / `details` 付きの構造化応答として扱う
 
 ---
 
@@ -274,33 +314,25 @@ portable packageを書き出し、DataRoot内にExport専用ディレクトリ�
 | Attached   | 接続先HostのCore、履歴、Runtime、Asset DB            | Host Control Serverへ接続                          |
 | Desktop    | Embedded DawHost、または選択したAttached Host        | in-process dispatchまたはHost Control Serverへ接続 |
 
-同じDataRootを別のHostが所有している場合、Standalone CLIと`serve`は起動に失敗し、DesktopはそのHostへ接続する。
-
-起動中のHostは、接続情報を`<data_root>/control/host.json`へ公開し、同じユーザーのregistryへも登録する。Desktopなどの接続管理は必要に応じてregistryから候補を探し、各候補へ接続して`host.status`を確認する。Attached CLIはcurrent-user registryを正本とし、DataRootや`host.json`を直接探索しない。
-
-候補を削除するのは、そのプロセスが存在しないか、接続先が登録内容と異なるHostであると確定したときだけである。一時的に接続できないだけなら、一覧から外すのみで登録は残す。
-
-Helloでは接続の役割を明示する。
+- 排他: 同一 DataRoot の所有者は 1 Host のみ。Standalone / `serve` は所有者ありで起動失敗し、Desktop は接続へ回る
+- 公開: 起動中 Host は `<data_root>/control/host.json` と current-user registry へ登録する。Attached CLI の探索先は registry のみとする
+- 削除: プロセス不存在か別 Host 確定のときのみ登録を削除する。一時的到達不能は一覧から外すだけで登録は残す
+- Hello では接続の役割を明示する
 
 ```json
 {"type":"hello","role":"command"}
 {"type":"hello","role":"events"}
 ```
 
-接続には二種類ある。
-
 | 種類    | 用途                                                |
 | ------- | --------------------------------------------------- |
 | command | 要求と応答を運ぶ。Desktopは要求ごとに開く           |
 | events  | `HostEventFrame { event, payload }`を運ぶ。長く保つ |
 
-Desktopは要求ごとにcommand接続を開くため、時間のかかる要求の実行中でもTransport操作や緊急ミュートを並行に処理できる。応答にはタイムアウトを設け、応答しないHostで処理が止まり続けないようにする。
-
-Hostのイベント配信では、meterやtransport statusなど最新値があれば足りる通知を最新値で上書きする。重要な通知は押し出されず、待ち行列が溢れても接続を切らない。
-
-外部Hostとの初期同期では、イベント接続を確立してから`host.bootstrap`を取得する。一覧表示は軽量な`host.info`を使い、`host.bootstrap`は接続対象に選ぶときだけ使う。
-
-接続先の変更は、新しい接続とbootstrapを準備してから現在のHostを交換し、交換後は世代を更新して旧Host由来の遅延イベントや応答を破棄する。録音中の切替は拒否する。外部Hostが終了した場合はDisconnectedとし、最後のDataRootとinstanceIdを保持して`host.json`から再接続する。Projectの切替はHostの切替とは独立し、同じHost内のActive Projectだけを変更する。
+- Desktop は要求ごとに command 接続を開くため、長時間要求の実行中も Transport 操作や緊急ミュートを並行処理できる。応答にはタイムアウトを設ける
+- イベント配信では meter や transport status など最新値で足りる通知を上書き集約する。重要通知は必ず配送し、待ち行列が溢れても接続を維持する
+- 初期同期はイベント接続の確立後に `host.bootstrap` を取得する。一覧表示は軽量な `host.info` を使い、`host.bootstrap` は接続確定時のみ使う
+- 切替は新接続と bootstrap の準備後に現 Host を交換し、世代を更新して旧 Host 由来の遅延を破棄する。切替は録音の完了後に行う。終了時は Disconnected とし、最終 DataRoot と instanceId を保持して再接続する。Project 切替は Host 切替と独立し、同一 Host 内の Active Project のみ変更する
 
 ### 8.1 起動とフレーミング
 
@@ -318,16 +350,16 @@ riffra host list
 riffra --attach --host <instance-id> session get
 ```
 
-Attached CLIは候補が1件なら自動接続し、複数件なら`--host`によるinstanceIdの明示を要求する。`host list`はcurrent-user registryを表示するローカル操作であり、DataRootを必要としない。
-
-対話モードは標準入力の1行を1要求として読み、標準出力へ1行の応答を書いてflushする。空行は無視する。
+- Attached は候補 1 件なら自動接続し、複数件なら `--host` による instanceId 明示を要求する。`host list` は registry 表示のみ行うローカル操作である
+- 対話モードは標準入力 1 行を 1 要求とし、標準出力へ 1 行応答を flush する。空行は読み飛ばす
 
 ```bash
 riffra --data-root ./data --interactive
 riffra --attach --interactive
 ```
 
-StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`requestId`は応答へそのまま返され、`expectedSequence`を指定した要求は正準シーケンスが一致するときだけ実行される。Live Hostへ送るProject-bound requestには、Clientが`project.list`または`host.bootstrap`で取得した`expectedProjectId`を付ける。Live Hostはこの値がない要求を拒否し、Active Projectと一致しない要求をConflictとして返す。Standalone Dispatcherは単独でActive Projectを管理するため、欠落した値を自身のActive Projectで補完する。
+- 要求は `command` と `params` を持ち、`requestId` は応答へそのまま返す。`expectedSequence` 付き要求は正準シーケンス一致時のみ実行する
+- Project-bound request には `expectedProjectId`（`project.list` / `host.bootstrap` で取得）を付ける。Live Host は `expectedProjectId` を必須とし、欠落・不一致は Conflict で返す。Standalone は自 Active Project で補完する
 
 ```json
 {
@@ -339,13 +371,12 @@ StandaloneとAttachedのinteractive要求は`command`と`params`を持つ。`req
 }
 ```
 
-Attachedでは、CLIが標準入力の各行をHostのローカルエンドポイントのフレームへ変換して送る。Hostは1接続内の要求を受けた順に処理し、CLIは応答を標準出力へ1行ずつflushする。フレームは8 MiB以下のUTF-8 JSONでなければならない。
+- Attached では CLI が stdin 各行をフレームへ変換して送る。Host は 1 接続内を受信順に処理し、CLI は応答を 1 行ずつ flush する。フレームは 8 MiB 以下の UTF-8 JSON とする
 
 ### 8.2 応答とエラー
 
-成功応答には、結果が対応する正準シーケンスを含める。HostとDesktopが共有するControl protocolでは、`session.get`は`result.type: "session"`と`CreativeSession`を返す。Rack、欠落依存、Undo/RedoなどRuntime投影と結び付くアレンジ変更は`result.type: "arrangementMutation"`とし、`result.value.canonical`が正準状態、`result.value.projection`が投影結果を表す。この場合は`result.value.canonical.sequence`と応答の`sequence`が一致する。その他の変更は各コマンド固有の結果型を使う。
-
-読み取りコマンドは1つの`CanonicalState`スナップショットから結果と応答シーケンスを構築する。応答を組み立てる途中で別の正準状態を読み直さない。
+- 成功応答は対応する正準シーケンスを含む。`session.get` は `result.type: "session"`、投影連動の変更は `result.type: "arrangementMutation"`（`canonical` + `projection`、sequence 一致）、その他は固有型を使う
+- 結果と sequence は同一 `CanonicalState` スナップショットから一貫して構築する
 
 ```json
 {
@@ -364,7 +395,7 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 | `hostUnavailable`    | Attached CLIがHostへ接続できない                                                             |
 | `runtimeUnavailable` | Safe Mode中など、要求されたRuntimeを利用できない                                             |
 
-機械判定にはエラーコードを使い、message文字列を解析しない。
+- 機械判定にはエラーコードを使い、message 文字列を解析しない
 
 ```json
 {
@@ -379,11 +410,11 @@ Attachedでは、CLIが標準入力の各行をHostのローカルエンドポ�
 }
 ```
 
-Standaloneの`undo`と`redo`はそのプロセス内の履歴を使う。serveの`undo`と`redo`はHostの履歴を使い、Attachedの要求は接続先Hostの履歴を共有する。
+- `undo` / `redo` の履歴は Standalone が自プロセス、serve / Attached が接続先 Host のものを共有する
 
 ### 8.3 制作操作
 
-CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
+CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
 
 | 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                          |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -398,17 +429,12 @@ CLIは入力形式だけを解釈し、制作規則と正準化は `riffra-core:
 | Rack state             | `plugin catalog list`、`instrument builtin list/set`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                 |
 | Runtime services       | `audio status/diagnostics/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
-Live HostのControl Serverは、正準状態、履歴、Track、Runtime投影、Transport、Audio、Plugin、Recording、Render、Job、Library、Missing、Analysisを公開する。Safe ModeではRuntimeを必要とする操作が`runtimeUnavailable`になる。
+軽量投影の約束: `session inspect`、`track list`、`device inspect`、`music.note.*` は構造把握用であり、本文の取得は `session get`、`plugin.state.get` に委譲する。`device inspect` の応答範囲は metadata と capability とする。
 
-`session inspect` は `CanonicalState` の1つのSnapshotから、Project設定、content end、範囲指定、History、Track/Clip/Region/Harmony/Markerの軽量な構造Projectionを返す。MIDI Note/Event、Automation Point、Plugin parameter、`stateData` は展開せず、件数に固定上限を設けない。`automationLaneCount` はTrack全体のLane数、`automationPointCount` は指定範囲に含まれるPoint数を表す。`--start` / `--end` の範囲は `[start, end)`、`--track-id` はTrack固有のClipとAutomationへ適用し、Region/Harmony/MarkerはArrangement全体の文脈として残る。
+- Agent 向け CLI の正準 Mutation 応答は `mutation` receipt（sequence・投影状態・構造 ID のみ）へ変換する。Desktop 同期の共有プロトコルでは Canonical 結果を維持する
+- `plugin state save` は結果をファイルへ保存し、標準出力には保存先のみ返す
 
-`music.note.list` と `music.note.get` はpitch、音楽座標のposition、音楽分数のduration、velocity、channelだけを返し、tickやMIDI note numberを返さない。`device.inspect` はmetadataとcapabilityだけを返し、Plugin parameterの値一覧やopaqueな`stateData`を含めない。Pluginのstateは`plugin.state.get`で取得でき、CLIの`plugin state save`はその結果を指定ファイルへ保存し、標準出力には保存先だけを返す。
-
-Agent向けCLIでは、Canonical Sessionを返す正準Mutationの成功応答を軽量な `mutation` receiptへ変換する。receiptは応答の `sequence`、Projection状態、構造Entity ID(Track、Clip、Region、Harmony、Marker、Automation Lane、Device)を含み、一部の直接Note操作では生成されたMIDI Note IDも含む。Canonical Session、MIDI Note/Eventの内容、Automation Point、Plugin parameter、`stateData` は含まない。後続操作に必要な最新状態は `session inspect` で取得する。DesktopとHost間の共有Control protocolではDesktop同期のためCanonical結果を維持する。
-
-`track list` は軽量な `TrackSummary` 投影を返す。Track と device の識別情報・ミキサー情報は含むが、device の `parameterValues` は含まない。完全な device 状態が必要な場合は `session get` を使う。
-
-DesktopのTauri command境界が所有する機能と、Live HostのControl Serverが所有する機能は次のように分かれる。
+Desktop の Tauri command 境界と Live Host の Control Server の機能分担は次の通り。
 
 | 操作群                                                               | Desktop / serve                   | Standalone                                                                          |
 | -------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
@@ -420,11 +446,9 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 | レンダー・ジョブ                                                     | HostのRenderWorker                | `runtimeUnavailable`                                                                |
 | ライブラリ・解析・Asset preview                                      | Hostのshared service              | `runtimeUnavailable`                                                                |
 
-プラグインエディタのウィンドウ、ファイルダイアログ、ウィンドウ管理はDesktop shellに残る。プラグインエディタのopen command、録音、プレビュー、VSTスキャン、ライブラリmetadata、解析は現在HostのRuntime / shared serviceを使う。エディタから発生したplugin state / parameterの永続化はHost内のcoordinatorがCanonical commitを行い、Desktop WebViewの往復には依存しない。
-
-`render start`は接続先Hostが所有する`RenderWorker`のジョブを開始し、ジョブIDを返す。音楽座標の部分Renderは`start` / `end`の`MusicalPosition`を受け取り、Runtime境界で既存のRender計画向けtickへ変換する。`trackId`との併用でTrack単位の部分Renderも指定できる。実行中の状態は`job get --id <id>`で取得し、`job cancel --id <id>`で停止を要求する。Attached CLIはRenderWorkerやその子プロセスを直接所有しない。
-
-`expectedSequence` はMutationだけでなく `render.start`、`undo`、`redo` にも適用される。Inspect後に人間の編集が入った場合、対象Snapshotを別の状態でRenderしたり直前の別ユーザーの編集をUndoしたりしないようConflictで拒否する。RenderやUndoのConflictは自動再送せず、最新状態を再Inspectする。SequenceのRevision tokenは同じ `AppCore` の有効期間でだけ成立し、Standaloneのワンショットプロセス間では共有されない。
+- エディタ窓・ダイアログ・窓管理は Desktop shell に残る。open / 録音 / プレビュー / スキャン / 図書館・解析の実行は Host 側を使い、エディタ由来の永続化は Host 内 coordinator の commit で完結する
+- `render start` は接続先 Host の `RenderWorker` にジョブ開始し ID を返す。部分 Render は音楽座標の `start` / `end` と任意の `trackId` で指定する。状態は `job get`、停止は `job cancel` で行う。Worker の所有者は接続先 Host とする
+- `expectedSequence` は `render.start`、`undo`、`redo` にも適用する。Conflict 時は再 Inspect してやり直す。Revision token は同一 `AppCore` の有効期間内でのみ有効
 
 ---
 
@@ -441,12 +465,11 @@ DesktopのTauri command境界が所有する機能と、Live HostのControl Serv
 
 ## 10. NativeApi と境界の対応規則
 
-`src/native/native-api.ts` はTauri命令をドメイン用語のcapability interfaceへ写像する。各Featureは必要なcapabilityだけに依存し、Reactコンポーネントは`invoke`の文字列コマンド名・引数名を直接知らない。ESLintは低レベルのTauri command/event APIを`src/native/`以外からimportすることを禁止する。
+`src/native/api/` は Tauri 命令をドメイン用語の capability interface へ写像する。コマンド名・引数名の知識は capability 層に集約し、各 Feature は必要な capability だけに依存する。低レベル API の import は ESLint で `src/native/` 配下に限定する。
 
-- Host-owned methodは`invokeHost`を使い、開始時のconnection generationと応答時のgenerationが一致しなければ成功結果として扱わない。bootstrap、Host切替、Reconnectの結果は現在generationを更新する
-- Window、dialog、Host selectorのようなDesktop shell-owned methodは通常の`invoke`を使い、Host切替による再同期対象にしない
-- 制作状態を変更するメソッドは `CanonicalState` を含む結果を返す
-- 起動時は `CanonicalState` を受け取り、履歴操作の可否はCoreのHistoryStateを参照する
-- 音声系メソッドは `AudioStatus` を返し、Audio設定Featureが状態遷移と再試行を担う
-- Tauri の失敗は `NativeCommandError` として受け取り、`code` と `details` で分岐する。Native の `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
-- テストでは `native-api-fake.ts` を注入し、呼び出し記録、設定済み応答・失敗、イベント発火だけを扱う。制作規則、履歴、validationはCoreのテストが担う
+- Host 所有の method は `invokeHost` を使う。開始時と応答時の connection generation が一致した応答のみ成功とする。bootstrap・Host 切替・Reconnect は現在 generation を更新する
+- Window・dialog・Host selector など Desktop shell 所有の method は通常の `invoke` を使う。再同期範囲は Host 所有の method に限る
+- 制作状態を変更する method は `CanonicalState` を含む結果を返す。起動時は履歴可否を Core の HistoryState で判定する
+- 音声系 method は `AudioStatus` を返し、状態遷移と再試行は Audio 設定 Feature に集約する
+- 失敗は `NativeCommandError` の `code` と `details` で分岐する。Native の `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
+- テストでは `native-api-fake.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validation は Core のテストが担う

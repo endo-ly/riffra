@@ -32,6 +32,26 @@
     - `ctest --test-dir native/audio-engine/build -C Debug --output-on-failure`
     - `clang-format --style=file -i <changed C++ files>`
 
+### Rust /C++ の境界ルール
+
+Rust owns canonical state.
+C++ owns prepared realtime state.
+
+Rust decides what the project means.
+C++ decides how that state is executed as audio.
+
+Persisted state belongs to Rust.
+Ephemeral realtime state belongs to C++.
+
+Editing creates changes in Rust.
+C++ never independently edits the Project.
+
+Rust sends immutable/versioned execution projections to C++.
+C++ may reject a projection that cannot be executed safely, but does not redefine the domain rules.
+
+Native interactions may originate state changes in C++ (e.g. VST editor),
+but those changes must flow back to Rust if they are to become part of the Project.
+
 ### CSSデザイントークン
 
 - 共通の背景・文字・境界線・アクセント・状態色は、`apps/desktop/src/styles/tokens.css` のRootトークンを正本とし、共通UIから直接参照する。機能別の中継・再定義は作らない。
