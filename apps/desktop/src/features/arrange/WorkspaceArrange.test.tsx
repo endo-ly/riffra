@@ -1461,6 +1461,42 @@ describe('WorkspaceArrange', () => {
     expect(api.calls).not.toContain('moveAudioClips');
   });
 
+  it('adds a Track from the context menu on the empty area below the Tracks', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:instrument',
+      name: 'Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    let addArgs: Parameters<FakeNativeApi['addTrack']> | undefined;
+    api.addTrack = async (...args) => {
+      addArgs = args;
+      api.calls.push('addTrack');
+      return mutationResult(session);
+    };
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const timeline = container.querySelector('[data-arrange-timeline]')!;
+
+    // Act
+    fireEvent.contextMenu(timeline, { clientX: 300, clientY: 300 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add Audio Track' }));
+
+    // Assert: the first Audio Track is numbered independently of Instrument Tracks
+    await waitFor(() => expect(addArgs).toBeDefined());
+    expect(addArgs?.[0]).toBe('Audio 1');
+    expect(addArgs?.[1]).toBe('audio');
+  });
+
   it('disables the timeline loop from the ruler context menu', async () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };

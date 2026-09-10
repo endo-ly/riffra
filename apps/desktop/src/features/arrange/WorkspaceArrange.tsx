@@ -19,6 +19,7 @@ import type {
   MidiClip,
   PluginEntry,
   RuntimeProjectionStatus,
+  TrackKind,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from './arrange-api';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
@@ -822,55 +823,58 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     });
   };
 
-  const openTrackLaneContextMenu = (event: React.MouseEvent, trackId: string, tick: number) => {
+  const addTrack = (kind: TrackKind) =>
+    editor.commit(
+      api.addTrack(
+        `${kind === 'audio' ? 'Audio' : 'Instrument'} ${
+          arrangement.tracks.filter((track) => track.kind === kind).length + 1
+        }`,
+        kind,
+      ),
+    );
+
+  const openTrackAreaContextMenu = (event: React.MouseEvent, trackId: string | null, tick = 0) => {
     event.preventDefault();
-    const track = arrangement.tracks.find((item) => item.id === trackId);
-    if (!track) return;
+    const track = trackId ? arrangement.tracks.find((item) => item.id === trackId) : undefined;
+    if (trackId && !track) return;
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
       items: [
-        {
-          label: 'Add Audio Track',
-          onClick: () =>
-            void editor.commit(
-              props.api.addTrack(`Audio ${arrangement.tracks.length + 1}`, 'audio'),
-            ),
-        },
-        {
-          label: 'Add Instrument Track',
-          onClick: () =>
-            void editor.commit(
-              props.api.addTrack(`Instrument ${arrangement.tracks.length + 1}`, 'instrument'),
-            ),
-        },
-        { separator: true },
-        ...(track.kind === 'instrument'
+        { label: 'Add Audio Track', onClick: () => void addTrack('audio') },
+        { label: 'Add Instrument Track', onClick: () => void addTrack('instrument') },
+        ...(track
           ? [
+              { separator: true },
+              ...(track.kind === 'instrument'
+                ? [
+                    {
+                      label: 'Insert MIDI Clip',
+                      onClick: () => {
+                        setContextMenu(null);
+                        void createEmptyMidiClip(track.id, tick);
+                      },
+                    },
+                    { separator: true },
+                  ]
+                : []),
               {
-                label: 'Insert MIDI Clip',
-                onClick: () => {
-                  setContextMenu(null);
-                  void createEmptyMidiClip(track.id, tick);
-                },
+                label: track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument',
+                onClick: () =>
+                  setPluginPicker({
+                    trackId: track.id,
+                    kind: track.kind === 'audio' ? 'effect' : 'instrument',
+                  }),
               },
               { separator: true },
+              {
+                label: 'Delete Track',
+                danger: true,
+                onClick: () =>
+                  void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0),
+              },
             ]
           : []),
-        {
-          label: track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument',
-          onClick: () =>
-            setPluginPicker({
-              trackId: track.id,
-              kind: track.kind === 'audio' ? 'effect' : 'instrument',
-            }),
-        },
-        { separator: true },
-        {
-          label: 'Delete Track',
-          danger: true,
-          onClick: () => void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0),
-        },
       ],
     });
   };
@@ -990,6 +994,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           className={styles.timeline}
           style={{ width: TRACK_HEADER_WIDTH + timelineWidth }}
           onPointerDown={editor.beginMarquee}
+          onContextMenu={(event) => {
+            if (event.target !== event.currentTarget) return;
+            openTrackAreaContextMenu(event, null);
+          }}
         >
           <ArrangeRuler
             timebase={timebase}
@@ -1098,16 +1106,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               <span className={styles.emptyIcon}>≋</span>
               <strong>Start arranging</strong>
               <div className={styles.emptyActions}>
-                <button onClick={() => void editor.commit(props.api.addTrack('Audio 1', 'audio'))}>
-                  ＋ Add Audio Track
-                </button>
-                <button
-                  onClick={() =>
-                    void editor.commit(props.api.addTrack('Instrument 1', 'instrument'))
-                  }
-                >
-                  ＋ Add Instrument Track
-                </button>
+                <button onClick={() => void addTrack('audio')}>＋ Add Audio Track</button>
+                <button onClick={() => void addTrack('instrument')}>＋ Add Instrument Track</button>
               </div>
             </div>
           ) : (
@@ -1143,7 +1143,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDrop={(event, trackId, trackKind) => {
                     handleDrop(event, trackId, trackKind);
                   }}
-                  onContextMenu={openTrackLaneContextMenu}
+                  onContextMenu={openTrackAreaContextMenu}
                   onDoubleClickLane={
                     track.kind === 'instrument'
                       ? (event, trackId, tick) => {
