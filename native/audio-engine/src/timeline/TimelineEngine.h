@@ -217,10 +217,11 @@ private:
                         std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
                       int sampleCount) noexcept;
-    void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void resetPlaybackTrackState(PreparedTimeline& timeline,
+                                 bool preserveLiveMidiState = false) noexcept;
     void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
+    void requestPlaybackDiscontinuity() noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
-    void requestPlaybackReset() noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateProcessedVariants(double sampleRate, int blockSize,
@@ -270,6 +271,7 @@ private:
     std::atomic<bool> resetPlaybackPending{false};
     std::atomic<bool> seekPending{false};
     std::atomic<std::int64_t> pendingSeekSample{0};
+    std::atomic<std::uint64_t> seekRequestGeneration{0};
     std::atomic<bool> panicAllPending{false};
     bool pendingMonitorLiveInput = false;
     std::uint32_t pendingMonitoringInputChannels = 0;

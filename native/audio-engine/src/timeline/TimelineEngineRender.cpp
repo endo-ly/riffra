@@ -7,6 +7,13 @@
 
 namespace riffra {
 
+void TimelineEngine::requestPlaybackDiscontinuity() noexcept {
+    AudioReadScope activeRead(*this);
+    auto* active = activeRead.get();
+    if (active == nullptr) return;
+    for (auto& trackPtr : active->tracks) trackPtr->runtime->requestTransportDiscontinuity();
+}
+
 void TimelineEngine::mixMetronome(float* const* outputChannels, const int channelCount,
                                   const int sampleCount) noexcept {
     if (sampleCount <= 0) return;
@@ -428,9 +435,15 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
     }
 }
 
-void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcept {
+void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared,
+                                             const bool preserveLiveMidiState) noexcept {
     clearPlaybackTrackState(prepared);
-    for (auto& trackPtr : prepared.tracks) trackPtr->runtime->resetForTransportDiscontinuity();
+    for (auto& trackPtr : prepared.tracks) {
+        if (preserveLiveMidiState)
+            trackPtr->runtime->resetAudioForTransportDiscontinuity();
+        else
+            trackPtr->runtime->resetForTransportDiscontinuity();
+    }
 }
 
 void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcept {
@@ -464,16 +477,6 @@ void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexce
     }
 }
 
-void TimelineEngine::requestPlaybackReset() noexcept {
-    PreparedTimeline* active = nullptr;
-    if (!beginAudioRead(active)) return;
-    if (active != nullptr)
-        for (auto& trackPtr : active->tracks)
-            if (trackPtr != nullptr && trackPtr->runtime != nullptr)
-                trackPtr->runtime->requestTransportDiscontinuity();
-    endAudioRead();
-}
-
 void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
     mix(nullptr, 0, outputChannels, channelCount, sampleCount);
@@ -492,16 +495,16 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
     AudioReadScope activeRead(*this);
     auto* active = activeRead.get();
     if (active == nullptr) return;
-    if (resetPlaybackPending.exchange(false, std::memory_order_acq_rel)) {
-        clearPlaybackTrackState(*active);
-        resetRecordingTrackState(*active);
-    }
-    if (seekPending.exchange(false, std::memory_order_acq_rel)) {
+    const auto resetRequested = resetPlaybackPending.exchange(false, std::memory_order_acq_rel);
+    const auto seekRequested = seekPending.exchange(false, std::memory_order_acq_rel);
+    if (seekRequested)
         timelineSample.store(pendingSeekSample.load(std::memory_order_acquire),
                              std::memory_order_release);
-        clearPlaybackTrackState(*active);
+    if (resetRequested || seekRequested) {
+        resetPlaybackTrackState(*active, true);
         resetRecordingTrackState(*active);
     }
+    const auto renderSeekGeneration = seekRequestGeneration.load(std::memory_order_acquire);
     applyPendingPanic(*active);
     const auto currentState = state.load(std::memory_order_acquire);
     if (currentState == State::stopped || currentState == State::starting) {
@@ -584,7 +587,11 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
             discontinuity.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    timelineSample.store(position, std::memory_order_release);
+    // A seek may arrive while this block is rendering. Do not publish the
+    // older block position over the control-side position of that seek.
+    if (seekRequestGeneration.load(std::memory_order_acquire) == renderSeekGeneration &&
+        !seekPending.load(std::memory_order_acquire))
+        timelineSample.store(position, std::memory_order_release);
 }
 
 }  // namespace riffra

@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 #include "TimelineTestSupport.h"
 
 namespace riffra {
@@ -124,6 +128,60 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     const auto armedTrackIds = engine.status().getProperty("armedTrackIds", {});
     ASSERT_TRUE(armedTrackIds.isArray());
     EXPECT_EQ(armedTrackIds.size(), 1);
+}
+
+TEST(TimelineEngineTest, RecoversAfterRepeatedConcurrentSeeks) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeBuiltInInstrumentSnapshot("track:repeated-seek", true, true),
+                            formats, 48'000.0, 512, error))
+        << error.toStdString();
+
+    constexpr int kBlockSamples = 512;
+    std::atomic<bool> audioRunning{true};
+    std::thread audioThread([&] {
+        std::array<float, kBlockSamples> left{};
+        std::array<float, kBlockSamples> right{};
+        const std::array<float*, 2> outputChannels{left.data(), right.data()};
+        while (audioRunning.load(std::memory_order_acquire)) {
+            left.fill(0.0f);
+            right.fill(0.0f);
+            engine.mix(outputChannels.data(), 2, kBlockSamples);
+            std::this_thread::yield();
+        }
+    });
+
+    // Act: model ruler clicks arriving while the audio callback is running.
+    engine.play();
+    for (int click = 0; click < 24; ++click) {
+        engine.seekToTick(click % 2 == 0 ? 0 : 60);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    engine.seekToTick(0);
+    engine.play();
+    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    audioRunning.store(false, std::memory_order_release);
+    audioThread.join();
+
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputChannels{left.data(), right.data()};
+    engine.mix(outputChannels.data(), 2, kBlockSamples);
+    const auto status = engine.status();
+    const auto instrumentFaults = status.getProperty("instrumentFaults", {});
+
+    // Assert
+    ASSERT_TRUE(instrumentFaults.isArray());
+    ASSERT_EQ(instrumentFaults.size(), 1);
+    EXPECT_EQ(static_cast<juce::int64>(instrumentFaults[0].getProperty("faultCode", -1)), 0);
+    EXPECT_GT(static_cast<juce::int64>(status.getProperty("audioClockSample", 0)), 0);
+    EXPECT_GT(std::max(std::abs(*std::max_element(left.begin(), left.end())),
+                       std::abs(*std::min_element(left.begin(), left.end()))),
+              0.0f);
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {

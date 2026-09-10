@@ -1,5 +1,5 @@
 import type { RuntimeProjectionStatus } from '@/model/domain';
-import { invokeHost } from '../invoke';
+import { invokeHost, invokeLatestHost } from '../invoke';
 
 export async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
   return await invokeHost<RuntimeProjectionStatus>('get_runtime_projection_status');
@@ -22,5 +22,5 @@ export async function goToStartTimeline(): Promise<void> {
 }
 
 export async function seekTimeline(tick: number): Promise<void> {
-  await invokeHost<void>('seek_timeline', { tick });
+  await invokeLatestHost<void>('seek_timeline', { tick }, 'transport:seek');
 }

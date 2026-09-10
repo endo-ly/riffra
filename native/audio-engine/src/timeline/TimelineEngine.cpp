@@ -209,7 +209,7 @@ void TimelineEngine::play() noexcept {
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
     resetPlaybackPending.store(true, std::memory_order_release);
-    requestPlaybackReset();
+    requestPlaybackDiscontinuity();
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -220,7 +220,7 @@ void TimelineEngine::audioDeviceStarted() noexcept {
     // being prepared. AudioRenderPipeline owns the mute during this period;
     // there is never a null active graph between device start and projection.
     resetPlaybackPending.store(true, std::memory_order_release);
-    requestPlaybackReset();
+    requestPlaybackDiscontinuity();
     runtimeDevicesNeedReprepare.store(true, std::memory_order_release);
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
@@ -233,8 +233,9 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
     timelineSample.store(sample, std::memory_order_release);
     pendingSeekSample.store(sample, std::memory_order_release);
+    seekRequestGeneration.fetch_add(1, std::memory_order_acq_rel);
     seekPending.store(true, std::memory_order_release);
-    requestPlaybackReset();
+    requestPlaybackDiscontinuity();
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
