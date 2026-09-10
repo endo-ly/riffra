@@ -1,14 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type {
-  AudioClip,
   AutomationParameter,
   AudioStatus,
   ArrangementMutationResult,
   BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
-  Marker,
-  MidiClip,
   PluginEntry,
   RuntimeProjectionStatus,
   TrackKind,
@@ -25,21 +22,18 @@ import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
 import { PluginPicker } from './inspector/PluginPicker';
 import { InstrumentPicker } from './inspector/InstrumentPicker';
-import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
+import { ContextMenu } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
-import { clearToast, showToast, toast } from '@/shared/toasts';
+import { clearToast, showToast } from '@/shared/toasts';
 import {
   buildTrackTimeline,
   timelineObjectEndTick,
-  clipDurationTicks,
-  countOffGridNotes,
   formatClock,
   formatMusicalPosition,
   ticksPerBar,
   ticksPerBeat,
   timelineGridDensity,
-  snapGridTicks,
   TRACK_HEADER_WIDTH,
   type ArrangeTool,
   type SnapGrid,
@@ -53,6 +47,10 @@ import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeD
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
+import {
+  useArrangeContextMenus,
+  type ArrangePluginPickerRequest,
+} from '@/features/arrange/hooks/useArrangeContextMenus';
 import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
@@ -91,11 +89,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     Partial<Record<string, AutomationParameter>>
   >({});
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    items: ContextMenuItem[];
-  } | null>(null);
   const [confirmRequest, setConfirmRequest] = useState<{
     title: string;
     message: string;
@@ -106,10 +99,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
-  const [pluginPicker, setPluginPicker] = useState<{
-    trackId: string;
-    kind: 'effect' | 'instrument';
-  } | null>(null);
+  const [pluginPicker, setPluginPicker] = useState<ArrangePluginPickerRequest | null>(null);
   const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
     props.api,
     timebase,
@@ -367,72 +357,51 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     zoomToRange,
   ]);
 
-  const openRulerContextMenu = (event: React.MouseEvent<HTMLDivElement>, tick: number) => {
-    event.preventDefault();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        { label: 'Add Marker Here', onClick: () => ruler.addMarkerAt(tick) },
-        {
-          label: 'Set Loop to Selection',
-          onClick: ruler.setLoopToSelection,
-          disabled: !ruler.timeSelection,
-        },
-        {
-          label: 'Set Punch Range',
-          onClick: ruler.setPunchToSelection,
-          disabled: !ruler.timeSelection,
-        },
-        { separator: true },
-        {
-          label: 'Clear Loop',
-          onClick: () => ruler.clearRange('loop'),
-          disabled: !arrangement.loopRange.enabled,
-        },
-        {
-          label: 'Clear Punch',
-          onClick: () => ruler.clearRange('punch'),
-          disabled: !arrangement.punchRange,
-        },
-      ],
+  const setTrackSizeForTrack = (trackId: string, size: TrackSize) => {
+    setTrackSizes((value) => ({ ...value, [trackId]: size }));
+  };
+  const toggleAutomation = (trackId: string) =>
+    setAutomationParameters((current) => ({
+      ...current,
+      [trackId]: current[trackId] ? undefined : 'volume',
+    }));
+
+  const createEmptyMidiClip = async (trackId: string, rawTick: number) => {
+    const track = arrangement.tracks.find((item) => item.id === trackId);
+    if (!track || track.kind !== 'instrument') return;
+    const beforeIds = new Set(arrangement.midiClips.map((clip) => clip.id));
+    const startTick = ruler.timeSelection
+      ? ruler.timeSelection.startTick
+      : editor.snapTick(rawTick);
+    const durationTicks = ruler.timeSelection
+      ? Math.max(1, ruler.timeSelection.endTick - ruler.timeSelection.startTick)
+      : Math.max(1, barTicks);
+    const next = await editor.commit(api.createMidiClip(trackId, startTick, durationTicks));
+    if (!next) return;
+    const created = next.arrangement.midiClips.find((clip) => !beforeIds.has(clip.id));
+    if (!created) return;
+    ruler.clearTimeSelection();
+    detail.openMidiEditor(created);
+  };
+
+  const seekMidiEditor = (tick: number) => {
+    const nextTick = Math.max(0, Math.round(tick));
+    seekLocally(nextTick);
+    void props.api.seekTimeline(nextTick).catch((error) => {
+      if (error instanceof HostConnectionChangedError) return;
+      setMessage(String(error));
     });
   };
 
-  const openRangeContextMenu = (
-    event: React.MouseEvent<HTMLDivElement>,
-    range: 'loop' | 'punch',
-  ) => {
-    event.preventDefault();
-    ruler.selectRange(range);
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: 'Delete',
-          danger: true,
-          onClick: () => {
-            ruler.clearRange(range);
-            ruler.clearSelectedRange();
-          },
-        },
-      ],
-    });
-  };
-
-  const openMarkerContextMenu = (event: React.MouseEvent, marker: Marker) => {
-    event.preventDefault();
-    ruler.selectMarker(marker.id);
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        { label: 'Rename', onClick: () => ruler.renameMarker(marker) },
-        { label: 'Delete', danger: true, onClick: () => ruler.removeMarker(marker) },
-      ],
-    });
-  };
+  const addTrack = (kind: TrackKind) =>
+    editor.commit(
+      api.addTrack(
+        `${kind === 'audio' ? 'Audio' : 'Instrument'} ${
+          arrangement.tracks.filter((track) => track.kind === kind).length + 1
+        }`,
+        kind,
+      ),
+    );
 
   const performDeleteTrack = async (trackId: string) => {
     const requestGeneration = getHostGeneration();
@@ -482,281 +451,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     });
   };
 
-  const openAudioClipContextMenu = (event: React.MouseEvent, clip: AudioClip) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: 'Split at Playhead',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.splitClip(clip, displayTick);
-          },
-        },
-        {
-          label: 'Duplicate',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.duplicateAudioClip(clip.id));
-          },
-        },
-        {
-          label: clip.muted ? 'Unmute' : 'Mute',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.updateAudioClip(clip.id, { muted: !clip.muted }));
-          },
-        },
-        {
-          label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }));
-          },
-        },
-        {
-          label: 'Merge with Previous',
-          disabled: !arrangement.audioClips.some(
-            (item) =>
-              item.id !== clip.id &&
-              item.trackId === clip.trackId &&
-              item.assetId === clip.assetId &&
-              item.startTick + clipDurationTicks(item, timebase) === clip.startTick &&
-              item.sourceRange.end === clip.sourceRange.start,
-          ),
-          onClick: () => {
-            setContextMenu(null);
-            void editor.mergeAudioClipWithPrevious(clip);
-          },
-        },
-        {
-          label: 'Merge with Next',
-          disabled: !arrangement.audioClips.some(
-            (item) =>
-              item.id !== clip.id &&
-              item.trackId === clip.trackId &&
-              item.assetId === clip.assetId &&
-              item.startTick === clip.startTick + clipDurationTicks(clip, timebase) &&
-              item.sourceRange.start === clip.sourceRange.end,
-          ),
-          onClick: () => {
-            setContextMenu(null);
-            void editor.mergeAudioClipWithNext(clip);
-          },
-        },
-        { separator: true },
-        {
-          label: 'Delete',
-          danger: true,
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.removeTimelineClips([clip.id], []));
-          },
-        },
-      ],
-    });
-  };
-
-  const openMidiClipContextMenu = (event: React.MouseEvent, clip: MidiClip) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const gridTicks = snapGridTicks(snap, timebase);
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: 'Open MIDI Editor',
-          onClick: () => {
-            setContextMenu(null);
-            detail.openMidiEditor(clip);
-          },
-        },
-        {
-          label: 'Split at Playhead',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.splitMidiClip(clip, displayTick);
-          },
-        },
-        {
-          label: 'Duplicate',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.duplicateMidiClip(clip.id));
-          },
-        },
-        {
-          label: clip.muted ? 'Unmute' : 'Mute',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.updateMidiClip(clip.id, { muted: !clip.muted }));
-          },
-        },
-        {
-          label: clip.loopEnabled ? 'Disable Loop' : 'Enable Loop',
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.updateMidiClip(clip.id, { loopEnabled: !clip.loopEnabled }));
-          },
-        },
-        {
-          label: 'Quantize',
-          disabled: gridTicks === 0,
-          onClick: () => {
-            setContextMenu(null);
-            const offGrid = countOffGridNotes(clip.notes, gridTicks);
-            if (offGrid === 0) {
-              toast('Notes are already on the grid.');
-              return;
-            }
-            void editor
-              .commit(
-                api.quantizeMidiNotes(
-                  clip.id,
-                  clip.notes.map((note) => note.id),
-                  gridTicks,
-                ),
-              )
-              .then((next) => {
-                if (next)
-                  toast(`Quantized ${offGrid} note${offGrid === 1 ? '' : 's'} to the grid.`);
-              });
-          },
-        },
-        {
-          label: 'Merge with Previous',
-          disabled: !arrangement.midiClips.some(
-            (item) =>
-              item.id !== clip.id &&
-              item.trackId === clip.trackId &&
-              item.startTick + item.durationTicks === clip.startTick,
-          ),
-          onClick: () => {
-            setContextMenu(null);
-            void editor.mergeMidiClipWithPrevious(clip);
-          },
-        },
-        {
-          label: 'Merge with Next',
-          disabled: !arrangement.midiClips.some(
-            (item) =>
-              item.id !== clip.id &&
-              item.trackId === clip.trackId &&
-              item.startTick === clip.startTick + clip.durationTicks,
-          ),
-          onClick: () => {
-            setContextMenu(null);
-            void editor.mergeMidiClipWithNext(clip);
-          },
-        },
-        { separator: true },
-        {
-          label: 'Delete',
-          danger: true,
-          onClick: () => {
-            setContextMenu(null);
-            void editor.commit(api.removeTimelineClips([], [clip.id]));
-          },
-        },
-      ],
-    });
-  };
-
-  const setTrackSizeForTrack = (trackId: string, size: TrackSize) => {
-    setTrackSizes((value) => ({ ...value, [trackId]: size }));
-  };
-  const toggleAutomation = (trackId: string) =>
-    setAutomationParameters((current) => ({
-      ...current,
-      [trackId]: current[trackId] ? undefined : 'volume',
-    }));
-
-  const createEmptyMidiClip = async (trackId: string, rawTick: number) => {
-    const track = arrangement.tracks.find((item) => item.id === trackId);
-    if (!track || track.kind !== 'instrument') return;
-    const beforeIds = new Set(arrangement.midiClips.map((clip) => clip.id));
-    const startTick = ruler.timeSelection
-      ? ruler.timeSelection.startTick
-      : editor.snapTick(rawTick);
-    const durationTicks = ruler.timeSelection
-      ? Math.max(1, ruler.timeSelection.endTick - ruler.timeSelection.startTick)
-      : Math.max(1, barTicks);
-    const next = await editor.commit(api.createMidiClip(trackId, startTick, durationTicks));
-    if (!next) return;
-    const created = next.arrangement.midiClips.find((clip) => !beforeIds.has(clip.id));
-    if (!created) return;
-    ruler.clearTimeSelection();
-    detail.openMidiEditor(created);
-  };
-
-  const seekMidiEditor = (tick: number) => {
-    const nextTick = Math.max(0, Math.round(tick));
-    seekLocally(nextTick);
-    void props.api.seekTimeline(nextTick).catch((error) => {
-      if (error instanceof HostConnectionChangedError) return;
-      setMessage(String(error));
-    });
-  };
-
-  const addTrack = (kind: TrackKind) =>
-    editor.commit(
-      api.addTrack(
-        `${kind === 'audio' ? 'Audio' : 'Instrument'} ${
-          arrangement.tracks.filter((track) => track.kind === kind).length + 1
-        }`,
-        kind,
-      ),
-    );
-
-  const openTrackAreaContextMenu = (event: React.MouseEvent, trackId: string | null, tick = 0) => {
-    event.preventDefault();
-    const track = trackId ? arrangement.tracks.find((item) => item.id === trackId) : undefined;
-    if (trackId && !track) return;
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        { label: 'Add Audio Track', onClick: () => void addTrack('audio') },
-        { label: 'Add Instrument Track', onClick: () => void addTrack('instrument') },
-        ...(track
-          ? [
-              { separator: true },
-              ...(track.kind === 'instrument'
-                ? [
-                    {
-                      label: 'Insert MIDI Clip',
-                      onClick: () => {
-                        setContextMenu(null);
-                        void createEmptyMidiClip(track.id, tick);
-                      },
-                    },
-                    { separator: true },
-                  ]
-                : []),
-              {
-                label: track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument',
-                onClick: () =>
-                  setPluginPicker({
-                    trackId: track.id,
-                    kind: track.kind === 'audio' ? 'effect' : 'instrument',
-                  }),
-              },
-              { separator: true },
-              {
-                label: 'Delete Track',
-                danger: true,
-                onClick: () =>
-                  void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0),
-              },
-            ]
-          : []),
-      ],
-    });
-  };
+  const menus = useArrangeContextMenus({
+    arrangement,
+    api,
+    editor,
+    ruler,
+    detail,
+    snap,
+    timebase,
+    displayTick,
+    setPluginPicker,
+    addTrack,
+    deleteTrack,
+    trackClipCounts,
+    createEmptyMidiClip,
+  });
 
   return (
     <section
@@ -875,7 +584,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           onPointerDown={editor.beginMarquee}
           onContextMenu={(event) => {
             if (event.target !== event.currentTarget) return;
-            openTrackAreaContextMenu(event, null);
+            menus.openTrackAreaContextMenu(event, null);
           }}
         >
           <ArrangeRuler
@@ -897,9 +606,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onLoopHandle={ruler.dragLoopHandle}
             onPunchHandle={ruler.dragPunchHandle}
             onSelectRange={ruler.selectRange}
-            onRulerContextMenu={openRulerContextMenu}
-            onRangeContextMenu={openRangeContextMenu}
-            onMarkerContextMenu={openMarkerContextMenu}
+            onRulerContextMenu={menus.openRulerContextMenu}
+            onRangeContextMenu={menus.openRangeContextMenu}
+            onMarkerContextMenu={menus.openMarkerContextMenu}
             onAddMarker={ruler.addMarkerAt}
             onMoveMarker={ruler.moveMarker}
             onRenameMarker={ruler.renameMarker}
@@ -1022,7 +731,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDrop={(event, trackId, trackKind) => {
                     handleDrop(event, trackId, trackKind);
                   }}
-                  onContextMenu={openTrackAreaContextMenu}
+                  onContextMenu={menus.openTrackAreaContextMenu}
                   onDoubleClickLane={
                     track.kind === 'instrument'
                       ? (event, trackId, tick) => {
@@ -1048,8 +757,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onOpenMidiEditor={(clip) => {
                     detail.openMidiEditor(clip);
                   }}
-                  onAudioClipContextMenu={openAudioClipContextMenu}
-                  onMidiClipContextMenu={openMidiClipContextMenu}
+                  onAudioClipContextMenu={menus.openAudioClipContextMenu}
+                  onMidiClipContextMenu={menus.openMidiClipContextMenu}
                   onRename={(name) => void editor.commit(props.api.updateTrack(track.id, { name }))}
                   onDuplicate={() => void editor.commit(props.api.duplicateTrack(track.id))}
                   onDelete={() =>
@@ -1217,12 +926,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onSummaryChange={setPlaySurfaceSummary}
       />
 
-      {contextMenu && (
+      {menus.contextMenu && (
         <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          items={contextMenu.items}
-          onClose={() => setContextMenu(null)}
+          x={menus.contextMenu.x}
+          y={menus.contextMenu.y}
+          items={menus.contextMenu.items}
+          onClose={menus.closeContextMenu}
         />
       )}
     </section>
