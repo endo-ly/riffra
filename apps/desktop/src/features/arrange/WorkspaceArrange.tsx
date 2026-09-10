@@ -21,7 +21,6 @@ import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
-import { clearToast, showToast } from '@/shared/toasts';
 import {
   buildTrackTimeline,
   timelineObjectEndTick,
@@ -39,6 +38,7 @@ import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
 import { HostConnectionChangedError, getHostGeneration } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
+import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
 import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeDetailController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
@@ -170,13 +170,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     [api],
   );
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
-  // Runtime projection status, rather than Arrangement revision, is the source
-  // of truth for playback health. Marker and other authoring-only edits still
-  // advance the canonical revision without requiring a new audio graph.
-  const playbackOutOfSync =
-    props.runtimeProjectionStatus.state === 'failed' || props.runtimeProjectionFailure !== null;
-  const unavailableClipCount = transport?.unavailableClipIds?.length ?? 0;
-  const missingDeviceCount = transport?.missingDeviceIds?.length ?? 0;
+  const { playbackOutOfSync } = useArrangeStatusToast({
+    runtimeProjectionStatus: props.runtimeProjectionStatus,
+    runtimeProjectionFailure: props.runtimeProjectionFailure ?? null,
+    onRetryRuntimeProjection: props.onRetryRuntimeProjection,
+    editorMessage: editor.message,
+    unavailableClipIds: transport?.unavailableClipIds ?? [],
+    missingDeviceIds: transport?.missingDeviceIds ?? [],
+  });
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
   const focusedTrackId = props.focusedTrackId;
@@ -251,30 +252,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     activeMidiTrack.instrument &&
     !activeInstrumentUnavailable,
   );
-  const statusMessage = playbackOutOfSync
-    ? (props.runtimeProjectionFailure ??
-      props.runtimeProjectionStatus.lastError ??
-      'Playback runtime is out of sync')
-    : unavailableClipCount || missingDeviceCount
-      ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
-      : editor.message;
-  const statusPersistent = playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
-  const retryRuntimeProjection = props.onRetryRuntimeProjection;
-
-  useEffect(() => {
-    if (!statusMessage) {
-      clearToast('arrange.status');
-      return;
-    }
-    showToast('arrange.status', statusMessage, {
-      kind: playbackOutOfSync ? 'error' : 'info',
-      persistent: statusPersistent,
-      ...(playbackOutOfSync
-        ? { action: { label: 'Retry', onClick: () => void retryRuntimeProjection() } }
-        : {}),
-    });
-    return () => clearToast('arrange.status');
-  }, [playbackOutOfSync, retryRuntimeProjection, statusMessage, statusPersistent]);
 
   const detailControls = (
     <>
