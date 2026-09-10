@@ -2,7 +2,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties
 import type {
   AutomationParameter,
   AudioStatus,
-  ArrangementMutationResult,
   BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
@@ -15,15 +14,12 @@ import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
-import { MidiEditorPanel } from './midi-editor/MidiEditorPanel';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
 import { ArrangeDetailArea } from './ArrangeDetailArea';
+import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
+import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
-import { PluginPicker } from './inspector/PluginPicker';
-import { InstrumentPicker } from './inspector/InstrumentPicker';
-import { ContextMenu } from '@/shared/ui/ContextMenu';
-import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import { clearToast, showToast } from '@/shared/toasts';
 import {
@@ -54,7 +50,6 @@ import {
 import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import styles from './WorkspaceArrange.module.css';
-import overlayStyles from './WorkspaceArrangeOverlay.module.css';
 
 interface WorkspaceArrangeProps {
   hostGeneration?: number;
@@ -89,13 +84,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     Partial<Record<string, AutomationParameter>>
   >({});
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
-  const [confirmRequest, setConfirmRequest] = useState<{
-    title: string;
-    message: string;
-    confirmLabel?: string;
-    danger?: boolean;
-    onConfirm: () => void;
-  } | null>(null);
+  const [confirmRequest, setConfirmRequest] = useState<ArrangeConfirmRequest | null>(null);
   const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
@@ -181,8 +170,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     [api],
   );
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
-  const commitMidiEdit = (operation: Promise<ArrangementMutationResult | null>) =>
-    commit(operation);
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
   // advance the canonical revision without requiring a new audio graph.
@@ -495,78 +482,19 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
       />
 
-      {pluginPicker &&
-        (pluginPicker.kind === 'instrument' ? (
-          <InstrumentPicker
-            api={props.api}
-            builtInInstruments={props.builtInInstruments ?? []}
-            plugins={props.plugins}
-            onSelectBuiltIn={(presetId) => {
-              const { trackId } = pluginPicker;
-              setPluginPicker(null);
-              void editor.commit(props.api.setTrackBuiltInInstrument(trackId, presetId));
-            }}
-            onSelectVst3={(plugin) => {
-              const { trackId } = pluginPicker;
-              setPluginPicker(null);
-              void editor.commit(props.api.setTrackVst3Instrument(trackId, plugin.path));
-            }}
-            onClose={() => setPluginPicker(null)}
-          />
-        ) : (
-          <PluginPicker
-            api={props.api}
-            plugins={props.plugins}
-            title="Add Effect"
-            onSelect={(plugin) => {
-              const { trackId } = pluginPicker;
-              setPluginPicker(null);
-              void editor.commit(props.api.addTrackEffect(trackId, plugin.path));
-            }}
-            onClose={() => setPluginPicker(null)}
-          />
-        ))}
-
-      {ruler.markerRename && (
-        <form
-          className={overlayStyles.markerDialog}
-          aria-label="Rename marker"
-          onSubmit={(event) => {
-            event.preventDefault();
-            ruler.saveMarkerRename();
-          }}
-        >
-          <strong>Rename Marker</strong>
-          <label>
-            <span>Name</span>
-            <input
-              autoFocus
-              value={ruler.markerRename.name}
-              onChange={(event) => ruler.updateMarkerRename(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') ruler.cancelMarkerRename();
-              }}
-            />
-          </label>
-          <div>
-            <button type="button" onClick={ruler.cancelMarkerRename}>
-              Cancel
-            </button>
-            <button type="submit">Save</button>
-          </div>
-        </form>
-      )}
-
-      {confirmRequest && (
-        <ConfirmDialog
-          title={confirmRequest.title}
-          message={confirmRequest.message}
-          confirmLabel={confirmRequest.confirmLabel}
-          danger={confirmRequest.danger}
-          onConfirm={confirmRequest.onConfirm}
-          onCancel={() => setConfirmRequest(null)}
-        />
-      )}
+      <ArrangeOverlays
+        api={props.api}
+        plugins={props.plugins}
+        builtInInstruments={props.builtInInstruments ?? []}
+        commit={commit}
+        ruler={ruler}
+        contextMenu={menus.contextMenu}
+        onCloseContextMenu={menus.closeContextMenu}
+        confirmRequest={confirmRequest}
+        onDismissConfirm={() => setConfirmRequest(null)}
+        pluginPicker={pluginPicker}
+        setPluginPicker={setPluginPicker}
+      />
 
       <div
         ref={scrollerRef}
@@ -841,7 +769,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onHeightChange={detail.setHeight}
         collapsedControls={detailControls}
         midiEditor={
-          <MidiEditorPanel
+          <ArrangeMidiEditor
             clip={activeMidiClip}
             timebase={timebase}
             ghostNotes={midiGhostNotes}
@@ -853,56 +781,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onSendMidi={sendMidiPreview}
             onPanicMidi={panicMidiPreview}
             toolbarTrailing={detail.collapsed ? null : detailControls}
-            onAddNote={(clipId, startTick, pitch, durationTicks, velocity, channel) =>
-              commitMidiEdit(
-                props.api.addMidiNote(
-                  clipId,
-                  Math.max(0, Math.round(startTick)),
-                  pitch,
-                  Math.max(1, Math.round(durationTicks)),
-                  velocity,
-                  channel,
-                ),
-              )
-            }
-            onUpdateNote={(clipId, note) =>
-              commitMidiEdit(
-                props.api.updateMidiNote(clipId, note.id, {
-                  note: note.note,
-                  startTick: note.startTick,
-                  durationTicks: note.durationTicks,
-                  velocity: note.velocity,
-                }),
-              )
-            }
-            onUpdateNotes={(clipId, updates) =>
-              commitMidiEdit(
-                props.api.updateMidiNotes(
-                  clipId,
-                  updates.map((update) => ({
-                    noteId: update.noteId,
-                    patch: {
-                      note: update.patch.note,
-                      startTick: update.patch.startTick,
-                      durationTicks: update.patch.durationTicks,
-                      velocity: update.patch.velocity,
-                    },
-                  })),
-                ),
-              )
-            }
-            onRemoveNotes={(clipId, noteIds) =>
-              commitMidiEdit(props.api.removeMidiNotes(clipId, noteIds))
-            }
-            onInsertNotes={(clipId, notes) =>
-              commitMidiEdit(props.api.insertMidiNotes(clipId, notes))
-            }
-            onQuantize={(clipId, noteIds, gridTicks) =>
-              editor.commit(props.api.quantizeMidiNotes(clipId, noteIds, gridTicks))
-            }
-            onDuplicateNotes={(clipId, noteIds, offsetTicks) =>
-              editor.commit(props.api.duplicateMidiNotes(clipId, noteIds, offsetTicks))
-            }
+            api={props.api}
+            commit={commit}
           />
         }
       />
@@ -925,15 +805,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }}
         onSummaryChange={setPlaySurfaceSummary}
       />
-
-      {menus.contextMenu && (
-        <ContextMenu
-          x={menus.contextMenu.x}
-          y={menus.contextMenu.y}
-          items={menus.contextMenu.items}
-          onClose={menus.closeContextMenu}
-        />
-      )}
     </section>
   );
 }
