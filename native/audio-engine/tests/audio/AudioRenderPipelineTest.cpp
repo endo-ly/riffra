@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "audio/AudioRenderPipeline.h"
+#include "audio/PreviewEngine.h"
 #include "recording/ArrangeRecordingSession.h"
 #include "timeline/TimelineEngine.h"
 
@@ -47,6 +48,18 @@ juce::var makeMonitoringSnapshot(const int channelIndex = 0, const bool armed = 
     snapshot->setProperty("timebase", juce::var(timebase));
     snapshot->setProperty("tracks", tracks);
     return juce::var(snapshot);
+}
+
+void fillPreviewBuffer(juce::AudioBuffer<float>& buffer, const float value) {
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+        buffer.setSample(0, sample, value);
+}
+
+float mixOnePreviewSample(PreviewEngine& preview) {
+    std::array<float, 1> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    EXPECT_TRUE(preview.tryMix(outputs.data(), 1, 1, 48'000.0));
+    return output.front();
 }
 
 }  // namespace
@@ -282,49 +295,111 @@ TEST(AudioRenderPipelineTest, MasterGainClampsToMinus90AndZero) {
 }
 
 TEST(AudioRenderPipelineTest, PreviewUsesExistingVoiceForSameKey) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-    juce::AudioBuffer<float> source(1, 16);
-    source.clear();
+    PreviewEngine preview;
+    juce::AudioBuffer<float> first(1, 16);
+    juce::AudioBuffer<float> replacement(1, 16);
+    fillPreviewBuffer(first, 1.0f);
+    fillPreviewBuffer(replacement, 2.0f);
     juce::String error;
 
-    ASSERT_TRUE(callback.startPreview(source, 2, 10, 1.0f, true, error, 7));
-    ASSERT_TRUE(callback.startPreview(source, 4, 12, 1.0f, true, error, 7));
+    ASSERT_TRUE(preview.startPreview(first, 0, first.getNumSamples(), 1.0f, true, error, 7));
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 1.0f);
 
-    EXPECT_TRUE(callback.isPreviewing());
+    ASSERT_TRUE(
+        preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 7));
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 2.0f);
 }
 
 TEST(AudioRenderPipelineTest, PreviewUsesFreeVoicesBeforeStealing) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-    juce::AudioBuffer<float> source(1, 16);
-    source.clear();
+    PreviewEngine preview;
     juce::String error;
 
-    for (int key = 0; key < 8; ++key)
+    for (int key = 0; key < 7; ++key) {
+        juce::AudioBuffer<float> source(1, 1);
+        fillPreviewBuffer(source, static_cast<float>(key + 1));
         ASSERT_TRUE(
-            callback.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+            preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+    }
 
-    ASSERT_TRUE(callback.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, 8));
-    EXPECT_TRUE(callback.isPreviewing());
+    juce::AudioBuffer<float> freeVoice(1, 1);
+    fillPreviewBuffer(freeVoice, 8.0f);
+    ASSERT_TRUE(
+        preview.startPreview(freeVoice, 0, freeVoice.getNumSamples(), 1.0f, true, error, 7));
+
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 36.0f);
+}
+
+TEST(AudioRenderPipelineTest, PreviewStealsOldestVoiceAtCapacity) {
+    PreviewEngine preview;
+    juce::String error;
+
+    for (int key = 0; key < 8; ++key) {
+        juce::AudioBuffer<float> source(1, 1);
+        fillPreviewBuffer(source, static_cast<float>(key + 1));
+        ASSERT_TRUE(
+            preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
+    }
+
+    juce::AudioBuffer<float> replacement(1, 1);
+    fillPreviewBuffer(replacement, 9.0f);
+    ASSERT_TRUE(
+        preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 8));
+
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 44.0f);
 }
 
 TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-    juce::AudioBuffer<float> source(1, 16);
-    juce::AudioBuffer<float> replacement(1, 32);
-    source.clear();
-    replacement.clear();
+    PreviewEngine preview;
+    juce::AudioBuffer<float> source(1, 8);
+    juce::AudioBuffer<float> replacement(1, 8);
+    for (int sample = 0; sample < source.getNumSamples(); ++sample) {
+        source.setSample(0, sample, static_cast<float>(sample));
+        replacement.setSample(0, sample, static_cast<float>(10 + sample));
+    }
     juce::String error;
-    ASSERT_TRUE(callback.startPreview(source, 2, 10, 1.0f, true, error, 7));
-    std::array<float*, 1> output{replacement.getWritePointer(0)};
-    const juce::AudioIODeviceCallbackContext context{};
+    ASSERT_TRUE(preview.startPreview(source, 2, 6, 1.0f, true, error, 7));
 
-    callback.processBlock(nullptr, 0, output.data(), 1, 3, context);
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 2.0f);
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 3.0f);
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 4.0f);
 
-    ASSERT_TRUE(callback.switchPreviewBuffer(7, replacement, error));
-    EXPECT_TRUE(callback.isPreviewing());
+    ASSERT_TRUE(preview.switchPreviewBuffer(7, replacement, error));
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 13.0f);
+}
+
+TEST(AudioRenderPipelineTest, StopPreviewForKeyDoesNotStopOtherVoices) {
+    PreviewEngine preview;
+    juce::AudioBuffer<float> first(1, 1);
+    juce::AudioBuffer<float> second(1, 1);
+    fillPreviewBuffer(first, 1.0f);
+    fillPreviewBuffer(second, 2.0f);
+    juce::String error;
+
+    ASSERT_TRUE(preview.startPreview(first, 0, first.getNumSamples(), 1.0f, true, error, 1));
+    ASSERT_TRUE(preview.startPreview(second, 0, second.getNumSamples(), 1.0f, true, error, 2));
+
+    preview.stopPreviewForKey(1);
+
+    EXPECT_FLOAT_EQ(mixOnePreviewSample(preview), 2.0f);
+}
+
+TEST(AudioRenderPipelineTest, AllNotesOffReleasesSynthVoices) {
+    PreviewEngine preview;
+    preview.startSynthNote(60, 1.0f);
+
+    std::array<float, 256> attack{};
+    const std::array<float*, 1> attackOutputs{attack.data()};
+    ASSERT_TRUE(preview.tryMix(attackOutputs.data(), 1, static_cast<int>(attack.size()), 48'000.0));
+    EXPECT_GT(*std::max_element(attack.begin(), attack.end()), 0.0f);
+
+    preview.allNotesOff();
+
+    std::array<float, 2048> release{};
+    const std::array<float*, 1> releaseOutputs{release.data()};
+    ASSERT_TRUE(
+        preview.tryMix(releaseOutputs.data(), 1, static_cast<int>(release.size()), 48'000.0));
+    EXPECT_TRUE(std::all_of(release.end() - 256, release.end(),
+                            [](const float sample) { return sample == 0.0f; }));
 }
 
 TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {

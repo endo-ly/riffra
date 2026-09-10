@@ -179,6 +179,8 @@ target_sources(riffra-render-core PRIVATE
 )
 
 target_sources(riffra-audio-core PRIVATE
+  src/app/CommandRouting.cpp
+  src/app/CommandRouting.h
   src/protocol/AudioProtocol.cpp
   src/protocol/AudioProtocol.h
   src/app/AudioStatusBuilder.cpp
@@ -471,6 +473,7 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
+    tests/app/CommandRoutingTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp

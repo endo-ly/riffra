@@ -32,10 +32,11 @@ public:
     AudioRenderPipeline(const AudioRenderPipeline&) = delete;
     AudioRenderPipeline& operator=(const AudioRenderPipeline&) = delete;
 
-    // Control thread only. These methods update atomic control state consumed
-    // by processBlock().
+    // Control-side setters update atomic state consumed by processBlock().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
+    // Thread-safe; processBlock() also calls this when the realtime detector
+    // engages protection.
     void setFeedbackProtection(bool active) noexcept;
     [[nodiscard]] std::uint32_t getMuteReasons() const noexcept;
     [[nodiscard]] bool isMuted() const noexcept;
@@ -129,7 +130,8 @@ public:
                       float* const* outputChannelData, int numOutputChannels, int numSamples,
                       const juce::AudioIODeviceCallbackContext& context) noexcept;
 
-    // Main / JUCE message thread only.
+    // Device lifecycle/control side only; these methods are separate from the
+    // audio callback.
     void prepare(juce::AudioIODevice* device);
     void deviceStopped() noexcept;
 

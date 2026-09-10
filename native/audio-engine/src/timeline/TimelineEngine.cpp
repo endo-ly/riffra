@@ -217,7 +217,7 @@ void TimelineEngine::stop() noexcept {
 void TimelineEngine::audioDeviceStarted() noexcept {
     audioClockSample.store(0, std::memory_order_release);
     // Keep the previous graph published while the new device environment is
-    // being prepared. The safety callback owns the mute during this period;
+    // being prepared. AudioRenderPipeline owns the mute during this period;
     // there is never a null active graph between device start and projection.
     resetPlaybackPending.store(true, std::memory_order_release);
     requestPlaybackReset();

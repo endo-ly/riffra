@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "CommandRouting.h"
 #include "midi/MidiInputService.h"
 #include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
@@ -26,55 +27,51 @@ void AudioCommandDispatcher::run(std::istream& input) {
 
 CommandResult AudioCommandDispatcher::dispatch(const juce::var& command) {
     const auto type = command.getProperty("type", {}).toString();
-    if (type == "shutdown") {
-        context.pipeline.setEngineTransitionMute(true);
-        const auto submitted = context.runtimeLifecycle.submit(
-            [&] {
-                if (context.trackPluginEditor != nullptr) {
-                    context.trackPluginEditor->close();
-                    context.trackPluginEditor.reset();
-                    context.trackPluginEditorTrackId.clear();
-                    context.trackPluginEditorDeviceId.clear();
-                }
-                context.timelineOperationRunning.store(false, std::memory_order_release);
-            },
-            std::chrono::seconds(10));
-        if (submitted && !context.runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-            std::_Exit(125);
-        return {true};
-    }
-    if (type == "setEmergencyMute" || type == "setFeedbackProtection" ||
-        type == "setEngineTransitionMute" || type == "setMasterGainDb")
-        return dispatchSafety(command);
-    if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot" ||
-        type == "commitTimelineSnapshot" || type == "discardTimelineSnapshot")
-        return dispatchTimeline(command);
-    if (type == "setTrackDeviceBypassed" || type == "setTrackDeviceParameter" ||
-        type == "getTrackDeviceStatus" || type == "getTrackDeviceParameters" ||
-        type == "setTrackPluginState" || type == "setTrackDeviceProgram" ||
-        type == "openTrackPluginEditor")
-        return dispatchTrackDevice(command);
-    if (type == "playTimeline" || type == "setTransportStarting" || type == "stopTimeline" ||
-        type == "seekTimeline")
-        return dispatchTransport(command);
-    if (type == "enableMidiListening" || type == "disableMidiListening" ||
-        type == "setLiveMidiTarget" || type == "sendTrackMidi" || type == "panicTrackMidi")
-        return dispatchMidi(command);
-    if (type == "startTakeComparison" || type == "switchTakeComparisonVariant" ||
-        type == "stopTakeComparison" || type == "previewSample" || type == "stopPreview")
-        return dispatchPreview(command);
-    if (type == "recoverAudioDevice" || type == "setAudioDriver") return dispatchDevice(command);
-    if (type == "startArrangeRecording" || type == "stopArrangeRecording")
-        return dispatchRecording(command);
-    if (type == "status") {
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-    if (type == "meterStatus") {
-        writeJson(AudioStatusBuilder::currentMeters(context.pipeline));
-        return {};
+    switch (commandFamilyFor(type.toStdString())) {
+        case CommandFamily::shutdown: {
+            context.pipeline.setEngineTransitionMute(true);
+            const auto submitted = context.runtimeLifecycle.submit(
+                [&] {
+                    if (context.trackPluginEditor != nullptr) {
+                        context.trackPluginEditor->close();
+                        context.trackPluginEditor.reset();
+                        context.trackPluginEditorTrackId.clear();
+                        context.trackPluginEditorDeviceId.clear();
+                    }
+                    context.timelineOperationRunning.store(false, std::memory_order_release);
+                },
+                std::chrono::seconds(10));
+            if (submitted && !context.runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
+                std::_Exit(125);
+            return {true};
+        }
+        case CommandFamily::safety:
+            return dispatchSafety(command);
+        case CommandFamily::timeline:
+            return dispatchTimeline(command);
+        case CommandFamily::trackDevice:
+            return dispatchTrackDevice(command);
+        case CommandFamily::transport:
+            return dispatchTransport(command);
+        case CommandFamily::midi:
+            return dispatchMidi(command);
+        case CommandFamily::preview:
+            return dispatchPreview(command);
+        case CommandFamily::device:
+            return dispatchDevice(command);
+        case CommandFamily::recording:
+            return dispatchRecording(command);
+        case CommandFamily::status:
+            if (type == "status") {
+                writeJson(AudioStatusBuilder::currentStatus(
+                    context.deviceController.manager(), context.pipeline,
+                    &context.midiInputs.monitor(), {}, &context.timelineEngine));
+                return {};
+            }
+            writeJson(AudioStatusBuilder::currentMeters(context.pipeline));
+            return {};
+        case CommandFamily::unsupported:
+            break;
     }
     writeJson(makeError("protocol", "Unsupported command: " + type));
     return {};

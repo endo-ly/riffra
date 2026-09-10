@@ -11,8 +11,8 @@ namespace riffra {
 /// Owns preview sample voices and the fallback MIDI synthesizer.
 class PreviewEngine final {
 public:
-    // Control thread only. Audio playback observes the state through the
-    // non-blocking audio guard.
+    // Non-audio callback threads only. Audio playback observes the state
+    // through the non-blocking audio guard.
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
                       bool loop, juce::String& error, int voiceKey = -1);
     void stopPreview() noexcept;
@@ -24,7 +24,7 @@ public:
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
 
-    // Main / JUCE message thread only.
+    // Device lifecycle/control side only.
     void prepare() noexcept;
 
     // Audio thread only. Returns false when a control-thread update currently

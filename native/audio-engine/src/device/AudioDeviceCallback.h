@@ -13,7 +13,7 @@ class AudioDeviceCallback final : public juce::AudioIODeviceCallback {
 public:
     using DeviceStoppedHandler = std::function<void()>;
 
-    // Main / JUCE message thread only.
+    // Construct before the device callbacks are attached.
     explicit AudioDeviceCallback(AudioRenderPipeline& pipeline,
                                  DeviceStoppedHandler deviceStoppedHandler = {});
     ~AudioDeviceCallback() override = default;
@@ -27,7 +27,7 @@ public:
         int numOutputChannels, int numSamples,
         const juce::AudioIODeviceCallbackContext& context) override;
 
-    // Main / JUCE message thread only.
+    // Device lifecycle/control side only; separate from the audio callback.
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     void audioDeviceError(const juce::String& errorMessage) override;
