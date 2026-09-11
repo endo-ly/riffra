@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CreativeSession } from '@/model/domain';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type { NativeEventApi, TransportApi } from '@/native/native-api';
-import { isNewerTransportStatus } from '@/native/transport-status';
 
 interface TransportControllerOptions {
   hostGeneration?: number;
@@ -25,13 +24,11 @@ export function useTransportController({
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelineStarting, setTimelineStarting] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
-  const lastAcceptedSequence = useRef<number | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
   useEffect(() => {
     pendingPlayRef.current = null;
-    lastAcceptedSequence.current = null;
     setTimelinePlaying(false);
     setTimelineStarting(false);
   }, [hostGeneration]);
@@ -103,8 +100,6 @@ export function useTransportController({
   useEffect(() => {
     return api.onTransportStatus((status) => {
       if (getHostGeneration() !== currentHostGeneration.current) return;
-      if (!isNewerTransportStatus(status, lastAcceptedSequence.current)) return;
-      lastAcceptedSequence.current = status.sequence;
       setTimelinePlaying(status.state === 'playing');
       setTimelineStarting(status.state === 'starting');
     });

@@ -254,6 +254,39 @@ mod tests {
         }
     }
 
+    struct OrderedTransportDriver {
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl OrderedTransportDriver {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl TransportDriver for OrderedTransportDriver {
+        fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        fn play_timeline(&self) -> Result<(), RuntimeError> {
+            self.calls.lock().unwrap().push("play".into());
+            Ok(())
+        }
+
+        fn stop_timeline(&self) -> Result<(), RuntimeError> {
+            self.calls.lock().unwrap().push("stop".into());
+            Ok(())
+        }
+
+        fn seek_timeline(&self, tick: u64) -> Result<(), RuntimeError> {
+            self.calls.lock().unwrap().push(format!("seek:{tick}"));
+            Ok(())
+        }
+    }
+
     #[test]
     fn native_play_does_not_hold_the_transport_controller_lock() {
         let driver = Arc::new(FakeTransportDriver::new());
@@ -326,5 +359,25 @@ mod tests {
         seek_thread.join().unwrap();
         assert!(play_thread.join().unwrap().unwrap());
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn multiple_seeks_are_followed_by_play() {
+        let driver = Arc::new(OrderedTransportDriver::new());
+        let executor = TransportExecutor::new(Arc::clone(&driver));
+
+        for tick in [100, 200, 300, 400] {
+            let lease = executor.acquire().unwrap();
+            lease.seek(tick).unwrap();
+        }
+
+        let lease = executor.acquire().unwrap();
+        let operation = lease.request_play(None).operation;
+        assert!(lease.play_if_current(Some(operation), None).unwrap());
+
+        assert_eq!(
+            *driver.calls.lock().unwrap(),
+            vec!["seek:100", "seek:200", "seek:300", "seek:400", "play"]
+        );
     }
 }

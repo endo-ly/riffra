@@ -47,6 +47,7 @@ interface ArrangeRulerControllerOptions {
   displayTickRef: MutableRefObject<number>;
   selectedClipCount: number;
   seekLocally: (tick: number) => void;
+  revealTimelineTick: (tick: number) => void;
   setMessage: (message: string) => void;
 }
 
@@ -59,6 +60,7 @@ export function useArrangeRulerController({
   displayTickRef,
   selectedClipCount,
   seekLocally,
+  revealTimelineTick,
   setMessage,
 }: ArrangeRulerControllerOptions) {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
@@ -179,27 +181,23 @@ export function useArrangeRulerController({
       const originX = event.clientX;
       let seeking = true;
       seekLocally(originTick);
+      revealTimelineTick(originTick);
       void api.seekTimeline(originTick).catch((error) => {
         if (error instanceof HostConnectionChangedError) return;
         setMessage(String(error));
       });
       const handle = (move: globalThis.PointerEvent) => {
-        const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
         if (seeking && Math.abs(move.clientX - originX) > 4) {
           seeking = false;
+          const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
           setTimeSelection({
             startTick: Math.min(originTick, tick),
             endTick: Math.max(originTick, tick),
           });
           return;
         }
-        if (seeking) {
-          seekLocally(tick);
-          void api.seekTimeline(tick).catch((error) => {
-            if (error instanceof HostConnectionChangedError) return;
-            setMessage(String(error));
-          });
-        } else {
+        if (!seeking) {
+          const tick = snapTick((move.clientX - bounds.left) / pixelsPerTick, move.altKey);
           setTimeSelection((current) =>
             current
               ? { startTick: Math.min(originTick, tick), endTick: Math.max(originTick, tick) }
@@ -227,7 +225,7 @@ export function useArrangeRulerController({
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', cancel);
     },
-    [api, pixelsPerTick, seekLocally, setMessage, snapTick],
+    [api, pixelsPerTick, revealTimelineTick, seekLocally, setMessage, snapTick],
   );
 
   const dragLoopHandle = useCallback(
