@@ -285,9 +285,6 @@ private:
     std::atomic<std::uint64_t> audioClockSample{0};
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
-    mutable std::atomic<std::uint64_t> statusRevision{0};
-    mutable std::atomic<double> statusSampleRate{0.0};
-    mutable std::atomic<std::int64_t> statusTimelineTick{0};
     std::atomic<std::uint64_t> graphPublishCount{0};
     std::atomic<std::uint64_t> clockGeneration{0};
     std::atomic<std::uint64_t> discontinuity{1};

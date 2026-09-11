@@ -126,28 +126,6 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     EXPECT_EQ(armedTrackIds.size(), 1);
 }
 
-TEST(TimelineEngineTest, KeepsLastTimelineTickWhenStatusLockIsBusy) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine;
-    juce::String error;
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:status"), formats, 48'000.0, 32, error))
-        << error.toStdString();
-    engine.seekToTick(960);
-    const auto valid = engine.status();
-
-    // Act
-    const auto contended = TimelineEngineTestPeer::statusWhileTimelineLockHeld(engine);
-
-    // Assert
-    EXPECT_EQ(static_cast<juce::int64>(contended.getProperty("timelineTick", -1)),
-              static_cast<juce::int64>(valid.getProperty("timelineTick", -2)));
-    EXPECT_DOUBLE_EQ(static_cast<double>(contended.getProperty("sampleRate", 0.0)),
-                     static_cast<double>(valid.getProperty("sampleRate", -1.0)));
-}
-
 TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
     // Arrange
     juce::AudioFormatManager formats;

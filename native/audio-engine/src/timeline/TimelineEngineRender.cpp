@@ -502,10 +502,6 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         clearPlaybackTrackState(*active);
         resetRecordingTrackState(*active);
     }
-    statusTimelineTick.store(
-        static_cast<std::int64_t>(active->timebase.sampleToTick(
-            timelineSample.load(std::memory_order_acquire), active->outputSampleRate)),
-        std::memory_order_release);
     applyPendingPanic(*active);
     const auto currentState = state.load(std::memory_order_acquire);
     if (currentState == State::stopped || currentState == State::starting) {
@@ -589,9 +585,6 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         }
     }
     timelineSample.store(position, std::memory_order_release);
-    statusTimelineTick.store(static_cast<std::int64_t>(
-                                 active->timebase.sampleToTick(position, active->outputSampleRate)),
-                             std::memory_order_release);
 }
 
 }  // namespace riffra

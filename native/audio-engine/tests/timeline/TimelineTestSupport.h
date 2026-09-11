@@ -571,11 +571,6 @@ public:
 
     static void endAudioReadForTest(TimelineEngine& engine) { engine.endAudioRead(); }
 
-    static juce::var statusWhileTimelineLockHeld(TimelineEngine& engine) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        return engine.status();
-    }
-
     static std::size_t retiredTimelineCount(const TimelineEngine& engine) {
         const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
         return engine.retiredTimelines.size();

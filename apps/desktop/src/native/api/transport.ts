@@ -8,92 +8,123 @@ import {
 } from '../invoke';
 
 interface PendingSeek {
+  kind: 'seek';
   tick: number;
   waiters: { resolve: () => void; reject: (error: unknown) => void }[];
 }
 
-interface TransportCommandQueue {
+type TransportBarrier = 'play_timeline' | 'stop_timeline' | 'go_to_start_timeline';
+
+interface PendingBarrier {
+  kind: 'barrier';
+  command: TransportBarrier;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+type PendingCommand = PendingSeek | PendingBarrier;
+
+type CommandOutcome = { ok: true } | { ok: false; error: unknown };
+
+interface TransportScheduler {
+  key: string;
   hostGeneration: number;
   projectEpoch: number;
-  tail: Promise<void>;
-  pendingSeek: PendingSeek | null;
-  seekTimer: ReturnType<typeof setTimeout> | null;
+  executing: boolean;
+  commands: PendingCommand[];
 }
 
-const transportQueues = new Map<string, TransportCommandQueue>();
+const transportSchedulers = new Map<string, TransportScheduler>();
 
-function currentTransportQueue(): TransportCommandQueue {
-  const key = `host:${getHostGeneration()}:project:${getProjectEpoch()}`;
-  let queue = transportQueues.get(key);
-  if (!queue) {
-    queue = {
-      hostGeneration: getHostGeneration(),
-      projectEpoch: getProjectEpoch(),
-      tail: Promise.resolve(),
-      pendingSeek: null,
-      seekTimer: null,
+function currentTransportScheduler(): TransportScheduler {
+  const hostGeneration = getHostGeneration();
+  const projectEpoch = getProjectEpoch();
+  const key = `host:${hostGeneration}:project:${projectEpoch}`;
+  let scheduler = transportSchedulers.get(key);
+  if (!scheduler) {
+    scheduler = {
+      key,
+      hostGeneration,
+      projectEpoch,
+      executing: false,
+      commands: [],
     };
-    transportQueues.set(key, queue);
+    transportSchedulers.set(key, scheduler);
   }
-  return queue;
+  return scheduler;
 }
 
-function appendTransportCommand(
-  queue: TransportCommandQueue,
-  command: string,
-  args: Record<string, unknown> = {},
+function invokeTransportCommand(
+  scheduler: TransportScheduler,
+  command: PendingCommand,
 ): Promise<void> {
-  const operation = queue.tail.then(() => {
-    if (queue.hostGeneration !== getHostGeneration()) {
-      throw new HostConnectionChangedError();
-    }
-    if (queue.projectEpoch !== getProjectEpoch()) {
-      throw new ProjectChangedError();
-    }
-    return invokeHost<void>(command, args);
-  });
-  queue.tail = operation.catch(() => undefined);
-  return operation;
+  if (scheduler.hostGeneration !== getHostGeneration()) {
+    throw new HostConnectionChangedError();
+  }
+  if (scheduler.projectEpoch !== getProjectEpoch()) {
+    throw new ProjectChangedError();
+  }
+  return command.kind === 'seek'
+    ? invokeHost<void>('seek_timeline', { tick: command.tick })
+    : invokeHost<void>(command.command);
 }
 
-function flushPendingSeek(queue: TransportCommandQueue): Promise<void> {
-  if (queue.seekTimer !== null) {
-    clearTimeout(queue.seekTimer);
-    queue.seekTimer = null;
+function settleCommand(command: PendingCommand, outcome: CommandOutcome): void {
+  if (command.kind === 'seek') {
+    command.waiters.forEach(({ resolve, reject }) => {
+      if (outcome.ok) resolve();
+      else reject(outcome.error);
+    });
+    return;
   }
-  const pending = queue.pendingSeek;
-  if (pending === null) return queue.tail;
-  queue.pendingSeek = null;
-  const operation = appendTransportCommand(queue, 'seek_timeline', { tick: pending.tick });
-  void operation.then(
-    () => pending.waiters.forEach(({ resolve }) => resolve()),
-    (error: unknown) => pending.waiters.forEach(({ reject }) => reject(error)),
-  );
-  return operation;
+  if (outcome.ok) command.resolve();
+  else command.reject(outcome.error);
+}
+
+function pumpTransportScheduler(scheduler: TransportScheduler): void {
+  if (scheduler.executing) return;
+  const command = scheduler.commands.shift();
+  if (command === undefined) {
+    if (transportSchedulers.get(scheduler.key) === scheduler) {
+      transportSchedulers.delete(scheduler.key);
+    }
+    return;
+  }
+
+  scheduler.executing = true;
+  const operation = Promise.resolve().then(() => invokeTransportCommand(scheduler, command));
+  void operation
+    .then(
+      () => settleCommand(command, { ok: true }),
+      (error: unknown) => settleCommand(command, { ok: false, error }),
+    )
+    .finally(() => {
+      scheduler.executing = false;
+      pumpTransportScheduler(scheduler);
+    })
+    .catch(() => undefined);
 }
 
 function queueSeek(tick: number): Promise<void> {
-  const queue = currentTransportQueue();
+  const scheduler = currentTransportScheduler();
   return new Promise<void>((resolve, reject) => {
-    if (queue.pendingSeek === null) {
-      queue.pendingSeek = { tick, waiters: [{ resolve, reject }] };
+    const last = scheduler.commands.at(-1);
+    if (last?.kind === 'seek') {
+      last.tick = tick;
+      last.waiters.push({ resolve, reject });
     } else {
-      queue.pendingSeek.tick = tick;
-      queue.pendingSeek.waiters.push({ resolve, reject });
+      scheduler.commands.push({ kind: 'seek', tick, waiters: [{ resolve, reject }] });
     }
-    if (queue.seekTimer === null) {
-      queue.seekTimer = setTimeout(() => {
-        queue.seekTimer = null;
-        void flushPendingSeek(queue).catch(() => undefined);
-      }, 16);
-    }
+    pumpTransportScheduler(scheduler);
   });
 }
 
-function queueTransportCommand(command: string): Promise<void> {
-  const queue = currentTransportQueue();
-  void flushPendingSeek(queue).catch(() => undefined);
-  return appendTransportCommand(queue, command);
+function queueTransportCommand(command: TransportBarrier): Promise<void> {
+  const scheduler = currentTransportScheduler();
+  return new Promise<void>((resolve, reject) => {
+    scheduler.commands.push({ kind: 'barrier', command, resolve, reject });
+    pumpTransportScheduler(scheduler);
+  });
 }
 
 export async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {

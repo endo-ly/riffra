@@ -33,33 +33,52 @@ describe('transport native API', () => {
   });
 
   afterEach(() => {
+    setHostGeneration(0);
     vi.useRealTimers();
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
-  it('coalesces seeks and keeps a following play behind the latest seek', async () => {
+  it('coalesces human-paced ruler seeks and keeps play behind the latest seek', async () => {
     let releaseSeek!: () => void;
     const seekCompletion = new Promise<void>((resolve) => {
       releaseSeek = resolve;
     });
-    tauriInvoke.mockImplementation((command: string) => {
-      if (command === 'seek_timeline') return seekCompletion;
+    const seekOperations: Promise<void>[] = [];
+    const nativeSeekTicks: number[] = [];
+    tauriInvoke.mockImplementation((command: string, args: { tick?: number }) => {
+      if (command === 'seek_timeline') {
+        nativeSeekTicks.push(args.tick ?? -1);
+        return nativeSeekTicks.length === 1 ? seekCompletion : Promise.resolve(undefined);
+      }
       return Promise.resolve(undefined);
     });
 
-    for (let tick = 0; tick < 100; tick += 1) void seekTimeline(tick);
+    await stopTimeline();
+    tauriInvoke.mockClear();
+
+    for (let tick = 0; tick < 50; tick += 1) {
+      seekOperations.push(seekTimeline(tick));
+      await vi.advanceTimersByTimeAsync(20);
+    }
+
+    expect(nativeSeekTicks).toEqual([0]);
+    expect(tauriInvoke).toHaveBeenCalledTimes(1);
+
     const play = playTimeline();
 
-    await vi.advanceTimersByTimeAsync(0);
-
     expect(tauriInvoke).toHaveBeenCalledTimes(1);
-    expect(tauriInvoke).toHaveBeenCalledWith('seek_timeline', { tick: 99 });
+    expect(tauriInvoke).toHaveBeenCalledWith('seek_timeline', { tick: 0 });
     expect(tauriInvoke).not.toHaveBeenCalledWith('play_timeline', {});
 
     releaseSeek();
     await expect(play).resolves.toBeUndefined();
+    await Promise.all(seekOperations);
 
-    expect(tauriInvoke).toHaveBeenNthCalledWith(2, 'play_timeline', {});
+    expect(tauriInvoke.mock.calls).toEqual([
+      ['seek_timeline', { tick: 0 }],
+      ['seek_timeline', { tick: 49 }],
+      ['play_timeline', {}],
+    ]);
   });
 
   it('keeps stop and go-to-start behind a pending seek', async () => {
@@ -91,7 +110,6 @@ describe('transport native API', () => {
     const seek = seekTimeline(300);
     const seekFailure = expect(seek).rejects.toBeInstanceOf(HostConnectionChangedError);
     setHostGeneration(1);
-    await vi.advanceTimersByTimeAsync(16);
 
     await seekFailure;
     expect(tauriInvoke).not.toHaveBeenCalled();
