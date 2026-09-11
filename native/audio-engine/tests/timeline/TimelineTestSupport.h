@@ -1227,14 +1227,18 @@ public:
                 const auto peak = std::max(*std::max_element(left.begin(), left.end()),
                                            *std::max_element(right.begin(), right.end()));
                 mixed = peak > 0.1f;
+                // A playing seek is committed at the next audio callback.
                 engine.seekToTick(960);
+                engine.mix(channels.data(), 2, static_cast<int>(left.size()));
                 const auto seekStatus = engine.status();
                 seeked =
-                    static_cast<juce::int64>(seekStatus.getProperty("timelineSample", -1)) == 24000;
+                    static_cast<juce::int64>(seekStatus.getProperty("timelineSample", -1)) ==
+                    24'512;
 
                 CaptureIsolationSink captureSink(directory);
                 engine.setRecordingSink(&captureSink);
                 engine.seekToTick(0);
+                engine.mix(channels.data(), 2, static_cast<int>(left.size()));
                 int captureOffset = 0;
                 int captureSamples = 0;
                 std::array<float, 512> physicalInput{};

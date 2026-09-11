@@ -88,7 +88,11 @@ export function advanceProjectEpoch(): number {
   return currentProjectEpoch;
 }
 
-/** Thin bridge to Tauri; command-specific ordering belongs to the owning API. */
+/**
+ * Thin bridge to Tauri. Ordering that affects Session or Runtime correctness
+ * is owned by the Rust Core and Runtime Reconciler; this module only
+ * coalesces high-frequency UI updates through invokeLatestHost below.
+ */
 export function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   return invokeNative<T>(command, args);
 }
