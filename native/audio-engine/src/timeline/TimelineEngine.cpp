@@ -183,6 +183,12 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         monitoringInputChannels.store(pendingMonitoringInputChannels, std::memory_order_release);
         armedInstrumentTrack.store(pendingArmedInstrumentTrack, std::memory_order_release);
         if (!hadActiveTimeline) timelineSample.store(0, std::memory_order_release);
+        statusRevision.store(timeline->revision, std::memory_order_release);
+        statusSampleRate.store(timeline->outputSampleRate, std::memory_order_release);
+        statusTimelineTick.store(
+            static_cast<std::int64_t>(timeline->timebase.sampleToTick(
+                timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate)),
+            std::memory_order_release);
         discontinuity.fetch_add(1, std::memory_order_relaxed);
         graphPublishCount.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);
@@ -209,7 +215,7 @@ void TimelineEngine::play() noexcept {
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
     resetPlaybackPending.store(true, std::memory_order_release);
-    requestPlaybackDiscontinuity();
+    requestPlaybackReset();
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -220,7 +226,7 @@ void TimelineEngine::audioDeviceStarted() noexcept {
     // being prepared. AudioRenderPipeline owns the mute during this period;
     // there is never a null active graph between device start and projection.
     resetPlaybackPending.store(true, std::memory_order_release);
-    requestPlaybackDiscontinuity();
+    requestPlaybackReset();
     runtimeDevicesNeedReprepare.store(true, std::memory_order_release);
     clockGeneration.fetch_add(1, std::memory_order_relaxed);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
@@ -232,10 +238,10 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     if (timeline == nullptr) return;
     const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
     timelineSample.store(sample, std::memory_order_release);
+    statusTimelineTick.store(static_cast<std::int64_t>(tick), std::memory_order_release);
     pendingSeekSample.store(sample, std::memory_order_release);
-    seekRequestGeneration.fetch_add(1, std::memory_order_acq_rel);
     seekPending.store(true, std::memory_order_release);
-    requestPlaybackDiscontinuity();
+    requestPlaybackReset();
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -254,7 +260,8 @@ juce::var TimelineEngine::status() const {
                         static_cast<juce::int64>(audioClockSample.load(std::memory_order_acquire)));
     object->setProperty(
         "sequence", static_cast<juce::int64>(sequence.fetch_add(1, std::memory_order_relaxed) + 1));
-    object->setProperty("graphRevision", 0);
+    object->setProperty("graphRevision",
+                        static_cast<juce::int64>(statusRevision.load(std::memory_order_acquire)));
     object->setProperty(
         "graphPublishCount",
         static_cast<juce::int64>(graphPublishCount.load(std::memory_order_acquire)));
@@ -267,9 +274,14 @@ juce::var TimelineEngine::status() const {
                         static_cast<juce::int64>(clockGeneration.load(std::memory_order_acquire)));
     object->setProperty("discontinuity",
                         static_cast<juce::int64>(discontinuity.load(std::memory_order_acquire)));
-    object->setProperty("revision", 0);
-    object->setProperty("sampleRate", 0.0);
-    object->setProperty("timelineTick", 0);
+    object->setProperty("revision",
+                        static_cast<juce::int64>(statusRevision.load(std::memory_order_acquire)));
+    object->setProperty("sampleRate", statusSampleRate.load(std::memory_order_acquire));
+    object->setProperty("timelineTick", static_cast<juce::int64>(
+                                            statusTimelineTick.load(std::memory_order_acquire)));
+    object->setProperty(
+        "recordingCurrentTick",
+        static_cast<juce::int64>(statusTimelineTick.load(std::memory_order_acquire)));
     const auto phase = recordingPhase.load(std::memory_order_acquire);
     object->setProperty("recordingPhase", phase == RecordingPhase::countingIn  ? "countingIn"
                                           : phase == RecordingPhase::recording ? "recording"
@@ -300,6 +312,9 @@ juce::var TimelineEngine::status() const {
             timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate));
         object->setProperty("timelineTick", tick);
         object->setProperty("recordingCurrentTick", tick);
+        statusRevision.store(timeline->revision, std::memory_order_release);
+        statusSampleRate.store(timeline->outputSampleRate, std::memory_order_release);
+        statusTimelineTick.store(tick, std::memory_order_release);
         object->setProperty("unavailableClipIds", timeline->unavailableClipIds);
         object->setProperty("missingDeviceIds", timeline->missingDeviceIds);
         for (const auto& track : timeline->tracks) {

@@ -21,6 +21,7 @@ pub trait TransportDriver: Send + Sync + 'static {
     fn set_transport_starting(&self) -> Result<(), RuntimeError>;
     fn play_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
+    fn seek_timeline(&self, tick: u64) -> Result<(), RuntimeError>;
 }
 
 /// Combined runtime bound for a driver used by both projection and transport.

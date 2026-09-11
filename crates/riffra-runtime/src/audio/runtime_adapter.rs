@@ -87,6 +87,10 @@ impl TransportDriver for AudioSupervisor {
             .map(|_| ())
             .map_err(RuntimeError::from)
     }
+
+    fn seek_timeline(&self, tick: u64) -> Result<(), RuntimeError> {
+        AudioSupervisor::seek_timeline(self, tick).map_err(RuntimeError::from)
+    }
 }
 
 #[cfg(test)]

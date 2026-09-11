@@ -673,6 +673,10 @@ mod tests {
         fn stop_timeline(&self) -> Result<(), crate::RuntimeError> {
             Ok(())
         }
+
+        fn seek_timeline(&self, _tick: u64) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
     }
 
     fn plugin_base_session() -> CreativeSession {

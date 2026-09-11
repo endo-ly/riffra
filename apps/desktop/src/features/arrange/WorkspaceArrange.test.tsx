@@ -89,11 +89,11 @@ describe('WorkspaceArrange', () => {
     const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
     Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
 
-    api.emitTransportStatus({ timelineTick: 3_840, discontinuity: 2 });
+    api.emitTransportStatus({ timelineTick: 3_840, discontinuity: 2, sequence: 1 });
     await waitFor(() => expect(scroller.scrollLeft).toBe(0));
     scroller.scrollLeft = 700;
 
-    api.emitTransportStatus({ timelineTick: 0, discontinuity: 3 });
+    api.emitTransportStatus({ timelineTick: 0, discontinuity: 3, sequence: 2 });
 
     await waitFor(() => expect(scroller.scrollLeft).toBe(0));
     await waitFor(() =>

@@ -101,14 +101,6 @@ public:
 
     void resetForTransportDiscontinuity() noexcept { requestTransportDiscontinuity(); }
 
-    // The callback resets the instrument/effect state after the control-side
-    // request. Keep live-MIDI routing state intact so events queued after the
-    // request are rendered in the new transport epoch.
-    void resetAudioForTransportDiscontinuity() noexcept {
-        if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();
-        devices.effects.allNotesOff();
-    }
-
     void requestTransportDiscontinuity() noexcept {
         if (devices.instrument != nullptr) devices.instrument->resetForTransportDiscontinuity();
         devices.effects.allNotesOff();

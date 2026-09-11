@@ -37,10 +37,10 @@ describe('useTransportController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await waitFor(() => expect(api.calls).toContain('playTimeline'));
 
-    act(() => api.emitTransportStatus({ state: 'starting' }));
+    act(() => api.emitTransportStatus({ state: 'starting', sequence: 1 }));
     expect(screen.getByText('transport-starting')).toBeInTheDocument();
 
-    act(() => api.emitTransportStatus({ state: 'playing' }));
+    act(() => api.emitTransportStatus({ state: 'playing', sequence: 2 }));
     await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
   });
 
@@ -86,7 +86,7 @@ describe('useTransportController', () => {
     await waitFor(() =>
       expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(1),
     );
-    api.emitTransportStatus({ state: 'playing' });
+    api.emitTransportStatus({ state: 'playing', sequence: 1 });
     await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => expect(api.calls).toContain('stopTimeline'));
@@ -97,5 +97,15 @@ describe('useTransportController', () => {
     );
 
     stop.resolve();
+  });
+
+  it('ignores an older transport status', () => {
+    const api = new FakeNativeApi();
+    render(<Harness api={api} />);
+
+    act(() => api.emitTransportStatus({ state: 'playing', sequence: 2 }));
+    act(() => api.emitTransportStatus({ state: 'stopped', sequence: 1 }));
+
+    expect(screen.getByText('transport-playing')).toBeInTheDocument();
   });
 });

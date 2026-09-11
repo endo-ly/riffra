@@ -742,12 +742,7 @@ impl HostState {
                     ));
                 }
                 self.runtime
-                    .stop_and_seek_to_start(|| {
-                        self.core
-                            .audio()
-                            .seek_timeline(0)
-                            .map_err(RuntimeError::from)
-                    })
+                    .stop_and_seek_to_start()
                     .map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
@@ -758,10 +753,9 @@ impl HostState {
                     ));
                 }
                 let params: SeekParams = decode(params)?;
-                self.core
-                    .audio()
+                self.runtime
                     .seek_timeline(params.tick)
-                    .map_err(audio_error)?;
+                    .map_err(runtime_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
             "audio.status" => Ok((

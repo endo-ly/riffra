@@ -162,6 +162,10 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
     pub(crate) fn stop(&self) -> Result<(), RuntimeError> {
         self.executor.driver.stop_timeline()
     }
+
+    pub(crate) fn seek(&self, tick: u64) -> Result<(), RuntimeError> {
+        self.executor.driver.seek_timeline(tick)
+    }
 }
 
 impl<D: TransportDriver> Drop for TransportExecutionLease<'_, D> {
@@ -181,6 +185,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
+    use std::thread;
     use std::time::Duration;
 
     struct FakeTransportDriver {
@@ -214,6 +219,37 @@ mod tests {
 
         fn stop_timeline(&self) -> Result<(), RuntimeError> {
             self.stopped.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn seek_timeline(&self, _tick: u64) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+    }
+
+    struct BlockingSeekDriver {
+        seek_started: mpsc::Sender<()>,
+        seek_release: Mutex<mpsc::Receiver<()>>,
+        played: AtomicU64,
+    }
+
+    impl TransportDriver for BlockingSeekDriver {
+        fn set_transport_starting(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        fn play_timeline(&self) -> Result<(), RuntimeError> {
+            self.played.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn stop_timeline(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        fn seek_timeline(&self, _tick: u64) -> Result<(), RuntimeError> {
+            self.seek_started.send(()).unwrap();
+            self.seek_release.lock().unwrap().recv().unwrap();
             Ok(())
         }
     }
@@ -255,5 +291,40 @@ mod tests {
         }
 
         assert!(!executor.is_play_requested(first_operation));
+    }
+
+    #[test]
+    fn seek_and_play_never_execute_concurrently() {
+        let (seek_started_sender, seek_started_receiver) = mpsc::channel();
+        let (seek_release_sender, seek_release_receiver) = mpsc::channel();
+        let driver = Arc::new(BlockingSeekDriver {
+            seek_started: seek_started_sender,
+            seek_release: Mutex::new(seek_release_receiver),
+            played: AtomicU64::new(0),
+        });
+        let executor = Arc::new(TransportExecutor::new(Arc::clone(&driver)));
+
+        let seek_executor = Arc::clone(&executor);
+        let seek_thread = thread::spawn(move || {
+            let lease = seek_executor.acquire().unwrap();
+            lease.seek(300).unwrap();
+        });
+        seek_started_receiver.recv().unwrap();
+
+        let (play_attempted_sender, play_attempted_receiver) = mpsc::channel();
+        let play_executor = Arc::clone(&executor);
+        let play_thread = thread::spawn(move || {
+            play_attempted_sender.send(()).unwrap();
+            let lease = play_executor.acquire().unwrap();
+            let operation = lease.request_play(None).operation;
+            lease.play_if_current(Some(operation), None)
+        });
+        play_attempted_receiver.recv().unwrap();
+        assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+
+        seek_release_sender.send(()).unwrap();
+        seek_thread.join().unwrap();
+        assert!(play_thread.join().unwrap().unwrap());
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
     }
 }

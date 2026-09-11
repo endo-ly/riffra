@@ -99,17 +99,12 @@ pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
 pub fn go_to_start_timeline(context: &SessionContext<'_>) -> Result<(), String> {
     context
         .runtime
-        .stop_and_seek_to_start(|| {
-            context
-                .audio
-                .seek_timeline(0)
-                .map_err(crate::RuntimeError::from)
-        })
+        .stop_and_seek_to_start()
         .map_err(String::from)
 }
 
 pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
-    context.audio.seek_timeline(tick.0).map_err(String::from)
+    context.runtime.seek_timeline(tick.0).map_err(String::from)
 }
 
 #[cfg(test)]

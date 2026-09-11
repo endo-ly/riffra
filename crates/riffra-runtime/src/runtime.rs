@@ -245,15 +245,17 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         Ok(self.status())
     }
 
-    pub fn stop_and_seek_to_start<F>(&self, seek: F) -> Result<(), RuntimeError>
-    where
-        F: FnOnce() -> Result<(), RuntimeError>,
-    {
+    pub fn seek_timeline(&self, tick: u64) -> Result<(), RuntimeError> {
+        let lease = self.transport.acquire()?;
+        lease.seek(tick)
+    }
+
+    pub fn stop_and_seek_to_start(&self) -> Result<(), RuntimeError> {
         let lease = self.transport.acquire()?;
         let _ = lease.request_stop();
         self.projection.notify();
         lease.stop()?;
-        seek()
+        lease.seek(0)
     }
 }
 
@@ -384,6 +386,10 @@ mod tests {
 
         fn stop_timeline(&self) -> Result<(), RuntimeError> {
             self.stopped.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn seek_timeline(&self, _tick: u64) -> Result<(), RuntimeError> {
             Ok(())
         }
     }

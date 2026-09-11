@@ -3,6 +3,7 @@ import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/native/contracts';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
 import { getHostGeneration } from '@/native/invoke';
+import { isNewerTransportStatus } from '@/native/transport-status';
 
 export function useArrangeTransport(
   api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
@@ -14,6 +15,7 @@ export function useArrangeTransport(
   const displayTickRef = useRef(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
   const receivedTransportStatus = useRef(false);
+  const lastAcceptedSequence = useRef<number | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
@@ -43,6 +45,7 @@ export function useArrangeTransport(
 
   useEffect(() => {
     receivedTransportStatus.current = false;
+    lastAcceptedSequence.current = null;
     setTransport(null);
     anchor.current = { tick: 0, at: performance.now(), playing: false };
     publishTick(0);
@@ -51,6 +54,8 @@ export function useArrangeTransport(
   useEffect(() => {
     const unlisten = api.onTransportStatus((status) => {
       if (getHostGeneration() !== currentHostGeneration.current) return;
+      if (!isNewerTransportStatus(status, lastAcceptedSequence.current)) return;
+      lastAcceptedSequence.current = status.sequence;
       receivedTransportStatus.current = true;
       setTransport((previous) =>
         transportMeaningfullyChanged(previous, status) ? status : previous,
