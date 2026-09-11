@@ -61,6 +61,7 @@ struct ActiveProjection {
 struct ProjectionState {
     next_operation_id: u64,
     latest_target: Option<RuntimeTarget>,
+    deferred_canonical_key: Option<ProjectionKey>,
     desired_key: Option<ProjectionKey>,
     running_operation_id: Option<u64>,
     active_projection: Option<ActiveProjection>,
@@ -91,6 +92,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             Mutex::new(ProjectionState {
                 next_operation_id: 0,
                 latest_target: None,
+                deferred_canonical_key: None,
                 desired_key: None,
                 running_operation_id: None,
                 active_projection: None,
@@ -144,6 +146,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
         let audio_environment_revision = state.audio_environment_revision;
+        if canonical
+            && state
+                .deferred_canonical_key
+                .is_some_and(|deferred| key.sequence >= deferred.sequence)
+        {
+            state.deferred_canonical_key = None;
+        }
         if canonical
             && state.status.state == RuntimeProjectionState::Failed
             && state.running_operation_id.is_none()
@@ -398,6 +407,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
         state.latest_target = None;
+        state.deferred_canonical_key = None;
         state.desired_key = None;
         state.active_projection = None;
         state.audio_environment_revision = state.audio_environment_revision.saturating_add(1);
@@ -428,6 +438,42 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         drop(state);
         (self.status_hook)(status);
         audio_environment_revision
+    }
+
+    /// Advances the identity of an already active canonical graph without
+    /// preparing or committing another native graph.
+    pub(crate) fn adopt_canonical_without_projection(&self, key: ProjectionKey) {
+        let generation = self.driver.runtime_generation();
+        let status = {
+            let (lock, wake) = &*self.state;
+            let mut state = lock.lock().expect("runtime projection lock poisoned");
+            observe_generation(&mut state, generation);
+
+            let candidate = state
+                .deferred_canonical_key
+                .filter(|deferred| deferred.sequence >= key.sequence)
+                .unwrap_or(key);
+            let adopted = try_adopt_canonical_key(&mut state, generation, candidate);
+            if adopted {
+                state.deferred_canonical_key = None;
+            } else if (state.latest_target.is_some() || state.running_operation_id.is_some())
+                && state
+                    .deferred_canonical_key
+                    .is_none_or(|deferred| candidate.sequence >= deferred.sequence)
+            {
+                state.deferred_canonical_key = Some(candidate);
+            }
+
+            if adopted {
+                wake.notify_all();
+                Some(state.status.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(status) = status {
+            (self.status_hook)(status);
+        }
     }
 }
 
@@ -594,6 +640,7 @@ fn worker_loop<D: ProjectionDriver>(
                         }
                         state.running_operation_id = None;
                         state.status.running_operation_id = None;
+                        try_adopt_deferred_canonical_key(&mut state, driver.runtime_generation());
                         wake.notify_one();
                     }
                     publish_current_status(&state, &status_hook);
@@ -675,6 +722,7 @@ fn worker_loop<D: ProjectionDriver>(
                             RuntimeProjectionState::Idle
                         };
                     }
+                    try_adopt_deferred_canonical_key(&mut state, current_generation);
                     false
                 }
                 Ok(()) => {
@@ -741,6 +789,7 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) {
         return;
     }
     state.active_projection = None;
+    state.deferred_canonical_key = None;
     state.status.active_projection_sequence = None;
     state.status.active_session_revision = None;
     state.status.active_audio_environment_revision = None;
@@ -761,6 +810,53 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) {
     if state.running_operation_id.is_none() && state.latest_target.is_none() {
         state.status.state = RuntimeProjectionState::Idle;
     }
+}
+
+fn try_adopt_deferred_canonical_key(state: &mut ProjectionState, generation: u64) -> bool {
+    let Some(key) = state.deferred_canonical_key else {
+        return false;
+    };
+    if try_adopt_canonical_key(state, generation, key) {
+        state.deferred_canonical_key = None;
+        true
+    } else if state
+        .active_projection
+        .is_some_and(|active| key.sequence < active.key.sequence)
+    {
+        state.deferred_canonical_key = None;
+        false
+    } else {
+        false
+    }
+}
+
+fn try_adopt_canonical_key(
+    state: &mut ProjectionState,
+    generation: u64,
+    key: ProjectionKey,
+) -> bool {
+    let Some(active) = state.active_projection else {
+        return false;
+    };
+    if state.status.state != RuntimeProjectionState::Active
+        || state.latest_target.is_some()
+        || state.running_operation_id.is_some()
+        || !active.canonical
+        || active.runtime_generation != generation
+        || active.audio_environment_revision != state.audio_environment_revision
+        || key.sequence < active.key.sequence
+    {
+        return false;
+    }
+
+    state.active_projection = Some(ActiveProjection { key, ..active });
+    state.desired_key = Some(key);
+    state.status.active_projection_sequence = Some(key.sequence);
+    state.status.active_session_revision = Some(key.session_revision);
+    state.status.active_audio_environment_revision = Some(active.audio_environment_revision);
+    state.status.runtime_generation = generation;
+    state.status.audio_environment_revision = state.audio_environment_revision;
+    true
 }
 
 #[cfg(test)]
@@ -872,5 +968,72 @@ mod tests {
         // Assert
         wait_until(|| driver.loaded.lock().unwrap().as_slice() == [10, 10]);
         assert_eq!(coordinator.status().active_session_revision, Some(10));
+    }
+
+    #[test]
+    fn adopts_a_new_canonical_key_without_repreparing_the_active_graph() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(0, 10));
+        wait_until(|| coordinator.status().active_projection_sequence == Some(0));
+        let prepare_count = driver.prepare_started.load(Ordering::Acquire);
+
+        // Act
+        coordinator.adopt_canonical_without_projection(key(1, 11));
+
+        // Assert
+        assert_eq!(coordinator.status().active_projection_sequence, Some(1));
+        assert_eq!(coordinator.status().active_session_revision, Some(11));
+        assert!(coordinator.is_ready_for(key(1, 11)));
+        assert_eq!(
+            driver.prepare_started.load(Ordering::Acquire),
+            prepare_count
+        );
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn does_not_regress_the_active_key_for_an_older_canonical_state() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(5, 100));
+        wait_until(|| coordinator.status().active_projection_sequence == Some(5));
+
+        // Act
+        coordinator.adopt_canonical_without_projection(key(4, 99));
+
+        // Assert
+        let status = coordinator.status();
+        assert_eq!(status.active_projection_sequence, Some(5));
+        assert_eq!(status.active_session_revision, Some(100));
+        assert!(coordinator.is_ready_for(key(5, 100)));
+    }
+
+    #[test]
+    fn defers_canonical_identity_until_an_in_progress_projection_finishes() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(40)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(1, 10));
+        wait_until(|| coordinator.status().active_projection_sequence == Some(1));
+        coordinator.submit_nonblocking(snapshot(20), key(2, 20));
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
+
+        // Act
+        coordinator.adopt_canonical_without_projection(key(3, 30));
+
+        // Assert
+        let in_progress = coordinator.status();
+        assert_eq!(in_progress.active_projection_sequence, Some(1));
+        assert_eq!(in_progress.target_projection_sequence, Some(2));
+        assert!(in_progress.running_operation_id.is_some());
+
+        wait_until(|| coordinator.status().active_projection_sequence == Some(3));
+        assert_eq!(coordinator.status().active_session_revision, Some(30));
+        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 20]);
+        assert!(coordinator.is_ready_for(key(3, 30)));
     }
 }

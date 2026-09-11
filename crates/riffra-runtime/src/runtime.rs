@@ -139,6 +139,12 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.submit_nonblocking(snapshot, key)
     }
 
+    /// Records that an already active canonical graph also represents a newer
+    /// canonical key without rebuilding the graph.
+    pub(crate) fn adopt_canonical_without_projection(&self, key: ProjectionKey) {
+        self.projection.adopt_canonical_without_projection(key);
+    }
+
     pub fn status(&self) -> RuntimeProjectionStatus {
         if let Ok(mut failure) = self.transport_failure.lock()
             && let Some(message) = failure.take()
@@ -654,6 +660,32 @@ mod tests {
             prepare_count
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
+    }
+
+    #[test]
+    fn pending_play_starts_after_canonical_identity_adoption() {
+        // Arrange
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        reconciler.submit_nonblocking(snapshot(10), key(0, 10));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(0));
+        let prepare_count = driver.prepare_started.load(Ordering::Acquire);
+
+        // Act
+        let play = reconciler.request_play_when_ready(key(1, 11)).unwrap();
+        assert_eq!(driver.played.load(Ordering::Acquire), 0);
+        assert_eq!(driver.starting.load(Ordering::Acquire), 1);
+        reconciler.adopt_canonical_without_projection(key(1, 11));
+
+        // Assert
+        assert!(play);
+        wait_until(|| driver.played.load(Ordering::Acquire) == 1);
+        assert_eq!(
+            driver.prepare_started.load(Ordering::Acquire),
+            prepare_count
+        );
+        assert_eq!(reconciler.status().active_projection_sequence, Some(1));
+        assert_eq!(reconciler.status().active_session_revision, Some(11));
     }
 
     #[test]

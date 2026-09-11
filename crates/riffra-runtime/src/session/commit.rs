@@ -35,7 +35,19 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     safe_mode: bool,
     effect: CanonicalMutationEffect,
 ) -> Result<ArrangementMutationResult, String> {
-    if safe_mode || matches!(effect, CanonicalMutationEffect::CanonicalOnly) {
+    if safe_mode {
+        return Ok(ArrangementMutationResult {
+            canonical,
+            projection: ArrangementProjectionOutcome::NotRequired,
+        });
+    }
+
+    let key = riffra_core::ProjectionKey {
+        sequence: canonical.sequence,
+        session_revision: canonical.session.arrangement.revision,
+    };
+    if matches!(effect, CanonicalMutationEffect::CanonicalOnly) {
+        runtime.adopt_canonical_without_projection(key);
         return Ok(ArrangementMutationResult {
             canonical,
             projection: ArrangementProjectionOutcome::NotRequired,
@@ -48,10 +60,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
             built_in_instruments,
             &canonical.session,
         ),
-        riffra_core::ProjectionKey {
-            sequence: canonical.sequence,
-            session_revision: canonical.session.arrangement.revision,
-        },
+        key,
     );
     let projection = match status.last_error {
         Some(message) => {
