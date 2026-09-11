@@ -94,15 +94,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     timebase,
     props.hostGeneration ?? 0,
   );
-  const {
-    scrollerRef,
-    zoom,
-    pixelsPerTick,
-    applyZoom,
-    zoomToRange,
-    revealTimelineTick,
-    scrollTop,
-  } = useArrangeViewport({ timebase, transport, displayTickRef });
+  const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
+    useArrangeViewport({ timebase, transport, displayTickRef });
   const analyses = useWaveformAnalyses(
     props.api,
     arrangement.audioClips,
@@ -208,7 +201,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     displayTickRef,
     selectedClipCount: selectedClipIds.length,
     seekLocally,
-    revealTimelineTick,
     setMessage: editor.setMessage,
   });
   const detail = useArrangeDetailController({

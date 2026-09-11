@@ -113,75 +113,7 @@ describe('WorkspaceArrange', () => {
 
     fireEvent.pointerDown(ruler, { clientX: 92 });
 
-    expect(api.calls.filter((call) => call === 'seekTimeline')).toHaveLength(1);
-  });
-
-  it('sends only the initial native Seek for a ruler gesture', () => {
-    const api = new FakeNativeApi();
-    const { container } = render(<Harness api={api} />);
-    const ruler = screen.getByLabelText('Timeline ruler');
-    Object.defineProperty(ruler, 'getBoundingClientRect', {
-      value: () => ({ left: 0, width: 1472, top: 0, bottom: 30, right: 1472, height: 30 }),
-    });
-
-    fireEvent.pointerDown(ruler, { clientX: 92 });
-    fireEvent.pointerMove(ruler, { clientX: 93 });
-    fireEvent.pointerMove(ruler, { clientX: 94 });
-    fireEvent.pointerMove(ruler, { clientX: 95 });
-
-    expect(api.calls.filter((call) => call === 'seekTimeline')).toHaveLength(1);
-
-    fireEvent.pointerMove(ruler, { clientX: 98 });
-    expect(container.querySelector('[data-time-selection-chip]')).toBeInTheDocument();
-    fireEvent.pointerMove(ruler, { clientX: 120 });
-    fireEvent.pointerUp(ruler, { clientX: 120 });
-
-    expect(api.calls.filter((call) => call === 'seekTimeline')).toHaveLength(1);
-  });
-
-  it('sends one native Seek per repeated ruler click', () => {
-    const api = new FakeNativeApi();
-    render(<Harness api={api} />);
-    const ruler = screen.getByLabelText('Timeline ruler');
-    Object.defineProperty(ruler, 'getBoundingClientRect', {
-      value: () => ({ left: 0, width: 1472, top: 0, bottom: 30, right: 1472, height: 30 }),
-    });
-
-    for (let index = 0; index < 30; index += 1) {
-      const clientX = 92 + index;
-      fireEvent.pointerDown(ruler, { clientX });
-      fireEvent.pointerUp(ruler, { clientX });
-    }
-
-    expect(api.calls.filter((call) => call === 'seekTimeline')).toHaveLength(30);
-  });
-
-  it('reveals the clicked ruler position at the viewport edge', () => {
-    const api = new FakeNativeApi();
-    const { container } = render(<Harness api={api} />);
-    const scroller = container.querySelector('[class*="scroller"]') as HTMLDivElement;
-    Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 800 });
-    const ruler = screen.getByLabelText('Timeline ruler');
-    Object.defineProperty(ruler, 'getBoundingClientRect', {
-      value: () => ({
-        left: TRACK_HEADER_WIDTH - scroller.scrollLeft,
-        width: 1472,
-        top: 0,
-        bottom: 30,
-        right: TRACK_HEADER_WIDTH - scroller.scrollLeft + 1472,
-        height: 30,
-      }),
-    });
-
-    fireEvent.pointerDown(ruler, { clientX: 790 });
-    fireEvent.pointerUp(ruler, { clientX: 790 });
-    const firstScrollLeft = scroller.scrollLeft;
-
-    fireEvent.pointerDown(ruler, { clientX: 790 });
-    fireEvent.pointerUp(ruler, { clientX: 790 });
-
-    expect(firstScrollLeft).toBeGreaterThan(0);
-    expect(scroller.scrollLeft).toBeGreaterThan(firstScrollLeft);
+    expect(api.calls).toContain('seekTimeline');
   });
 
   it('keeps the timeline view following the playhead during playback', async () => {

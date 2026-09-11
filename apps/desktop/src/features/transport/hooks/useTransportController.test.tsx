@@ -44,36 +44,6 @@ describe('useTransportController', () => {
     await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
   });
 
-  it('shows Starting immediately while the Play request is pending', async () => {
-    const api = new FakeNativeApi();
-    let resolvePlay!: () => void;
-    api.setResponse(
-      'playTimeline',
-      () =>
-        new Promise<void>((resolve) => {
-          resolvePlay = resolve;
-        }),
-    );
-    render(<Harness api={api} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-
-    expect(screen.getByText('transport-starting')).toBeInTheDocument();
-    await waitFor(() => expect(api.calls).toContain('playTimeline'));
-    resolvePlay();
-  });
-
-  it('clears Starting when the Play request fails', async () => {
-    const api = new FakeNativeApi();
-    api.setFailure('playTimeline', new Error('play failed'));
-    render(<Harness api={api} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-
-    expect(screen.getByText('transport-starting')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('transport-starting')).not.toBeInTheDocument());
-  });
-
   it('stops a timeline play request before the playing status arrives', async () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);

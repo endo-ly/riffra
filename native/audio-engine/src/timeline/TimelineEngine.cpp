@@ -231,25 +231,11 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) return;
     const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
-    const auto currentState = state.load(std::memory_order_acquire);
-    switch (currentState) {
-        case State::playing:
-            // Playback seeks cross the audio callback boundary so the existing
-            // discontinuity handling remains atomic with the new position.
-            pendingSeekSample.store(sample, std::memory_order_release);
-            seekPending.store(true, std::memory_order_release);
-            requestPlaybackReset();
-            discontinuity.fetch_add(1, std::memory_order_relaxed);
-            break;
-        case State::stopped:
-        case State::starting:
-        case State::faulted:
-            // Starting has not crossed into playback yet, and faulted cannot
-            // render playback. Both use the stopped cursor semantics.
-            timelineSample.store(sample, std::memory_order_release);
-            seekPending.store(false, std::memory_order_release);
-            break;
-    }
+    timelineSample.store(sample, std::memory_order_release);
+    pendingSeekSample.store(sample, std::memory_order_release);
+    seekPending.store(true, std::memory_order_release);
+    requestPlaybackReset();
+    discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 

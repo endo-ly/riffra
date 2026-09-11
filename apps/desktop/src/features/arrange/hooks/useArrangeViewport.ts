@@ -12,7 +12,6 @@ interface UseArrangeViewportOptions {
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 4;
 const FOLLOW_LINE_RATIO = 0.32;
-const REVEAL_MARGIN = 48;
 
 export function useArrangeViewport({
   timebase,
@@ -41,30 +40,6 @@ export function useArrangeViewport({
       scroller.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + tick * nextPixels - cursor);
     });
   };
-
-  const revealTimelineTick = useCallback(
-    (tick: number) => {
-      const scroller = scrollerRef.current;
-      if (!scroller) return;
-
-      const targetX = TRACK_HEADER_WIDTH + Math.max(0, tick) * pixelsPerTick;
-      const left = scroller.scrollLeft;
-      const right = left + scroller.clientWidth;
-      const margin = Math.min(REVEAL_MARGIN, scroller.clientWidth / 2);
-      let nextScrollLeft = left;
-      if (targetX < left + margin) {
-        nextScrollLeft = Math.max(0, targetX - margin);
-      } else if (targetX > right - margin) {
-        nextScrollLeft = Math.max(0, targetX - scroller.clientWidth + margin);
-      }
-      if (nextScrollLeft === left) return;
-
-      programmaticScrollRef.current = true;
-      followPausedRef.current = false;
-      scroller.scrollLeft = nextScrollLeft;
-    },
-    [pixelsPerTick],
-  );
 
   const zoomToRange = useCallback(
     (startTick: number, endTick: number) => {
@@ -159,13 +134,5 @@ export function useArrangeViewport({
     followPausedRef.current = false;
   }, [pixelsPerTick, transport]);
 
-  return {
-    scrollerRef,
-    zoom,
-    pixelsPerTick,
-    applyZoom,
-    zoomToRange,
-    revealTimelineTick,
-    scrollTop,
-  };
+  return { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop };
 }

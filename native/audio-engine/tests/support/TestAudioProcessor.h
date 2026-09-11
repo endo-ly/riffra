@@ -73,7 +73,6 @@ struct InstrumentTrace final {
     bool processed = false;
     bool released = false;
     bool noteHeld = false;
-    int transportResetBlocks = 0;
     juce::MidiMessage lastMidiMessage;
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
@@ -97,21 +96,16 @@ public:
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         trace.processed = trace.prepared;
-        auto receivedTransportReset = false;
         for (const auto metadata : midi) {
             trace.lastMidiMessage = metadata.getMessage();
             trace.midiMessages.push_back(trace.lastMidiMessage);
             trace.midiSamplePositions.push_back(metadata.samplePosition);
             ++trace.midiMessageCount;
-            receivedTransportReset = receivedTransportReset ||
-                                     trace.lastMidiMessage.isAllNotesOff() ||
-                                     trace.lastMidiMessage.isAllSoundOff();
             if (trace.lastMidiMessage.isNoteOn())
                 trace.noteHeld = true;
             else if (trace.lastMidiMessage.isNoteOff())
                 trace.noteHeld = false;
         }
-        if (receivedTransportReset) ++trace.transportResetBlocks;
         buffer.clear();
         if (trace.noteHeld) {
             for (int channel = 0; channel < buffer.getNumChannels(); ++channel)

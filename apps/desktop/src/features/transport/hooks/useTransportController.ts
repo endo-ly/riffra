@@ -44,7 +44,6 @@ export function useTransportController({
     const current = Promise.resolve()
       .then(operation)
       .catch((error: unknown) => {
-        if (pendingPlayRef.current === current) setTimelineStarting(false);
         logNativeError('Transport operation')(error);
       })
       .finally(() => {
@@ -67,14 +66,10 @@ export function useTransportController({
   const playTransport = useCallback(() => {
     const pending = pendingPlayRef.current;
     if (pending) return pending;
-    if (!sessionRef.current) return Promise.resolve();
     const generationAtRequest = hostGeneration;
-    setTimelineStarting(true);
     return runPlayOperation(async () => {
-      if (!sessionRef.current || currentHostGeneration.current !== generationAtRequest) {
-        setTimelineStarting(false);
-        return;
-      }
+      if (!sessionRef.current) return;
+      if (currentHostGeneration.current !== generationAtRequest) return;
       await api.playTimeline();
     });
   }, [api, hostGeneration, runPlayOperation, sessionRef]);
