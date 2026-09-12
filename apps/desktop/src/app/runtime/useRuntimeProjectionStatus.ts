@@ -13,6 +13,10 @@ interface RuntimeProjectionViewState {
   failure: string | null;
 }
 
+const genericProjectionFailure = 'Audio preparation failed. Retry to prepare audio.';
+const preservedProjectionFailure =
+  'Audio preparation failed. The previous playback state remains available.';
+
 const initialRuntimeProjectionStatus: RuntimeProjectionStatus = {
   state: 'idle',
   operationId: 0,
@@ -33,6 +37,7 @@ const initialRuntimeProjectionStatus: RuntimeProjectionStatus = {
   lastNativeResponseAtMs: null,
   discardedPreparationCount: 0,
   lastError: null,
+  lastErrorCode: null,
 };
 
 const initialRuntimeProjectionViewState: RuntimeProjectionViewState = {
@@ -45,14 +50,18 @@ function reduceRuntimeProjectionStatus(
   next: RuntimeProjectionStatus,
 ): RuntimeProjectionViewState {
   if (next.operationId < current.status.operationId) return current;
+  const transientBusy = next.lastErrorCode === 'timelineBusy';
+  const status: RuntimeProjectionStatus = transientBusy
+    ? { ...next, state: 'queued', lastError: null }
+    : next;
   return {
-    status: next,
+    status,
     failure:
-      next.state === 'failed'
-        ? (next.lastError ?? 'Playback runtime is out of sync')
-        : next.state === 'active'
-          ? null
-          : current.failure,
+      status.state === 'failed'
+        ? status.activeProjectionSequence !== null
+          ? preservedProjectionFailure
+          : genericProjectionFailure
+        : null,
   };
 }
 
@@ -60,6 +69,8 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
   const [viewState, setViewState] = useState<RuntimeProjectionViewState>(
     initialRuntimeProjectionViewState,
   );
+  const [retrying, setRetrying] = useState(false);
+  const retryInFlight = useRef(false);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
@@ -68,6 +79,8 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
     let receivedEvent = false;
     const effectGeneration = hostGeneration;
     setViewState(initialRuntimeProjectionViewState);
+    retryInFlight.current = false;
+    setRetrying(false);
     const publish = (next: RuntimeProjectionStatus) => {
       if (
         disposed ||
@@ -94,17 +107,42 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
   }, [api, hostGeneration]);
 
   const retry = useCallback(async () => {
+    if (retryInFlight.current) return;
+    retryInFlight.current = true;
+    setRetrying(true);
     const requestGeneration = hostGeneration;
+    setViewState((current) => ({
+      status: {
+        ...current.status,
+        state: 'queued',
+        lastError: null,
+        lastErrorCode: null,
+      },
+      failure: null,
+    }));
     try {
       const next = await api.retryRuntimeProjection();
       if (requestGeneration !== currentHostGeneration.current) return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
-    } catch (error) {
+    } catch {
       if (requestGeneration !== currentHostGeneration.current) return;
-      const message = error instanceof Error ? error.message : String(error);
-      setViewState((current) => ({ ...current, failure: message }));
+      setViewState((current) => ({
+        status: {
+          ...current.status,
+          state: 'failed',
+          lastError: null,
+          lastErrorCode: 'retryFailed',
+        },
+        failure:
+          current.status.activeProjectionSequence !== null
+            ? preservedProjectionFailure
+            : genericProjectionFailure,
+      }));
+    } finally {
+      retryInFlight.current = false;
+      if (requestGeneration === currentHostGeneration.current) setRetrying(false);
     }
   }, [api, hostGeneration]);
 
-  return { status: viewState.status, failure: viewState.failure, retry };
+  return { status: viewState.status, failure: viewState.failure, retrying, retry };
 }

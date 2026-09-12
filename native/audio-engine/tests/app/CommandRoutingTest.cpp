@@ -17,8 +17,9 @@ TEST(CommandRoutingTest, PreservesCommandFamilyAssignments) {
     expectFamily(CommandFamily::shutdown, {"shutdown"});
     expectFamily(CommandFamily::safety, {"setEmergencyMute", "setFeedbackProtection",
                                          "setEngineTransitionMute", "setMasterGainDb"});
-    expectFamily(CommandFamily::timeline, {"loadTimelineSnapshot", "prepareTimelineSnapshot",
-                                           "commitTimelineSnapshot", "discardTimelineSnapshot"});
+    expectFamily(CommandFamily::timeline,
+                 {"loadTimelineSnapshot", "prepareTimelineSnapshot", "commitTimelineSnapshot",
+                  "discardTimelineSnapshot", "waitForTimelineIdle"});
     expectFamily(CommandFamily::trackDevice,
                  {"setTrackDeviceBypassed", "setTrackDeviceParameter", "getTrackDeviceStatus",
                   "getTrackDeviceParameters", "getTrackDevicePrograms", "getTrackPluginState",

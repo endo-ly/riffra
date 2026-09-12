@@ -112,6 +112,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     startRecordingNow,
     runtimeProjectionStatus,
     runtimeProjectionFailure,
+    runtimeProjectionRetrying,
     retryRuntimeProjection,
     autosaveError,
     audioPreferenceMessage,
@@ -547,6 +548,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 .map((item) => item.id)}
               runtimeProjectionStatus={runtimeProjectionStatus}
               runtimeProjectionFailure={runtimeProjectionFailure}
+              runtimeProjectionRetrying={runtimeProjectionRetrying}
               onRetryRuntimeProjection={retryRuntimeProjection}
               playSurfaceHost={playSurfaceHost}
             />

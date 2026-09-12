@@ -168,18 +168,18 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                    | ペイロード                          | 意味                                                                                        |
-| --------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------- |
-| `runtime-startup-finished`  | `{ succeeded }`                     | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                            |
-| `audio-status`              | `AudioStatus`                       | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                     |
-| `audio-meters`              | `AudioMeters`                       | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                    |
-| `transport-status`          | `TransportStatus`                   | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                          |
-| `runtime-projection-status` | `RuntimeProjectionStatus`           | 非同期のランタイム投影状態と世代・音声環境 revision（queued / preparing / active / failed） |
-| `runtime-restarted`         | `{ generation }`                    | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                  |
-| `canonical-state-changed`   | `CanonicalState`                    | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                               |
-| `recording-finalized`       | `{ directory, succeeded, message }` | Native処理後の録音Asset登録とArrangement確定の完了結果                                      |
-| `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                 |
-| `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する      |
+| イベント                    | ペイロード                          | 意味                                                                                                      |
+| --------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`  | `{ succeeded }`                     | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                          |
+| `audio-status`              | `AudioStatus`                       | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                                   |
+| `audio-meters`              | `AudioMeters`                       | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                                  |
+| `transport-status`          | `TransportStatus`                   | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                                        |
+| `runtime-projection-status` | `RuntimeProjectionStatus`           | 非同期のランタイム投影状態、エラーコード、世代・音声環境 revision（queued / preparing / active / failed） |
+| `runtime-restarted`         | `{ generation }`                    | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                |
+| `canonical-state-changed`   | `CanonicalState`                    | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                             |
+| `recording-finalized`       | `{ directory, succeeded, message }` | Native処理後の録音Asset登録とArrangement確定の完了結果                                                    |
+| `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                               |
+| `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                    |
 
 - 購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
 - エディタ由来の state / parameter 変更は Host 内の正準保存で完結する
@@ -193,14 +193,14 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 - 起動: `riffra-audio --serve`。`AudioSupervisor` が起動を待ち（`SIDECAR_READY_TIMEOUT`）、起動ごとに世代番号を採番する
 - 送受信: JSON Lines（1 コマンド = stdin 1 行、1 応答 = stdout 1 行）
 - 相関: `command_bus.rs` が `requestId`（原子カウンタ）を付与し、応答は同一 ID を返す。`Condvar` で待機側へ配送する
-- 期限: 通常は `COMMAND_ACK_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT`。期限切れは失敗報告で確定する
+- 期限: 通常は `COMMAND_ACK_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` と呼び出し側の残り時間の短い方、`waitForTimelineIdle` は呼び出し側の残り時間を使う。期限切れは失敗報告で確定する
 
 ### 5.2 コマンド分類
 
 | 分類                | コマンド                                                                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 状態照会            | `status`、`meterStatus`                                                                                                           |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                                    |
+| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                             |
 | トランスポート      | `playTimeline`、`stopTimeline`、`seekTimeline`                                                                                    |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |
@@ -221,9 +221,10 @@ MIDI 系の意味づけは次の通り。
 ### 5.3 応答形式
 
 ```jsonc
-// 成功: 状態かメーターのいずれか
+// 成功: 状態、メーター、またはタイムラインの待機完了
 {"type": "audioStatus", "requestId": N, ...}
 {"type": "audioMeters", "requestId": N, ...}
+{"type": "timelineIdleAck", "requestId": N}
 // 失敗: 構造化エラー
 {"type": "error", "requestId": N, "kind": "...", "message": "...", "operation": "...", "details": {...}}
 ```

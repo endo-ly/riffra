@@ -200,6 +200,7 @@ export class FakeNativeApi implements NativeApi {
       lastNativeResponseAtMs: null,
       discardedPreparationCount: 0,
       lastError: null,
+      lastErrorCode: null,
     };
     for (const [name, response] of Object.entries(options.responses ?? {})) {
       this.responses.set(name as keyof NativeApi, response);

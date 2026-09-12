@@ -64,6 +64,7 @@ interface WorkspaceArrangeProps {
   onToggleTransport: () => void;
   runtimeProjectionStatus: RuntimeProjectionStatus;
   runtimeProjectionFailure: string | null;
+  runtimeProjectionRetrying: boolean;
   onRetryRuntimeProjection: () => Promise<void>;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
@@ -173,6 +174,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { playbackOutOfSync } = useArrangeStatusToast({
     runtimeProjectionStatus: props.runtimeProjectionStatus,
     runtimeProjectionFailure: props.runtimeProjectionFailure ?? null,
+    runtimeProjectionRetrying: props.runtimeProjectionRetrying,
     onRetryRuntimeProjection: props.onRetryRuntimeProjection,
     editorMessage: editor.message,
     unavailableClipIds: transport?.unavailableClipIds ?? [],

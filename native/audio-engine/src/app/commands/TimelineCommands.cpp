@@ -14,6 +14,29 @@ constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(45);
 
 CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command) {
     const auto type = command.getProperty("type", {}).toString();
+    if (type == "waitForTimelineIdle") {
+        const auto requestId = currentRequestId();
+        const auto timeoutMs = command.getProperty("timeoutMs", 0).toString().getLargeIntValue();
+        if (timeoutMs <= 0) {
+            writeJson(
+                makeError("invalidCommand", "waitForTimelineIdle requires a positive timeoutMs.",
+                          "runtime.timeline.waitForIdle"),
+                requestId);
+            return {};
+        }
+        if (!context.runtimeLifecycle.waitForIdle(std::chrono::milliseconds(timeoutMs))) {
+            writeJson(makeError("runtimeLifecycle",
+                                "The VST lifecycle executor did not become idle in time.",
+                                "runtime.timeline.waitForIdle"),
+                      requestId);
+            return {};
+        }
+        auto* ack = new juce::DynamicObject();
+        ack->setProperty("type", "timelineIdleAck");
+        writeJson(juce::var(ack), requestId);
+        return {};
+    }
+
     if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot") {
         if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
             writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));

@@ -112,7 +112,7 @@ native/audio-engine/
 | 分類                  | コマンド例                                                                                                                        |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 状態照会              | `status`、`meterStatus`                                                                                                           |
-| 投影                  | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`                                                    |
+| 投影                  | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                             |
 | トランスポート        | `playTimeline`、`stopTimeline`、`seekTimeline`、`setTransportStarting`                                                            |
 | デバイス・安全        | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
 | トラック / プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |

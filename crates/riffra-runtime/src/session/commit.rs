@@ -62,17 +62,18 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         ),
         key,
     );
-    let projection = match status.last_error {
-        Some(message) => {
-            runtime.mark_projection_failed(message.clone());
-            ArrangementProjectionOutcome::Failed { message }
+    let projection = match status.state {
+        RuntimeProjectionState::Failed => {
+            let message = if status.active_projection_sequence.is_some() {
+                "Audio preparation failed. The previous playback state remains available."
+            } else {
+                "Audio preparation failed. Retry to prepare audio."
+            };
+            ArrangementProjectionOutcome::Failed {
+                message: message.into(),
+            }
         }
-        None if status.state == RuntimeProjectionState::Failed => {
-            let message = "runtime projection failed".to_owned();
-            runtime.mark_projection_failed(message.clone());
-            ArrangementProjectionOutcome::Failed { message }
-        }
-        None => ArrangementProjectionOutcome::Queued,
+        _ => ArrangementProjectionOutcome::Queued,
     };
     Ok(ArrangementMutationResult {
         canonical,

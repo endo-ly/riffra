@@ -154,10 +154,6 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.status()
     }
 
-    pub fn mark_projection_failed(&self, message: String) {
-        self.projection.mark_failed(message)
-    }
-
     /// Invalidates the active graph after the native audio device environment
     /// changes, so the canonical Session is prepared with the new sample rate
     /// and block size.

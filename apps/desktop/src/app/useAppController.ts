@@ -321,6 +321,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     startRecordingNow,
     runtimeProjectionStatus: runtimeProjection.status,
     runtimeProjectionFailure: runtimeProjection.failure,
+    runtimeProjectionRetrying: runtimeProjection.retrying,
     retryRuntimeProjection: runtimeProjection.retry,
   };
 }

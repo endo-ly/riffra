@@ -46,13 +46,11 @@ export function useStartupRuntimeRestore({
     try {
       const nextAudio = await retryStartupRuntime();
       if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
-    } catch (error) {
+    } catch {
       if (currentHostGeneration.current !== requestGeneration) return;
       showToast(
         'vst3-scan',
-        `Startup runtime restore failed after the catalog scan: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        'Audio preparation after the plugin scan failed. Check the Arrange status and retry.',
         { kind: 'error' },
       );
     }
