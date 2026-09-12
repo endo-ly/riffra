@@ -25,7 +25,7 @@ export function useRuntimeRestartNotification({
         getHostGeneration() !== hostGeneration
       )
         return;
-      toast('Audio Runtime restarted; Rust is restoring the current runtime.');
+      toast('Audio engine recovered; the current runtime is ready.');
     });
     return () => {
       disposed = true;

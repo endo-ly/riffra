@@ -394,7 +394,7 @@ fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
             let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
-        Some("transportStatus" | "timelineAck") => {
+        Some("transportStatus" | "timelineAck" | "timelineIdleAck") => {
             Some(ParsedNativeLine::Acknowledgement { request_id })
         }
         Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
@@ -512,7 +512,7 @@ pub(super) fn handle_native_stdout(
             let detail = error.to_string();
             if fault {
                 set_faulted(status, detail.clone());
-            } else {
+            } else if error.descriptor().kind != "timelineBusy" {
                 set_command_error(status, detail.clone());
             }
             Some(NativeReply {
@@ -597,6 +597,20 @@ mod tests {
         let current = status.lock().unwrap();
         assert!(matches!(current.state, AudioState::Ready));
         assert!(current.message.contains("load failed"));
+    }
+
+    #[test]
+    fn timeline_busy_preserves_audio_status_without_publishing_native_detail() {
+        let status = test_status();
+        let reply = handle_native_stdout(
+            &status,
+            br#"{"type":"error","kind":"timelineBusy","operation":"timeline.prepare","message":"Another Arrangement Graph is still loading a VST3."}"#,
+        )
+        .expect("timeline busy reply");
+        let current = status.lock().unwrap();
+        assert!(reply.result.is_err());
+        assert!(matches!(current.state, AudioState::Ready));
+        assert_eq!(current.message, "ready");
     }
 
     #[test]

@@ -12,6 +12,9 @@ pub trait ProjectionDriver: Send + Sync + 'static {
     ) -> Result<(), RuntimeError>;
     fn commit_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;
     fn discard_timeline_snapshot(&self, timeout: Duration) -> Result<(), RuntimeError>;
+    fn wait_for_timeline_idle(&self, _timeout: Duration) -> Result<(), RuntimeError> {
+        Ok(())
+    }
     fn runtime_generation(&self) -> u64;
     fn force_shutdown(&self) {}
 }

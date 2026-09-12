@@ -30,6 +30,7 @@ function Harness({
   onToggleTransport,
   runtimeProjectionStatus,
   runtimeProjectionFailure,
+  runtimeProjectionRetrying,
   onRetryRuntimeProjection,
 }: {
   api: FakeNativeApi;
@@ -37,6 +38,7 @@ function Harness({
   onToggleTransport?: () => void;
   runtimeProjectionStatus?: RuntimeProjectionStatus;
   runtimeProjectionFailure?: string | null;
+  runtimeProjectionRetrying?: boolean;
   onRetryRuntimeProjection?: () => Promise<void>;
 }) {
   const initial = initialSession ?? defaultSession();
@@ -63,9 +65,10 @@ function Harness({
         runtimeProjectionFailure={
           runtimeProjectionFailure ??
           (runtimeProjectionStatus?.state === 'failed'
-            ? (runtimeProjectionStatus.lastError ?? 'Playback runtime is out of sync')
+            ? 'Audio preparation failed. Retry to prepare audio.'
             : null)
         }
+        runtimeProjectionRetrying={runtimeProjectionRetrying ?? false}
         onRetryRuntimeProjection={onRetryRuntimeProjection ?? noopRetryRuntimeProjection}
         playSurfaceHost={playSurfaceHost}
       />
@@ -1346,6 +1349,7 @@ describe('WorkspaceArrange', () => {
       state: 'failed',
       operationId: 1,
       lastError: 'native rejected',
+      lastErrorCode: 'nativeRejected',
     };
 
     // Act
@@ -1353,7 +1357,7 @@ describe('WorkspaceArrange', () => {
       <Harness
         api={api}
         runtimeProjectionStatus={runtimeProjectionStatus}
-        runtimeProjectionFailure="native rejected"
+        runtimeProjectionFailure="Audio preparation failed. Retry to prepare audio."
         onRetryRuntimeProjection={async () => {
           retryCount += 1;
         }}
@@ -1361,9 +1365,54 @@ describe('WorkspaceArrange', () => {
     );
 
     // Assert
-    expect(await screen.findByText('native rejected')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Audio preparation failed. Retry to prepare audio.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('native rejected')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(retryCount).toBe(1);
+  });
+
+  it('shows projection loading without presenting a retry action', async () => {
+    const api = new FakeNativeApi();
+    const runtimeProjectionStatus: RuntimeProjectionStatus = {
+      ...api.runtimeProjection,
+      state: 'failed',
+      operationId: 2,
+      runningOperationId: 2,
+      lastError: 'native detail must stay internal',
+      lastErrorCode: 'timelineBusy',
+    };
+
+    render(<Harness api={api} runtimeProjectionStatus={runtimeProjectionStatus} />);
+
+    expect(await screen.findByText('Preparing audio…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByText('native detail must stay internal')).not.toBeInTheDocument();
+  });
+
+  it('shows retrying without presenting a busy error action', async () => {
+    const api = new FakeNativeApi();
+    const runtimeProjectionStatus: RuntimeProjectionStatus = {
+      ...api.runtimeProjection,
+      state: 'failed',
+      operationId: 3,
+      runningOperationId: 3,
+      lastError: 'native busy detail must stay internal',
+      lastErrorCode: 'timelineBusy',
+    };
+
+    render(
+      <Harness
+        api={api}
+        runtimeProjectionStatus={runtimeProjectionStatus}
+        runtimeProjectionRetrying
+      />,
+    );
+
+    expect(await screen.findByText('Retrying audio preparation…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByText('native busy detail must stay internal')).not.toBeInTheDocument();
   });
 
   it('renders one shared grid for a long timeline regardless of Track count', () => {

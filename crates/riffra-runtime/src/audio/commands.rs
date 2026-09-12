@@ -131,6 +131,17 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn wait_for_timeline_idle(&self, timeout: Duration) -> NativeAudioResult<()> {
+        self.send_command_ack(
+            serde_json::json!({
+                "type": "waitForTimelineIdle",
+                "timeoutMs": timeout.as_millis().min(u64::MAX as u128) as u64,
+            }),
+            "",
+            timeout,
+        )
+    }
+
     pub fn play_timeline(&self) -> NativeAudioResult<()> {
         self.send_command(serde_json::json!({"type": "playTimeline"}), "")?;
         Ok(())

@@ -171,6 +171,7 @@ Core の `RuntimeProjection` Port は、正準スナップショットとその�
 | `prepare_timeline_snapshot(snapshot)` | 投影候補をサイドカーへ渡して事前構築（VST読み込み・グラフ構築）。まだ再生されない |
 | `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                  |
 | `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                              |
+| `wait_for_timeline_idle()`            | タイムライン処理の競合時に、サイドカーのライフサイクル処理が完了するまで待つ      |
 
 再生状態の所有分担は次の通り。
 

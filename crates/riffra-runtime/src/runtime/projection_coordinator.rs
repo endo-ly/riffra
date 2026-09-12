@@ -17,6 +17,7 @@ pub(crate) struct ProjectionOperation {
     pub(crate) key: ProjectionKey,
 }
 
+#[derive(Clone)]
 struct RuntimeTarget {
     operation_id: u64,
     key: ProjectionKey,
@@ -161,6 +162,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             state.latest_target = None;
             state.status.state = RuntimeProjectionState::Idle;
             state.status.last_error = None;
+            state.status.last_error_code = None;
         }
         if canonical
             && state.running_operation_id.is_none()
@@ -257,6 +259,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             last_native_response_at_ms: None,
             discarded_preparation_count: 0,
             last_error: None,
+            last_error_code: None,
         };
         let status = state.status.clone();
         wake.notify_one();
@@ -390,6 +393,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.state = RuntimeProjectionState::Failed;
         state.status.running_operation_id = state.running_operation_id;
         state.status.last_error = Some(message);
+        state.status.last_error_code = Some("runtime".into());
         state.status.completed_at_ms = Some(now_ms());
         let status = state.status.clone();
         wake.notify_all();
@@ -432,6 +436,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.completed_at_ms = None;
         state.status.last_native_response_at_ms = None;
         state.status.last_error = None;
+        state.status.last_error_code = None;
         let audio_environment_revision = state.audio_environment_revision;
         let status = state.status.clone();
         wake.notify_all();
@@ -594,7 +599,8 @@ fn worker_loop<D: ProjectionDriver>(
             match publish_result {
                 Some(result_value) => {
                     result = result_value;
-                    if result.is_err() {
+                    if result.is_err() && !matches!(&result, Err(error) if is_timeline_busy(error))
+                    {
                         let _ = driver.discard_timeline_snapshot(
                             remaining_timeout(target.deadline, Duration::from_secs(3))
                                 .unwrap_or(Duration::from_millis(1)),
@@ -645,6 +651,25 @@ fn worker_loop<D: ProjectionDriver>(
                     }
                     publish_current_status(&state, &status_hook);
                     continue;
+                }
+            }
+        }
+
+        if let Err(error) = &result
+            && is_timeline_busy(error)
+        {
+            let wait_result = remaining_timeout(target.deadline, TIMELINE_PREPARE_TIMEOUT)
+                .and_then(|timeout| driver.wait_for_timeline_idle(timeout));
+            match wait_result {
+                Ok(()) if requeue_after_timeline_busy(&state, &target) => {
+                    publish_current_status(&state, &status_hook);
+                    continue;
+                }
+                Ok(()) => {
+                    result = Err(RuntimeError::ShuttingDown);
+                }
+                Err(error) => {
+                    result = Err(error);
                 }
             }
         }
@@ -714,6 +739,7 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_audio_environment_revision = None;
                         state.status.completed_at_ms = Some(completed_at_ms);
                         state.status.last_error = None;
+                        state.status.last_error_code = None;
                         state.status.state = if state.latest_target.is_some() {
                             RuntimeProjectionState::Queued
                         } else if state.active_projection.is_some() {
@@ -747,6 +773,7 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_session_revision = None;
                         state.status.prepared_audio_environment_revision = None;
                         state.status.last_error = Some(error.to_string());
+                        state.status.last_error_code = Some(runtime_error_code(&error));
                     }
                     false
                 }
@@ -755,6 +782,63 @@ fn worker_loop<D: ProjectionDriver>(
         publish_current_status(&state, &status_hook);
         state.1.notify_one();
     }
+}
+
+fn is_timeline_busy(error: &RuntimeError) -> bool {
+    matches!(
+        error,
+        RuntimeError::Native { kind, .. } if kind == "timelineBusy"
+    )
+}
+
+fn runtime_error_code(error: &RuntimeError) -> String {
+    match error {
+        RuntimeError::Native { kind, .. } => kind.clone(),
+        RuntimeError::RuntimeUnavailable(_) => "runtimeUnavailable".into(),
+        RuntimeError::Timeout { .. } => "timeout".into(),
+        RuntimeError::TransportLost { .. } => "transportLost".into(),
+        RuntimeError::GenerationChanged { .. } => "generationChanged".into(),
+        RuntimeError::Superseded { .. } => "superseded".into(),
+        RuntimeError::Cancelled { .. } => "cancelled".into(),
+        RuntimeError::NativeRejected(_) => "nativeRejected".into(),
+        RuntimeError::ShuttingDown => "shuttingDown".into(),
+        RuntimeError::Internal(_) => "internal".into(),
+    }
+}
+
+fn requeue_after_timeline_busy(
+    state: &Arc<(Mutex<ProjectionState>, Condvar)>,
+    target: &RuntimeTarget,
+) -> bool {
+    let (lock, wake) = &**state;
+    let Ok(mut state) = lock.lock() else {
+        return false;
+    };
+    if state.stop_requested {
+        state.running_operation_id = None;
+        state.status.running_operation_id = None;
+        wake.notify_all();
+        return false;
+    }
+
+    if state.status.operation_id == target.operation_id && state.latest_target.is_none() {
+        state.latest_target = Some(target.clone());
+        state.status.state = RuntimeProjectionState::Queued;
+        state.status.target_projection_sequence = Some(target.key.sequence);
+        state.status.target_session_revision = Some(target.key.session_revision);
+        state.status.target_audio_environment_revision = Some(target.audio_environment_revision);
+        state.status.queued_at_ms = Some(now_ms());
+        state.status.started_at_ms = None;
+        state.status.completed_at_ms = None;
+        state.status.last_error = None;
+        state.status.last_error_code = None;
+    }
+    state.running_operation_id = None;
+    state.status.running_operation_id = None;
+    state.status.prepared_session_revision = None;
+    state.status.prepared_audio_environment_revision = None;
+    wake.notify_one();
+    true
 }
 
 fn publish_current_status(
@@ -796,6 +880,8 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) {
     state.audio_environment_revision = state.audio_environment_revision.saturating_add(1);
     state.status.runtime_generation = generation;
     state.status.audio_environment_revision = state.audio_environment_revision;
+    state.status.last_error = None;
+    state.status.last_error_code = None;
     if state
         .latest_target
         .as_ref()
@@ -872,6 +958,9 @@ mod tests {
         prepare_delay: Duration,
         prepare_started: AtomicU64,
         discarded: AtomicU64,
+        busy_prepare_count: AtomicU64,
+        failed_prepare_count: AtomicU64,
+        wait_for_idle_count: AtomicU64,
     }
 
     impl FakeProjectionDriver {
@@ -883,6 +972,9 @@ mod tests {
                 prepare_delay,
                 prepare_started: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
+                busy_prepare_count: AtomicU64::new(0),
+                failed_prepare_count: AtomicU64::new(0),
+                wait_for_idle_count: AtomicU64::new(0),
             }
         }
     }
@@ -895,6 +987,44 @@ mod tests {
         ) -> Result<(), RuntimeError> {
             self.prepare_started.fetch_add(1, Ordering::Release);
             thread::sleep(self.prepare_delay);
+            let mut busy_count = self.busy_prepare_count.load(Ordering::Acquire);
+            while busy_count > 0 {
+                match self.busy_prepare_count.compare_exchange(
+                    busy_count,
+                    busy_count - 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        return Err(RuntimeError::Native {
+                            kind: "timelineBusy".into(),
+                            message: "another timeline operation is running".into(),
+                            operation: "timeline.prepare".into(),
+                            details: None,
+                        });
+                    }
+                    Err(next) => busy_count = next,
+                }
+            }
+            let mut failed_count = self.failed_prepare_count.load(Ordering::Acquire);
+            while failed_count > 0 {
+                match self.failed_prepare_count.compare_exchange(
+                    failed_count,
+                    failed_count - 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        return Err(RuntimeError::Native {
+                            kind: "timeline".into(),
+                            message: "VST failed to initialize".into(),
+                            operation: "timeline.prepare".into(),
+                            details: None,
+                        });
+                    }
+                    Err(next) => failed_count = next,
+                }
+            }
             *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
             Ok(())
         }
@@ -910,6 +1040,11 @@ mod tests {
         fn discard_timeline_snapshot(&self, _timeout: Duration) -> Result<(), RuntimeError> {
             self.pending.lock().unwrap().take();
             self.discarded.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn wait_for_timeline_idle(&self, _timeout: Duration) -> Result<(), RuntimeError> {
+            self.wait_for_idle_count.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
 
@@ -951,6 +1086,40 @@ mod tests {
         let loaded = driver.loaded.lock().unwrap().clone();
         assert_eq!(loaded.last().copied(), Some(3));
         assert!(!loaded.contains(&2));
+    }
+
+    #[test]
+    fn treats_timeline_busy_as_loading_and_retries_after_idle() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        driver.busy_prepare_count.store(1, Ordering::Release);
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+
+        coordinator.submit_nonblocking(snapshot(4), key(4, 4));
+
+        wait_until(|| coordinator.status().active_session_revision == Some(4));
+        let status = coordinator.status();
+        assert_eq!(driver.wait_for_idle_count.load(Ordering::Acquire), 1);
+        assert_eq!(status.state, RuntimeProjectionState::Active);
+        assert_eq!(status.last_error, None);
+        assert_eq!(status.last_error_code, None);
+    }
+
+    #[test]
+    fn preserves_the_active_projection_when_a_new_prepare_fails() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+
+        driver.failed_prepare_count.store(1, Ordering::Release);
+        coordinator.submit_nonblocking(snapshot(11), key(2, 11));
+
+        wait_until(|| coordinator.status().state == RuntimeProjectionState::Failed);
+        let status = coordinator.status();
+        assert_eq!(status.active_session_revision, Some(10));
+        assert_eq!(status.active_projection_sequence, Some(1));
+        assert_eq!(status.last_error_code.as_deref(), Some("timeline"));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
     }
 
     #[test]

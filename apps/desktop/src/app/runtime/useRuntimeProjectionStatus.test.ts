@@ -27,6 +27,7 @@ function status(overrides: Partial<RuntimeProjectionStatus> = {}): RuntimeProjec
     lastNativeResponseAtMs: null,
     discardedPreparationCount: 0,
     lastError: null,
+    lastErrorCode: null,
     ...overrides,
   };
 }
@@ -35,13 +36,19 @@ describe('useRuntimeProjectionStatus', () => {
   it('keeps the app-level status synchronized with asynchronous projection events', async () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
-    const failed = status({ state: 'failed', lastError: 'native rejected' });
+    const failed = status({
+      state: 'failed',
+      lastError: 'native rejected',
+      lastErrorCode: 'nativeRejected',
+    });
 
     act(() => api.emitRuntimeProjectionStatus(failed));
 
     await waitFor(() => {
       expect(result.current.status).toEqual(failed);
-      expect(result.current.failure).toBe('native rejected');
+      expect(result.current.failure).toBe(
+        'Audio preparation failed. The previous playback state remains available.',
+      );
     });
   });
 
@@ -80,7 +87,9 @@ describe('useRuntimeProjectionStatus', () => {
       activeProjectionSequence: 2,
       completedAtMs: 2,
     });
-    api.emitRuntimeProjectionStatus(status({ state: 'failed', lastError: 'native rejected' }));
+    api.emitRuntimeProjectionStatus(
+      status({ state: 'failed', lastError: 'native rejected', lastErrorCode: 'nativeRejected' }),
+    );
     api.setResponse('retryRuntimeProjection', active);
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
@@ -92,35 +101,54 @@ describe('useRuntimeProjectionStatus', () => {
     expect(result.current.failure).toBeNull();
   });
 
-  it('keeps the native status unchanged when the retry command fails', async () => {
+  it('keeps the failure visible when the retry command fails', async () => {
     const api = new FakeNativeApi();
-    const failed = status({ state: 'failed', lastError: 'native rejected' });
+    const failed = status({
+      state: 'failed',
+      lastError: 'native rejected',
+      lastErrorCode: 'nativeRejected',
+    });
     api.emitRuntimeProjectionStatus(failed);
     api.setFailure('retryRuntimeProjection', new Error('retry unavailable'));
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
-    await waitFor(() => expect(result.current.failure).toBe('native rejected'));
+    await waitFor(() =>
+      expect(result.current.failure).toBe(
+        'Audio preparation failed. The previous playback state remains available.',
+      ),
+    );
 
     await act(async () => {
       await result.current.retry();
     });
 
-    expect(result.current.status).toEqual(failed);
-    expect(result.current.failure).toBe('retry unavailable');
+    expect(result.current.status.state).toBe('failed');
+    expect(result.current.status.lastError).toBeNull();
+    expect(result.current.failure).toBe(
+      'Audio preparation failed. The previous playback state remains available.',
+    );
   });
 
-  it('keeps a projection failure visible until a later projection becomes active', async () => {
+  it('clears a projection failure while the next projection is loading', async () => {
     const api = new FakeNativeApi();
-    const failed = status({ state: 'failed', lastError: 'native rejected' });
+    const failed = status({
+      state: 'failed',
+      lastError: 'native rejected',
+      lastErrorCode: 'nativeRejected',
+    });
     api.emitRuntimeProjectionStatus(failed);
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
-    await waitFor(() => expect(result.current.failure).toBe('native rejected'));
+    await waitFor(() =>
+      expect(result.current.failure).toBe(
+        'Audio preparation failed. The previous playback state remains available.',
+      ),
+    );
 
     const queued = status({ operationId: 3, targetProjectionSequence: 3 });
     act(() => api.emitRuntimeProjectionStatus(queued));
     await waitFor(() => expect(result.current.status).toEqual(queued));
-    expect(result.current.failure).toBe('native rejected');
+    expect(result.current.failure).toBeNull();
 
     const active = status({
       state: 'active',
@@ -131,5 +159,69 @@ describe('useRuntimeProjectionStatus', () => {
     });
     act(() => api.emitRuntimeProjectionStatus(active));
     await waitFor(() => expect(result.current.failure).toBeNull());
+  });
+
+  it('treats a timeline busy code as loading rather than a user failure', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+
+    act(() =>
+      api.emitRuntimeProjectionStatus(
+        status({
+          state: 'failed',
+          lastError: 'native timeline detail',
+          lastErrorCode: 'timelineBusy',
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(result.current.status.state).toBe('queued'));
+    expect(result.current.status.lastErrorCode).toBe('timelineBusy');
+    expect(result.current.failure).toBeNull();
+  });
+
+  it('allows only one retry request and exposes retrying while it is pending', async () => {
+    const api = new FakeNativeApi();
+    const failed = status({
+      state: 'failed',
+      lastError: 'native rejected',
+      lastErrorCode: 'nativeRejected',
+    });
+    api.emitRuntimeProjectionStatus(failed);
+    let resolveRetry!: (value: RuntimeProjectionStatus) => void;
+    api.setResponse(
+      'retryRuntimeProjection',
+      new Promise<RuntimeProjectionStatus>((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+
+    await waitFor(() => expect(result.current.failure).not.toBeNull());
+    let firstRetry!: Promise<void>;
+    act(() => {
+      firstRetry = result.current.retry();
+      void result.current.retry();
+    });
+
+    expect(result.current.retrying).toBe(true);
+    expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(1);
+    expect(result.current.failure).toBeNull();
+
+    await act(async () => {
+      resolveRetry(
+        status({
+          state: 'active',
+          operationId: 3,
+          runningOperationId: null,
+          activeProjectionSequence: 3,
+          completedAtMs: 3,
+        }),
+      );
+      await firstRetry;
+    });
+
+    expect(result.current.retrying).toBe(false);
+    expect(result.current.failure).toBeNull();
   });
 });

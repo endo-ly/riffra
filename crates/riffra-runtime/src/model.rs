@@ -602,6 +602,7 @@ pub struct RuntimeProjectionStatus {
     pub last_native_response_at_ms: Option<u64>,
     pub discarded_preparation_count: u64,
     pub last_error: Option<String>,
+    pub last_error_code: Option<String>,
 }
 
 /// Result of a canonical Arrangement mutation and its best-effort runtime

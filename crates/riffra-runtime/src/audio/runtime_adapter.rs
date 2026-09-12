@@ -62,6 +62,10 @@ impl ProjectionDriver for AudioSupervisor {
         AudioSupervisor::discard_timeline_snapshot(self, timeout).map_err(RuntimeError::from)
     }
 
+    fn wait_for_timeline_idle(&self, timeout: Duration) -> Result<(), RuntimeError> {
+        AudioSupervisor::wait_for_timeline_idle(self, timeout).map_err(RuntimeError::from)
+    }
+
     fn runtime_generation(&self) -> u64 {
         self.sidecar_generation()
     }
