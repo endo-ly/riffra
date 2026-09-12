@@ -25,7 +25,7 @@ export function useRuntimeRestartNotification({
         getHostGeneration() !== hostGeneration
       )
         return;
-      toast('Audio engine recovered; the current runtime is ready.');
+      toast('Audio engine restarted.');
     });
     return () => {
       disposed = true;

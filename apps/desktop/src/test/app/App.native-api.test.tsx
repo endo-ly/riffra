@@ -91,11 +91,7 @@ describe('App native boundary', () => {
 
     api.emitRuntimeRestarted(2);
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Audio engine recovered; the current runtime is ready/),
-      ).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText('Audio engine restarted.')).toBeInTheDocument());
     expect(api.calls.filter((call) => call === 'retryRuntimeProjection')).toHaveLength(0);
     expect(api.calls.slice(0, callsBeforeRestart.length)).toEqual(callsBeforeRestart);
   });

@@ -43,7 +43,8 @@ export function useArrangeStatusToast({
       : unavailableClipCount || missingDeviceCount
         ? `Playback skipped ${unavailableClipCount} missing source${unavailableClipCount === 1 ? '' : 's'} and ${missingDeviceCount} missing device${missingDeviceCount === 1 ? '' : 's'}.`
         : editorMessage;
-  const statusPersistent = playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
+  const statusPersistent =
+    projectionLoading || playbackOutOfSync || unavailableClipCount > 0 || missingDeviceCount > 0;
 
   useEffect(() => {
     if (!statusMessage) {

@@ -1391,6 +1391,28 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByText('native detail must stay internal')).not.toBeInTheDocument();
   });
 
+  it('keeps projection loading visible until the state changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const api = new FakeNativeApi();
+      const runtimeProjectionStatus: RuntimeProjectionStatus = {
+        ...api.runtimeProjection,
+        state: 'preparing',
+        operationId: 2,
+      };
+
+      render(<Harness api={api} runtimeProjectionStatus={runtimeProjectionStatus} />);
+
+      expect(screen.getByText('Preparing audio…')).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getByText('Preparing audio…')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows retrying without presenting a busy error action', async () => {
     const api = new FakeNativeApi();
     const runtimeProjectionStatus: RuntimeProjectionStatus = {
