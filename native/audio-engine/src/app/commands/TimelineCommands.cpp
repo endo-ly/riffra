@@ -16,7 +16,7 @@ CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command)
     const auto type = command.getProperty("type", {}).toString();
     if (type == "waitForTimelineIdle") {
         const auto requestId = currentRequestId();
-        const auto timeoutMs = static_cast<int64_t>(command.getProperty("timeoutMs", 0));
+        const auto timeoutMs = command.getProperty("timeoutMs", 0).toString().getLargeIntValue();
         if (timeoutMs <= 0) {
             writeJson(
                 makeError("invalidCommand", "waitForTimelineIdle requires a positive timeoutMs.",
