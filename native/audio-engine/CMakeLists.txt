@@ -9,8 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 include(CTest)
 
-set(RIFFRA_SONALLOY_VERSION "2026.9.11" CACHE STRING
-  "Pinned Sonalloy release version used for the built-in instrument engine and resources")
+set(RIFFRA_SONALLOY_VERSION "2026.9.14")
 set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
