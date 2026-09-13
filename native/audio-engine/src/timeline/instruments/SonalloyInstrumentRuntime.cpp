@@ -77,7 +77,7 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
         error = diagnosticsSummary(inspectDiagnostics.get(), inspectResult);
         return nullptr;
     }
-    if (definitionInfo.required_input_channels > 0) {
+    if (!acceptsRequiredInputChannels(definitionInfo.required_input_channels)) {
         error =
             "This built-in instrument requires an audio input route that Riffra does not support "
             "yet.";

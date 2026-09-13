@@ -20,6 +20,12 @@ public:
         const juce::String& definitionJson, const juce::String& definitionBaseDir,
         double sampleRate, int blockSize, juce::String& error);
 
+    /// Returns whether Riffra can execute a Sonalloy definition's required input route.
+    [[nodiscard]] static constexpr bool acceptsRequiredInputChannels(
+        std::uint32_t requiredInputChannels) noexcept {
+        return requiredInputChannels == 0;
+    }
+
     ~SonalloyInstrumentRuntime() override = default;
 
     [[nodiscard]] bool isLoaded() const noexcept override;

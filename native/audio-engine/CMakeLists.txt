@@ -9,17 +9,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 include(CTest)
 
+option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
+  "Configure only the built-in resource staging target." OFF)
+
 set(RIFFRA_SONALLOY_VERSION "2026.9.14")
 set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
-
-FetchContent_Declare(
-  JUCE
-  GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG 9.0.0
-  GIT_SHALLOW TRUE
-  GIT_PROGRESS TRUE
-)
-FetchContent_MakeAvailable(JUCE)
 
 FetchContent_Declare(
   SONALLOY
@@ -38,6 +32,19 @@ sonalloy_stage_builtin_bundle(
   TARGET riffra-builtin-resource-stage
   DESTINATION "${RIFFRA_BUILTIN_RESOURCE_STAGE_ROOT}"
 )
+
+if(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY)
+  return()
+endif()
+
+FetchContent_Declare(
+  JUCE
+  GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+  GIT_TAG 9.0.0
+  GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(JUCE)
 
 juce_add_console_app(riffra-audio
   PRODUCT_NAME "Riffra Audio Engine"
