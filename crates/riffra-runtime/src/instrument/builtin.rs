@@ -1,8 +1,7 @@
 use serde::Deserialize;
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Minimal metadata presented to clients for one built-in instrument.
 #[derive(Clone, Debug, Deserialize, serde::Serialize, ts_rs::TS)]
@@ -34,15 +33,27 @@ pub struct BuiltInInstrumentCatalog {
 #[serde(rename_all = "camelCase")]
 struct ResourceManifest {
     source_release: String,
-    presets: Vec<String>,
+    presets: Vec<ResourceManifestPreset>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceManifestPreset {
+    id: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    definition_path: String,
+    resource_base_path: String,
 }
 
 impl BuiltInInstrumentCatalog {
     /// Loads and validates the resource directory once for the Host lifetime.
     ///
-    /// A malformed individual definition is reported through [`Self::errors`]
-    /// and does not prevent the remaining catalog from loading. A malformed
-    /// resource manifest is a packaging error and prevents catalog creation.
+    /// A missing or unreadable individual definition is reported through
+    /// [`Self::errors`] and does not prevent the remaining catalog from loading.
+    /// A malformed resource manifest is a packaging error and prevents catalog
+    /// creation. Definition contents remain opaque to Riffra.
     pub fn load(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         if !root.is_dir() {
@@ -53,38 +64,52 @@ impl BuiltInInstrumentCatalog {
         }
 
         let manifest = read_manifest(&root)?;
-        let mut directories = fs::read_dir(&root)
-            .map_err(|error| {
-                format!("built-in instrument resource root could not be read: {error}")
-            })?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                format!("built-in instrument resource entry could not be read: {error}")
-            })?;
-        directories.sort();
+        if manifest.source_release.trim().is_empty() {
+            return Err("built-in instrument resource manifest has no sourceRelease".into());
+        }
+
+        let manifest_ids = manifest
+            .presets
+            .iter()
+            .map(|preset| preset.id.trim().to_owned())
+            .collect::<Vec<_>>();
+        if manifest_ids.iter().any(String::is_empty) {
+            return Err("built-in instrument resource manifest contains an empty preset id".into());
+        }
+        let mut sorted_manifest_ids = manifest_ids.clone();
+        sorted_manifest_ids.sort();
+        if manifest_ids != sorted_manifest_ids {
+            return Err("built-in instrument resource manifest preset list is not sorted".into());
+        }
+        if manifest_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(
+                "built-in instrument resource manifest contains duplicate preset ids".into(),
+            );
+        }
 
         let mut definitions = BTreeMap::new();
         let mut errors = Vec::new();
         let mut invalid_preset_ids = BTreeSet::new();
-        let mut discovered_ids = Vec::new();
-        for directory in directories.into_iter().filter(|path| path.is_dir()) {
-            let id = directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| {
-                    format!(
-                        "built-in instrument resource directory has an invalid name: {}",
-                        directory.display()
-                    )
-                })?
-                .to_owned();
-            let definition_path = directory.join("definition.json");
-            if !definition_path.is_file() {
+        for preset in manifest.presets {
+            let id = preset.id.trim().to_owned();
+            let name = preset.name.trim().to_owned();
+            if name.is_empty() {
+                return Err(format!(
+                    "built-in instrument resource manifest preset '{id}' has no name"
+                ));
+            }
+            let definition_path =
+                resolve_bundle_path(&root, &preset.definition_path, "definitionPath")?;
+            let base_dir =
+                resolve_bundle_path(&root, &preset.resource_base_path, "resourceBasePath")?;
+            if !base_dir.is_dir() {
+                invalid_preset_ids.insert(id.clone());
+                errors.push(format!(
+                    "built-in instrument preset '{id}' resource base directory is missing: {}",
+                    base_dir.display()
+                ));
                 continue;
             }
-            discovered_ids.push(id.clone());
             let definition_json = match fs::read_to_string(&definition_path) {
                 Ok(definition_json) => definition_json,
                 Err(error) => {
@@ -95,71 +120,20 @@ impl BuiltInInstrumentCatalog {
                     continue;
                 }
             };
-            let value: Value = match serde_json::from_str(&definition_json) {
-                Ok(value) => value,
-                Err(error) => {
-                    invalid_preset_ids.insert(id.clone());
-                    errors.push(format!(
-                        "built-in instrument preset '{id}' definition is invalid JSON: {error}"
-                    ));
-                    continue;
-                }
-            };
-            let metadata = value.get("metadata").and_then(Value::as_object);
-            let name = metadata
-                .and_then(|metadata| metadata.get("name"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty());
-            let Some(name) = name else {
-                invalid_preset_ids.insert(id.clone());
-                errors.push(format!(
-                    "built-in instrument preset '{id}' definition has no metadata.name"
-                ));
-                continue;
-            };
-            let description = metadata
-                .and_then(|metadata| metadata.get("description"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|description| !description.is_empty())
-                .map(ToOwned::to_owned);
-            if definitions.contains_key(&id) {
-                return Err(format!(
-                    "built-in instrument resource contains duplicate preset id: {id}"
-                ));
-            }
+            let description = preset.description.and_then(|description| {
+                (!description.trim().is_empty()).then(|| description.trim().to_owned())
+            });
             definitions.insert(
                 id.clone(),
                 BuiltInInstrumentDefinition {
                     summary: BuiltInInstrumentSummary {
                         id,
-                        name: name.to_owned(),
+                        name,
                         description,
                     },
                     definition_json,
-                    base_dir: directory,
+                    base_dir,
                 },
-            );
-        }
-        discovered_ids.sort();
-        let manifest_ids = manifest.presets;
-        let mut sorted_manifest_ids = manifest_ids.clone();
-        sorted_manifest_ids.sort();
-        if manifest.source_release.trim().is_empty() {
-            return Err("built-in instrument resource manifest has no sourceRelease".into());
-        }
-        if manifest_ids != sorted_manifest_ids {
-            return Err("built-in instrument resource manifest preset list is not sorted".into());
-        }
-        if manifest_ids.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(
-                "built-in instrument resource manifest contains duplicate preset ids".into(),
-            );
-        }
-        if manifest_ids != discovered_ids {
-            return Err(
-                "built-in instrument resource manifest does not match preset directories".into(),
             );
         }
 
@@ -171,7 +145,7 @@ impl BuiltInInstrumentCatalog {
         })
     }
 
-    /// Returns the resource root used to resolve preset base directories.
+    /// Returns the resource root used to resolve built-in resource paths.
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -184,7 +158,7 @@ impl BuiltInInstrumentCatalog {
             .collect()
     }
 
-    /// Returns catalog diagnostics for individual invalid preset directories.
+    /// Returns catalog diagnostics for individual invalid preset entries.
     pub fn errors(&self) -> &[String] {
         &self.errors
     }
@@ -199,6 +173,24 @@ impl BuiltInInstrumentCatalog {
             }
         })
     }
+}
+
+fn resolve_bundle_path(root: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
+    let path = Path::new(value);
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "built-in instrument resource manifest has an invalid {field}: {value}"
+        ));
+    }
+    Ok(root.join(path))
 }
 
 fn read_manifest(root: &Path) -> Result<ResourceManifest, String> {
@@ -241,17 +233,29 @@ mod tests {
         }
     }
 
-    fn write_definition(root: &Path, id: &str, name: &str) {
-        let directory = root.join(id);
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(
-            directory.join("definition.json"),
-            format!(r#"{{"metadata":{{"name":"{name}","description":"{name} description"}}}}"#),
-        )
-        .unwrap();
+    fn write_definition(root: &Path, path: &str, contents: &str) {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
     }
 
-    fn write_manifest(root: &Path, presets: &[&str]) {
+    fn manifest_entry(
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+        definition_path: &str,
+        resource_base_path: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "description": description,
+            "definitionPath": definition_path,
+            "resourceBasePath": resource_base_path,
+        })
+    }
+
+    fn write_manifest(root: &Path, presets: &[serde_json::Value]) {
         fs::write(
             root.join("manifest.json"),
             serde_json::json!({
@@ -264,12 +268,25 @@ mod tests {
     }
 
     #[test]
-    fn discovers_preset_directories_in_stable_order() {
+    fn loads_catalog_from_manifest_and_keeps_definition_opaque() {
         let root = TempRoot::new();
-        write_definition(&root.0, "02-second", "Second");
-        write_definition(&root.0, "01-first", "First");
-        fs::create_dir(root.0.join("ignored-without-definition")).unwrap();
-        write_manifest(&root.0, &["01-first", "02-second"]);
+        write_definition(
+            &root.0,
+            "arbitrary/location/sound.data",
+            r#"{"completelyOpaque":"value"}"#,
+        );
+        fs::create_dir_all(root.0.join("resources/first")).unwrap();
+        fs::create_dir(root.0.join("unlisted-directory")).unwrap();
+        write_manifest(
+            &root.0,
+            &[manifest_entry(
+                "01-first",
+                "First",
+                Some("First description"),
+                "arbitrary/location/sound.data",
+                "resources/first",
+            )],
+        );
 
         let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
 
@@ -279,46 +296,45 @@ mod tests {
                 .into_iter()
                 .map(|summary| summary.id)
                 .collect::<Vec<_>>(),
-            ["01-first", "02-second"]
+            ["01-first"]
+        );
+        let definition = catalog.resolve("01-first").unwrap();
+        assert_eq!(
+            definition.definition_json,
+            r#"{"completelyOpaque":"value"}"#
+        );
+        assert_eq!(definition.base_dir, root.0.join("resources/first"));
+        assert!(catalog.errors().is_empty());
+    }
+
+    #[test]
+    fn invalid_json_is_retained_as_an_opaque_definition() {
+        let root = TempRoot::new();
+        write_definition(&root.0, "sound.data", "not-json");
+        fs::create_dir_all(root.0.join("resources")).unwrap();
+        write_manifest(
+            &root.0,
+            &[manifest_entry(
+                "01-opaque",
+                "Opaque",
+                None,
+                "sound.data",
+                "resources",
+            )],
+        );
+
+        let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
+
+        assert_eq!(
+            catalog.resolve("01-opaque").unwrap().definition_json,
+            "not-json"
         );
         assert!(catalog.errors().is_empty());
     }
 
     #[test]
-    fn invalid_definition_is_reported_without_poisoning_other_presets() {
-        let root = TempRoot::new();
-        write_definition(&root.0, "01-valid", "Valid");
-        let invalid = root.0.join("02-invalid");
-        fs::create_dir_all(&invalid).unwrap();
-        fs::write(invalid.join("definition.json"), "not-json").unwrap();
-        write_manifest(&root.0, &["01-valid", "02-invalid"]);
-
-        let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
-
-        assert!(catalog.resolve("01-valid").is_ok());
-        assert!(catalog.resolve("02-invalid").is_err());
-        assert_eq!(catalog.errors().len(), 1);
-    }
-
-    #[test]
-    fn manifest_must_match_sorted_preset_directories() {
-        let root = TempRoot::new();
-        write_definition(&root.0, "01-first", "First");
-        fs::write(
-            root.0.join("manifest.json"),
-            r#"{"sourceRelease":"vtest","presets":["02-missing"]}"#,
-        )
-        .unwrap();
-
-        let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
-
-        assert!(error.contains("does not match"));
-    }
-
-    #[test]
     fn manifest_is_required() {
         let root = TempRoot::new();
-        write_definition(&root.0, "01-first", "First");
 
         let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
 
@@ -326,17 +342,44 @@ mod tests {
     }
 
     #[test]
-    fn manifest_rejects_duplicate_preset_ids() {
+    fn manifest_requires_sorted_unique_ids() {
         let root = TempRoot::new();
-        write_definition(&root.0, "01-first", "First");
-        fs::write(
-            root.0.join("manifest.json"),
-            r#"{"sourceRelease":"vtest","presets":["01-first","01-first"]}"#,
-        )
-        .unwrap();
+        write_definition(&root.0, "first.data", "first");
+        write_definition(&root.0, "second.data", "second");
+        fs::create_dir_all(root.0.join("resources/first")).unwrap();
+        fs::create_dir_all(root.0.join("resources/second")).unwrap();
+        write_manifest(
+            &root.0,
+            &[
+                manifest_entry(
+                    "02-second",
+                    "Second",
+                    None,
+                    "second.data",
+                    "resources/second",
+                ),
+                manifest_entry("01-first", "First", None, "first.data", "resources/first"),
+            ],
+        );
 
         let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
 
+        assert!(error.contains("not sorted"));
+
+        write_manifest(
+            &root.0,
+            &[
+                manifest_entry("01-first", "First", None, "first.data", "resources/first"),
+                manifest_entry(
+                    "01-first",
+                    "First again",
+                    None,
+                    "first.data",
+                    "resources/first",
+                ),
+            ],
+        );
+        let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
         assert!(error.contains("duplicate preset ids"));
     }
 }

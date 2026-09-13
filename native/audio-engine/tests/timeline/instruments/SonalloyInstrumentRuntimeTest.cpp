@@ -78,8 +78,6 @@ private:
 
 juce::File presetRoot() { return juce::File(RIFFRA_SONALLOY_TEST_PRESET_ROOT); }
 
-juce::File sourceRoot() { return juce::File(RIFFRA_SONALLOY_TEST_SOURCE_ROOT); }
-
 std::unique_ptr<SonalloyInstrumentRuntime> loadPreset(const juce::File& directory,
                                                       juce::String& error) {
     const auto definition = directory.getChildFile("definition.json");
@@ -147,12 +145,17 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     }
     std::vector<juce::String> manifestPresetIds;
     for (const auto& preset : *manifestPresets.getArray()) {
-        manifestPresetIds.push_back(preset.toString());
-        ASSERT_TRUE(presetRoot()
-                        .getChildFile(preset.toString())
-                        .getChildFile("definition.json")
-                        .existsAsFile())
-            << preset.toString().toStdString();
+        const auto* presetObject = preset.getDynamicObject();
+        ASSERT_NE(presetObject, nullptr);
+        const auto presetId = presetObject->getProperty("id").toString();
+        const auto definitionPath = presetObject->getProperty("definitionPath").toString();
+        const auto resourceBasePath = presetObject->getProperty("resourceBasePath").toString();
+        ASSERT_FALSE(presetId.isEmpty());
+        ASSERT_TRUE(presetRoot().getChildFile(definitionPath).existsAsFile())
+            << presetId.toStdString();
+        ASSERT_TRUE(presetRoot().getChildFile(resourceBasePath).isDirectory())
+            << presetId.toStdString();
+        manifestPresetIds.push_back(presetId);
     }
     const auto comparePresetIds = [](const juce::String& left, const juce::String& right) {
         return left.compare(right) < 0;
@@ -399,16 +402,71 @@ TEST(SonalloyInstrumentRuntimeTest, ProcessContextRemainsContinuousAcrossBlocks)
     }
 }
 
-TEST(SonalloyInstrumentRuntimeTest, RejectsAudioInputDefinitionsBeforeActivation) {
-    const auto definition = sourceRoot()
-                                .getChildFile("review/external-audio-cross-synthesis/definitions/")
-                                .getChildFile("envelope-transfer-rhythm.json");
-    ASSERT_TRUE(definition.existsAsFile()) << definition.getFullPathName().toStdString();
-
+TEST(SonalloyInstrumentRuntimeTest, RejectsDefinitionsThatRequireAudioInput) {
+    const juce::String definition = R"json({
+        "schema_version": 5,
+        "metadata": {
+            "name": "External Audio Test",
+            "description": "Test definition"
+        },
+        "performance": {
+            "mode": "polyphonic",
+            "polyphony": 1,
+            "voice_stealing": "quietest_releasing_then_oldest"
+        },
+        "layers": [
+            {
+                "id": "body",
+                "enabled": true,
+                "trigger": {
+                    "event": "note_on",
+                    "key_min": 0,
+                    "key_max": 127,
+                    "velocity_min": 1,
+                    "velocity_max": 127
+                },
+                "gain_db": -14.0,
+                "pan": 0.0,
+                "tuning_cents": 0.0,
+                "envelope": {
+                    "attack_seconds": 0.005,
+                    "decay_seconds": 0.18,
+                    "sustain_level": 0.65,
+                    "release_seconds": 0.3
+                },
+                "generator": {
+                    "oscillator": {
+                        "waveform": { "type": "saw" },
+                        "phase_reset": true,
+                        "phase": 0.0
+                    }
+                },
+                "processors": []
+            }
+        ],
+        "voice_processors": [],
+        "global_processors": [
+            {
+                "type": "compressor",
+                "id": "duck",
+                "threshold_db": -24.0,
+                "ratio": 6.0,
+                "attack_ms": 8.0,
+                "release_ms": 180.0,
+                "knee_db": 6.0,
+                "makeup_gain_db": 0.0,
+                "mix": 1.0,
+                "detector": "external_audio"
+            }
+        ],
+        "modulation": { "sources": [], "routes": [] },
+        "macros": [],
+        "vectors": [],
+        "external_audio": { "channels": "stereo" }
+    })json";
     juce::String error;
-    auto runtime = SonalloyInstrumentRuntime::create(
-        definition.loadFileAsString(), definition.getParentDirectory().getFullPathName(), 48'000.0,
-        256, error);
+    auto runtime = SonalloyInstrumentRuntime::create(definition, presetRoot().getFullPathName(),
+                                                     48'000.0, 256, error);
     EXPECT_EQ(runtime, nullptr);
     EXPECT_NE(error.indexOf("audio input route"), -1);
 }

@@ -54,7 +54,6 @@ jobs:
               - 'crates/**'
               - 'apps/cli/**'
               - 'scripts/ci/**'
-              - 'scripts/resources/**'
               - '.github/workflows/ci.yml'
             tauri:
               - 'Cargo.toml'
@@ -62,7 +61,6 @@ jobs:
               - 'crates/**'
               - 'apps/desktop/src-tauri/**'
               - 'scripts/ci/**'
-              - 'scripts/resources/**'
               - '.github/workflows/ci.yml'
             native:
               - 'Cargo.toml'
@@ -74,7 +72,6 @@ jobs:
               - 'crates/riffra-runtime/src/host/lifecycle.rs'
               - 'crates/riffra-runtime/src/startup.rs'
               - 'scripts/ci/headless-host-process.*'
-              - 'scripts/resources/prepare-builtin.mjs'
               - 'apps/desktop/src-tauri/tauri.conf.json'
               - 'apps/desktop/src-tauri/binaries/**'
               - 'apps/desktop/src-tauri/resources/**'
@@ -138,9 +135,10 @@ jobs:
       - name: Stage built-in instrument resources
         shell: bash
         run: |
-          resource_root="$RUNNER_TEMP/riffra-resources"
-          node scripts/resources/prepare-builtin.mjs --destination "$resource_root"
-          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$resource_root/instruments/builtin" >> "$GITHUB_ENV"
+          build_dir="$RUNNER_TEMP/riffra-resource-stage"
+          cmake -S native/audio-engine -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug
+          cmake --build "$build_dir" --target riffra-builtin-resource-stage --parallel
+          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$build_dir/riffra-resources/instruments/builtin" >> "$GITHUB_ENV"
 
       - name: Exercise headless Host
         shell: bash
@@ -187,8 +185,10 @@ jobs:
       - name: Stage built-in instrument resources
         shell: pwsh
         run: |
-          $resourceRoot = Join-Path $env:RUNNER_TEMP 'riffra-resources'
-          node scripts/resources/prepare-builtin.mjs --destination $resourceRoot
+          $buildDir = Join-Path $env:RUNNER_TEMP 'riffra-resource-stage'
+          cmake -S native/audio-engine -B $buildDir -G 'Visual Studio 17 2022' -A x64
+          cmake --build $buildDir --config Debug --target riffra-builtin-resource-stage --parallel
+          $resourceRoot = Join-Path $buildDir 'riffra-resources'
           "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$(Join-Path $resourceRoot 'instruments\builtin')" | Out-File `
             -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -244,11 +244,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            native/audio-engine/build/sonalloy-cargo-target
-            native/audio-engine/build/sonalloy-capi
-          key: ${{ runner.os }}-native-sonalloy-debug-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+          key: ${{ runner.os }}-native-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-native-sonalloy-debug-
+            ${{ runner.os }}-native-cargo-
 
       - name: Check clang-format
         shell: bash
@@ -308,11 +306,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            native/audio-engine/build/sonalloy-cargo-target
-            native/audio-engine/build/sonalloy-capi
-          key: ${{ runner.os }}-native-sonalloy-debug-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+          key: ${{ runner.os }}-native-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-native-sonalloy-debug-
+            ${{ runner.os }}-native-cargo-
 
       - name: Build and test on Windows
         shell: pwsh
@@ -359,11 +355,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            native/audio-engine/build/sonalloy-cargo-target
-            native/audio-engine/build/sonalloy-capi
-          key: ${{ runner.os }}-native-sonalloy-${{ github.event_name == 'pull_request' && 'debug' || 'release' }}-${{ hashFiles('native/audio-engine/CMakeLists.txt') }}
+          key: ${{ runner.os }}-native-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-native-sonalloy-${{ github.event_name == 'pull_request' && 'debug' || 'release' }}-
+            ${{ runner.os }}-native-cargo-
 
       - name: Build, test, and package on macOS
         shell: bash

@@ -210,9 +210,6 @@ pub(crate) fn validate_and_normalize(instrument: &mut TrackInstrument) -> Result
             if preset_id.trim().is_empty() {
                 return Err("built-in instrument preset id must not be empty".into());
             }
-            serde_json::from_str::<serde_json::Value>(definition_json).map_err(|error| {
-                format!("built-in instrument definition is invalid JSON: {error}")
-            })?;
             *preset_id = preset_id.trim().to_owned();
         }
         TrackInstrumentSource::Vst3 {
@@ -269,15 +266,19 @@ mod tests {
     }
 
     #[test]
-    fn invalid_built_in_definition_is_rejected() {
-        let result = TrackInstrument::built_in(
+    fn built_in_definition_is_retained_as_opaque_payload() {
+        let instrument = TrackInstrument::built_in(
             "device:instrument".into(),
-            "Broken".into(),
-            "broken".into(),
-            "not-json".into(),
-        );
+            "Opaque".into(),
+            "opaque".into(),
+            r#"{"completelyOpaque":"value"}"#.into(),
+        )
+        .unwrap();
 
-        assert!(result.is_err());
+        assert_eq!(
+            instrument.as_internal().map(|(definition, _)| definition),
+            Some(r#"{"completelyOpaque":"value"}"#)
+        );
     }
 
     #[test]

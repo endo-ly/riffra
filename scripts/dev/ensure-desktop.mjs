@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prepareBuiltinResources, readSonalloyReleaseTag } from '../resources/prepare-builtin.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktopRoot = join(repositoryRoot, 'apps/desktop/src-tauri');
@@ -53,7 +52,7 @@ function isRunnableFile(path) {
   }
 }
 
-function inspectResources(expectedRelease) {
+function inspectResources() {
   const requiredFiles = [
     join(resourcesRoot, 'instruments/builtin/manifest.json'),
     join(resourcesRoot, 'THIRD_PARTY_NOTICES.md'),
@@ -64,7 +63,6 @@ function inspectResources(expectedRelease) {
   if (missingFile) {
     return {
       current: false,
-      releaseMismatch: false,
       reason: `missing ${relative(repositoryRoot, missingFile)}`,
     };
   }
@@ -73,17 +71,15 @@ function inspectResources(expectedRelease) {
     const manifest = JSON.parse(
       readFileSync(join(resourcesRoot, 'instruments/builtin/manifest.json'), 'utf8'),
     );
-    if (manifest.sourceRelease !== expectedRelease) {
+    if (typeof manifest.sourceRelease !== 'string' || !Array.isArray(manifest.presets)) {
       return {
         current: false,
-        releaseMismatch: true,
-        reason: `resource release is ${manifest.sourceRelease ?? 'unknown'}, expected ${expectedRelease}`,
+        reason: 'built-in resource manifest is invalid',
       };
     }
   } catch {
     return {
       current: false,
-      releaseMismatch: false,
       reason: 'built-in resource manifest is invalid',
     };
   }
@@ -183,7 +179,7 @@ function inspectAudioProbe(executable) {
   return { current: true };
 }
 
-function inspectSidecars({ targetTriple, expectedRelease, inputFingerprint }) {
+function inspectSidecars({ targetTriple, inputFingerprint }) {
   const paths = sidecarPaths(targetTriple);
   const missingSidecar = paths.all.find((path) => !isRunnableFile(path));
   if (missingSidecar) {
@@ -207,7 +203,6 @@ function inspectSidecars({ targetTriple, expectedRelease, inputFingerprint }) {
   if (
     stamp.targetTriple !== targetTriple ||
     stamp.configuration !== nativeBuildConfiguration ||
-    stamp.sourceRelease !== expectedRelease ||
     stamp.inputFingerprint !== inputFingerprint
   ) {
     return { current: false, reason: 'native sidecars were built from a different runtime state' };
@@ -244,14 +239,13 @@ function runNativeBuild() {
   });
 }
 
-function writeRuntimeStamp({ targetTriple, expectedRelease, inputFingerprint }) {
+function writeRuntimeStamp({ targetTriple, inputFingerprint }) {
   writeFileSync(
     runtimeStampPath,
     `${JSON.stringify(
       {
         targetTriple,
         configuration: nativeBuildConfiguration,
-        sourceRelease: expectedRelease,
         inputFingerprint,
       },
       null,
@@ -269,32 +263,26 @@ function ensureSidecarsExist(targetTriple) {
   }
 }
 
-function ensureFinalResources(expectedRelease) {
-  const resources = inspectResources(expectedRelease);
+function ensureFinalResources() {
+  const resources = inspectResources();
   if (!resources.current) {
     throw new Error(`Desktop resources are not ready: ${resources.reason}.`);
   }
 }
 
 function main() {
-  const expectedRelease = readSonalloyReleaseTag(repositoryRoot);
   const targetTriple = getRustHostTriple();
   const inputFingerprint = nativeInputFingerprint();
-  const resources = inspectResources(expectedRelease);
-  const sidecars = inspectSidecars({ targetTriple, expectedRelease, inputFingerprint });
-  const nativeBuildRequired = !sidecars.current || resources.releaseMismatch === true;
+  const resources = inspectResources();
+  const sidecars = inspectSidecars({ targetTriple, inputFingerprint });
+  const nativeBuildRequired = !sidecars.current || !resources.current;
 
   if (resources.current && sidecars.current) {
     if (sidecars.needsStamp) {
-      writeRuntimeStamp({ targetTriple, expectedRelease, inputFingerprint });
+      writeRuntimeStamp({ targetTriple, inputFingerprint });
     }
     console.log('Desktop runtime is ready.');
     return;
-  }
-
-  if (!resources.current && !nativeBuildRequired) {
-    console.log(`Preparing desktop resources (${resources.reason})...`);
-    prepareBuiltinResources({ destination: resourcesRoot, releaseTag: expectedRelease });
   }
 
   if (nativeBuildRequired) {
@@ -303,9 +291,9 @@ function main() {
     ensureSidecarsExist(targetTriple);
   }
 
-  ensureFinalResources(expectedRelease);
+  ensureFinalResources();
   if (nativeBuildRequired || sidecars.needsStamp) {
-    writeRuntimeStamp({ targetTriple, expectedRelease, inputFingerprint });
+    writeRuntimeStamp({ targetTriple, inputFingerprint });
   }
   console.log('Desktop runtime is ready.');
 }

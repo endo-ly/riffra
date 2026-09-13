@@ -47,8 +47,6 @@ $headlessResourcesDestination = if ($env:RIFFRA_HEADLESS_RESOURCES_DESTINATION) 
 } else {
     'target/release'
 }
-$sonalloyCargoProfile = if ($Configuration -eq 'Debug') { 'dev' } else { 'release' }
-
 # Use the configured generator. Visual Studio generators support -A for the
 # target architecture; other generators select their architecture themselves.
 $configureArgs = @(
@@ -56,8 +54,7 @@ $configureArgs = @(
     '-B', $buildDir,
     '-G', $Generator,
     "-DRIFFRA_HEADLESS_BINARIES_DESTINATION=$headlessDestination",
-    "-DRIFFRA_HEADLESS_RESOURCES_DESTINATION=$headlessResourcesDestination",
-    "-DRIFFRA_SONALLOY_CARGO_PROFILE=$sonalloyCargoProfile"
+    "-DRIFFRA_HEADLESS_RESOURCES_DESTINATION=$headlessResourcesDestination"
 )
 if ($Generator -like 'Visual Studio *' -and $Architecture) {
     $configureArgs += @('-A', $Architecture)

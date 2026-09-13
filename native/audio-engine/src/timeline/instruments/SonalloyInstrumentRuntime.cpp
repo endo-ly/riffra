@@ -33,16 +33,6 @@ juce::String diagnosticText(const SonalloyStringView value) {
         .trim();
 }
 
-bool declaresUnsupportedExternalAudio(const juce::String& definitionJson) {
-    const auto definition = juce::JSON::parse(definitionJson);
-    if (!definition.isObject()) return false;
-
-    const auto externalAudio = definition.getProperty("external_audio", {});
-    if (!externalAudio.isObject()) return false;
-    const auto channels = externalAudio.getProperty("channels", {}).toString();
-    return channels == "mono" || channels == "stereo";
-}
-
 }  // namespace
 
 void SonalloyInstrumentRuntime::CompiledDeleter::operator()(
@@ -76,7 +66,18 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
         error = "Built-in instrument definition or process specification is invalid.";
         return nullptr;
     }
-    if (declaresUnsupportedExternalAudio(definitionJson)) {
+    SonalloyDefinitionInfo definitionInfo{};
+    SonalloyDiagnostics* inspectDiagnosticsRaw = nullptr;
+    const auto inspectResult =
+        sonalloy_inspect_json(stringView(definitionJson), stringView(definitionBaseDir),
+                              &definitionInfo, &inspectDiagnosticsRaw);
+    std::unique_ptr<SonalloyDiagnostics, DiagnosticsDeleter> inspectDiagnostics(
+        inspectDiagnosticsRaw);
+    if (inspectResult != SONALLOY_OK) {
+        error = diagnosticsSummary(inspectDiagnostics.get(), inspectResult);
+        return nullptr;
+    }
+    if (definitionInfo.required_input_channels > 0) {
         error =
             "This built-in instrument requires an audio input route that Riffra does not support "
             "yet.";
