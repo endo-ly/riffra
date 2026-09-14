@@ -13,17 +13,14 @@ case "$CONFIG" in
   Debug)
     headless_destination="target/debug"
     headless_resources_destination="target/debug"
-    sonalloy_cargo_profile="dev"
     ;;
   RelWithDebInfo)
     headless_destination="target/debug"
     headless_resources_destination="target/debug"
-    sonalloy_cargo_profile="release"
     ;;
   Release)
     headless_destination="target/release"
     headless_resources_destination="target/release"
-    sonalloy_cargo_profile="release"
     ;;
   *)
     echo "Configuration must be Debug, RelWithDebInfo, or Release." >&2
@@ -50,7 +47,6 @@ configure_args=(
   -S .
   -B "$BUILD_DIR"
   -DCMAKE_BUILD_TYPE="$CONFIG"
-  -DRIFFRA_SONALLOY_CARGO_PROFILE="$sonalloy_cargo_profile"
   -DRIFFRA_HEADLESS_BINARIES_DESTINATION="$headless_destination"
   -DRIFFRA_HEADLESS_RESOURCES_DESTINATION="$headless_resources_destination"
 )

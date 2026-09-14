@@ -39,7 +39,10 @@ pub fn runtime_timeline_snapshot(
                     definition_json,
                     resource: InternalInstrumentResource::BuiltInPreset { preset_id },
                 } => {
-                    let base_dir = built_in_instruments.root().join(preset_id);
+                    let base_dir = built_in_instruments.resolve(preset_id).map_or_else(
+                        |_| built_in_instruments.root().to_path_buf(),
+                        |definition| definition.base_dir.clone(),
+                    );
                     serde_json::json!({
                         "id": instrument.id,
                         "name": instrument.name,

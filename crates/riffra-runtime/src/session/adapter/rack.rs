@@ -703,7 +703,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             root.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":["01-clean-sub-bass"]}"#,
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-clean-sub-bass","name":"Clean Sub Bass","description":"Test preset","definitionPath":"01-clean-sub-bass/definition.json","resourceBasePath":"01-clean-sub-bass"}]}"#,
         )
         .unwrap();
         crate::instrument::BuiltInInstrumentCatalog::load(root).unwrap()

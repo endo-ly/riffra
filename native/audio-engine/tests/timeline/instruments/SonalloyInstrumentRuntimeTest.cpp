@@ -78,8 +78,6 @@ private:
 
 juce::File presetRoot() { return juce::File(RIFFRA_SONALLOY_TEST_PRESET_ROOT); }
 
-juce::File sourceRoot() { return juce::File(RIFFRA_SONALLOY_TEST_SOURCE_ROOT); }
-
 std::unique_ptr<SonalloyInstrumentRuntime> loadPreset(const juce::File& directory,
                                                       juce::String& error) {
     const auto definition = directory.getChildFile("definition.json");
@@ -147,12 +145,17 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     }
     std::vector<juce::String> manifestPresetIds;
     for (const auto& preset : *manifestPresets.getArray()) {
-        manifestPresetIds.push_back(preset.toString());
-        ASSERT_TRUE(presetRoot()
-                        .getChildFile(preset.toString())
-                        .getChildFile("definition.json")
-                        .existsAsFile())
-            << preset.toString().toStdString();
+        const auto* presetObject = preset.getDynamicObject();
+        ASSERT_NE(presetObject, nullptr);
+        const auto presetId = presetObject->getProperty("id").toString();
+        const auto definitionPath = presetObject->getProperty("definitionPath").toString();
+        const auto resourceBasePath = presetObject->getProperty("resourceBasePath").toString();
+        ASSERT_FALSE(presetId.isEmpty());
+        ASSERT_TRUE(presetRoot().getChildFile(definitionPath).existsAsFile())
+            << presetId.toStdString();
+        ASSERT_TRUE(presetRoot().getChildFile(resourceBasePath).isDirectory())
+            << presetId.toStdString();
+        manifestPresetIds.push_back(presetId);
     }
     const auto comparePresetIds = [](const juce::String& left, const juce::String& right) {
         return left.compare(right) < 0;
@@ -399,18 +402,10 @@ TEST(SonalloyInstrumentRuntimeTest, ProcessContextRemainsContinuousAcrossBlocks)
     }
 }
 
-TEST(SonalloyInstrumentRuntimeTest, RejectsAudioInputDefinitionsBeforeActivation) {
-    const auto definition = sourceRoot()
-                                .getChildFile("review/external-audio-cross-synthesis/definitions/")
-                                .getChildFile("envelope-transfer-rhythm.json");
-    ASSERT_TRUE(definition.existsAsFile()) << definition.getFullPathName().toStdString();
-
-    juce::String error;
-    auto runtime = SonalloyInstrumentRuntime::create(
-        definition.loadFileAsString(), definition.getParentDirectory().getFullPathName(), 48'000.0,
-        256, error);
-    EXPECT_EQ(runtime, nullptr);
-    EXPECT_NE(error.indexOf("audio input route"), -1);
+TEST(SonalloyInstrumentRuntimeTest, AcceptsOnlyDefinitionsWithoutRequiredAudioInput) {
+    EXPECT_TRUE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(0));
+    EXPECT_FALSE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(1));
+    EXPECT_FALSE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(2));
 }
 
 TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
