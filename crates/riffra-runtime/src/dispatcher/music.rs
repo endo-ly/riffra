@@ -34,25 +34,27 @@ pub(super) fn dispatch<A>(
     Ok(match request.name.as_str() {
         "music.midi-clip.create" => {
             let params: MusicalMidiClipCreateParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .create_musical_midi_clip(
+                    .create_musical_midi_clip_with_created_ids(
                         &params.track_id,
                         params.start,
                         params.end,
                         params.name,
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.insert" => {
             let params: MusicalNoteInsertParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .insert_musical_notes(&params.clip_id, params.notes)?,
+                    .insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.list" => {
@@ -139,11 +141,11 @@ pub(super) fn dispatch<A>(
         ),
         "music.harmony.insert" => {
             let params: MusicalHarmonyInsertParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .insert_harmony_events(params.events)?,
+                    .insert_harmony_events_with_created_ids(params.events)?,
                 CanonicalMutationEffect::CanonicalOnly,
             )
         }
@@ -169,11 +171,11 @@ pub(super) fn dispatch<A>(
         }
         "music.harmony.realize" => {
             let params: MusicalHarmonyRealizeParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .realize_harmony(
+                    .realize_harmony_with_created_ids(
                         &params.clip_id,
                         HarmonyRealizeSelection {
                             start: params.start,
@@ -191,11 +193,11 @@ pub(super) fn dispatch<A>(
         }
         "music.phrase.insert" => {
             let params: MusicalPhraseInsertParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .insert_phrase_pattern(
+                    .insert_phrase_pattern_with_created_ids(
                         &params.clip_id,
                         params.pattern,
                         params.placements,
@@ -213,11 +215,11 @@ pub(super) fn dispatch<A>(
         ),
         "music.region.add" => {
             let params: MusicalRegionAddParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .add_region(params.name, params.start, params.end)?,
+                    .add_region_with_created_ids(params.name, params.start, params.end)?,
                 CanonicalMutationEffect::CanonicalOnly,
             )
         }

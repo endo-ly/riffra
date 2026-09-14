@@ -897,6 +897,7 @@ export class FakeNativeApi implements NativeApi {
     if (arrangementMutationMethodNames.has(name)) {
       const result: ArrangementMutationResult = {
         canonical: this.bootstrapState.canonical,
+        createdEntityIds: {},
         projection: { state: 'notRequired' },
       };
       return Promise.resolve(result);

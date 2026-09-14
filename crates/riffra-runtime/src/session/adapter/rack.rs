@@ -22,6 +22,14 @@ pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+    commit_device_arrangement_with_created_ids(context, prepared, Default::default())
+}
+
+pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
+    context: &SessionContext<'_, D>,
+    prepared: riffra_core::PreparedSession,
+    created_entity_ids: std::collections::BTreeMap<String, Vec<String>>,
+) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
     if let Err(error) =
         prepare_arrangement_candidate(context, prepared.session(), prepared.sequence())
     {
@@ -99,7 +107,9 @@ pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
             }
         });
     }
-    crate::session::adapter::arrangement_mutation_result(context)
+    let mut mutation = crate::session::adapter::arrangement_mutation_result(context)?;
+    mutation.created_entity_ids = created_entity_ids;
+    Ok(mutation)
 }
 
 pub fn set_track_audio_input(
@@ -147,17 +157,21 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
     }
     let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
     let snapshot = current_session(context)?;
-    let id = snapshot
+    let existing_id = snapshot
         .arrangement
         .tracks
         .iter()
         .find(|track| track.id == track_id)
         .and_then(|track| track.instrument.as_ref())
-        .map(|instrument| instrument.id.clone())
-        .unwrap_or_else(|| format!("device:instrument:{track_id}"));
-    let instrument =
-        riffra_core::TrackInstrument::vst3(id, name, validated_path.to_string_lossy().into_owned())
-            .map_err(AdapterError::command)?;
+        .map(|instrument| instrument.id.clone());
+    let creates_device = existing_id.is_none();
+    let id = existing_id.unwrap_or_else(|| format!("device:instrument:{track_id}"));
+    let instrument = riffra_core::TrackInstrument::vst3(
+        id.clone(),
+        name,
+        validated_path.to_string_lossy().into_owned(),
+    )
+    .map_err(AdapterError::command)?;
     let prepared = context
         .core
         .application(&context.storage)
@@ -167,7 +181,12 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_device_arrangement(context, prepared)
+    let created_entity_ids = if creates_device {
+        std::collections::BTreeMap::from([("devices".into(), vec![id])])
+    } else {
+        Default::default()
+    };
+    commit_device_arrangement_with_created_ids(context, prepared, created_entity_ids)
 }
 
 /// Assigns a built-in instrument resolved from the immutable Host catalog.
@@ -190,16 +209,17 @@ pub(crate) fn set_track_builtin_instrument_with_expected_sequence<D: RuntimeDriv
         .resolve(preset_id)
         .map_err(AdapterError::command)?;
     let snapshot = current_session(context)?;
-    let id = snapshot
+    let existing_id = snapshot
         .arrangement
         .tracks
         .iter()
         .find(|track| track.id == track_id)
         .and_then(|track| track.instrument.as_ref())
-        .map(|instrument| instrument.id.clone())
-        .unwrap_or_else(|| format!("device:instrument:{track_id}"));
+        .map(|instrument| instrument.id.clone());
+    let creates_device = existing_id.is_none();
+    let id = existing_id.unwrap_or_else(|| format!("device:instrument:{track_id}"));
     let instrument = riffra_core::TrackInstrument::built_in(
-        id,
+        id.clone(),
         definition.summary.name.clone(),
         preset_id.to_owned(),
         definition.definition_json.clone(),
@@ -214,13 +234,20 @@ pub(crate) fn set_track_builtin_instrument_with_expected_sequence<D: RuntimeDriv
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
+    let created_entity_ids = if creates_device {
+        std::collections::BTreeMap::from([("devices".into(), vec![id])])
+    } else {
+        Default::default()
+    };
     if context.safe_mode {
         commit_core_application(context, |core, store| {
             core.application(store).commit_prepared(prepared)
         })?;
-        arrangement_mutation_without_projection(context)
+        let mut result = arrangement_mutation_without_projection(context)?;
+        result.created_entity_ids = created_entity_ids;
+        Ok(result)
     } else {
-        commit_device_arrangement(context, prepared)
+        commit_device_arrangement_with_created_ids(context, prepared, created_entity_ids)
     }
 }
 
@@ -254,10 +281,10 @@ pub(crate) fn add_track_effect_with_expected_sequence(
         ));
     }
     let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
-    let prepared = context
+    let (prepared, device_id) = context
         .core
         .application(&context.storage)
-        .prepare_track_effect(
+        .prepare_track_effect_with_created_id(
             track_id,
             name,
             validated_path.to_string_lossy().into_owned(),
@@ -267,7 +294,11 @@ pub(crate) fn add_track_effect_with_expected_sequence(
         Some(sequence) => prepared.with_expected_sequence(sequence),
         None => prepared,
     };
-    commit_device_arrangement(context, prepared)
+    commit_device_arrangement_with_created_ids(
+        context,
+        prepared,
+        std::collections::BTreeMap::from([(String::from("devices"), vec![device_id])]),
+    )
 }
 
 pub fn remove_track_effect(

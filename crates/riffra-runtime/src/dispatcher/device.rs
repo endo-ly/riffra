@@ -56,19 +56,24 @@ pub(super) fn dispatch<A>(
                 .as_ref()
                 .map(|device| device.id.clone())
                 .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
+            let creates_device = track.instrument.is_none();
             let instrument = riffra_core::TrackInstrument::built_in(
-                id,
+                id.clone(),
                 definition.summary.name.clone(),
                 params.preset_id,
                 definition.definition_json.clone(),
             )
             .map_err(DispatchError::CommandFailed)?;
-            dispatcher.session(
+            let mut result = dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .set_track_instrument(&params.track_id, Some(instrument))?,
-            )
+            );
+            if creates_device {
+                result.created_entity_ids.insert("devices".into(), vec![id]);
+            }
+            result
         }
         "instrument.vst3.set" => {
             let params: PluginPathParams = decode(request.params)?;
@@ -85,18 +90,23 @@ pub(super) fn dispatch<A>(
                 .as_ref()
                 .map(|instrument| instrument.id.clone())
                 .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
+            let creates_device = track.instrument.is_none();
             let instrument = riffra_core::TrackInstrument::vst3(
-                id,
+                id.clone(),
                 plugin_name(&params.plugin_path),
                 params.plugin_path,
             )
             .map_err(DispatchError::CommandFailed)?;
-            dispatcher.session(
+            let mut result = dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .set_track_instrument(&track.id, Some(instrument))?,
-            )
+            );
+            if creates_device {
+                result.created_entity_ids.insert("devices".into(), vec![id]);
+            }
+            result
         }
         "instrument.clear" => {
             let params: TrackIdParams = decode(request.params)?;
@@ -114,14 +124,15 @@ pub(super) fn dispatch<A>(
                 params.track_id,
                 dispatcher.core.snapshot()?.sequence + 1
             );
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .add_track_effect(
+                    .add_track_effect_with_created_ids(
                         &params.track_id,
                         plugin_device(device_id, params.plugin_path)?,
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "effect.remove" => {

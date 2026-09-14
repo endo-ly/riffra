@@ -127,11 +127,13 @@ pub fn place_take_as_separate_clip(
             )
         })
         .transpose()?;
-    commit_core_application(context, |core, store| {
+    let mutation = commit_core_application_with_created_ids(context, |core, store| {
         core.application(store)
-            .place_take_as_separate_clip(take_id, midi_clip)
+            .place_take_as_separate_clip_with_created_ids(take_id, midi_clip)
     })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let mut result = crate::session::adapter::arrangement_mutation_result(context)?;
+    result.created_entity_ids = mutation.created_entity_ids;
+    Ok(result)
 }
 
 #[cfg(test)]

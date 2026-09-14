@@ -4,4 +4,4 @@ import type { TrackInstrumentSummarySource } from "./TrackInstrumentSummarySourc
 /**
  * Instrument metadata included in a lightweight Track projection.
  */
-export type TrackInstrumentSummary = { id: string, name: string, bypassed: boolean, source: TrackInstrumentSummarySource, };
+export type TrackInstrumentSummary = { id: string, name: string, bypassed: boolean, source: TrackInstrumentSummarySource, presetId?: string, };

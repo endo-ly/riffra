@@ -10,6 +10,9 @@ pub struct BuiltInInstrumentSummary {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reference_pitch: Option<String>,
 }
 
 /// A resolved built-in instrument definition retained by the Host.
@@ -43,6 +46,8 @@ struct ResourceManifestPreset {
     name: String,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    reference_pitch: Option<String>,
     definition_path: String,
     resource_base_path: String,
 }
@@ -123,6 +128,9 @@ impl BuiltInInstrumentCatalog {
             let description = preset.description.and_then(|description| {
                 (!description.trim().is_empty()).then(|| description.trim().to_owned())
             });
+            let reference_pitch = preset.reference_pitch.and_then(|reference_pitch| {
+                (!reference_pitch.trim().is_empty()).then(|| reference_pitch.trim().to_owned())
+            });
             definitions.insert(
                 id.clone(),
                 BuiltInInstrumentDefinition {
@@ -130,6 +138,7 @@ impl BuiltInInstrumentCatalog {
                         id,
                         name,
                         description,
+                        reference_pitch,
                     },
                     definition_json,
                     base_dir,
@@ -243,6 +252,7 @@ mod tests {
         id: &str,
         name: &str,
         description: Option<&str>,
+        reference_pitch: Option<&str>,
         definition_path: &str,
         resource_base_path: &str,
     ) -> serde_json::Value {
@@ -250,6 +260,7 @@ mod tests {
             "id": id,
             "name": name,
             "description": description,
+            "referencePitch": reference_pitch,
             "definitionPath": definition_path,
             "resourceBasePath": resource_base_path,
         })
@@ -283,6 +294,7 @@ mod tests {
                 "01-first",
                 "First",
                 Some("First description"),
+                Some("C1"),
                 "arbitrary/location/sound.data",
                 "resources/first",
             )],
@@ -290,14 +302,15 @@ mod tests {
 
         let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
 
+        let summaries = catalog.summaries();
         assert_eq!(
-            catalog
-                .summaries()
-                .into_iter()
-                .map(|summary| summary.id)
+            summaries
+                .iter()
+                .map(|summary| summary.id.as_str())
                 .collect::<Vec<_>>(),
             ["01-first"]
         );
+        assert_eq!(summaries[0].reference_pitch.as_deref(), Some("C1"));
         let definition = catalog.resolve("01-first").unwrap();
         assert_eq!(
             definition.definition_json,
@@ -317,6 +330,7 @@ mod tests {
             &[manifest_entry(
                 "01-opaque",
                 "Opaque",
+                None,
                 None,
                 "sound.data",
                 "resources",
@@ -355,10 +369,18 @@ mod tests {
                     "02-second",
                     "Second",
                     None,
+                    None,
                     "second.data",
                     "resources/second",
                 ),
-                manifest_entry("01-first", "First", None, "first.data", "resources/first"),
+                manifest_entry(
+                    "01-first",
+                    "First",
+                    None,
+                    None,
+                    "first.data",
+                    "resources/first",
+                ),
             ],
         );
 
@@ -369,10 +391,18 @@ mod tests {
         write_manifest(
             &root.0,
             &[
-                manifest_entry("01-first", "First", None, "first.data", "resources/first"),
+                manifest_entry(
+                    "01-first",
+                    "First",
+                    None,
+                    None,
+                    "first.data",
+                    "resources/first",
+                ),
                 manifest_entry(
                     "01-first",
                     "First again",
+                    None,
                     None,
                     "first.data",
                     "resources/first",

@@ -246,7 +246,8 @@ impl HostState {
             )
             .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
-                let mutation = self.after_canonical_commit(result.projection_effect())?;
+                let mut mutation = self.after_canonical_commit(result.projection_effect())?;
+                mutation.created_entity_ids = result.created_entity_ids;
                 let sequence = mutation.canonical.sequence;
                 return Ok((
                     "arrangementMutation",
@@ -2629,7 +2630,7 @@ mod tests {
                 "marker-add",
                 ControlCommand::new(
                     "marker.add",
-                    serde_json::json!({"name": "Verse", "tick": 0}),
+                    serde_json::json!({"name": "Verse", "position": "1:1"}),
                 ),
                 Some(1),
             )

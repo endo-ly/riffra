@@ -44,11 +44,12 @@ pub(super) fn dispatch<A>(
         ),
         "track.add" => {
             let params: TrackAddParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .add_track(params.name, parse_track_kind(&params.kind)?)?,
+                    .add_track_with_created_ids(params.name, parse_track_kind(&params.kind)?)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "track.update" => {
@@ -71,11 +72,12 @@ pub(super) fn dispatch<A>(
         }
         "track.duplicate" => {
             let params: TrackIdParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .duplicate_track(&params.track_id)?,
+                    .duplicate_track_with_created_ids(&params.track_id)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "track.reorder" => {
@@ -131,16 +133,33 @@ pub(super) fn dispatch<A>(
         }
         "marker.add" => {
             let params: MarkerAddParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            let tick = canonical
+                .session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(params.position)
+                .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .add_marker(TimelineTick(params.tick), params.name)?,
+                    .add_marker_with_created_ids(tick, params.name)?,
                 CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "marker.update" => {
             let params: MarkerUpdateParams = decode(request.params)?;
+            let tick = params
+                .position
+                .map(|position| {
+                    canonical
+                        .session
+                        .arrangement
+                        .timebase
+                        .musical_position_to_tick(position)
+                        .map_err(|error| DispatchError::invalid_request(error.to_string()))
+                })
+                .transpose()?;
             dispatcher.session_with_effect(
                 dispatcher
                     .core
@@ -149,7 +168,7 @@ pub(super) fn dispatch<A>(
                         &params.marker_id,
                         MarkerPatch {
                             name: params.name,
-                            tick: params.tick.map(TimelineTick),
+                            tick,
                         },
                     )?,
                 CanonicalMutationEffect::CanonicalOnly,
@@ -191,41 +210,58 @@ pub(super) fn dispatch<A>(
         }
         "loop-range.set" => {
             let params: RangeParams = decode(request.params)?;
+            let start = canonical
+                .session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(params.start)
+                .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
+            let end = canonical
+                .session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(params.end)
+                .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
             dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .update_loop_range(
-                        params.enabled,
-                        TimelineTick(params.start_tick),
-                        TimelineTick(params.end_tick),
-                    )?,
+                    .update_loop_range(params.enabled, start, end)?,
             )
         }
         "punch-range.set" => {
             let params: RangeParams = decode(request.params)?;
+            let start = canonical
+                .session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(params.start)
+                .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
+            let end = canonical
+                .session
+                .arrangement
+                .timebase
+                .musical_position_to_tick(params.end)
+                .map_err(|error| DispatchError::invalid_request(error.to_string()))?;
             dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .update_punch_range(
-                        params.enabled,
-                        TimelineTick(params.start_tick),
-                        TimelineTick(params.end_tick),
-                    )?,
+                    .update_punch_range(params.enabled, start, end)?,
             )
         }
         "automation.set" => {
             let params: AutomationParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .set_track_automation(
+                    .set_track_automation_with_created_ids(
                         &params.track_id,
                         parse_automation_parameter(&params.parameter)?,
                         params.points,
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "automation.clear" => {
@@ -286,7 +322,7 @@ pub(crate) struct MidiInputParams {
 #[serde(rename_all = "camelCase")]
 struct MarkerAddParams {
     name: String,
-    tick: u64,
+    position: riffra_core::MusicalPosition,
 }
 
 #[derive(Debug, Deserialize)]
@@ -294,7 +330,7 @@ struct MarkerAddParams {
 struct MarkerUpdateParams {
     marker_id: String,
     name: Option<String>,
-    tick: Option<u64>,
+    position: Option<riffra_core::MusicalPosition>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,8 +360,8 @@ impl TimebasePatchParams {
 #[serde(rename_all = "camelCase")]
 struct RangeParams {
     enabled: bool,
-    start_tick: u64,
-    end_tick: u64,
+    start: riffra_core::MusicalPosition,
+    end: riffra_core::MusicalPosition,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +507,68 @@ mod tests {
             .dispatch(request("timebase.update", json!({"ppq": 960})))
             .unwrap_err();
         assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn marker_and_ranges_convert_positions_using_the_current_meter() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-musical-position-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        dispatcher
+            .dispatch(request(
+                "timebase.update",
+                json!({"timeSignatureNumerator":3,"timeSignatureDenominator":4}),
+            ))
+            .unwrap();
+        let marker = dispatcher
+            .dispatch(request(
+                "marker.add",
+                json!({"name":"Chorus","position":"5:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(marker.value).unwrap();
+        assert_eq!(session.arrangement.markers[0].tick, 4 * 3 * 960);
+
+        let looped = dispatcher
+            .dispatch(request(
+                "loop-range.set",
+                json!({"enabled":true,"start":"5:1","end":"9:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(looped.value).unwrap();
+        assert_eq!(session.arrangement.loop_range.start_tick.0, 4 * 3 * 960);
+        assert_eq!(session.arrangement.loop_range.end_tick.0, 8 * 3 * 960);
+
+        let punched = dispatcher
+            .dispatch(request(
+                "punch-range.set",
+                json!({"enabled":true,"start":"9:1","end":"13:1"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(punched.value).unwrap();
+        let punch = session.arrangement.punch_range.unwrap();
+        assert_eq!(punch.start_tick.0, 8 * 3 * 960);
+        assert_eq!(punch.end_tick.0, 12 * 3 * 960);
+
+        assert!(
+            dispatcher
+                .dispatch(request("marker.add", json!({"name":"Invalid","tick":960})))
+                .is_err()
+        );
+        assert!(
+            dispatcher
+                .dispatch(request(
+                    "loop-range.set",
+                    json!({"enabled":true,"startTick":960,"endTick":1920}),
+                ))
+                .is_err()
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

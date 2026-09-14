@@ -6,4 +6,4 @@ import type { CanonicalState } from "./CanonicalState";
  * Result of a canonical Arrangement mutation and its best-effort runtime
  * projection.
  */
-export type ArrangementMutationResult = { canonical: CanonicalState, projection: ArrangementProjectionOutcome, };
+export type ArrangementMutationResult = { canonical: CanonicalState, projection: ArrangementProjectionOutcome, createdEntityIds: { [key in string]: Array<string> }, };

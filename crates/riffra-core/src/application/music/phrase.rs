@@ -22,10 +22,22 @@ where
     pub fn insert_phrase_pattern(
         &self,
         clip_id: &str,
-        mut pattern: PhrasePattern,
+        pattern: PhrasePattern,
         placements: Vec<PhrasePlacement>,
         channel: Option<u8>,
     ) -> Result<crate::domain::CreativeSession, ApplicationError> {
+        self.insert_phrase_pattern_with_created_ids(clip_id, pattern, placements, channel)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Expands a phrase and returns all generated Note IDs.
+    pub fn insert_phrase_pattern_with_created_ids(
+        &self,
+        clip_id: &str,
+        mut pattern: PhrasePattern,
+        placements: Vec<PhrasePlacement>,
+        channel: Option<u8>,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
         if placements.is_empty() {
             return Err(ApplicationError::InvalidCommand(
                 "at least one phrase placement is required".into(),
@@ -40,7 +52,8 @@ where
         for placement in &placements {
             placement.validate()?;
         }
-        self.commit_arrangement(|arrangement| {
+        let mut created_entity_ids = super::CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let timebase = arrangement.timebase;
             let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
             let mut notes = Vec::new();
@@ -87,9 +100,13 @@ where
                     }
                 }
             }
-            insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
-                .map_err(Into::into)
-        })
+            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            for id in ids {
+                super::record_created(&mut created_entity_ids, "midiNotes", id);
+            }
+            Ok(())
+        })?;
+        Ok(super::ApplicationMutation::new(session, created_entity_ids))
     }
 }
 

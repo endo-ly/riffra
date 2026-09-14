@@ -87,7 +87,20 @@ where
         end: MusicalPosition,
         name: Option<String>,
     ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+        self.create_musical_midi_clip_with_created_ids(track_id, start, end, name)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Creates a MIDI Clip from musical positions and returns its identity.
+    pub fn create_musical_midi_clip_with_created_ids(
+        &self,
+        track_id: &str,
+        start: MusicalPosition,
+        end: MusicalPosition,
+        name: Option<String>,
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let start_tick = arrangement.timebase.musical_position_to_tick(start)?;
             let end_tick = arrangement.timebase.musical_position_to_tick(end)?;
             let duration_ticks = end_tick.0.checked_sub(start_tick.0).ok_or_else(|| {
@@ -101,14 +114,17 @@ where
                 )
                 .into());
             }
-            super::arrangement::create_midi_clip_in_arrangement(
+            let id = super::arrangement::create_midi_clip_in_arrangement(
                 arrangement,
                 track_id,
                 start_tick,
                 duration_ticks,
                 name,
-            )
-        })
+            )?;
+            record_created(&mut created_entity_ids, "midiClips", id);
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Inserts MIDI notes whose positions are absolute within the arrangement.
@@ -123,12 +139,23 @@ where
         clip_id: &str,
         inputs: Vec<MusicalMidiNoteInput>,
     ) -> Result<CreativeSession, ApplicationError> {
+        self.insert_musical_notes_with_created_ids(clip_id, inputs)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Inserts musical notes atomically and returns their identities.
+    pub fn insert_musical_notes_with_created_ids(
+        &self,
+        clip_id: &str,
+        inputs: Vec<MusicalMidiNoteInput>,
+    ) -> Result<ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
             return Err(ApplicationError::InvalidCommand(
                 "at least one musical midi note is required".into(),
             ));
         }
-        self.commit_arrangement(|arrangement| {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
             if inputs.len() > available_notes {
                 return Err(too_many_midi_notes().into());
@@ -138,9 +165,13 @@ where
                 .into_iter()
                 .map(|input| resolve_musical_note(timebase, input))
                 .collect::<Result<Vec<_>, _>>()?;
-            insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
-                .map_err(Into::into)
-        })
+            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            for id in ids {
+                record_created(&mut created_entity_ids, "midiNotes", id);
+            }
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Lists MIDI notes using absolute musical positions.
@@ -354,19 +385,32 @@ where
         start: MusicalPosition,
         end: MusicalPosition,
     ) -> Result<CreativeSession, ApplicationError> {
+        self.add_region_with_created_ids(name, start, end)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Adds a musical region and returns its Core-allocated identity.
+    pub fn add_region_with_created_ids(
+        &self,
+        name: String,
+        start: MusicalPosition,
+        end: MusicalPosition,
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let name = normalize_region_name(name)?;
-        self.commit_arrangement(|arrangement| {
+        let id = next_id("region");
+        let session = self.commit_arrangement(|arrangement| {
             let start_tick = arrangement.timebase.musical_position_to_tick(start)?;
             let end_tick = arrangement.timebase.musical_position_to_tick(end)?;
             arrangement
                 .add_region(TimelineRegion {
-                    id: next_id("region"),
+                    id: id.clone(),
                     name,
                     start_tick,
                     end_tick,
                 })
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "regions", id))
     }
 
     /// Updates a named timeline range using only the supplied fields.
@@ -459,7 +503,7 @@ fn insert_resolved_midi_notes_in_arrangement(
     arrangement: &mut crate::domain::Arrangement,
     clip_id: &str,
     inputs: Vec<ResolvedMidiNoteInput>,
-) -> Result<(), DomainError> {
+) -> Result<Vec<String>, DomainError> {
     if inputs.is_empty() {
         return Err(DomainError::InvalidMusicalValue(
             "at least one musical midi note is required".into(),
@@ -504,7 +548,9 @@ fn insert_resolved_midi_notes_in_arrangement(
             })
         })
         .collect::<Result<Vec<_>, DomainError>>()?;
-    arrangement.insert_midi_notes(clip_id, notes)
+    let ids = notes.iter().map(|note| note.id.clone()).collect::<Vec<_>>();
+    arrangement.insert_midi_notes(clip_id, notes)?;
+    Ok(ids)
 }
 
 fn available_midi_note_capacity(

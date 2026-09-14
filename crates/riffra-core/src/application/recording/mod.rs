@@ -124,9 +124,19 @@ where
     pub fn place_take_as_separate_clip(
         &self,
         take_id: &str,
-        mut midi_clip: Option<MidiClip>,
+        midi_clip: Option<MidiClip>,
     ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+        self.place_take_as_separate_clip_with_created_ids(take_id, midi_clip)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Places a recorded Take and returns the newly allocated clip identity.
+    pub fn place_take_as_separate_clip_with_created_ids(
+        &self,
+        take_id: &str,
+        mut midi_clip: Option<MidiClip>,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
+        self.commit_arrangement_with_created_ids(|arrangement, created| {
             let take = arrangement
                 .takes
                 .iter()
@@ -145,6 +155,7 @@ where
             {
                 let mut clip = source;
                 clip.id = next_id("clip:take-place");
+                super::record_created(created, "audioClips", clip.id.clone());
                 clip.muted = true;
                 arrangement.audio_clips.push(clip);
             } else if take.raw_audio.is_some() || take.processed_audio.is_some() {
@@ -175,6 +186,7 @@ where
                         )
                     })?;
                 clip.id = next_id("clip:take-place");
+                super::record_created(created, "audioClips", clip.id.clone());
                 clip.start_tick = take.start_tick;
                 let source = take
                     .preferred_audio_source(clip.take_variant)
@@ -195,6 +207,7 @@ where
                     )
                 })?;
                 clip.id = next_id("midi-clip:take-place");
+                super::record_created(created, "midiClips", clip.id.clone());
                 clip.recording_take_id = Some(take.id);
                 clip.muted = true;
                 arrangement.midi_clips.push(clip);

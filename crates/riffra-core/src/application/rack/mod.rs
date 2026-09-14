@@ -134,6 +134,29 @@ where
         })
     }
 
+    /// Adds an effect device and returns its identity.
+    pub fn add_track_effect_with_created_ids(
+        &self,
+        track_id: &str,
+        device: RackDevice,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
+        let device_id = device.id.clone();
+        let session = self.core.commit(self.storage, |session| {
+            let track = session
+                .arrangement
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            track.rack.devices.push(device);
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })?;
+        Ok(super::ApplicationMutation::one(
+            session, "devices", device_id,
+        ))
+    }
+
     /// Builds a Track effect insertion for host runtime validation without
     /// changing canonical state.
     ///
@@ -145,20 +168,37 @@ where
         name: String,
         path: String,
     ) -> Result<crate::PreparedSession, ApplicationError> {
-        self.core.prepare(|session| {
-            let track = session
-                .arrangement
-                .tracks
-                .iter_mut()
-                .find(|track| track.id == track_id)
-                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-            track
-                .rack
-                .devices
-                .push(plugin_device(next_id("device:effect"), name, path)?);
-            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-            Ok(())
-        })
+        self.prepare_track_effect_with_created_id(track_id, name, path)
+            .map(|(prepared, _)| prepared)
+    }
+
+    /// Builds a Track effect insertion and returns the allocated device ID.
+    ///
+    /// The prepared session is still uncommitted; the ID is returned so the
+    /// Host can carry mutation metadata through runtime validation.
+    pub fn prepare_track_effect_with_created_id(
+        &self,
+        track_id: &str,
+        name: String,
+        path: String,
+    ) -> Result<(crate::PreparedSession, String), ApplicationError> {
+        let device_id = next_id("device:effect");
+        self.core
+            .prepare(|session| {
+                let track = session
+                    .arrangement
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.id == track_id)
+                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+                track
+                    .rack
+                    .devices
+                    .push(plugin_device(device_id.clone(), name, path)?);
+                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+                Ok(())
+            })
+            .map(|prepared| (prepared, device_id))
     }
 
     /// Removes one effect device from a Track rack.
@@ -289,9 +329,21 @@ where
         &self,
         track_id: &str,
         parameter: AutomationParameter,
-        mut points: Vec<AutomationPoint>,
+        points: Vec<AutomationPoint>,
     ) -> Result<CreativeSession, ApplicationError> {
-        self.core.commit(self.storage, |session| {
+        self.set_track_automation_with_created_ids(track_id, parameter, points)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Replaces automation and reports a newly created lane identity.
+    pub fn set_track_automation_with_created_ids(
+        &self,
+        track_id: &str,
+        parameter: AutomationParameter,
+        mut points: Vec<AutomationPoint>,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
+        let mut created_entity_ids = super::CreatedEntityIds::new();
+        let session = self.core.commit(self.storage, |session| {
             if !session
                 .arrangement
                 .tracks
@@ -301,6 +353,11 @@ where
                 return Err(crate::DomainError::UnknownTrack(track_id.to_owned()).into());
             }
             points.sort_by_key(|point| point.tick);
+            let had_lane = session
+                .arrangement
+                .automation_lanes
+                .iter()
+                .any(|lane| lane.track_id == track_id && lane.parameter == parameter);
             session
                 .arrangement
                 .automation_lanes
@@ -310,16 +367,21 @@ where
                     AutomationParameter::Volume => "volume",
                     AutomationParameter::Pan => "pan",
                 };
+                let id = format!("automation:{track_id}:{parameter_name}");
                 session.arrangement.automation_lanes.push(AutomationLane {
-                    id: format!("automation:{track_id}:{parameter_name}"),
+                    id: id.clone(),
                     track_id: track_id.to_owned(),
                     parameter,
                     points,
                 });
+                if !had_lane {
+                    super::record_created(&mut created_entity_ids, "automationLanes", id);
+                }
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
-        })
+        })?;
+        Ok(super::ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Persists a complete state snapshot emitted by a native Plugin Editor.

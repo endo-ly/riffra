@@ -96,20 +96,32 @@ where
         &self,
         inputs: Vec<HarmonyEventInput>,
     ) -> Result<crate::domain::CreativeSession, ApplicationError> {
+        self.insert_harmony_events_with_created_ids(inputs)
+            .map(|mutation| mutation.session)
+    }
+
+    /// Inserts harmony events and returns their Core-allocated identities.
+    pub fn insert_harmony_events_with_created_ids(
+        &self,
+        inputs: Vec<HarmonyEventInput>,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
             return Err(ApplicationError::InvalidCommand(
                 "at least one harmony event is required".into(),
             ));
         }
-        self.commit_arrangement(|arrangement| {
+        let mut created_entity_ids = super::CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let timebase = arrangement.timebase;
             let events = inputs
                 .into_iter()
                 .map(|input| {
                     let start_tick = timebase.musical_position_to_tick(input.start)?;
                     let end_tick = timebase.musical_position_to_tick(input.end)?;
+                    let id = super::next_id("harmony");
+                    super::record_created(&mut created_entity_ids, "harmonyEvents", id.clone());
                     Ok(HarmonyEvent {
-                        id: super::next_id("harmony"),
+                        id,
                         start_tick,
                         end_tick,
                         chord: resolve_harmony_input(input)?,
@@ -117,7 +129,8 @@ where
                 })
                 .collect::<Result<Vec<_>, crate::DomainError>>()?;
             arrangement.add_harmony_events(events).map_err(Into::into)
-        })
+        })?;
+        Ok(super::ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Updates one harmony event and re-resolves a changed chord definition.
@@ -249,6 +262,22 @@ where
         velocity: Option<u8>,
         channel: Option<u8>,
     ) -> Result<crate::domain::CreativeSession, ApplicationError> {
+        self.realize_harmony_with_created_ids(
+            clip_id, selection, voicing, rhythm, velocity, channel,
+        )
+        .map(|mutation| mutation.session)
+    }
+
+    /// Realizes harmony into MIDI notes and returns all generated Note IDs.
+    pub fn realize_harmony_with_created_ids(
+        &self,
+        clip_id: &str,
+        selection: HarmonyRealizeSelection,
+        voicing: ChordVoicingInput,
+        rhythm: Option<RhythmPattern>,
+        velocity: Option<u8>,
+        channel: Option<u8>,
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
         if velocity.is_some_and(|value| value > 127) {
             return Err(ApplicationError::InvalidCommand(
                 "harmony velocity must be between 0 and 127".into(),
@@ -259,7 +288,8 @@ where
                 "harmony channel must be between 1 and 16".into(),
             ));
         }
-        self.commit_arrangement(|arrangement| {
+        let mut created_entity_ids = super::CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let clip = arrangement
                 .midi_clips
                 .iter()
@@ -375,9 +405,13 @@ where
                     }
                 }
             }
-            insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
-                .map_err(Into::into)
-        })
+            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            for id in ids {
+                super::record_created(&mut created_entity_ids, "midiNotes", id);
+            }
+            Ok(())
+        })?;
+        Ok(super::ApplicationMutation::new(session, created_entity_ids))
     }
 }
 

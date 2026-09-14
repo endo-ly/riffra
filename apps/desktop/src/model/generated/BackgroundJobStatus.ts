@@ -7,4 +7,4 @@ import type { ScanReport } from "./ScanReport";
  * Typed view of a background job, produced from [`JobStatus`] at the IPC
  * boundary. `kind` is the discriminator and fixes the shape of `result`.
  */
-export type BackgroundJobStatus = { "kind": "scan", id: string, state: JobState, progress: number, message: string, result: ScanReport | null, } | { "kind": "render", id: string, state: JobState, progress: number, message: string, result: RenderResult | null, };
+export type BackgroundJobStatus = { "kind": "scan", id: string, state: JobState, progress: number | null, message: string, result: ScanReport | null, } | { "kind": "render", id: string, state: JobState, progress: number | null, message: string, result: RenderResult | null, };
