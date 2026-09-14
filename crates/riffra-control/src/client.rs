@@ -57,6 +57,15 @@ impl LocalHostClient {
         &self.descriptor
     }
 
+    /// Performs only the initial command handshake without sending a request.
+    ///
+    /// This is used by clients that need to absorb a startup race before a
+    /// mutation is sent.
+    pub fn verify_connection(&self) -> Result<(), LocalHostClientError> {
+        let _stream = self.open_command_stream()?;
+        Ok(())
+    }
+
     /// Sends one command over its own connection and waits for its response.
     ///
     /// # Errors

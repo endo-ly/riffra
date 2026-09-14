@@ -6,6 +6,8 @@ use riffra_control::{
 use riffra_runtime::command_requires_project_id;
 use serde_json::Value;
 use std::io::{BufRead, Write};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Client-only backend for commands owned by a running Riffra Host.
 pub struct AttachedBackend {
@@ -39,6 +41,37 @@ impl AttachedBackend {
         })
     }
 
+    /// Polls an existing background job until it reaches a terminal state.
+    pub fn wait_for_job(&self, job_id: &str, timeout_ms: u64) -> Result<ControlResponse, String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let response = self.request(&ControlRequest::new(
+                format!("cli-job-wait-{}", new_instance_id()),
+                ControlCommand::new("job.get", serde_json::json!({"id": job_id})),
+                None,
+            ))?;
+            if !response.ok {
+                return Ok(response);
+            }
+            let Some(result) = response.result.as_ref() else {
+                return Err("job.get response did not contain a result".into());
+            };
+            let Some(state) = result.value.get("state").and_then(Value::as_str) else {
+                if result.value.is_null() {
+                    return Err(format!("background job was not found: {job_id}"));
+                }
+                return Err("job.get response did not contain a job state".into());
+            };
+            if matches!(state, "cancelled" | "completed" | "failed") {
+                return Ok(response);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("timed out waiting for background job: {job_id}"));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     fn active_project_id(&self) -> Result<String, String> {
         let response = self
             .client
@@ -65,23 +98,29 @@ impl AttachedBackend {
     pub fn run_interactive(self) -> Result<(), String> {
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout().lock();
-        for line in stdin.lock().lines() {
+        for (line_index, line) in stdin.lock().lines().enumerate() {
             let line = line.map_err(|error| format!("request could not be read: {error}"))?;
             if line.trim().is_empty() {
                 continue;
             }
+            let input_line = Some(line_index + 1);
             let response = match serde_json::from_str::<ControlRequest>(&line) {
                 Err(error) => ControlResponse::failure(
                     request_id_from_json(&line),
                     None,
-                    ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
+                    with_input_line(
+                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
+                        input_line,
+                    ),
                 ),
                 Ok(request) => match request.validate() {
-                    Err(error) => ControlResponse::failure(request.request_id, None, error),
+                    Err(error) => ControlResponse::failure(
+                        request.request_id,
+                        None,
+                        with_input_line(error, input_line),
+                    ),
                     Ok(()) => match self.request(&request) {
-                        Ok(response) => {
-                            compact_agent_response(&request.command, &request.params, response)
-                        }
+                        Ok(response) => compact_agent_response(&request.command, response, None),
                         Err(error) => ControlResponse::failure(
                             request.request_id,
                             None,
@@ -108,6 +147,20 @@ fn request_id_from_json(line: &str) -> String {
         .ok()
         .and_then(|value| value.get("requestId")?.as_str().map(str::to_owned))
         .unwrap_or_default()
+}
+
+fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> ProtocolError {
+    let Some(input_line) = input_line else {
+        return error;
+    };
+    error.message = format!("input line {input_line}: {}", error.message);
+    let mut details = match error.details.take() {
+        Some(Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("inputLine".into(), serde_json::json!(input_line));
+    error.details = Some(Value::Object(details));
+    error
 }
 
 #[cfg(test)]
@@ -200,5 +253,16 @@ mod tests {
         assert_eq!(response.result.unwrap().value["sequence"], 12);
 
         server.join().unwrap();
+    }
+
+    #[test]
+    fn attached_interactive_errors_include_the_physical_input_line() {
+        let error = with_input_line(
+            ProtocolError::new(ErrorCode::InvalidRequest, "malformed JSON"),
+            Some(3),
+        );
+
+        assert_eq!(error.details.unwrap()["inputLine"], 3);
+        assert_eq!(error.message, "input line 3: malformed JSON");
     }
 }

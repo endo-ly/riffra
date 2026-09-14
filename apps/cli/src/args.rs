@@ -206,6 +206,7 @@ pub struct SessionSettingsArgs {
     pub project_name: Option<String>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(allow_hyphen_values = true)]
     pub master_db: Option<f64>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,9 +264,11 @@ pub struct TrackUpdateArgs {
     pub name: Option<String>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(allow_hyphen_values = true)]
     pub gain_db: Option<f64>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(allow_hyphen_values = true)]
     pub pan: Option<f64>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -376,8 +379,10 @@ pub struct AudioClipUpdateArgs {
     #[arg(long)]
     pub start_tick: Option<u64>,
     #[arg(long)]
+    #[arg(allow_hyphen_values = true)]
     pub gain_db: Option<f64>,
     #[arg(long)]
+    #[arg(allow_hyphen_values = true)]
     pub pan: Option<f64>,
     #[arg(long)]
     pub loop_enabled: Option<bool>,
@@ -593,7 +598,9 @@ pub struct MusicalHarmonyResolveArgs {
 #[derive(Debug, Args)]
 pub struct MusicalHarmonyInsertArgs {
     #[arg(long, alias = "events")]
-    pub events_json: String,
+    pub events_json: Option<String>,
+    #[arg(long)]
+    pub events_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -619,9 +626,12 @@ pub struct MusicalHarmonyRealizeArgs {
     #[arg(long)]
     pub end: Option<String>,
     #[arg(long)]
+    #[arg(allow_hyphen_values = true)]
     pub lowest_octave: Option<i8>,
     #[arg(long)]
     pub rhythm_json: Option<String>,
+    #[arg(long)]
+    pub rhythm_file: Option<PathBuf>,
     #[arg(long)]
     pub velocity: Option<u8>,
     #[arg(long)]
@@ -638,7 +648,9 @@ pub struct MusicalPhraseInsertArgs {
     #[arg(long)]
     pub clip_id: String,
     #[arg(long, alias = "phrase")]
-    pub phrase_json: String,
+    pub phrase_json: Option<String>,
+    #[arg(long)]
+    pub phrase_file: Option<PathBuf>,
     #[arg(long)]
     pub channel: Option<u8>,
 }
@@ -853,8 +865,10 @@ pub struct MidiNoteTransformArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ids_json: Option<String>,
     #[arg(long, default_value_t = 0)]
+    #[arg(allow_hyphen_values = true)]
     pub transpose_semitones: i16,
     #[arg(long, default_value_t = 0)]
+    #[arg(allow_hyphen_values = true)]
     pub velocity_offset: i16,
 }
 
@@ -923,7 +937,7 @@ pub struct MarkerAddArgs {
     #[arg(long)]
     pub name: String,
     #[arg(long)]
-    pub tick: u64,
+    pub position: String,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -934,7 +948,7 @@ pub struct MarkerUpdateArgs {
     #[arg(long)]
     pub name: Option<String>,
     #[arg(long)]
-    pub tick: Option<u64>,
+    pub position: Option<String>,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -975,9 +989,9 @@ pub struct RangeArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[arg(long)]
-    pub start_tick: u64,
+    pub start: String,
     #[arg(long)]
-    pub end_tick: u64,
+    pub end: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1097,7 +1111,9 @@ pub enum BuiltInInstrumentCommand {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuiltInInstrumentSetArgs {
+    #[arg(long)]
     pub track_id: String,
+    #[arg(long)]
     pub preset_id: String,
 }
 
@@ -1557,12 +1573,21 @@ pub struct RenderStartArgs {
 pub enum JobCommand {
     Get(JobIdArgs),
     Cancel(JobIdArgs),
+    Wait(JobWaitArgs),
 }
 
 #[derive(Debug, Args, Serialize)]
 pub struct JobIdArgs {
     #[arg(long)]
     pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct JobWaitArgs {
+    #[arg(long)]
+    pub id: String,
+    #[arg(long, default_value_t = 30_000)]
+    pub timeout_ms: u64,
 }
 
 impl Cli {
@@ -1753,12 +1778,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             MusicCommand::Harmony { command } => match command {
                 MusicHarmonyCommand::Resolve(args) => value("music.harmony.resolve", args),
                 MusicHarmonyCommand::List => simple("music.harmony.list"),
-                MusicHarmonyCommand::Insert(args) => json_string_with_fields(
-                    "music.harmony.insert",
-                    json!({}),
-                    "events",
-                    args.events_json,
-                )?,
+                MusicHarmonyCommand::Insert(args) => harmony_insert(args)?,
                 MusicHarmonyCommand::Update(args) => harmony_update(args)?,
                 MusicHarmonyCommand::Remove(args) => {
                     let ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
@@ -1780,8 +1800,18 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             }
         },
         CliCommand::Marker { command } => match command {
-            MarkerCommand::Add(args) => value("marker.add", args),
-            MarkerCommand::Update(args) => value("marker.update", args),
+            MarkerCommand::Add(args) => value(
+                "marker.add",
+                json!({"name": args.name, "position": args.position}),
+            ),
+            MarkerCommand::Update(args) => value(
+                "marker.update",
+                json!({
+                    "markerId": args.marker_id,
+                    "name": args.name,
+                    "position": args.position,
+                }),
+            ),
             MarkerCommand::Remove(args) => value("marker.remove", args),
         },
         CliCommand::Timebase { command } => match command {
@@ -1927,6 +1957,9 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => value("job.get", args),
             JobCommand::Cancel(args) => value("job.cancel", args),
+            JobCommand::Wait(_) => {
+                return Err("job wait is handled locally by an attached one-shot CLI".into());
+            }
         },
         CliCommand::Undo => simple("undo"),
         CliCommand::Redo => simple("redo"),
@@ -2001,17 +2034,51 @@ fn note_source_command(
     notes_file: Option<PathBuf>,
     use_stdin: bool,
 ) -> Result<ControlCommand, String> {
-    let source_count = usize::from(notes_json.is_some())
-        + usize::from(notes_file.is_some())
-        + usize::from(use_stdin);
-    if source_count != 1 {
-        return Err("exactly one of --notes-json, --notes-file, or --stdin is required".into());
+    let notes = json_source(notes_json, notes_file, use_stdin, "notes", true)?
+        .expect("required JSON source is present");
+    if !notes.is_array() {
+        return Err("note input must be a JSON array".into());
     }
-    let encoded = if let Some(notes_json) = notes_json {
-        notes_json
-    } else if let Some(notes_file) = notes_file {
-        std::fs::read_to_string(&notes_file)
-            .map_err(|error| format!("--notes-file could not be read: {error}"))?
+    Ok(value(command, json!({"clipId": clip_id, "notes": notes})))
+}
+
+fn harmony_insert(args: MusicalHarmonyInsertArgs) -> Result<ControlCommand, String> {
+    let events = json_source(args.events_json, args.events_file, false, "events", true)?
+        .expect("required JSON source is present");
+    if !events.is_array() {
+        return Err("events input must be a JSON array".into());
+    }
+    Ok(value("music.harmony.insert", json!({"events": events})))
+}
+
+fn json_source(
+    inline: Option<String>,
+    file: Option<PathBuf>,
+    use_stdin: bool,
+    field: &str,
+    required: bool,
+) -> Result<Option<Value>, String> {
+    let source_names = if use_stdin {
+        format!("--{field}-json, --{field}-file, or --stdin")
+    } else {
+        format!("--{field}-json or --{field}-file")
+    };
+    let source_count =
+        usize::from(inline.is_some()) + usize::from(file.is_some()) + usize::from(use_stdin);
+    if source_count > 1 {
+        return Err(format!("only one of {source_names} may be specified"));
+    }
+    if required && source_count == 0 {
+        return Err(format!("one of {source_names} is required"));
+    }
+    if source_count == 0 {
+        return Ok(None);
+    }
+    let encoded = if let Some(inline) = inline {
+        inline
+    } else if let Some(file) = file {
+        std::fs::read_to_string(&file)
+            .map_err(|error| format!("--{field}-file could not be read: {error}"))?
     } else {
         let mut encoded = String::new();
         std::io::stdin()
@@ -2019,12 +2086,9 @@ fn note_source_command(
             .map_err(|error| format!("--stdin could not be read: {error}"))?;
         encoded
     };
-    let notes: Value = serde_json::from_str(&encoded)
-        .map_err(|error| format!("note input is invalid JSON: {error}"))?;
-    if !notes.is_array() {
-        return Err("note input must be a JSON array".into());
-    }
-    Ok(value(command, json!({"clipId": clip_id, "notes": notes})))
+    serde_json::from_str::<Value>(&encoded)
+        .map(Some)
+        .map_err(|error| format!("{field} input is invalid JSON: {error}"))
 }
 
 fn plugin_preset_set(args: PluginPresetSetArgs) -> Result<ControlCommand, String> {
@@ -2107,9 +2171,7 @@ fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, St
     if let Some(lowest_octave) = args.lowest_octave {
         params.insert("lowestOctave".into(), json!(lowest_octave));
     }
-    if let Some(rhythm_json) = args.rhythm_json {
-        let rhythm = serde_json::from_str::<Value>(&rhythm_json)
-            .map_err(|error| format!("--rhythm-json is invalid JSON: {error}"))?;
+    if let Some(rhythm) = json_source(args.rhythm_json, args.rhythm_file, false, "rhythm", false)? {
         params.insert("rhythm".into(), rhythm);
     }
     if let Some(velocity) = args.velocity {
@@ -2122,16 +2184,28 @@ fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, St
 }
 
 fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String> {
-    let phrase = serde_json::from_str::<Value>(&args.phrase_json)
-        .map_err(|error| format!("--phrase-json is invalid JSON: {error}"))?;
-    let mut params = phrase
+    let phrase = json_source(args.phrase_json, args.phrase_file, false, "phrase", true)?
+        .expect("required JSON source is present");
+    let mut phrase = phrase
         .as_object()
         .cloned()
-        .ok_or_else(|| "--phrase-json must contain a JSON object".to_string())?;
-    if params.contains_key("clipId") {
+        .ok_or_else(|| "phrase input must contain a JSON object".to_string())?;
+    if phrase.contains_key("clipId") {
         return Err("--phrase-json must not contain clipId".into());
     }
+    let pattern = phrase
+        .remove("pattern")
+        .ok_or_else(|| "--phrase-json must contain pattern".to_string())?;
+    let placements = phrase
+        .remove("placements")
+        .ok_or_else(|| "--phrase-json must contain placements".to_string())?;
+    if !phrase.is_empty() {
+        return Err("--phrase-json may contain only pattern and placements".into());
+    }
+    let mut params = serde_json::Map::new();
     params.insert("clipId".into(), Value::String(args.clip_id));
+    params.insert("pattern".into(), pattern);
+    params.insert("placements".into(), placements);
     if let Some(channel) = args.channel {
         params.insert("channel".into(), json!(channel));
     }
@@ -2184,8 +2258,8 @@ fn range_value(command: &str, args: RangeArgs) -> ControlCommand {
         command,
         json!({
             "enabled": args.enabled.unwrap_or(false),
-            "startTick": args.start_tick,
-            "endTick": args.end_tick,
+            "start": args.start,
+            "end": args.end,
         }),
     )
 }
@@ -2304,7 +2378,9 @@ mod tests {
             "instrument",
             "builtin",
             "set",
+            "--track-id",
             "track:keys",
+            "--preset-id",
             "01-clean-sub-bass",
         ])
         .unwrap();
@@ -2644,6 +2720,169 @@ mod tests {
     }
 
     #[test]
+    fn file_sources_expand_to_native_protocol_fields_without_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-structured-sources-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let events_file = root.join("events.json");
+        let rhythm_file = root.join("rhythm.json");
+        let phrase_file = root.join("phrase.json");
+        std::fs::write(
+            &events_file,
+            br#"[{"start":"1:1","end":"2:1","chord":"Dm9"}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &rhythm_file,
+            br#"{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &phrase_file,
+            br#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]}"#,
+        )
+        .unwrap();
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "harmony",
+            "insert",
+            "--events-file",
+            events_file.to_str().unwrap(),
+        ])
+        .unwrap();
+        let events_request = cli.request().unwrap();
+        assert_eq!(
+            events_request.params,
+            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "harmony",
+            "realize",
+            "--clip-id",
+            "midi-clip:1",
+            "--rhythm-file",
+            rhythm_file.to_str().unwrap(),
+        ])
+        .unwrap();
+        let rhythm_request = cli.request().unwrap();
+        assert_eq!(
+            rhythm_request.params["rhythm"],
+            json!({"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "phrase",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--phrase-file",
+            phrase_file.to_str().unwrap(),
+        ])
+        .unwrap();
+        let phrase_request = cli.request().unwrap();
+        assert!(phrase_request.params.get("phrase").is_none());
+        assert_eq!(phrase_request.params["pattern"]["length"], "1/1");
+        assert_eq!(phrase_request.params["placements"][0]["anchor"], "C4");
+        let encoded = phrase_request.params.to_string();
+        assert!(!encoded.contains(phrase_file.to_string_lossy().as_ref()));
+
+        assert!(Cli::try_parse_from(["riffra", "music", "harmony", "insert", "--stdin"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "music",
+                "harmony",
+                "realize",
+                "--clip-id",
+                "midi-clip:1",
+                "--stdin",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "music",
+                "phrase",
+                "insert",
+                "--clip-id",
+                "midi-clip:1",
+                "--stdin",
+            ])
+            .is_err()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn signed_track_values_parse_as_regular_options() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "track",
+            "update",
+            "--track-id",
+            "track:keys",
+            "--gain-db",
+            "-12",
+            "--pan",
+            "-0.5",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.request().unwrap().params,
+            json!({"trackId":"track:keys","gainDb":-12.0,"pan":-0.5})
+        );
+    }
+
+    #[test]
+    fn marker_and_range_commands_use_musical_positions() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "marker",
+            "add",
+            "--name",
+            "Chorus",
+            "--position",
+            "17:1",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params,
+            json!({"name":"Chorus","position":"17:1"})
+        );
+
+        assert!(
+            Cli::try_parse_from([
+                "riffra", "marker", "add", "--name", "Chorus", "--tick", "960",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "loop-range",
+                "set",
+                "--start-tick",
+                "960",
+                "--end-tick",
+                "1920",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn harmony_update_rejects_event_id_in_the_patch_payload() {
         let cli = Cli::try_parse_from([
             "riffra",
@@ -2728,16 +2967,16 @@ mod tests {
             "set",
             "--enabled",
             "true",
-            "--start-tick",
-            "0",
-            "--end-tick",
-            "960",
+            "--start",
+            "1:1",
+            "--end",
+            "2:1",
         ])
         .unwrap();
         let request = cli.request().unwrap();
         assert_eq!(
             request.params,
-            json!({"enabled":true,"startTick":0,"endTick":960})
+            json!({"enabled":true,"start":"1:1","end":"2:1"})
         );
         assert!(
             Cli::try_parse_from([
@@ -2747,10 +2986,10 @@ mod tests {
                 "loop-range",
                 "set",
                 "--enabled",
-                "--start-tick",
-                "0",
-                "--end-tick",
-                "960",
+                "--start",
+                "1:1",
+                "--end",
+                "2:1",
             ])
             .is_err()
         );
