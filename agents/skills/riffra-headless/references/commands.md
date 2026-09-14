@@ -19,7 +19,7 @@ riffra --attach session inspect
 riffra --attach --host <instance-id> session inspect
 ```
 
-稼働Hostが0件ならhostUnavailable、1件なら自動選択、2件以上ならinstance IDを指定する。host listはregistryをhandshakeで検証した結果を返し、各Hostのinstance ID、PID、DataRoot、起動時刻を表示する。Attached CLIはDataRootを開いたり、HostをDataRootから選択したりしない。
+起動直後にHostがまだ見つからない、または初回handshakeに一時的な失敗がある場合、Attached CLIは短い有限回数だけ再試行する。候補が1件なら自動で接続し、複数件ある場合は`--host <instance-id>`で接続先を指定する。指定がないまま複数のHostが見つかった場合は、選択せずにエラーを返す。`host list`はregistryの候補をhandshakeで検証し、稼働中のHostのinstance ID、PID、DataRoot、起動時刻を表示する。状態変更要求の再試行は、Hostの検出と初回handshakeの段階に限る。
 
 ## 正準状態の編集
 
@@ -37,7 +37,7 @@ riffra --attach session inspect
 # 必要な範囲だけ確認
 riffra --attach session inspect --start 9:1 --end 13:1 --track-id track:01j...
 
-# Track 追加 → 軽量なmutation receiptからIDを得て、続けてInspectで状態を確認する
+# Track追加の応答からIDを取得し、後続の要求に渡す
 riffra --attach --expected-sequence 0 track add --name Drums --kind audio
 riffra --attach session inspect
 
@@ -48,6 +48,10 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 ```
 
 通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。Timebaseのテンポ・拍子は `timebase update` で変更できる。MIDI channel は1〜16の範囲で指定する。
+
+状態を変更する要求が成功すると、`result.value.createdEntityIds`にその要求で新しく生成されたIDだけが種類ごとに入る。生成IDがない要求では`{}`になる。後続の要求でIDが必要な場合は、この値を使う。
+
+interactive JSONLで要求を連鎖させる場合は、要求を送って応答を受け取ってから、次の要求を組み立てる。`expectedSequence`には直前の応答の`sequence`を使い、Conflictが返った場合は`session inspect`で状態を確認して操作を組み直す。
 
 ### Music Operations
 
@@ -88,6 +92,27 @@ Get-Content ./notes.json -Raw | riffra --attach music note insert --clip-id midi
 ```
 
 Noteのpitch、position、duration、velocity、channelの意味検証はCoreが行う。CLIは入力の読み込み、JSON parse、top-levelが配列であることだけを確認する。ClipのNoteがClip終端を超える追加・更新・複製は自動延長せず、Mutation全体が失敗する。
+
+### CLI入力とControl Protocolのparams
+
+構造化JSONはCLIが読み込み、解析した値をControl Protocolのparamsへ渡す。paramsにはファイルから読み込んだJSONの値が入る。
+
+| CLI入力                                     | Protocol params                            |
+| ------------------------------------------- | ------------------------------------------ |
+| `--notes-json` / `--notes-file` / `--stdin` | `notes`                                    |
+| `--events-json` / `--events-file`           | `events`                                   |
+| `--rhythm-json` / `--rhythm-file`           | `rhythm`                                   |
+| `--phrase-json` / `--phrase-file`           | `pattern` と `placements`                  |
+| `music note update` の個別項目              | `clipId`、`noteId`、変更項目をparams直下へ |
+| `music harmony update --patch-json`         | patchの各項目をparams直下へ展開            |
+
+`events`、`rhythm`、`phrase`の入力は`--*-json`または`--*-file`で渡す。PhraseのJSONは`pattern`と`placements`を含む入力として受け取り、Protocol paramsではこの2項目へ展開する。Harmony updateのpatchの各項目もparams直下へ展開する。低レベルAPIが独自に`patch`を持つ場合は、その契約を維持する。
+
+```powershell
+riffra --attach music harmony insert --events-file ./events.json
+riffra --attach music harmony realize --clip-id midi-clip:01j... --rhythm-file ./rhythm.json
+riffra --attach music phrase insert --clip-id midi-clip:01j... --phrase-file ./phrase.json
+```
 
 #### Region
 
@@ -145,6 +170,21 @@ riffra --data-root ./riffra-data music phrase insert `
 ```
 
 `PhrasePattern` と `RhythmPattern` は操作入力であり、正準セッションへ二重保存しない。Chord ToneやNote JSONをエージェント側で展開する必要はない。
+
+同じ音高を繰り返すドラムパターンもPhraseで表現できる。Kick、Snare、Hi-HatなどのNoteを大量に手書きする前に、次のようなPatternで表現できるか確認する。
+
+```json
+{
+  "pattern": {
+    "length": "1/1",
+    "notes": [
+      { "offset": "0/1", "duration": "1/8", "semitones": 0 },
+      { "offset": "1/4", "duration": "1/8", "semitones": 0 }
+    ]
+  },
+  "placements": [{ "position": "1:1", "anchor": "C1", "repeats": 4 }]
+}
+```
 
 ### Undo / Redo
 
@@ -236,15 +276,23 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 
 | コマンド           | 主要引数                                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------- |
-| `marker add`       | `--name` `--tick`                                                                           |
-| `marker update`    | `--marker-id` [`--name`] [`--tick`]                                                         |
+| `marker add`       | `--name` `--position <bar:beat>`                                                            |
+| `marker update`    | `--marker-id` [`--name`] [`--position <bar:beat>`]                                          |
 | `marker remove`    | `--marker-id`                                                                               |
-| `loop-range set`   | [`--enabled true\|false`] `--start-tick` `--end-tick`                                       |
-| `punch-range set`  | [`--enabled true\|false`] `--start-tick` `--end-tick`                                       |
+| `loop-range set`   | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>`                           |
+| `punch-range set`  | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>`                           |
 | `automation set`   | `--track-id` `--parameter volume\|pan` `--points-json '[{"id":"p1","tick":0,"value":0.8}]'` |
 | `automation clear` | `--track-id` `--parameter volume\|pan`                                                      |
 
 Automation の points 配列は既存ポイントを置き換える。各要素は `id`・`tick`・`value` を持つ。
+
+Marker、Loop Range、Punch Rangeは音楽座標を受け取り、プロジェクトの拍子に合わせて内部のTimeline tickへ変換する。MIDI NoteやClipの低レベル操作ではtickを使う。
+
+```powershell
+riffra --attach marker add --name Chorus --position 17:1
+riffra --attach loop-range set --start 17:1 --end 25:1 --enabled true
+riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
+```
 
 ### Asset と Project
 
@@ -261,7 +309,7 @@ Automation の points 配列は既存ポイントを置き換える。各要素�
 | コマンド                  | 主要引数                                                                                       |
 | ------------------------- | ---------------------------------------------------------------------------------------------- |
 | `instrument builtin list` | -                                                                                              |
-| `instrument builtin set`  | `<track-id>` `<preset-id>`（Riffraに同梱されたBuilt-in instrument）                            |
+| `instrument builtin set`  | `--track-id` `--preset-id`（Riffraに同梱されたBuilt-in instrument）                            |
 | `plugin instrument`       | `--track-id` `--plugin-path`(VST3 パス)                                                        |
 | `plugin effect`           | `--track-id` `--plugin-path`                                                                   |
 | `instrument clear`        | `--track-id`                                                                                   |
@@ -287,7 +335,7 @@ riffra --attach plugin preset set --track-id track:01j... --device-id device:01j
 
 Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固有GUIのpreset browserは対象外である。Plugin state fileにはschema version、Plugin path、parameter values、opaque stateを含め、別VST3のstateは適用しない。
 
-`instrument builtin list`はHostのresource catalogを返す。`instrument builtin set`はcatalogに存在するpreset IDをTrackへ割り当て、definition本文をCanonical Sessionへ保存する。Built-in instrumentの割り当てはSafe Modeでも実行できる。
+`instrument builtin list`はHostのresource catalogを返し、presetに基準音が定義されている場合は`referencePitch`も返す。`instrument builtin set --track-id <id> --preset-id <id>`はcatalogに存在するpresetをTrackへ割り当てる。`track list`のInternal Instrumentには`presetId`が含まれるため、割り当て後のpresetを確認できる。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
 ### Missing 復旧
 
@@ -326,9 +374,9 @@ riffra --attach --interactive   # 1 接続で連続要求
 riffra --attach host shutdown
 ```
 
-- `--attach` はcurrent-user registryのdiscovery結果から選んだHostとhandshakeし、要求を転送する。DataRootの排他所有はHostが持つため、attach側が開き直すことはない
+- `--attach` はcurrent-user registryから選んだHostとhandshakeし、要求を転送する。DataRootの排他所有はHostが持つため、attach側が開き直すことはない
 - 初期状態を取得するprotocol clientはevents connectionを先に確立し、command connectionで`host.bootstrap`を要求する。bootstrap中のeventは受信順に適用する
-- 接続できない場合は `hostUnavailable`。Standalone への自動フォールバックはないので、Host の生存を確認してから再試行する
+- 接続できない場合は `hostUnavailable`。Hostの状態を確認してから明示的に再試行する
 - Host の停止は `host shutdown`、またはプロセスへの SIGINT / SIGTERM
 
 ### Safe Mode の範囲
@@ -401,12 +449,14 @@ riffra --attach record promote --id rec:01j...
 riffra --attach --expected-sequence 43 render start --range loop-range --normalize true
 riffra --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
 riffra --attach job get --id job:01j...
+riffra --attach job wait --id job:01j... --timeout-ms 30000
 riffra --attach job cancel --id job:01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
 - `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
-- 応答は `type: "job"` のジョブ ID。完了は `job get` で確認し、進行中の停止は `job cancel`
+- 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
+- Runtimeから意味のある進捗率を取得できない間の`progress`は`null`である
 - 出力は `renders/render-{ms}/timeline.wav` と manifest として書き出される
 
 `plugin scan-start` も同様に非同期ジョブ(`job get` で追跡)である。同期版の `plugin scan` は完了まで応答を返さない。
@@ -431,3 +481,7 @@ riffra --attach job cancel --id job:01j...
 | `plugin catalog list`        | -          |
 | `plugin scan` / `scan-start` | [`--path`] |
 | `missing list`               | -          |
+
+## Windowsの入出力
+
+ワンショットのJSON、interactive JSONL、Attached responseを標準出力へ書き出すバイト列はUTF-8である。UTF-8に対応したツールでは日本語をそのまま復元できる。PowerShell 5.1など親Shellがパイプ経由で別のコードページへ変換した後の表示はRiffraのProtocol保証に含まれない。複雑な構造JSONは`--*-file`またはinteractive JSONLで渡す。

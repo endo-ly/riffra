@@ -38,21 +38,23 @@ description: >-
 
 各系統に含まれるコマンドの一覧と引数は [references/commands.md](references/commands.md) を参照。
 
-## Agentの制作ループ
+## 制作の基本手順
 
-既存Sessionを編集する場合は、次の順序で構造と音を確認する。
+既存のSessionを編集するときは、全体を確認してから、音楽上のまとまりが大きい順に組み立てる。基本の流れは次のとおりである。
 
-1. `session inspect` で現在の構造と `sequence` を取得する
-2. 必要なら `--start` / `--end` または `--track-id` で対象を絞る
-3. 取得した `sequence` を `--expected-sequence` としてMutationへ渡す
-4. 編集後に同じ範囲をもう一度 `session inspect` し、新しい `sequence` を取得する
-5. 音を確認するときは、その `sequence` を `--expected-sequence` として同じ範囲を `render start` し、`job get` で完了を確認する
-6. 必要なら既存の `analysis start` で音声の観測値を取得する
-7. 採用しない変更は、その変更後の `sequence` を `--expected-sequence` として `undo` し、再度Inspectする
+1. `session inspect` で現在の構造と `sequence` を確認する
+2. トラック、音源、テンポ、リージョンを必要な範囲で設定する
+3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
+4. 必要な箇所だけ `music note` で個別に調整する
+5. `session inspect` または `track list` で結果を確認する
+6. `render start` で音声を書き出し、Attachedでワンショット実行する場合は `job wait`、interactiveでは `job.get` の繰り返しで完了を確認する
+7. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
 
-`session.inspect`、Mutation、`render.start`、`undo`、`redo` はすべて `expectedSequence` を検証する。同じ `sequence` で確認した状態を操作する必要があるため、Inspect後に人間の編集が入った場合はConflictとして処理される。Conflictになった要求は自動再送せず、最新状態をInspectして編集内容やRender対象を決め直す。
+音声を扱わない編集はStandaloneで行い、再生・録音・RenderなどRuntimeを使う操作はLive HostへAttachedして行う。大きなJSONは`--*-file`で渡し、連続した操作はinteractive JSONLで送る。意味のある進捗率を取得できない間、ジョブの`progress`は`null`になる。
 
-`sequence` は同じ `AppCore` の有効期間でだけRevision tokenとして機能する。Standaloneのワンショットはプロセス終了時に状態を破棄するため、Inspectと後続操作を別プロセスで行う場合の共同編集保護には使わない。GUIと共同編集する場合はLive Hostを起動して `--attach` で接続し、Standaloneで連続操作する場合は `--interactive` を使う。InspectとRenderの音楽座標はそのまま渡し、tick、MIDI pitch番号、Harmony toneはエージェント側で計算しない。
+`session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。確認後に別の編集が入ってConflictになった場合は、最新状態を確認してから操作を組み直す。
+
+`sequence`が競合検出用の値として機能するのは、同じ `AppCore` が動作している間だけである。GUIと共同編集する場合はLive HostへAttachedし、Standaloneで連続操作する場合は`--interactive`を使う。音楽座標や音高はそのままCLIとCoreへ渡し、tickやMIDI pitch番号への変換はCLIとCoreに委ねる。
 
 ## 楽曲制作の入力契約
 
@@ -64,23 +66,21 @@ description: >-
 音高: C4、F#4、Bb3
 ```
 
-通常の楽曲制作で、次の計算や補助スクリプトは行わない。
-
-- PPQを使った手計算
-- 小節・拍からtickへの手計算
-- 音名からMIDI pitch番号への手計算
-- クリップ開始位置を使った相対tickの計算
-- Node.js / Python / PowerShellでのMIDI note JSON生成
+通常の楽曲制作では、位置・音価・音名を音楽座標のままCLIへ渡す。拍子に応じたtick、音名に対応するMIDI pitch番号、Clipを基準にした相対位置への変換はCLIとCoreが行う。
 
 通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
+構造化JSONはCLIが読み込み、解析した値をControl Protocolのparamsへ渡す。`music note insert`では`--notes-json`、`--notes-file`、`--stdin`のいずれか1つを使い、events・rhythm・phraseでは`--*-json`または`--*-file`を使う。paramsにはCLIが読み込んだJSONの値が入り、phraseは`pattern`と`placements`へ、`music note update`とharmony updateの変更項目はparams直下へ展開される。対応表は [references/commands.md](references/commands.md) にまとめている。
+
+`marker add`やRange操作は`bar:beat`の音楽座標を受け取る。MIDI NoteやClipの低レベル編集ではtickを使い、MarkerとRangeはプロジェクトの拍子に応じて内部でTimeline tickへ変換する。
+
 ### 和声・フレーズ・リズム
 
 和声は一般的なChord Symbolをそのまま `music harmony insert` へ渡す。解釈を確認したいときは `music harmony resolve` を使う。parserで表現できない特殊な音集合は、`pitches`、任意の `root` / `bass`、`label` を持つexplicit tonesで指定する。
 
-反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。独立した `music rhythm` 操作はない。
+反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。同じ音高を繰り返すドラムパターンもPhraseで表現できるため、KickやSnareなどのNoteを大量に列挙する前に利用を検討する。
 
 和声のTone、MIDI pitch番号、Phrase / Rhythmの反復、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算しない。Coreが解決・展開し、HarmonyEventを正準セッションへ保存する。
 
@@ -103,7 +103,7 @@ Standaloneと`serve`では既定の場所はなく `--data-root` が必須であ
 └─ <instance-id>.json       # 同一OSユーザーの稼働Host一覧
 ```
 
-`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。CLIは`LocalHostRegistry::current_user().discover()`でhandshake済みのHostを取得する。候補が1件なら自動選択し、複数件なら`--host <instance-id>`を要求する。
+`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。CLIはcurrent-user registryからHostを発見し、起動直後の一時的な検出・handshake失敗だけを短い有限回数で再試行する。候補が1件なら自動選択し、複数件なら`--host <instance-id>`を要求する。状態変更要求の再試行対象はHostの検出と初回handshakeに限る。
 
 Host一覧は次で確認する。
 
@@ -164,8 +164,16 @@ Event frameはRuntime型を直接持たない。
 ```
 
 - `sequence`: その結果が対応する正準シーケンス。同じAppCoreへの次の操作の `expectedSequence` に使える
-- Agent向けCLIの正準Mutation成功応答は `result.type: "mutation"` となり、Canonical Session全体を含めない。`result.value` にはprojection状態、`sequence`、Track/Clip/Region/Harmony/Marker/Automation Lane/Deviceの構造Entity IDが含まれ、一部の直接Note操作では生成されたMIDI Note IDも含まれる。新しい正準状態は後続の `session inspect` で確認する
+- Agent向けCLIの正準Mutation成功応答は `result.type: "mutation"` となる軽量なreceiptである。`result.value.createdEntityIds` には、そのMutationで新しく生成されたIDだけが種類ごとに含まれ、生成IDがないMutationでは`{}`になる。現在のSession全体は後続の `session inspect` または `track list` で確認する
 - DesktopとHost間の共有Control接続では、Desktop同期のため従来のCanonical結果とCanonical eventを維持する
+
+後続の操作でIDが必要な場合は、応答の`createdEntityIds`を使う。たとえば`track add`の応答からTrack IDを取り出して`instrument builtin set`や`track update`へ渡す。
+
+interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立てる。`expectedSequence`を使う場合は直前の応答の`sequence`を渡し、Conflict時は状態を確認して操作を組み直す。
+
+JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
+
+`instrument builtin list`のpresetには、定義されている場合`referencePitch`が含まれ、`track list`のInternal Instrumentには`presetId`が含まれる。
 
 失敗応答:
 
@@ -192,3 +200,7 @@ Event frameはRuntime型を直接持たない。
 | `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | 最新状態を `session inspect` して編集内容を決め直す |
 | `hostUnavailable`    | Attached が Host へ接続できない               | `riffra host list`でHostの登録とhandshake状態を確認 |
 | `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える                   |
+
+## Windowsの入出力
+
+CLIがJSONやJSONLを標準出力へ書き出すバイト列はUTF-8である。UTF-8に対応したツールでは日本語をそのまま復元できる。PowerShell 5.1など親シェルがパイプ経由で別のコードページへ変換した後の表示は、この保証の対象外となる。大きなJSONは`--*-file`、連続した操作はinteractive JSONLを使う。
