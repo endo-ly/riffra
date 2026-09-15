@@ -311,6 +311,30 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             })
     }
 
+    /// Reports whether in-flight projection work can still make `key` the
+    /// active projection. When this returns false and `is_ready_for` is also
+    /// false, nothing will ever satisfy a Play intent armed for `key`.
+    pub(crate) fn pending_work_for(&self, key: ProjectionKey) -> bool {
+        let generation = self.driver.runtime_generation();
+        let mut state = self
+            .state
+            .0
+            .lock()
+            .expect("runtime projection lock poisoned");
+        observe_generation(&mut state, generation);
+        if state.latest_target.is_none() && state.running_operation_id.is_none() {
+            return false;
+        }
+        // While an operation runs, the worker has taken the target and
+        // `desired_key` is the only remaining record of its key.
+        let targeted = state
+            .latest_target
+            .as_ref()
+            .is_some_and(|target| target.key == key)
+            || state.latest_target.is_none() && state.desired_key == Some(key);
+        targeted || state.deferred_canonical_key == Some(key)
+    }
+
     pub(crate) fn wait_for_operation(
         &self,
         operation_id: u64,

@@ -79,16 +79,21 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
 }
 
 pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    // Projection starts when canonical state changes. Play only registers a
-    // transport intent and either starts the already-active graph or waits for
-    // the projection activation hook; it never begins graph preparation.
+    // Play registers a transport intent for the current canonical key. When
+    // nothing in flight can produce that key anymore, the canonical
+    // projection is resubmitted so the armed intent plays on activation.
     let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    context
+    let outcome = context
         .runtime
         .request_play_when_ready(riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: projection.session.arrangement.revision,
-        })?;
+        })
+        .map_err(|error| error.to_string())?;
+    if outcome == crate::runtime::PlayStart::Stalled {
+        crate::session::adapter::arrangement_mutation_result(context)
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 

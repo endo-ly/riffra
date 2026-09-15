@@ -74,6 +74,20 @@ pub struct RuntimeReconciler<D: RuntimeDriver> {
     transport_failure: Arc<Mutex<Option<String>>>,
 }
 
+/// Outcome of a Play request for a projection that was not ready yet.
+///
+/// `Stalled` means nothing in flight can ever produce the requested
+/// projection; the caller must resubmit the canonical projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlayStart {
+    /// The native transport started playback.
+    Started,
+    /// A matching projection is already being prepared or adopted.
+    Waiting,
+    /// No in-flight work can produce the requested projection.
+    Stalled,
+}
+
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
     pub fn new(driver: Arc<D>) -> Result<Self, RuntimeError> {
         Self::with_status_listener(driver, Arc::new(|_| {}))
@@ -217,25 +231,34 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
     /// mutations submit projections independently; when that projection is
     /// already active the native transport starts immediately, otherwise the
     /// activation hook starts it after the prepared graph is committed.
-    pub fn request_play_when_ready(&self, projection: ProjectionKey) -> Result<bool, RuntimeError> {
-        if self.status().state == crate::model::RuntimeProjectionState::Failed {
-            return Err(RuntimeError::NativeRejected(
-                "The active Arrangement Graph is unavailable.".into(),
-            ));
-        }
+    ///
+    /// A failed starting announcement rolls the intent back instead of
+    /// leaving a wait behind that no activation could ever satisfy.
+    pub(crate) fn request_play_when_ready(
+        &self,
+        projection: ProjectionKey,
+    ) -> Result<PlayStart, RuntimeError> {
         let lease = self.transport.acquire()?;
         let PlayDecision { operation } = lease.request_play(Some(projection));
         if self.projection.is_ready_for(projection) {
             return match lease.play_if_current(Some(operation), Some(projection)) {
-                Ok(result) => Ok(result),
+                Ok(true) => Ok(PlayStart::Started),
+                Ok(false) => Ok(PlayStart::Waiting),
                 Err(error) => {
                     self.projection.mark_failed(error.to_string());
                     Err(error)
                 }
             };
         }
-        lease.set_transport_starting()?;
-        Ok(true)
+        if let Err(error) = lease.set_transport_starting() {
+            let _ = lease.request_stop();
+            return Err(error);
+        }
+        if self.projection.pending_work_for(projection) {
+            Ok(PlayStart::Waiting)
+        } else {
+            Ok(PlayStart::Stalled)
+        }
     }
 
     pub fn stop(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
@@ -545,7 +568,7 @@ mod tests {
             RuntimeProjectionState::Queued | RuntimeProjectionState::Preparing
         ));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
-        assert!(play.unwrap());
+        assert!(matches!(play.unwrap(), PlayStart::Waiting));
         wait_until(|| driver.played.load(Ordering::Relaxed) == 1);
     }
 
@@ -574,6 +597,7 @@ mod tests {
         assert!(reconciler.request_play_when_ready(key(1, 1)).is_ok());
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.played.load(Ordering::Relaxed), 0);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -649,7 +673,7 @@ mod tests {
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
         let played = reconciler.request_play_when_ready(key(20, 20)).unwrap();
-        assert!(played);
+        assert!(matches!(played, PlayStart::Started));
 
         assert_eq!(
             driver.prepare_started.load(Ordering::Acquire),
@@ -671,10 +695,10 @@ mod tests {
         let play = reconciler.request_play_when_ready(key(1, 11)).unwrap();
         assert_eq!(driver.played.load(Ordering::Acquire), 0);
         assert_eq!(driver.starting.load(Ordering::Acquire), 1);
+        assert!(matches!(play, PlayStart::Stalled));
         reconciler.adopt_canonical_without_projection(key(1, 11));
 
         // Assert
-        assert!(play);
         wait_until(|| driver.played.load(Ordering::Acquire) == 1);
         assert_eq!(
             driver.prepare_started.load(Ordering::Acquire),
@@ -682,6 +706,24 @@ mod tests {
         );
         assert_eq!(reconciler.status().active_projection_sequence, Some(1));
         assert_eq!(reconciler.status().active_session_revision, Some(11));
+    }
+
+    #[test]
+    fn a_stalled_play_wait_recovers_when_the_canonical_projection_is_resubmitted() {
+        // Arrange
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(10));
+
+        // Act
+        let outcome = reconciler.request_play_when_ready(key(11, 11)).unwrap();
+        assert!(matches!(outcome, PlayStart::Stalled));
+
+        // Assert
+        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
+        wait_until(|| driver.played.load(Ordering::Acquire) == 1);
+        assert_eq!(reconciler.status().active_projection_sequence, Some(11));
     }
 
     #[test]

@@ -718,12 +718,21 @@ impl HostState {
                         "Safe Mode keeps transport playback offline",
                     ));
                 }
-                self.runtime
+                let outcome = self
+                    .runtime
                     .request_play_when_ready(riffra_core::ProjectionKey {
                         sequence: current.sequence,
                         session_revision: current.session.arrangement.revision,
                     })
                     .map_err(runtime_error)?;
+                if outcome == crate::runtime::PlayStart::Stalled {
+                    // Nothing in flight can produce the requested key anymore;
+                    // only a canonical resubmission returns the runtime to a
+                    // playable graph.
+                    let context = self.session_context()?;
+                    session_adapter::arrangement_mutation_result(&context)
+                        .map_err(|error| error.protocol_error())?;
+                }
                 Ok(("ok", Value::Null, current.sequence))
             }
             "transport.stop" => {

@@ -66,6 +66,17 @@ impl<D: TransportDriver> TransportExecutor<D> {
             .and_then(|controller| controller.projection_activated(projection));
         if let Some(operation) = operation {
             let _ = guard.play_if_current(Some(operation), Some(projection))?;
+            return Ok(());
+        }
+        let released = self
+            .controller
+            .lock()
+            .is_ok_and(|mut controller| controller.release_stale_play(projection));
+        if released && let Err(error) = guard.stop() {
+            tracing::warn!(
+                error = ?error,
+                "Native transport could not return to stopped state after a stale Play wait was released"
+            );
         }
         Ok(())
     }

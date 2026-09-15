@@ -120,7 +120,29 @@ impl TransportController {
         else {
             return false;
         };
-        required_projection == projection && self.record_play_failure(operation)
+        // A failure at or after the required projection makes the wait
+        // unsatisfiable; an older one does not.
+        let wait_is_lost = projection.sequence >= required_projection.sequence;
+        wait_is_lost && self.record_play_failure(operation)
+    }
+
+    /// Releases an armed Play intent that waits for a projection older than
+    /// `activated`. The activated graph is the newest playable state, so that
+    /// intent can never be satisfied; leaving it armed would keep the native
+    /// transport in its starting state.
+    pub(crate) fn release_stale_play(&mut self, activated: ProjectionKey) -> bool {
+        let TransportIntent::PlayRequested {
+            required_projection: Some(required_projection),
+            ..
+        } = self.intent
+        else {
+            return false;
+        };
+        if activated.sequence < required_projection.sequence {
+            return false;
+        }
+        self.intent = TransportIntent::Stopped;
+        true
     }
 
     pub(crate) fn invalidate_for_audio_environment(&mut self) {
@@ -194,5 +216,26 @@ mod tests {
         controller.invalidate_for_audio_environment();
 
         assert!(!controller.is_play_requested(play.operation));
+    }
+
+    #[test]
+    fn a_newer_projection_failure_releases_a_stale_play_intent_but_an_older_one_does_not() {
+        let mut controller = TransportController::default();
+        let play = controller.request_play(Some(key(3, 8)));
+
+        assert!(!controller.record_projection_failure(key(2, 7)));
+        assert!(controller.is_play_requested(play.operation));
+
+        assert!(controller.record_projection_failure(key(4, 9)));
+        assert!(!controller.is_play_requested(play.operation));
+    }
+
+    #[test]
+    fn a_newer_activation_releases_a_stale_play_intent_but_an_older_one_does_not() {
+        let mut controller = TransportController::default();
+        controller.request_play(Some(key(3, 8)));
+
+        assert!(!controller.release_stale_play(key(2, 7)));
+        assert!(controller.release_stale_play(key(4, 9)));
     }
 }
