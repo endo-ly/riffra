@@ -112,6 +112,13 @@ impl TransportController {
         true
     }
 
+    /// Consumes the intent once its Play has been executed. Playback then
+    /// runs until an explicit Stop, and later projection activations must
+    /// not touch it.
+    pub(crate) fn consume_play(&mut self) {
+        self.intent = TransportIntent::Stopped;
+    }
+
     pub(crate) fn record_projection_failure(&mut self, projection: ProjectionKey) -> bool {
         let TransportIntent::PlayRequested {
             operation,

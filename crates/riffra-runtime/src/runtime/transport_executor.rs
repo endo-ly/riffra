@@ -148,7 +148,12 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
         }
 
         match self.executor.driver.play_timeline() {
-            Ok(()) => Ok(true),
+            Ok(()) => {
+                if let Ok(mut controller) = self.executor.controller.lock() {
+                    controller.consume_play();
+                }
+                Ok(true)
+            }
             Err(error) => {
                 let failed_current_play = operation.is_none_or(|operation| {
                     self.executor

@@ -683,6 +683,24 @@ mod tests {
     }
 
     #[test]
+    fn a_canonical_update_during_playback_does_not_stop_the_transport() {
+        let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
+        let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
+        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(10));
+        assert!(matches!(
+            reconciler.request_play_when_ready(key(10, 10)).unwrap(),
+            PlayStart::Started
+        ));
+
+        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
+        wait_until(|| reconciler.status().active_projection_sequence == Some(11));
+
+        assert_eq!(driver.played.load(Ordering::Relaxed), 1);
+        assert_eq!(driver.stopped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn pending_play_starts_after_canonical_identity_adoption() {
         // Arrange
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
