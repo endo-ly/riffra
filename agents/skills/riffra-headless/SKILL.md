@@ -54,7 +54,7 @@ description: >-
 
 `session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。確認後に別の編集が入ってConflictになった場合は、最新状態を確認してから操作を組み直す。
 
-`sequence`が競合検出用の値として機能するのは、同じ `AppCore` が動作している間だけである。GUIと共同編集する場合はLive HostへAttachedし、Standaloneで連続操作する場合は`--interactive`を使う。音楽座標や音高はそのままCLIとCoreへ渡し、tickやMIDI pitch番号への変換はCLIとCoreに委ねる。
+`sequence`が競合検出用の値として機能するのは、同じ `AppCore` が動作している間だけである。GUIと共同編集する場合はLive HostへAttachedし、Standaloneで連続操作する場合は`--interactive`を使う。
 
 ## 楽曲制作の入力契約
 
@@ -72,7 +72,7 @@ description: >-
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
-構造化JSONはCLIが読み込み、解析した値をControl Protocolのparamsへ渡す。`music note insert`では`--notes-json`、`--notes-file`、`--stdin`のいずれか1つを使い、events・rhythm・phraseでは`--*-json`または`--*-file`を使う。paramsにはCLIが読み込んだJSONの値が入り、phraseは`pattern`と`placements`へ、`music note update`とharmony updateの変更項目はparams直下へ展開される。対応表は [references/commands.md](references/commands.md) にまとめている。
+小さな構造入力はinline JSON、大きな構造入力は`--*-file`、連続操作はinteractive JSONLを使う。CLI入力とControl Protocolのparamsの詳細な対応は [references/commands.md](references/commands.md) を参照する。
 
 `marker add`やRange操作は`bar:beat`の音楽座標を受け取る。MIDI NoteやClipの低レベル編集ではtickを使い、MarkerとRangeはプロジェクトの拍子に応じて内部でTimeline tickへ変換する。
 
@@ -103,7 +103,7 @@ Standaloneと`serve`では既定の場所はなく `--data-root` が必須であ
 └─ <instance-id>.json       # 同一OSユーザーの稼働Host一覧
 ```
 
-`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。CLIはcurrent-user registryからHostを発見し、起動直後の一時的な検出・handshake失敗だけを短い有限回数で再試行する。候補が1件なら自動選択し、複数件なら`--host <instance-id>`を要求する。状態変更要求の再試行対象はHostの検出と初回handshakeに限る。
+`--attach`の接続先はDataRootではなく、稼働中のHostプロセスである。CLIはcurrent-user registryからHostを発見する。候補が1件なら自動選択し、複数件なら`--host <instance-id>`を要求する。
 
 Host一覧は次で確認する。
 
@@ -171,8 +171,6 @@ Event frameはRuntime型を直接持たない。
 
 interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立てる。`expectedSequence`を使う場合は直前の応答の`sequence`を渡し、Conflict時は状態を確認して操作を組み直す。
 
-JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
-
 `instrument builtin list`のpresetには、定義されている場合`referencePitch`が含まれ、`track list`のInternal Instrumentには`presetId`が含まれる。
 
 失敗応答:
@@ -200,7 +198,3 @@ JSONLの構文エラーまたは検証エラーには、物理入力行が`error
 | `conflict`           | `expectedSequence` が現在のシーケンスと不一致 | 最新状態を `session inspect` して編集内容を決め直す |
 | `hostUnavailable`    | Attached が Host へ接続できない               | `riffra host list`でHostの登録とhandshake状態を確認 |
 | `runtimeUnavailable` | Runtime を利用できない(Safe Mode、Standalone) | `serve` + `--attach` に切り替える                   |
-
-## Windowsの入出力
-
-CLIがJSONやJSONLを標準出力へ書き出すバイト列はUTF-8である。UTF-8に対応したツールでは日本語をそのまま復元できる。PowerShell 5.1など親シェルがパイプ経由で別のコードページへ変換した後の表示は、この保証の対象外となる。大きなJSONは`--*-file`、連続した操作はinteractive JSONLを使う。

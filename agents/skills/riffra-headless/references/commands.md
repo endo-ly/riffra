@@ -53,6 +53,8 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 interactive JSONLで要求を連鎖させる場合は、要求を送って応答を受け取ってから、次の要求を組み立てる。`expectedSequence`には直前の応答の`sequence`を使い、Conflictが返った場合は`session inspect`で状態を確認して操作を組み直す。
 
+interactive JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
+
 ### Music Operations
 
 #### MIDI ClipとNote
@@ -449,13 +451,14 @@ riffra --attach record promote --id rec:01j...
 riffra --attach --expected-sequence 43 render start --range loop-range --normalize true
 riffra --attach --expected-sequence 43 render start --start 9:1 --end 13:1 --track-id track:01j...
 riffra --attach job get --id job:01j...
+riffra --attach job wait --id job:01j...
 riffra --attach job wait --id job:01j... --timeout-ms 30000
 riffra --attach job cancel --id job:01j...
 ```
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
 - `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
-- 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
+- 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は`--timeout-ms`を指定しなければterminal stateまで待ち、指定した場合だけその時間で打ち切る。内部では既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
 - Runtimeから意味のある進捗率を取得できない間の`progress`は`null`である
 - 出力は `renders/render-{ms}/timeline.wav` と manifest として書き出される
 
