@@ -64,7 +64,7 @@ jq -e '.ok == true and .result.type == "hostBootstrap" and .result.value.canonic
     "$data_root/bootstrap.json" >/dev/null
 "$binary" --attach --expected-sequence 0 track add \
     --name "Process Test" --kind instrument >"$data_root/track.json"
-jq -e '.ok == true and .result.type == "mutation" and .sequence == 1 and (.result.value.entityIds.tracks | length) == 1 and (.result.value | has("canonical") | not)' \
+jq -e '.ok == true and .result.type == "mutation" and .sequence == 1 and (.result.value.createdEntityIds.tracks | length) == 1 and (.result.value | has("canonical") | not)' \
     "$data_root/track.json" >/dev/null
 "$binary" --attach --expected-sequence 1 undo >"$data_root/undo.json"
 jq -e '.ok == true and .result.type == "mutation" and .sequence == 2 and (.result.value | has("canonical") | not)' \

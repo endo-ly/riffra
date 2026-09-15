@@ -81,6 +81,7 @@ function Harness({
 function mutationResult(session: CreativeSession): ArrangementMutationResult {
   return {
     canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    createdEntityIds: {},
     projection: { state: 'notRequired' },
   };
 }

@@ -886,7 +886,7 @@ impl Arrangement {
         clip_id: &str,
         note_ids: &[String],
         offset_ticks: u64,
-    ) -> Result<(), DomainError> {
+    ) -> Result<Vec<String>, DomainError> {
         if note_ids.is_empty() {
             return Err(DomainError::InvalidClip(
                 "no midi notes were selected.".into(),
@@ -922,8 +922,10 @@ impl Arrangement {
             .cloned()
             .collect::<Vec<_>>();
         let mut candidate = clip;
+        let mut created_ids = Vec::with_capacity(selected.len());
         for (index, mut note) in selected.into_iter().enumerate() {
             note.id = format!("note:duplicate:{}:{index}", self.revision);
+            created_ids.push(note.id.clone());
             note.start_tick =
                 TimelineTick(note.start_tick.0.checked_add(offset_ticks).ok_or_else(|| {
                     DomainError::InvalidClip("MIDI duplicate overflowed.".into())
@@ -933,7 +935,7 @@ impl Arrangement {
         self.validate_midi_clip(&candidate)?;
         self.midi_clips[index] = candidate;
         self.revision = self.revision.saturating_add(1);
-        Ok(())
+        Ok(created_ids)
     }
 
     /// Removes multiple MIDI notes as one domain edit.

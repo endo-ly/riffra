@@ -20,6 +20,7 @@ export async function undoSession(): Promise<ArrangementMutationResult> {
         sequence: 0,
         history: { canUndo: false, canRedo: false },
       },
+      createdEntityIds: {},
       projection: { state: 'notRequired' },
     },
   );
@@ -36,6 +37,7 @@ export async function redoSession(): Promise<ArrangementMutationResult> {
         sequence: 0,
         history: { canUndo: false, canRedo: false },
       },
+      createdEntityIds: {},
       projection: { state: 'notRequired' },
     },
   );

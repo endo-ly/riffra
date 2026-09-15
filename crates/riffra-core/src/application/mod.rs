@@ -19,7 +19,7 @@ use crate::domain::{
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 pub use music::{
@@ -32,6 +32,33 @@ pub use session::{
     InstrumentSourceKind, MusicalMarkerView, MusicalRangeInspection, ProjectInspection,
     SessionInspection, SessionInspectionQuery, TrackInspection, inspect_canonical_state,
 };
+
+/// Entity identities created by one atomic application mutation.
+pub type CreatedEntityIds = BTreeMap<String, Vec<String>>;
+
+/// Canonical result plus the identities explicitly allocated by the mutation.
+#[derive(Debug)]
+pub struct ApplicationMutation {
+    /// Canonical session after the atomic mutation.
+    pub session: CreativeSession,
+    /// Entity IDs allocated while applying this mutation, grouped by entity kind.
+    pub created_entity_ids: CreatedEntityIds,
+}
+
+impl ApplicationMutation {
+    fn new(session: CreativeSession, created_entity_ids: CreatedEntityIds) -> Self {
+        Self {
+            session,
+            created_entity_ids,
+        }
+    }
+
+    fn one(session: CreativeSession, kind: &str, id: String) -> Self {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        created_entity_ids.insert(kind.into(), vec![id]);
+        Self::new(session, created_entity_ids)
+    }
+}
 
 /// Partial update for session-wide production settings.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -139,6 +166,20 @@ where
             .commit(self.storage, |session| edit(&mut session.arrangement))
     }
 
+    fn commit_arrangement_with_created_ids<F>(
+        &self,
+        edit: F,
+    ) -> Result<ApplicationMutation, ApplicationError>
+    where
+        F: FnOnce(&mut Arrangement, &mut CreatedEntityIds) -> Result<(), ApplicationError>,
+    {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.core.commit(self.storage, |session| {
+            edit(&mut session.arrangement, &mut created_entity_ids)
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
+    }
+
     /// Commits the exact Core-produced candidate previously validated by a
     /// host runtime, provided its canonical base is still current.
     ///
@@ -150,6 +191,10 @@ where
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit_prepared(self.storage, prepared)
     }
+}
+
+fn record_created(ids: &mut CreatedEntityIds, kind: &str, id: String) {
+    ids.entry(kind.into()).or_default().push(id);
 }
 
 fn merge_recording_vector<T: Clone + PartialEq>(

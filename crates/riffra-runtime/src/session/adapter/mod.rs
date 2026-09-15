@@ -33,7 +33,7 @@ use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
 
 pub use crate::session::commit::{
     arrangement_mutation_result, arrangement_mutation_without_projection, commit_core_application,
-    publish_canonical_state, restore_generation,
+    commit_core_application_with_created_ids, publish_canonical_state, restore_generation,
 };
 pub use crate::session::context::{SessionContext, current_session};
 pub use crate::session::error::AdapterError;

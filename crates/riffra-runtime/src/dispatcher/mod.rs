@@ -5,10 +5,10 @@ use crate::model::{
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
-    AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch,
-    HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput, MidiNotePatch,
-    MidiNoteUpdate, MusicalMidiNoteInput, SessionInspectionQuery, SessionSettingsPatch,
-    inspect_canonical_state,
+    ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
+    HarmonyEventPatch, HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput,
+    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, SessionInspectionQuery,
+    SessionSettingsPatch, inspect_canonical_state,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
@@ -21,6 +21,7 @@ use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -232,6 +233,7 @@ pub struct DispatchResult {
     pub result_type: &'static str,
     pub value: Value,
     pub sequence: u64,
+    pub created_entity_ids: BTreeMap<String, Vec<String>>,
     projection_effect: CanonicalMutationEffect,
 }
 
@@ -393,6 +395,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                 "unknown command: {command}"
             )));
         };
+        let created_entity_ids = result.created_entity_ids.clone();
         let sequence = if is_read_command(&command) {
             canonical_sequence
         } else {
@@ -408,9 +411,11 @@ impl<'a, A> HostDispatcher<'a, A> {
                 value: serde_json::to_value(ArrangementMutationResult {
                     canonical: canonical.clone(),
                     projection: ArrangementProjectionOutcome::NotRequired,
+                    created_entity_ids: created_entity_ids.clone(),
                 })
                 .expect("arrangement mutation results serialize"),
                 sequence: canonical.sequence,
+                created_entity_ids,
                 projection_effect: CanonicalMutationEffect::CanonicalOnly,
             });
         }
@@ -418,6 +423,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             result_type: result.result_type,
             value: result.value,
             sequence,
+            created_entity_ids,
             projection_effect: result.projection_effect,
         })
     }
@@ -477,6 +483,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             result_type,
             value: serde_json::to_value(value).expect("project values must serialize"),
             sequence,
+            created_entity_ids: BTreeMap::new(),
             projection_effect: CanonicalMutationEffect::CanonicalOnly,
         })
     }
@@ -487,6 +494,21 @@ impl<'a, A> HostDispatcher<'a, A> {
         projection_effect: CanonicalMutationEffect,
     ) -> DispatchResult {
         self.value_with_effect("session", session, projection_effect)
+    }
+
+    fn application_mutation(
+        &self,
+        mutation: ApplicationMutation,
+        projection_effect: CanonicalMutationEffect,
+    ) -> DispatchResult {
+        DispatchResult {
+            result_type: "session",
+            value: serde_json::to_value(mutation.session)
+                .expect("canonical mutation results serialize"),
+            sequence: 0,
+            created_entity_ids: mutation.created_entity_ids,
+            projection_effect,
+        }
     }
 
     fn value<T: serde::Serialize>(&self, result_type: &'static str, value: T) -> DispatchResult {
@@ -503,6 +525,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             result_type,
             value: serde_json::to_value(value).expect("canonical values must serialize"),
             sequence: 0,
+            created_entity_ids: BTreeMap::new(),
             projection_effect,
         }
     }
@@ -876,7 +899,10 @@ mod tests {
         );
 
         let marker = dispatcher
-            .dispatch(request("marker.add", json!({"name":"Verse","tick":0})))
+            .dispatch(request(
+                "marker.add",
+                json!({"name":"Verse","position":"1:1"}),
+            ))
             .unwrap();
         assert_eq!(
             marker.projection_effect,

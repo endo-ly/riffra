@@ -116,17 +116,18 @@ where
         })
     }
 
-    /// Places a recorded Take as a new timeline clip.
+    /// Places a recorded Take as a new timeline clip and returns the allocated
+    /// clip identity.
     ///
     /// The host may provide a decoded MIDI clip because reading the source
     /// asset is an infrastructure concern. Core assigns the new clip identity
     /// and owns the arrangement mutation.
-    pub fn place_take_as_separate_clip(
+    pub fn place_take_as_separate_clip_with_created_ids(
         &self,
         take_id: &str,
         mut midi_clip: Option<MidiClip>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<super::ApplicationMutation, ApplicationError> {
+        self.commit_arrangement_with_created_ids(|arrangement, created| {
             let take = arrangement
                 .takes
                 .iter()
@@ -145,6 +146,7 @@ where
             {
                 let mut clip = source;
                 clip.id = next_id("clip:take-place");
+                super::record_created(created, "audioClips", clip.id.clone());
                 clip.muted = true;
                 arrangement.audio_clips.push(clip);
             } else if take.raw_audio.is_some() || take.processed_audio.is_some() {
@@ -175,6 +177,7 @@ where
                         )
                     })?;
                 clip.id = next_id("clip:take-place");
+                super::record_created(created, "audioClips", clip.id.clone());
                 clip.start_tick = take.start_tick;
                 let source = take
                     .preferred_audio_source(clip.take_variant)
@@ -195,6 +198,7 @@ where
                     )
                 })?;
                 clip.id = next_id("midi-clip:take-place");
+                super::record_created(created, "midiClips", clip.id.clone());
                 clip.recording_take_id = Some(take.id);
                 clip.muted = true;
                 arrangement.midi_clips.push(clip);

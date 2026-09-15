@@ -15,6 +15,8 @@ use riffra_control::{
 use riffra_runtime::Dispatcher;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     if let Err(error) = run() {
@@ -41,6 +43,12 @@ fn run() -> Result<(), String> {
             command: args::HostCommand::List
         })
     );
+    let job_wait = match cli.command.as_ref() {
+        Some(CliCommand::Job {
+            command: args::JobCommand::Wait(args),
+        }) => Some((args.id.clone(), args.timeout_ms)),
+        _ => None,
+    };
     if is_host_list {
         if interactive {
             return Err("host list cannot be combined with --interactive".into());
@@ -77,6 +85,29 @@ fn run() -> Result<(), String> {
             args.clone(),
         );
     }
+    if let Some((job_id, timeout_ms)) = job_wait {
+        if !attach {
+            return Err("job wait requires --attach".into());
+        }
+        if interactive {
+            return Err("job wait cannot be combined with --interactive".into());
+        }
+        if data_root.is_some() {
+            return Err("job wait cannot be combined with --data-root".into());
+        }
+        if expected_sequence.is_some() {
+            return Err("job wait cannot be combined with --expected-sequence".into());
+        }
+        let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
+        let response = attached.wait_for_job(&job_id, timeout_ms)?;
+        if response.ok {
+            return write_response(&response);
+        }
+        let error = response
+            .error
+            .ok_or_else(|| "Riffra Host returned an invalid failure response".to_string())?;
+        return Err(format!("{}: {}", error.code, error.message));
+    }
     let request = if interactive {
         if expected_sequence.is_some() {
             return Err("--expected-sequence cannot be combined with --interactive".into());
@@ -109,7 +140,7 @@ fn run() -> Result<(), String> {
             &request,
             attached.request(&request)?,
         )?;
-        let response = compact_agent_response(&request.command, &request.params, response);
+        let response = compact_agent_response(&request.command, response, None);
         if let Some((json, _)) = audio_diagnostics_options {
             return write_audio_diagnostics(&response, json);
         }
@@ -153,8 +184,8 @@ fn run() -> Result<(), String> {
     }
     write_response(&compact_agent_response(
         &request.command,
-        &request.params,
         response,
+        Some(serde_json::to_value(dispatched.created_entity_ids).expect("entity ids serialize")),
     ))
 }
 
@@ -185,31 +216,45 @@ fn save_plugin_state_response(
 }
 
 fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> {
-    let discovered = LocalHostRegistry::current_user()
-        .discover()
-        .map_err(|error| format!("Host discovery failed: {error}"))?;
-    if let Some(instance_id) = instance_id {
-        return discovered
-            .into_iter()
-            .find(|host| host.registration.instance_id == instance_id)
-            .ok_or_else(|| format!("Riffra Host was not found: {instance_id}"));
-    }
-    match discovered.len() {
-        0 => Err("no running Riffra Host was discovered".into()),
-        1 => Ok(discovered
-            .into_iter()
-            .next()
-            .expect("one discovered Host exists")),
-        _ => {
+    const MAX_ATTEMPTS: usize = 3;
+    let registry = LocalHostRegistry::current_user();
+    for attempt in 0..MAX_ATTEMPTS {
+        let discovered = match registry.discover() {
+            Ok(discovered) => discovered,
+            Err(error) if attempt + 1 < MAX_ATTEMPTS => {
+                thread::sleep(Duration::from_millis(100));
+                let _ = error;
+                continue;
+            }
+            Err(error) => return Err(format!("Host discovery failed: {error}")),
+        };
+        if discovered.len() > 1 && instance_id.is_none() {
             let candidates = discovered
                 .iter()
                 .map(|host| host.registration.instance_id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            Err(format!(
+            return Err(format!(
                 "multiple Riffra Hosts are running; choose one with --host (candidates: {candidates})"
-            ))
+            ));
         }
+        let candidate = if let Some(instance_id) = instance_id {
+            discovered
+                .into_iter()
+                .find(|host| host.registration.instance_id == instance_id)
+        } else {
+            discovered.into_iter().next()
+        };
+        if let Some(host) = candidate {
+            return Ok(host);
+        }
+        if attempt + 1 < MAX_ATTEMPTS {
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+    match instance_id {
+        Some(instance_id) => Err(format!("Riffra Host was not found: {instance_id}")),
+        None => Err("no running Riffra Host was discovered".into()),
     }
 }
 
@@ -237,12 +282,12 @@ fn list_hosts() -> Result<(), String> {
 fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
-    for line in stdin.lock().lines() {
+    for (line_index, line) in stdin.lock().lines().enumerate() {
         let line = line.map_err(|error| format!("request could not be read: {error}"))?;
         if line.trim().is_empty() {
             continue;
         }
-        let response = handle_request(dispatcher, &line);
+        let response = handle_request_at(dispatcher, &line, Some(line_index + 1));
         serde_json::to_writer(&mut stdout, &response)
             .map_err(|error| format!("response could not be encoded: {error}"))?;
         stdout
@@ -255,7 +300,16 @@ fn run_interactive(dispatcher: &Dispatcher) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
+    handle_request_at(dispatcher, line, None)
+}
+
+fn handle_request_at(
+    dispatcher: &Dispatcher,
+    line: &str,
+    input_line: Option<usize>,
+) -> ControlResponse {
     let request_id = request_id_from_json(line);
     let request = match serde_json::from_str::<ControlRequest>(line) {
         Ok(request) => request,
@@ -263,14 +317,23 @@ fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
             return ControlResponse::failure(
                 request_id,
                 None,
-                ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
+                with_input_line(
+                    ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
+                    input_line,
+                ),
             );
         }
     };
+    if let Err(error) = request.validate() {
+        return ControlResponse::failure(
+            request.request_id,
+            None,
+            with_input_line(error, input_line),
+        );
+    }
     match dispatcher.dispatch_request(request.clone()) {
         Ok(result) => compact_agent_response(
             &request.command,
-            &request.params,
             ControlResponse::success(
                 request.request_id,
                 result.sequence,
@@ -279,9 +342,32 @@ fn handle_request(dispatcher: &Dispatcher, line: &str) -> ControlResponse {
                     value: result.value,
                 },
             ),
+            Some(serde_json::to_value(result.created_entity_ids).expect("entity ids serialize")),
         ),
-        Err(error) => ControlResponse::failure(request.request_id, None, error.protocol_error()),
+        Err(error) => {
+            let error = error.protocol_error();
+            let error = if error.code == ErrorCode::InvalidRequest {
+                with_input_line(error, input_line)
+            } else {
+                error
+            };
+            ControlResponse::failure(request.request_id, None, error)
+        }
     }
+}
+
+fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> ProtocolError {
+    let Some(input_line) = input_line else {
+        return error;
+    };
+    error.message = format!("input line {input_line}: {}", error.message);
+    let mut details = match error.details.take() {
+        Some(serde_json::Value::Object(details)) => details,
+        _ => serde_json::Map::new(),
+    };
+    details.insert("inputLine".into(), serde_json::json!(input_line));
+    error.details = Some(serde_json::Value::Object(details));
+    error
 }
 
 fn write_response(response: &ControlResponse) -> Result<(), String> {
@@ -347,7 +433,7 @@ mod tests {
         let result = response.result.unwrap();
         assert_eq!(result.result_type, "mutation");
         assert!(result.value.get("canonical").is_none());
-        assert!(result.value.get("entityIds").is_some());
+        assert!(result.value.get("createdEntityIds").is_some());
         assert!(!result.value.to_string().contains("arrangement"));
         let _ = fs::remove_dir_all(root);
     }
@@ -370,7 +456,7 @@ mod tests {
             })
             .to_string(),
         );
-        let track_id = track.result.as_ref().unwrap().value["entityIds"]["tracks"][0]
+        let track_id = track.result.as_ref().unwrap().value["createdEntityIds"]["tracks"][0]
             .as_str()
             .unwrap();
         let clip = handle_request(
@@ -387,7 +473,7 @@ mod tests {
             })
             .to_string(),
         );
-        let clip_id = clip.result.as_ref().unwrap().value["entityIds"]["midiClips"][0]
+        let clip_id = clip.result.as_ref().unwrap().value["createdEntityIds"]["midiClips"][0]
             .as_str()
             .unwrap();
 
@@ -408,10 +494,11 @@ mod tests {
             })
             .to_string(),
         );
-        let first_note_id = first_note.result.as_ref().unwrap().value["entityIds"]["midiNotes"][0]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let first_note_id =
+            first_note.result.as_ref().unwrap().value["createdEntityIds"]["midiNotes"][0]
+                .as_str()
+                .unwrap()
+                .to_owned();
         let second_note = handle_request(
             &dispatcher,
             &json!({
@@ -429,11 +516,11 @@ mod tests {
             })
             .to_string(),
         );
-        let second_note_id = second_note.result.as_ref().unwrap().value["entityIds"]["midiNotes"]
-            [0]
-        .as_str()
-        .unwrap()
-        .to_owned();
+        let second_note_id =
+            second_note.result.as_ref().unwrap().value["createdEntityIds"]["midiNotes"][0]
+                .as_str()
+                .unwrap()
+                .to_owned();
 
         let duplicated = handle_request(
             &dispatcher,
@@ -451,9 +538,10 @@ mod tests {
         );
         assert!(duplicated.ok);
         assert_eq!(duplicated.result.as_ref().unwrap().result_type, "mutation");
-        let generated_ids = duplicated.result.as_ref().unwrap().value["entityIds"]["midiNotes"]
-            .as_array()
-            .unwrap();
+        let generated_ids =
+            duplicated.result.as_ref().unwrap().value["createdEntityIds"]["midiNotes"]
+                .as_array()
+                .unwrap();
         assert_eq!(generated_ids.len(), 2);
         assert!(generated_ids.iter().all(|id| {
             id.as_str() != Some(first_note_id.as_str())
@@ -533,6 +621,115 @@ mod tests {
             response.error.as_ref().unwrap().code,
             ErrorCode::InvalidRequest
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_json_reports_the_physical_input_line() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-protocol-input-line-{}",
+            std::process::id()
+        ));
+        let dispatcher = open_test_dispatcher(root.clone());
+        let response = super::handle_request_at(&dispatcher, "{\"requestId\":", Some(3));
+
+        assert!(!response.ok);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.details.unwrap()["inputLine"], 3);
+        assert!(error.message.starts_with("input line 3: "));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn created_track_receipt_drives_instrument_and_track_update() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-cli-created-track-flow-{}",
+            std::process::id()
+        ));
+        let resources = root.join("resources");
+        fs::create_dir_all(resources.join("drum-kit")).unwrap();
+        fs::write(
+            resources.join("drum-kit/definition.json"),
+            br#"{"metadata":{"name":"Drum Kit"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            resources.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"drum-kit","name":"Drum Kit","description":"Test drums","definitionPath":"drum-kit/definition.json","resourceBasePath":"drum-kit"}]}"#,
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+
+        let lead = handle_request(
+            &dispatcher,
+            r#"{"requestId":"lead","command":"track.add","expectedSequence":0,"params":{"name":"Lead","kind":"instrument"}}"#,
+        );
+        let pad = handle_request(
+            &dispatcher,
+            r#"{"requestId":"pad","command":"track.add","expectedSequence":1,"params":{"name":"Pad","kind":"instrument"}}"#,
+        );
+        let drums = handle_request(
+            &dispatcher,
+            r#"{"requestId":"drums","command":"track.add","expectedSequence":2,"params":{"name":"Drums","kind":"instrument"}}"#,
+        );
+        assert!(lead.ok && pad.ok && drums.ok);
+        let lead_id = lead.result.as_ref().unwrap().value["createdEntityIds"]["tracks"][0]
+            .as_str()
+            .unwrap();
+        let pad_id = pad.result.as_ref().unwrap().value["createdEntityIds"]["tracks"][0]
+            .as_str()
+            .unwrap();
+        let drums_id = drums.result.as_ref().unwrap().value["createdEntityIds"]["tracks"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(lead_id, drums_id);
+        assert_ne!(pad_id, drums_id);
+
+        let instrument = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId":"instrument",
+                "command":"instrument.builtin.set",
+                "expectedSequence":3,
+                "params":{"trackId":drums_id,"presetId":"drum-kit"}
+            })
+            .to_string(),
+        );
+        assert!(instrument.ok);
+        assert_eq!(
+            instrument.result.unwrap().value["createdEntityIds"]["devices"][0],
+            format!("device:instrument:{drums_id}")
+        );
+
+        let update = handle_request(
+            &dispatcher,
+            &json!({
+                "requestId":"update",
+                "command":"track.update",
+                "expectedSequence":4,
+                "params":{"trackId":drums_id,"gainDb":-12.0,"pan":-0.5}
+            })
+            .to_string(),
+        );
+        assert!(update.ok);
+
+        let list = handle_request(
+            &dispatcher,
+            r#"{"requestId":"list","command":"track.list","params":{}}"#,
+        );
+        assert!(list.ok);
+        let tracks = list.result.unwrap().value.as_array().unwrap().clone();
+        let lead = tracks.iter().find(|track| track["id"] == lead_id).unwrap();
+        let pad = tracks.iter().find(|track| track["id"] == pad_id).unwrap();
+        let drums = tracks.iter().find(|track| track["id"] == drums_id).unwrap();
+        assert!(lead["instrument"].is_null());
+        assert!(pad["instrument"].is_null());
+        assert_eq!(drums["gainDb"], -12.0);
+        assert_eq!(drums["pan"], -0.5);
+        assert_eq!(drums["instrument"]["source"], "internal");
+        assert_eq!(drums["instrument"]["presetId"], "drum-kit");
         let _ = fs::remove_dir_all(root);
     }
 

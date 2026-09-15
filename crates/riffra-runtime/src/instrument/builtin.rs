@@ -290,11 +290,11 @@ mod tests {
 
         let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
 
+        let summaries = catalog.summaries();
         assert_eq!(
-            catalog
-                .summaries()
-                .into_iter()
-                .map(|summary| summary.id)
+            summaries
+                .iter()
+                .map(|summary| summary.id.as_str())
                 .collect::<Vec<_>>(),
             ["01-first"]
         );
