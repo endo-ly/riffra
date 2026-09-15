@@ -39,6 +39,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         return Ok(ArrangementMutationResult {
             canonical,
             projection: ArrangementProjectionOutcome::NotRequired,
+            created_entity_ids: Default::default(),
         });
     }
 
@@ -51,6 +52,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         return Ok(ArrangementMutationResult {
             canonical,
             projection: ArrangementProjectionOutcome::NotRequired,
+            created_entity_ids: Default::default(),
         });
     }
 
@@ -78,6 +80,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     Ok(ArrangementMutationResult {
         canonical,
         projection,
+        created_entity_ids: Default::default(),
     })
 }
 
@@ -104,6 +107,31 @@ where
             .emit(HostEvent::CanonicalStateChanged(canonical));
     }
     Ok(())
+}
+
+/// Runs a Core mutation that carries explicit creation metadata and publishes
+/// the resulting canonical state to the Host library and event stream.
+pub fn commit_core_application_with_created_ids<D, F>(
+    context: &SessionContext<'_, D>,
+    operation: F,
+) -> Result<riffra_core::application::ApplicationMutation, AdapterError>
+where
+    D: RuntimeDriver,
+    F: FnOnce(
+        &AppCore<AudioSupervisor>,
+        &SessionStore,
+    ) -> Result<riffra_core::application::ApplicationMutation, ApplicationError>,
+{
+    let before_sequence = context.core.snapshot()?.sequence;
+    let mutation = operation(context.core, &context.storage)?;
+    crate::library::index::refresh(context.data_root, &context.storage, &mutation.session);
+    let canonical = context.core.canonical_state()?;
+    if canonical.sequence > before_sequence {
+        context
+            .events
+            .emit(HostEvent::CanonicalStateChanged(canonical));
+    }
+    Ok(mutation)
 }
 
 /// Completes a canonical Arrangement mutation without allowing a projection

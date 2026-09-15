@@ -3,6 +3,7 @@ use riffra_core::{
     RackMacro, Track, TrackInstrument, TrackInstrumentSource, TrackKind,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// Summary of one Project container exposed to Desktop and CLI clients.
@@ -185,6 +186,9 @@ pub struct TrackInstrumentSummary {
     pub name: String,
     pub bypassed: bool,
     pub source: TrackInstrumentSummarySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset_id: Option<String>,
 }
 
 /// Instrument implementation family included in a Track summary.
@@ -260,6 +264,7 @@ impl TrackInstrumentSummary {
                 TrackInstrumentSource::Internal { .. } => TrackInstrumentSummarySource::Internal,
                 TrackInstrumentSource::Vst3 { .. } => TrackInstrumentSummarySource::Vst3,
             },
+            preset_id: instrument.built_in_preset_id().map(str::to_owned),
         }
     }
 }
@@ -612,6 +617,7 @@ pub struct RuntimeProjectionStatus {
 pub struct ArrangementMutationResult {
     pub canonical: riffra_core::CanonicalState,
     pub projection: ArrangementProjectionOutcome,
+    pub created_entity_ids: BTreeMap<String, Vec<String>>,
 }
 
 /// Outcome of projecting a committed Arrangement mutation into the native

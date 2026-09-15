@@ -61,7 +61,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Attached track.add failed' }
     $track = Get-Content (Join-Path $dataRoot 'track.json') | ConvertFrom-Json
     if (-not $track.ok -or $track.result.type -ne 'mutation' -or $track.sequence -ne 1 -or
-        $null -ne $track.result.value.canonical -or $track.result.value.entityIds.tracks.Count -ne 1) {
+        $null -ne $track.result.value.canonical -or $track.result.value.createdEntityIds.tracks.Count -ne 1) {
         throw 'Attached track.add returned an invalid contract'
     }
     & $binary --attach --expected-sequence 1 undo |

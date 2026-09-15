@@ -82,20 +82,25 @@ pub(super) fn dispatch<A>(
         }
         "audio-clip.split" => {
             let params: SplitParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .split_audio_clip(&params.clip_id, TimelineTick(params.split_tick))?,
+                    .split_audio_clip_with_created_ids(
+                        &params.clip_id,
+                        TimelineTick(params.split_tick),
+                    )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "audio-clip.duplicate" => {
             let params: ClipIdParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .duplicate_audio_clip(&params.clip_id)?,
+                    .duplicate_audio_clip_with_created_ids(&params.clip_id)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "audio-clip.crossfade" => {
@@ -113,16 +118,17 @@ pub(super) fn dispatch<A>(
         ),
         "midi-clip.create" => {
             let params: MidiClipCreateParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .create_midi_clip(
+                    .create_midi_clip_with_created_ids(
                         &params.track_id,
                         TimelineTick(params.start_tick),
                         params.duration_ticks,
                         params.name,
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-clip.add-asset" => dispatcher.add_midi_clip(decode(request.params)?)?,
@@ -159,29 +165,34 @@ pub(super) fn dispatch<A>(
         }
         "midi-clip.split" => {
             let params: SplitParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .split_midi_clip(&params.clip_id, TimelineTick(params.split_tick))?,
+                    .split_midi_clip_with_created_ids(
+                        &params.clip_id,
+                        TimelineTick(params.split_tick),
+                    )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-clip.duplicate" => {
             let params: ClipIdParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .duplicate_midi_clip(&params.clip_id)?,
+                    .duplicate_midi_clip_with_created_ids(&params.clip_id)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.add" => {
             let params: MidiNoteAddParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .add_midi_note(
+                    .add_midi_note_with_created_ids(
                         &params.clip_id,
                         TimelineTick(params.start_tick),
                         params.pitch,
@@ -189,15 +200,17 @@ pub(super) fn dispatch<A>(
                         params.velocity,
                         params.channel,
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.insert" => {
             let params: MidiNoteInsertParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .insert_midi_notes(&params.clip_id, params.notes)?,
+                    .insert_midi_notes_with_created_ids(&params.clip_id, params.notes)?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.update" => {
@@ -276,11 +289,16 @@ pub(super) fn dispatch<A>(
         }
         "midi-note.duplicate" => {
             let params: MidiNoteDuplicateParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .duplicate_midi_notes(&params.clip_id, params.note_ids, params.offset_ticks)?,
+                    .duplicate_midi_notes_with_created_ids(
+                        &params.clip_id,
+                        params.note_ids,
+                        params.offset_ticks,
+                    )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "clip.remove" => {
@@ -294,15 +312,16 @@ pub(super) fn dispatch<A>(
         }
         "clip.paste" => {
             let params: ClipPasteParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .paste_timeline_clips(
+                    .paste_timeline_clips_with_created_ids(
                         params.audio_clip_ids,
                         params.midi_clip_ids,
                         TimelineTick(params.start_tick),
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         _ => unreachable!("unsupported clips command family"),
@@ -323,19 +342,22 @@ impl<'a, A> HostDispatcher<'a, A> {
         if metadata.sample_rate == 0 || metadata.frame_count == 0 {
             return Err("Audio Asset has no usable frames.".into());
         }
-        Ok(
-            self.session(self.core.application(&self.storage).add_audio_asset_clip(
-                AudioAssetClipPlacement {
-                    asset_id,
-                    name: params.name,
-                    start_tick: params.start_tick.map(TimelineTick),
-                    track_id: params.track_id,
-                    sample_rate: metadata.sample_rate,
-                    source_frames: metadata.frame_count,
-                },
-                |id| riffra_host::load(&self.data_root, id).is_some(),
-            )?),
-        )
+        Ok(self.application_mutation(
+            self.core
+                .application(&self.storage)
+                .add_audio_asset_clip_with_created_ids(
+                    AudioAssetClipPlacement {
+                        asset_id,
+                        name: params.name,
+                        start_tick: params.start_tick.map(TimelineTick),
+                        track_id: params.track_id,
+                        sample_rate: metadata.sample_rate,
+                        source_frames: metadata.frame_count,
+                    },
+                    |id| riffra_host::load(&self.data_root, id).is_some(),
+                )?,
+            CanonicalMutationEffect::ProjectArrangement,
+        ))
     }
 
     fn add_midi_clip(&self, params: MidiAddParams) -> Result<DispatchResult, DispatchError> {
@@ -348,9 +370,10 @@ impl<'a, A> HostDispatcher<'a, A> {
         let bytes = std::fs::read(&asset.content_location)
             .map_err(|error| format!("MIDI Asset could not be read: {error}"))?;
         let (duration_ticks, notes, events) = riffra_host::parse_smf(&bytes)?;
-        Ok(
-            self.session(self.core.application(&self.storage).add_midi_asset_clip(
-                MidiAssetClipPlacement {
+        Ok(self.application_mutation(
+            self.core
+                .application(&self.storage)
+                .add_midi_asset_clip_with_created_ids(MidiAssetClipPlacement {
                     asset_id,
                     name: params.name,
                     start_tick: params.start_tick.map(TimelineTick),
@@ -358,9 +381,9 @@ impl<'a, A> HostDispatcher<'a, A> {
                     duration_ticks,
                     notes,
                     events,
-                },
-            )?),
-        )
+                })?,
+            CanonicalMutationEffect::ProjectArrangement,
+        ))
     }
 
     fn audio_source_frames(&self, clip_id: &str) -> Result<u64, DispatchError> {

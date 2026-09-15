@@ -53,7 +53,7 @@ pub struct JobStatus {
     pub id: String,
     pub kind: JobKind,
     pub state: JobState,
-    pub progress: f32,
+    pub progress: Option<f32>,
     pub message: String,
     pub result: Option<Value>,
 }
@@ -66,14 +66,14 @@ pub enum BackgroundJobStatus {
     Scan {
         id: String,
         state: JobState,
-        progress: f32,
+        progress: Option<f32>,
         message: String,
         result: Option<ScanReport>,
     },
     Render {
         id: String,
         state: JobState,
-        progress: f32,
+        progress: Option<f32>,
         message: String,
         result: Option<RenderResult>,
     },
@@ -141,7 +141,7 @@ impl JobRegistry {
                 id: id.clone(),
                 kind,
                 state: JobState::Queued,
-                progress: 0.0,
+                progress: None,
                 message: format!("{label} job queued."),
                 result: None,
             }),
@@ -193,7 +193,7 @@ impl JobRegistry {
                 status.result = None;
             } else {
                 status.state = JobState::Completed;
-                status.progress = 1.0;
+                status.progress = Some(1.0);
                 status.message = message.into();
                 status.result = Some(result);
             }

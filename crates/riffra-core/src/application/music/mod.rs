@@ -73,21 +73,23 @@ impl<'a, A, S> Application<'a, A, S>
 where
     S: SessionStorage + ?Sized,
 {
-    /// Creates an empty MIDI Clip from absolute musical positions.
+    /// Creates a MIDI Clip from absolute musical positions and returns its
+    /// Core-allocated identity.
     ///
     /// # Errors
     ///
     /// Returns an error when a musical position is invalid, the range is not
     /// positive, the Track is missing or not an Instrument Track, or the
     /// canonical commit cannot be persisted.
-    pub fn create_musical_midi_clip(
+    pub fn create_musical_midi_clip_with_created_ids(
         &self,
         track_id: &str,
         start: MusicalPosition,
         end: MusicalPosition,
         name: Option<String>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let start_tick = arrangement.timebase.musical_position_to_tick(start)?;
             let end_tick = arrangement.timebase.musical_position_to_tick(end)?;
             let duration_ticks = end_tick.0.checked_sub(start_tick.0).ok_or_else(|| {
@@ -101,34 +103,39 @@ where
                 )
                 .into());
             }
-            super::arrangement::create_midi_clip_in_arrangement(
+            let id = super::arrangement::create_midi_clip_in_arrangement(
                 arrangement,
                 track_id,
                 start_tick,
                 duration_ticks,
                 name,
-            )
-        })
+            )?;
+            record_created(&mut created_entity_ids, "midiClips", id);
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
-    /// Inserts MIDI notes whose positions are absolute within the arrangement.
+    /// Inserts MIDI notes at absolute musical positions and returns their
+    /// Core-allocated identities.
     ///
     /// # Errors
     ///
     /// Returns an error when the input is empty, a musical value is invalid,
     /// a note precedes the Clip, the Clip is missing, or the canonical commit
     /// cannot be persisted.
-    pub fn insert_musical_notes(
+    pub fn insert_musical_notes_with_created_ids(
         &self,
         clip_id: &str,
         inputs: Vec<MusicalMidiNoteInput>,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
             return Err(ApplicationError::InvalidCommand(
                 "at least one musical midi note is required".into(),
             ));
         }
-        self.commit_arrangement(|arrangement| {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
             let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
             if inputs.len() > available_notes {
                 return Err(too_many_midi_notes().into());
@@ -138,9 +145,13 @@ where
                 .into_iter()
                 .map(|input| resolve_musical_note(timebase, input))
                 .collect::<Result<Vec<_>, _>>()?;
-            insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)
-                .map_err(Into::into)
-        })
+            let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
+            for id in ids {
+                record_created(&mut created_entity_ids, "midiNotes", id);
+            }
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Lists MIDI notes using absolute musical positions.
@@ -342,31 +353,34 @@ where
             .collect())
     }
 
-    /// Adds a named timeline range from absolute musical positions.
+    /// Adds a named timeline range from absolute musical positions and returns
+    /// its Core-allocated identity.
     ///
     /// # Errors
     ///
     /// Returns an error when the name, positions, or range is invalid, or the
     /// canonical commit cannot be persisted.
-    pub fn add_region(
+    pub fn add_region_with_created_ids(
         &self,
         name: String,
         start: MusicalPosition,
         end: MusicalPosition,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let name = normalize_region_name(name)?;
-        self.commit_arrangement(|arrangement| {
+        let id = next_id("region");
+        let session = self.commit_arrangement(|arrangement| {
             let start_tick = arrangement.timebase.musical_position_to_tick(start)?;
             let end_tick = arrangement.timebase.musical_position_to_tick(end)?;
             arrangement
                 .add_region(TimelineRegion {
-                    id: next_id("region"),
+                    id: id.clone(),
                     name,
                     start_tick,
                     end_tick,
                 })
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "regions", id))
     }
 
     /// Updates a named timeline range using only the supplied fields.
@@ -459,7 +473,7 @@ fn insert_resolved_midi_notes_in_arrangement(
     arrangement: &mut crate::domain::Arrangement,
     clip_id: &str,
     inputs: Vec<ResolvedMidiNoteInput>,
-) -> Result<(), DomainError> {
+) -> Result<Vec<String>, DomainError> {
     if inputs.is_empty() {
         return Err(DomainError::InvalidMusicalValue(
             "at least one musical midi note is required".into(),
@@ -504,7 +518,9 @@ fn insert_resolved_midi_notes_in_arrangement(
             })
         })
         .collect::<Result<Vec<_>, DomainError>>()?;
-    arrangement.insert_midi_notes(clip_id, notes)
+    let ids = notes.iter().map(|note| note.id.clone()).collect::<Vec<_>>();
+    arrangement.insert_midi_notes(clip_id, notes)?;
+    Ok(ids)
 }
 
 fn available_midi_note_capacity(
@@ -649,20 +665,20 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         let clip = application
-            .create_musical_midi_clip(
+            .create_musical_midi_clip_with_created_ids(
                 &track_id,
                 "5:1".parse().unwrap(),
                 "13:1".parse().unwrap(),
                 Some("Piano".into()),
             )
             .unwrap();
-        let clip_id = clip.arrangement.midi_clips[0].id.clone();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
         let inserted = application
-            .insert_musical_notes(
+            .insert_musical_notes_with_created_ids(
                 &clip_id,
                 vec![
                     MusicalMidiNoteInput {
@@ -690,7 +706,7 @@ mod tests {
             )
             .unwrap();
 
-        let notes = &inserted.arrangement.midi_clips[0].notes;
+        let notes = &inserted.session.arrangement.midi_clips[0].notes;
         assert_eq!(notes[0].start_tick, TimelineTick(0));
         assert_eq!(notes[0].duration_ticks, 480);
         assert_eq!(notes[0].note, 60);
@@ -700,10 +716,13 @@ mod tests {
         assert_eq!(notes[2].start_tick, TimelineTick(29_760));
         assert_eq!(notes[2].duration_ticks, 480);
         assert_eq!(notes[2].note, 69);
-        assert_eq!(inserted.arrangement.midi_clips[0].duration_ticks, 30_720);
+        assert_eq!(
+            inserted.session.arrangement.midi_clips[0].duration_ticks,
+            30_720
+        );
         assert!(
             application
-                .insert_musical_notes(
+                .insert_musical_notes_with_created_ids(
                     &clip_id,
                     vec![MusicalMidiNoteInput {
                         pitch: "C4".parse().unwrap(),
@@ -730,19 +749,19 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let clip = application
-            .create_musical_midi_clip(
-                &track.arrangement.tracks[0].id,
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
                 "5:1".parse().unwrap(),
                 None,
             )
             .unwrap();
-        let clip_id = clip.arrangement.midi_clips[0].id.clone();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
         let inserted = application
-            .insert_musical_notes(
+            .insert_musical_notes_with_created_ids(
                 &clip_id,
                 vec![MusicalMidiNoteInput {
                     pitch: "C4".parse().unwrap(),
@@ -753,7 +772,9 @@ mod tests {
                 }],
             )
             .unwrap();
-        let note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+        let note_id = inserted.session.arrangement.midi_clips[0].notes[0]
+            .id
+            .clone();
 
         let listed = application
             .list_musical_notes(
@@ -801,12 +822,12 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         assert!(
             application
-                .create_musical_midi_clip(
+                .create_musical_midi_clip_with_created_ids(
                     &track_id,
                     "5:2".parse().unwrap(),
                     "5:1".parse().unwrap(),
@@ -816,12 +837,20 @@ mod tests {
         );
         assert!(
             application
-                .add_region(" ".into(), "1:1".parse().unwrap(), "2:1".parse().unwrap())
+                .add_region_with_created_ids(
+                    " ".into(),
+                    "1:1".parse().unwrap(),
+                    "2:1".parse().unwrap()
+                )
                 .is_err()
         );
         assert!(
             application
-                .add_region("A'".into(), "1:1".parse().unwrap(), "2:1".parse().unwrap())
+                .add_region_with_created_ids(
+                    "A'".into(),
+                    "1:1".parse().unwrap(),
+                    "2:1".parse().unwrap()
+                )
                 .is_ok()
         );
         let regions = application.list_regions().unwrap();

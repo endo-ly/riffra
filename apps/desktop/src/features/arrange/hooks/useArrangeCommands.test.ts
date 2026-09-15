@@ -10,6 +10,7 @@ function result(projection: ArrangementMutationResult['projection']): Arrangemen
   const session = defaultSession();
   return {
     canonical: canonicalState(session),
+    createdEntityIds: {},
     projection,
   };
 }

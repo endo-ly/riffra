@@ -21,23 +21,24 @@ where
         Ok(self.get_session()?.arrangement.midi_clips)
     }
 
-    /// Adds a Track to the Arrangement.
-    pub fn add_track(
+    /// Adds a Track and returns the identity allocated by Core.
+    pub fn add_track_with_created_ids(
         &self,
         name: impl Into<String>,
         kind: TrackKind,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let name = normalize_track_name(name.into())?;
-        self.commit_arrangement(|arrangement| {
-            let id = next_id("track");
+        let id = next_id("track");
+        let session = self.commit_arrangement(|arrangement| {
             let track = match kind {
-                TrackKind::Audio => Track::audio(id, name),
-                TrackKind::Instrument => Track::instrument(id, name),
+                TrackKind::Audio => Track::audio(id.clone(), name),
+                TrackKind::Instrument => Track::instrument(id.clone(), name),
             };
             arrangement.tracks.push(track);
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "tracks", id))
     }
 
     /// Removes a Track and its owned Timeline objects.
@@ -47,9 +48,12 @@ where
         })
     }
 
-    /// Duplicates a Track and its owned timeline and automation objects.
-    pub fn duplicate_track(&self, track_id: &str) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    /// Duplicates a Track and returns every identity allocated for its copy.
+    pub fn duplicate_track_with_created_ids(
+        &self,
+        track_id: &str,
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mutation = self.commit_arrangement_with_created_ids(|arrangement, created| {
             let source_index = arrangement
                 .tracks
                 .iter()
@@ -60,6 +64,7 @@ where
             duplicate.id = format!("track:{operation_id}");
             duplicate.name = format!("{} copy", duplicate.name);
             let duplicate_id = duplicate.id.clone();
+            record_created(created, "tracks", duplicate_id.clone());
             arrangement
                 .tracks
                 .insert(source_index.saturating_add(1), duplicate);
@@ -73,6 +78,7 @@ where
                 .map(|(index, mut clip)| {
                     clip.id = format!("clip:{operation_id}:{index}");
                     clip.track_id = duplicate_id.clone();
+                    record_created(created, "audioClips", clip.id.clone());
                     clip
                 })
                 .collect::<Vec<_>>();
@@ -87,6 +93,7 @@ where
                 .map(|(index, mut clip)| {
                     clip.id = format!("midi-clip:{operation_id}:{index}");
                     clip.track_id = duplicate_id.clone();
+                    record_created(created, "midiClips", clip.id.clone());
                     clip
                 })
                 .collect::<Vec<_>>();
@@ -101,6 +108,7 @@ where
                 .map(|(index, mut lane)| {
                     lane.id = format!("automation:{duplicate_id}:{index}");
                     lane.track_id = duplicate_id.clone();
+                    record_created(created, "automationLanes", lane.id.clone());
                     for (point_index, point) in lane.points.iter_mut().enumerate() {
                         point.id = format!("automation-point:{operation_id}:{index}:{point_index}");
                     }
@@ -109,7 +117,8 @@ where
                 .collect::<Vec<_>>();
             arrangement.automation_lanes.extend(automation_lanes);
             Ok(())
-        })
+        })?;
+        Ok(mutation)
     }
 
     /// Applies a validated Track mix and routing patch.
@@ -206,18 +215,13 @@ where
         })
     }
 
-    /// Adds an Audio Asset to the timeline, selecting an existing Audio Track
-    /// or creating one when no target was supplied or available.
-    ///
-    /// # Errors
-    /// Returns an error when the target Track or Asset is invalid, or when the
-    /// resulting session cannot be persisted.
-    pub fn add_audio_asset_clip(
+    /// Adds an Audio Asset Clip and returns identities allocated by Core.
+    pub fn add_audio_asset_clip_with_created_ids(
         &self,
         placement: AudioAssetClipPlacement,
         asset_exists: impl Fn(&crate::domain::asset::AssetId) -> bool,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mutation = self.commit_arrangement_with_created_ids(|arrangement, created| {
             let requested_track_id = placement.track_id.filter(|id| !id.trim().is_empty());
             let track_id = if let Some(track_id) = requested_track_id {
                 let track = arrangement
@@ -242,6 +246,7 @@ where
                 arrangement
                     .tracks
                     .push(Track::audio(track_id.clone(), "Audio 1".into()));
+                record_created(created, "tracks", track_id.clone());
                 track_id
             };
             let append_tick = arrangement
@@ -256,8 +261,10 @@ where
                 })
                 .max()
                 .unwrap_or(0);
+            let clip_id = next_id("clip");
+            record_created(created, "audioClips", clip_id.clone());
             let clip = AudioClip::full_source(
-                next_id("clip"),
+                clip_id,
                 placement.name,
                 track_id,
                 placement.asset_id,
@@ -268,7 +275,8 @@ where
             arrangement
                 .add_audio_clip(clip, asset_exists)
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(mutation)
     }
 
     /// Adds an already-validated MIDI Clip.
@@ -276,7 +284,8 @@ where
         self.commit_arrangement(|arrangement| arrangement.add_midi_clip(clip).map_err(Into::into))
     }
 
-    /// Creates an empty MIDI Clip on an existing Instrument Track.
+    /// Creates a MIDI Clip on an existing Instrument Track and returns its
+    /// Core-allocated identity.
     ///
     /// The Core owns the Clip identity, default name, empty content, and
     /// duration normalization so hosts only submit user intent.
@@ -285,29 +294,39 @@ where
     ///
     /// Returns an error when the track is missing, is not an Instrument Track,
     /// or the resulting Clip cannot be validated or persisted.
-    pub fn create_midi_clip(
+    pub fn create_midi_clip_with_created_ids(
         &self,
         track_id: &str,
         start_tick: TimelineTick,
         duration_ticks: u64,
         name: Option<String>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
-            create_midi_clip_in_arrangement(arrangement, track_id, start_tick, duration_ticks, name)
-        })
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mut created_entity_ids = CreatedEntityIds::new();
+        let session = self.commit_arrangement(|arrangement| {
+            let id = create_midi_clip_in_arrangement(
+                arrangement,
+                track_id,
+                start_tick,
+                duration_ticks,
+                name,
+            )?;
+            record_created(&mut created_entity_ids, "midiClips", id);
+            Ok(())
+        })?;
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
-    /// Adds parsed MIDI Asset content to the timeline with Core-owned
-    /// identities, creating an Instrument Track when necessary.
+    /// Adds parsed MIDI Asset content to the timeline, creates an Instrument
+    /// Track when necessary, and returns the Core-owned identities.
     ///
     /// # Errors
     /// Returns an error when the target Track or MIDI content is invalid, or
     /// when the resulting session cannot be persisted.
-    pub fn add_midi_asset_clip(
+    pub fn add_midi_asset_clip_with_created_ids(
         &self,
         placement: MidiAssetClipPlacement,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mutation = self.commit_arrangement_with_created_ids(|arrangement, created| {
             let requested_track_id = placement.track_id.filter(|id| !id.trim().is_empty());
             let track_id = if let Some(track_id) = requested_track_id {
                 let track = arrangement
@@ -332,18 +351,22 @@ where
                 arrangement
                     .tracks
                     .push(Track::instrument(track_id.clone(), "Instrument 1".into()));
+                record_created(created, "tracks", track_id.clone());
                 track_id
             };
             let mut notes = placement.notes;
             for note in &mut notes {
                 note.id = next_id("note");
+                record_created(created, "midiNotes", note.id.clone());
             }
             let mut events = placement.events;
             for event in &mut events {
                 event.id = next_id("event");
             }
+            let clip_id = next_id("midi-clip");
+            record_created(created, "midiClips", clip_id.clone());
             let clip = MidiClip {
-                id: next_id("midi-clip"),
+                id: clip_id,
                 name: placement.name,
                 track_id,
                 asset_id: Some(placement.asset_id),
@@ -356,7 +379,8 @@ where
                 recording_take_id: None,
             };
             arrangement.add_midi_clip(clip).map_err(Into::into)
-        })
+        })?;
+        Ok(mutation)
     }
 
     /// Replaces the project timebase through the canonical domain operation.
@@ -456,13 +480,13 @@ where
         })
     }
 
-    /// Duplicates selected Clips at one timeline anchor.
-    pub fn paste_timeline_clips(
+    /// Pastes selected Clips and returns the newly allocated Clip IDs.
+    pub fn paste_timeline_clips_with_created_ids(
         &self,
         audio_clip_ids: Vec<String>,
         midi_clip_ids: Vec<String>,
         start_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let operation_id = next_id("paste");
         let audio_ids = (0..audio_clip_ids.len())
             .map(|index| format!("clip:{operation_id}:{index}"))
@@ -470,7 +494,7 @@ where
         let midi_ids = (0..midi_clip_ids.len())
             .map(|index| format!("midi-clip:{operation_id}:{index}"))
             .collect::<Vec<_>>();
-        self.commit_arrangement(|arrangement| {
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
                 .paste_timeline_clips(
                     &audio_clip_ids,
@@ -480,7 +504,15 @@ where
                     start_tick,
                 )
                 .map_err(Into::into)
-        })
+        })?;
+        let mut created_entity_ids = CreatedEntityIds::new();
+        if !audio_ids.is_empty() {
+            created_entity_ids.insert("audioClips".into(), audio_ids);
+        }
+        if !midi_ids.is_empty() {
+            created_entity_ids.insert("midiClips".into(), midi_ids);
+        }
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Trims an Audio Clip after the host validates its source length.
@@ -498,28 +530,37 @@ where
         })
     }
 
-    /// Splits an Audio Clip at a musical position.
-    pub fn split_audio_clip(
+    /// Splits an Audio Clip and returns the newly created right-hand Clip ID.
+    pub fn split_audio_clip_with_created_ids(
         &self,
         clip_id: &str,
         split_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let right_id = next_id("clip:split");
-        self.commit_arrangement(|arrangement| {
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
-                .split_audio_clip(clip_id, split_tick, right_id)
+                .split_audio_clip(clip_id, split_tick, right_id.clone())
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "audioClips", right_id))
     }
 
-    /// Duplicates an Audio Clip with a Core-owned identity.
-    pub fn duplicate_audio_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+    /// Duplicates an Audio Clip and returns its new Clip ID.
+    pub fn duplicate_audio_clip_with_created_ids(
+        &self,
+        clip_id: &str,
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let duplicate_id = next_id("clip:duplicate");
-        self.commit_arrangement(|arrangement| {
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
-                .duplicate_audio_clip(clip_id, duplicate_id)
+                .duplicate_audio_clip(clip_id, duplicate_id.clone())
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(
+            session,
+            "audioClips",
+            duplicate_id,
+        ))
     }
 
     /// Trims a MIDI Clip and its contained notes/events.
@@ -536,32 +577,37 @@ where
         })
     }
 
-    /// Splits a MIDI Clip at a musical position.
-    pub fn split_midi_clip(
+    /// Splits a MIDI Clip and returns the newly created right-hand Clip ID.
+    pub fn split_midi_clip_with_created_ids(
         &self,
         clip_id: &str,
         split_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let right_id = next_id("midi-clip:split");
-        self.commit_arrangement(|arrangement| {
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
-                .split_midi_clip(clip_id, split_tick, right_id)
+                .split_midi_clip(clip_id, split_tick, right_id.clone())
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "midiClips", right_id))
     }
 
-    /// Duplicates a MIDI Clip with a Core-owned identity.
-    pub fn duplicate_midi_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+    /// Duplicates a MIDI Clip and returns its new Clip ID.
+    pub fn duplicate_midi_clip_with_created_ids(
+        &self,
+        clip_id: &str,
+    ) -> Result<ApplicationMutation, ApplicationError> {
         let duplicate_id = next_id("midi-clip:duplicate");
-        self.commit_arrangement(|arrangement| {
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
-                .duplicate_midi_clip(clip_id, duplicate_id)
+                .duplicate_midi_clip(clip_id, duplicate_id.clone())
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "midiClips", duplicate_id))
     }
 
-    /// Adds one MIDI note to an existing MIDI clip.
-    pub fn add_midi_note(
+    /// Adds one MIDI note and returns its Core-allocated identity.
+    pub fn add_midi_note_with_created_ids(
         &self,
         clip_id: &str,
         start_tick: TimelineTick,
@@ -569,7 +615,7 @@ where
         duration_ticks: u64,
         velocity: u8,
         channel: u8,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         if pitch > 127 {
             return Err(ApplicationError::InvalidCommand(
                 "midi pitch must be between 0 and 127".into(),
@@ -590,12 +636,13 @@ where
                 "midi note duration must be positive".into(),
             ));
         }
-        self.commit_arrangement(|arrangement| {
+        let id = next_id("note");
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
                 .insert_midi_notes(
                     clip_id,
                     vec![MidiNote {
-                        id: next_id("note"),
+                        id: id.clone(),
                         note: pitch,
                         start_tick,
                         duration_ticks,
@@ -604,20 +651,22 @@ where
                     }],
                 )
                 .map_err(Into::into)
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "midiNotes", id))
     }
 
-    /// Inserts multiple identity-free MIDI notes as one atomic edit.
+    /// Inserts multiple MIDI notes as one atomic edit and returns their
+    /// Core-allocated identities.
     ///
     /// # Errors
     ///
     /// Returns an error for an empty input, invalid MIDI values, an unknown
     /// Clip, or a note that would make the Clip invalid.
-    pub fn insert_midi_notes(
+    pub fn insert_midi_notes_with_created_ids(
         &self,
         clip_id: &str,
         inputs: Vec<MidiNoteInput>,
-    ) -> Result<CreativeSession, ApplicationError> {
+    ) -> Result<ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
             return Err(ApplicationError::InvalidCommand(
                 "at least one midi note is required".into(),
@@ -655,12 +704,16 @@ where
                 velocity: input.velocity,
                 channel: input.channel,
             })
-            .collect();
-        self.commit_arrangement(|arrangement| {
+            .collect::<Vec<_>>();
+        let ids = notes.iter().map(|note| note.id.clone()).collect::<Vec<_>>();
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
                 .insert_midi_notes(clip_id, notes)
                 .map_err(Into::into)
-        })
+        })?;
+        let mut created_entity_ids = CreatedEntityIds::new();
+        created_entity_ids.insert("midiNotes".into(), ids);
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
     /// Applies one atomic set of updates to notes in a MIDI clip.
@@ -873,30 +926,36 @@ where
         })
     }
 
-    /// Duplicates selected MIDI notes within one clip.
-    pub fn duplicate_midi_notes(
+    /// Duplicates MIDI notes and returns all newly allocated Note IDs.
+    pub fn duplicate_midi_notes_with_created_ids(
         &self,
         clip_id: &str,
         note_ids: Vec<String>,
         offset_ticks: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let mut created_ids = Vec::new();
+        let session = self.commit_arrangement(|arrangement| {
             arrangement
                 .duplicate_midi_notes(clip_id, &note_ids, offset_ticks)
+                .map(|ids| created_ids = ids)
                 .map_err(Into::into)
-        })
+        })?;
+        let mut created_entity_ids = CreatedEntityIds::new();
+        created_entity_ids.insert("midiNotes".into(), created_ids);
+        Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
-    /// Adds a named timeline marker.
-    pub fn add_marker(
+    /// Adds a timeline marker and returns its Core-allocated identity.
+    pub fn add_marker_with_created_ids(
         &self,
         tick: TimelineTick,
         name: String,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.commit_arrangement(|arrangement| {
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        let id = next_id("marker");
+        let session = self.commit_arrangement(|arrangement| {
             let name = name.trim().chars().take(80).collect::<String>();
             arrangement.markers.push(Marker {
-                id: next_id("marker"),
+                id: id.clone(),
                 name: if name.is_empty() {
                     "Marker".into()
                 } else {
@@ -906,7 +965,8 @@ where
             });
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
-        })
+        })?;
+        Ok(ApplicationMutation::one(session, "markers", id))
     }
 
     /// Updates one timeline marker.
@@ -975,10 +1035,11 @@ pub(super) fn create_midi_clip_in_arrangement(
     start_tick: TimelineTick,
     duration_ticks: u64,
     name: Option<String>,
-) -> Result<(), ApplicationError> {
+) -> Result<String, ApplicationError> {
+    let id = next_id("midi-clip");
     arrangement
         .add_midi_clip(MidiClip {
-            id: next_id("midi-clip"),
+            id: id.clone(),
             name: normalize_midi_clip_name(name),
             track_id: track_id.to_owned(),
             asset_id: None,
@@ -991,4 +1052,5 @@ pub(super) fn create_midi_clip_in_arrangement(
             recording_take_id: None,
         })
         .map_err(Into::into)
+        .map(|()| id)
 }
