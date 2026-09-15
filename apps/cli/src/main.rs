@@ -656,7 +656,7 @@ mod tests {
         .unwrap();
         fs::write(
             resources.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":[{"id":"drum-kit","name":"Drum Kit","description":"Test drums","referencePitch":"C1","definitionPath":"drum-kit/definition.json","resourceBasePath":"drum-kit"}]}"#,
+            br#"{"sourceRelease":"vtest","presets":[{"id":"drum-kit","name":"Drum Kit","description":"Test drums","definitionPath":"drum-kit/definition.json","resourceBasePath":"drum-kit"}]}"#,
         )
         .unwrap();
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();

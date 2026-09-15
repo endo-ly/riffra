@@ -171,7 +171,7 @@ Event frameはRuntime型を直接持たない。
 
 interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立てる。`expectedSequence`を使う場合は直前の応答の`sequence`を渡し、Conflict時は状態を確認して操作を組み直す。
 
-`instrument builtin list`のpresetには、定義されている場合`referencePitch`が含まれ、`track list`のInternal Instrumentには`presetId`が含まれる。
+`track list`のInternal Instrumentには`presetId`が含まれる。
 
 失敗応答:
 

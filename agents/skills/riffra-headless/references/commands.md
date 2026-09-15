@@ -337,7 +337,7 @@ riffra --attach plugin preset set --track-id track:01j... --device-id device:01j
 
 Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固有GUIのpreset browserは対象外である。Plugin state fileにはschema version、Plugin path、parameter values、opaque stateを含め、別VST3のstateは適用しない。
 
-`instrument builtin list`はHostのresource catalogを返し、presetに基準音が定義されている場合は`referencePitch`も返す。`instrument builtin set --track-id <id> --preset-id <id>`はcatalogに存在するpresetをTrackへ割り当てる。`track list`のInternal Instrumentには`presetId`が含まれるため、割り当て後のpresetを確認できる。Built-in instrumentの割り当てはSafe Modeでも実行できる。
+`instrument builtin list`はHostのresource catalogを返す。`instrument builtin set --track-id <id> --preset-id <id>`はcatalogに存在するpresetをTrackへ割り当てる。`track list`のInternal Instrumentには`presetId`が含まれるため、割り当て後のpresetを確認できる。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
 ### Missing 復旧
 

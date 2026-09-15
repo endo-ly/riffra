@@ -3,4 +3,4 @@
 /**
  * Minimal metadata presented to clients for one built-in instrument.
  */
-export type BuiltInInstrumentSummary = { id: string, name: string, description: string | null, referencePitch?: string, };
+export type BuiltInInstrumentSummary = { id: string, name: string, description: string | null, };

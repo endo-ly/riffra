@@ -192,7 +192,7 @@ mod tests {
         .unwrap();
         fs::write(
             resources.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":[{"id":"01-clean-sub-bass","name":"Clean Sub Bass","description":"Test preset","referencePitch":"C1","definitionPath":"01-clean-sub-bass/definition.json","resourceBasePath":"01-clean-sub-bass"}]}"#,
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-clean-sub-bass","name":"Clean Sub Bass","description":"Test preset","definitionPath":"01-clean-sub-bass/definition.json","resourceBasePath":"01-clean-sub-bass"}]}"#,
         )
         .unwrap();
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
@@ -203,7 +203,6 @@ mod tests {
         assert_eq!(listed.result_type, "builtInInstruments");
         assert_eq!(listed.value[0]["id"], "01-clean-sub-bass");
         assert_eq!(listed.value[0]["name"], "Clean Sub Bass");
-        assert_eq!(listed.value[0]["referencePitch"], "C1");
 
         let track = dispatcher
             .dispatch(request(
