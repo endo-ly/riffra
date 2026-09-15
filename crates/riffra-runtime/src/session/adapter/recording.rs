@@ -248,9 +248,9 @@ mod tests {
 
         let placed = core
             .application(&store)
-            .place_take_as_separate_clip("take:1", None)
+            .place_take_as_separate_clip_with_created_ids("take:1", None)
             .unwrap();
-        let placed_copy = placed.arrangement.audio_clips.last().unwrap();
+        let placed_copy = placed.session.arrangement.audio_clips.last().unwrap();
         assert!(placed_copy.muted);
         let _ = std::fs::remove_dir_all(root);
     }

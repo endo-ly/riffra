@@ -1586,8 +1586,8 @@ pub struct JobIdArgs {
 pub struct JobWaitArgs {
     #[arg(long)]
     pub id: String,
-    #[arg(long, default_value_t = 30_000)]
-    pub timeout_ms: u64,
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
 }
 
 impl Cli {
@@ -2356,6 +2356,36 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "timebase.update");
         assert_eq!(request.params, json!({"bpm": 140.0}));
+    }
+
+    #[test]
+    fn job_wait_timeout_is_optional() {
+        let cli = Cli::try_parse_from(["riffra", "job", "wait", "--id", "job:1"]).unwrap();
+        let Some(CliCommand::Job {
+            command: JobCommand::Wait(args),
+        }) = cli.command
+        else {
+            panic!("job wait was not parsed");
+        };
+        assert_eq!(args.timeout_ms, None);
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "job",
+            "wait",
+            "--id",
+            "job:1",
+            "--timeout-ms",
+            "30000",
+        ])
+        .unwrap();
+        let Some(CliCommand::Job {
+            command: JobCommand::Wait(args),
+        }) = cli.command
+        else {
+            panic!("job wait was not parsed");
+        };
+        assert_eq!(args.timeout_ms, Some(30_000));
     }
 
     #[test]

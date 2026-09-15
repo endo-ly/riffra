@@ -115,25 +115,6 @@ where
         })
     }
 
-    /// Appends an effect device to a Track rack.
-    pub fn add_track_effect(
-        &self,
-        track_id: &str,
-        device: RackDevice,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core.commit(self.storage, |session| {
-            let track = session
-                .arrangement
-                .tracks
-                .iter_mut()
-                .find(|track| track.id == track_id)
-                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-            track.rack.devices.push(device);
-            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-            Ok(())
-        })
-    }
-
     /// Adds an effect device and returns its identity.
     pub fn add_track_effect_with_created_ids(
         &self,
@@ -322,17 +303,6 @@ where
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
-    }
-
-    /// Replaces one Track automation lane with sorted points.
-    pub fn set_track_automation(
-        &self,
-        track_id: &str,
-        parameter: AutomationParameter,
-        points: Vec<AutomationPoint>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.set_track_automation_with_created_ids(track_id, parameter, points)
-            .map(|mutation| mutation.session)
     }
 
     /// Replaces automation and reports a newly created lane identity.

@@ -13,24 +13,13 @@ impl<'a, A, S> Application<'a, A, S>
 where
     S: SessionStorage + ?Sized,
 {
-    /// Expands a relative phrase at one or more absolute placements.
+    /// Expands a relative phrase at one or more absolute placements and
+    /// returns the generated Note IDs.
     ///
     /// # Errors
     ///
     /// Returns an error when the pattern, placement, channel, or generated
     /// pitch is invalid, or when the canonical commit cannot be persisted.
-    pub fn insert_phrase_pattern(
-        &self,
-        clip_id: &str,
-        pattern: PhrasePattern,
-        placements: Vec<PhrasePlacement>,
-        channel: Option<u8>,
-    ) -> Result<crate::domain::CreativeSession, ApplicationError> {
-        self.insert_phrase_pattern_with_created_ids(clip_id, pattern, placements, channel)
-            .map(|mutation| mutation.session)
-    }
-
-    /// Expands a phrase and returns all generated Note IDs.
     pub fn insert_phrase_pattern_with_created_ids(
         &self,
         clip_id: &str,
@@ -141,17 +130,17 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let clip = application
-            .create_musical_midi_clip(
-                &track.arrangement.tracks[0].id,
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
                 "2:1".parse().unwrap(),
                 None,
             )
             .unwrap();
-        let clip_id = clip.arrangement.midi_clips[0].id.clone();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
         let pattern = PhrasePattern::new(
             "1/4".parse().unwrap(),
             vec![
@@ -171,7 +160,7 @@ mod tests {
         )
         .unwrap();
         let inserted = application
-            .insert_phrase_pattern(
+            .insert_phrase_pattern_with_created_ids(
                 &clip_id,
                 pattern,
                 vec![PhrasePlacement {
@@ -183,7 +172,7 @@ mod tests {
             )
             .unwrap();
 
-        let notes = &inserted.arrangement.midi_clips[0].notes;
+        let notes = &inserted.session.arrangement.midi_clips[0].notes;
         assert_eq!(notes.len(), 4);
         assert_eq!(
             notes.iter().map(|note| note.note).collect::<Vec<_>>(),
@@ -205,17 +194,17 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let clip = application
-            .create_musical_midi_clip(
-                &track.arrangement.tracks[0].id,
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
                 "4:1".parse().unwrap(),
                 None,
             )
             .unwrap();
-        let clip_id = clip.arrangement.midi_clips[0].id.clone();
+        let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
         let pattern = PhrasePattern::new(
             "1/7".parse().unwrap(),
             vec![PhraseNote {
@@ -228,7 +217,7 @@ mod tests {
         .unwrap();
 
         let inserted = application
-            .insert_phrase_pattern(
+            .insert_phrase_pattern_with_created_ids(
                 &clip_id,
                 pattern,
                 vec![PhrasePlacement {
@@ -241,7 +230,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            inserted.arrangement.midi_clips[0]
+            inserted.session.arrangement.midi_clips[0]
                 .notes
                 .iter()
                 .map(|note| note.start_tick.0)
@@ -262,17 +251,17 @@ mod tests {
         );
         let setup_application = setup_core.application(&setup_storage);
         let track = setup_application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let clip = setup_application
-            .create_musical_midi_clip(
-                &track.arrangement.tracks[0].id,
+            .create_musical_midi_clip_with_created_ids(
+                &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
                 "2:1".parse().unwrap(),
                 None,
             )
             .unwrap();
-        let mut session = clip.clone();
+        let mut session = clip.session.clone();
         let midi_clip = &mut session.arrangement.midi_clips[0];
         midi_clip.notes = (0..crate::domain::arrangement::MAX_MIDI_NOTES_PER_CLIP - 1)
             .map(|index| MidiNote {
@@ -301,7 +290,7 @@ mod tests {
 
         assert!(
             application
-                .insert_phrase_pattern(
+                .insert_phrase_pattern_with_created_ids(
                     &clip_id,
                     pattern,
                     vec![PhrasePlacement {

@@ -266,15 +266,16 @@ pub(super) fn dispatch<A>(
         }
         "automation.clear" => {
             let params: AutomationClearParams = decode(request.params)?;
-            dispatcher.session(
+            dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .set_track_automation(
+                    .set_track_automation_with_created_ids(
                         &params.track_id,
                         parse_automation_parameter(&params.parameter)?,
                         Vec::new(),
                     )?,
+                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         _ => unreachable!("unsupported track command family"),

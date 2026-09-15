@@ -607,10 +607,10 @@ mod tests {
 
         let committed = core
             .application(&storage)
-            .add_track("Main", TrackKind::Audio)
+            .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap();
 
-        assert_eq!(committed.arrangement.tracks.len(), 1);
+        assert_eq!(committed.session.arrangement.tracks.len(), 1);
         assert_eq!(storage.sessions.lock().unwrap().len(), 1);
         assert!(core.history_state().unwrap().can_undo);
     }
@@ -628,10 +628,10 @@ mod tests {
 
         let committed = core
             .application(&storage)
-            .add_track(format!("  {}  ", "a".repeat(100)), TrackKind::Audio)
+            .add_track_with_created_ids(format!("  {}  ", "a".repeat(100)), TrackKind::Audio)
             .unwrap();
 
-        assert_eq!(committed.arrangement.tracks[0].name, "a".repeat(80));
+        assert_eq!(committed.session.arrangement.tracks[0].name, "a".repeat(80));
     }
 
     #[test]
@@ -648,7 +648,7 @@ mod tests {
 
         let committed = core
             .application(&storage)
-            .add_audio_asset_clip(
+            .add_audio_asset_clip_with_created_ids(
                 crate::application::AudioAssetClipPlacement {
                     asset_id,
                     name: "Take".into(),
@@ -661,12 +661,15 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(committed.arrangement.tracks.len(), 1);
-        assert_eq!(committed.arrangement.tracks[0].kind, TrackKind::Audio);
-        assert_eq!(committed.arrangement.audio_clips.len(), 1);
+        assert_eq!(committed.session.arrangement.tracks.len(), 1);
         assert_eq!(
-            committed.arrangement.audio_clips[0].track_id,
-            committed.arrangement.tracks[0].id
+            committed.session.arrangement.tracks[0].kind,
+            TrackKind::Audio
+        );
+        assert_eq!(committed.session.arrangement.audio_clips.len(), 1);
+        assert_eq!(
+            committed.session.arrangement.audio_clips[0].track_id,
+            committed.session.arrangement.tracks[0].id
         );
     }
 
@@ -684,7 +687,7 @@ mod tests {
 
         let committed = core
             .application(&storage)
-            .add_midi_asset_clip(crate::application::MidiAssetClipPlacement {
+            .add_midi_asset_clip_with_created_ids(crate::application::MidiAssetClipPlacement {
                 asset_id,
                 name: "Pattern".into(),
                 start_tick: None,
@@ -702,10 +705,13 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(committed.arrangement.tracks[0].kind, TrackKind::Instrument);
-        assert_eq!(committed.arrangement.midi_clips.len(), 1);
+        assert_eq!(
+            committed.session.arrangement.tracks[0].kind,
+            TrackKind::Instrument
+        );
+        assert_eq!(committed.session.arrangement.midi_clips.len(), 1);
         assert_ne!(
-            committed.arrangement.midi_clips[0].notes[0].id,
+            committed.session.arrangement.midi_clips[0].notes[0].id,
             "adapter:temporary"
         );
     }
@@ -721,27 +727,29 @@ mod tests {
             false,
         );
         let application = core.application(&storage);
-        let audio = application.add_track("Audio", TrackKind::Audio).unwrap();
-        let audio_id = audio.arrangement.tracks[0].id.clone();
+        let audio = application
+            .add_track_with_created_ids("Audio", TrackKind::Audio)
+            .unwrap();
+        let audio_id = audio.session.arrangement.tracks[0].id.clone();
 
         let error = application
-            .create_midi_clip(&audio_id, TimelineTick(0), 960, None)
+            .create_midi_clip_with_created_ids(&audio_id, TimelineTick(0), 960, None)
             .unwrap_err();
         assert!(error.to_string().contains("requires an Instrument Track"));
 
         let instrument = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let instrument_id = instrument.arrangement.tracks[1].id.clone();
+        let instrument_id = instrument.session.arrangement.tracks[1].id.clone();
         let committed = application
-            .create_midi_clip(
+            .create_midi_clip_with_created_ids(
                 &instrument_id,
                 TimelineTick(480),
                 960,
                 Some("  Lead  ".into()),
             )
             .unwrap();
-        let clip = &committed.arrangement.midi_clips[0];
+        let clip = &committed.session.arrangement.midi_clips[0];
 
         assert!(clip.id.starts_with("midi-clip:"));
         assert_eq!(clip.name, "Lead");
@@ -765,16 +773,16 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
-            .create_midi_clip(&track_id, TimelineTick(0), 1_920, None)
+            .create_midi_clip_with_created_ids(&track_id, TimelineTick(0), 1_920, None)
             .unwrap();
         let before_insert_saves = storage.sessions.lock().unwrap().len();
 
         let inserted = application
-            .insert_midi_notes(
+            .insert_midi_notes_with_created_ids(
                 "midi-clip:missing",
                 vec![crate::application::MidiNoteInput {
                     pitch: 60,
@@ -791,7 +799,7 @@ mod tests {
             .id
             .clone();
         let inserted = application
-            .insert_midi_notes(
+            .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![
                     crate::application::MidiNoteInput {
@@ -815,24 +823,26 @@ mod tests {
             storage.sessions.lock().unwrap().len(),
             before_insert_saves + 1
         );
-        assert_eq!(inserted.arrangement.midi_clips[0].notes.len(), 2);
+        assert_eq!(inserted.session.arrangement.midi_clips[0].notes.len(), 2);
         assert_eq!(
-            inserted.arrangement.midi_clips[0].notes[1].duration_ticks,
+            inserted.session.arrangement.midi_clips[0].notes[1].duration_ticks,
             480
         );
         assert_ne!(
-            inserted.arrangement.midi_clips[0].notes[0].id,
-            inserted.arrangement.midi_clips[0].notes[1].id
+            inserted.session.arrangement.midi_clips[0].notes[0].id,
+            inserted.session.arrangement.midi_clips[0].notes[1].id
         );
 
-        let existing_note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+        let existing_note_id = inserted.session.arrangement.midi_clips[0].notes[0]
+            .id
+            .clone();
         let empty_selection = application
-            .duplicate_midi_notes(&clip_id, Vec::new(), 1_920)
+            .duplicate_midi_notes_with_created_ids(&clip_id, Vec::new(), 1_920)
             .unwrap_err();
         assert!(empty_selection.to_string().contains("no midi notes"));
 
         let missing_note = application
-            .duplicate_midi_notes(
+            .duplicate_midi_notes_with_created_ids(
                 &clip_id,
                 vec![existing_note_id.clone(), "note:missing".into()],
                 1_920,
@@ -841,7 +851,7 @@ mod tests {
         assert!(missing_note.to_string().contains("not found"));
 
         let duplicate_selection = application
-            .duplicate_midi_notes(
+            .duplicate_midi_notes_with_created_ids(
                 &clip_id,
                 vec![existing_note_id.clone(), existing_note_id],
                 1_920,
@@ -849,7 +859,7 @@ mod tests {
             .unwrap_err();
         assert!(duplicate_selection.to_string().contains("duplicate"));
 
-        let note_ids = inserted.arrangement.midi_clips[0]
+        let note_ids = inserted.session.arrangement.midi_clips[0]
             .notes
             .iter()
             .map(|note| note.id.clone())
@@ -884,15 +894,15 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         let created = application
-            .create_midi_clip(&track_id, TimelineTick(0), 1_920, None)
+            .create_midi_clip_with_created_ids(&track_id, TimelineTick(0), 1_920, None)
             .unwrap();
-        let clip_id = created.arrangement.midi_clips[0].id.clone();
+        let clip_id = created.session.arrangement.midi_clips[0].id.clone();
         let inserted = application
-            .insert_midi_notes(
+            .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
                     pitch: 60,
@@ -903,10 +913,12 @@ mod tests {
                 }],
             )
             .unwrap();
-        let note_id = inserted.arrangement.midi_clips[0].notes[0].id.clone();
+        let note_id = inserted.session.arrangement.midi_clips[0].notes[0]
+            .id
+            .clone();
 
         let duplicated = application
-            .duplicate_midi_notes(&clip_id, vec![note_id], 1_920)
+            .duplicate_midi_notes_with_created_ids(&clip_id, vec![note_id], 1_920)
             .unwrap_err();
         assert!(duplicated.to_string().contains("invalid note"));
         let unchanged = core.snapshot().unwrap();
@@ -917,7 +929,7 @@ mod tests {
         assert_eq!(unchanged.session.arrangement.midi_clips[0].notes.len(), 1);
 
         let pasted = application
-            .insert_midi_notes(
+            .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
                     pitch: 64,
@@ -949,9 +961,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let with_track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = with_track.arrangement.tracks[0].id.clone();
+        let track_id = with_track.session.arrangement.tracks[0].id.clone();
         let prepared = application
             .prepare_track_instrument(
                 &track_id,
@@ -981,8 +993,10 @@ mod tests {
             false,
         );
         let application = core.application(&storage);
-        let with_track = application.add_track("Audio", TrackKind::Audio).unwrap();
-        let track_id = with_track.arrangement.tracks[0].id.clone();
+        let with_track = application
+            .add_track_with_created_ids("Audio", TrackKind::Audio)
+            .unwrap();
+        let track_id = with_track.session.arrangement.tracks[0].id.clone();
         let asset_id = mint_asset_id();
         let clip = AudioClip::full_source(
             "clip:1".into(),
@@ -1015,13 +1029,13 @@ mod tests {
             )
             .unwrap();
         application
-            .split_audio_clip("clip:1", TimelineTick(1_440))
+            .split_audio_clip_with_created_ids("clip:1", TimelineTick(1_440))
             .unwrap();
 
         let with_midi_track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let midi_track_id = with_midi_track.arrangement.tracks[1].id.clone();
+        let midi_track_id = with_midi_track.session.arrangement.tracks[1].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1039,7 +1053,7 @@ mod tests {
             .unwrap();
 
         application
-            .add_track_effect(
+            .add_track_effect_with_created_ids(
                 &track_id,
                 RackDevice {
                     id: "device:gain".into(),
@@ -1069,14 +1083,16 @@ mod tests {
         assert_eq!(redone.arrangement.midi_clips.len(), 1);
         assert!(storage.sessions.lock().unwrap().len() >= 10);
 
-        let duplicated = application.duplicate_track(&track_id).unwrap();
-        assert_eq!(duplicated.arrangement.tracks.len(), 3);
-        assert_eq!(duplicated.arrangement.audio_clips.len(), 4);
+        let duplicated = application
+            .duplicate_track_with_created_ids(&track_id)
+            .unwrap();
+        assert_eq!(duplicated.session.arrangement.tracks.len(), 3);
+        assert_eq!(duplicated.session.arrangement.audio_clips.len(), 4);
 
         let marked = application
-            .add_marker(TimelineTick(1_920), "  Chorus  ".into())
+            .add_marker_with_created_ids(TimelineTick(1_920), "  Chorus  ".into())
             .unwrap();
-        assert_eq!(marked.arrangement.markers[0].name, "Chorus");
+        assert_eq!(marked.session.arrangement.markers[0].name, "Chorus");
 
         let settings = application
             .update_session_settings(crate::application::SessionSettingsPatch {
@@ -1125,9 +1141,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1145,9 +1161,11 @@ mod tests {
             .unwrap();
 
         let with_note = application
-            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
-        let note_id = with_note.arrangement.midi_clips[0].notes[0].id.clone();
+        let note_id = with_note.session.arrangement.midi_clips[0].notes[0]
+            .id
+            .clone();
         let updated = application
             .update_midi_notes(
                 "midi:1",
@@ -1163,9 +1181,9 @@ mod tests {
         assert_eq!(updated.arrangement.midi_clips[0].notes[0].note, 61);
 
         let duplicated = application
-            .duplicate_midi_notes("midi:1", vec![note_id.clone()], 480)
+            .duplicate_midi_notes_with_created_ids("midi:1", vec![note_id.clone()], 480)
             .unwrap();
-        assert_eq!(duplicated.arrangement.midi_clips[0].notes.len(), 2);
+        assert_eq!(duplicated.session.arrangement.midi_clips[0].notes.len(), 2);
         let removed = application.remove_midi_note("midi:1", &note_id).unwrap();
         assert_eq!(removed.arrangement.midi_clips[0].notes.len(), 1);
     }
@@ -1183,9 +1201,9 @@ mod tests {
         let application = core.application(&storage);
 
         let track = application
-            .add_track("Synth", TrackKind::Instrument)
+            .add_track_with_created_ids("Synth", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         let instrument =
             TrackInstrument::vst3("device:synth".into(), "Synth".into(), "Synth.vst3".into())
                 .unwrap();
@@ -1238,9 +1256,9 @@ mod tests {
         );
 
         let built_in_track = application
-            .add_track("Built-in", TrackKind::Instrument)
+            .add_track_with_created_ids("Built-in", TrackKind::Instrument)
             .unwrap();
-        let built_in_track_id = built_in_track.arrangement.tracks[1].id.clone();
+        let built_in_track_id = built_in_track.session.arrangement.tracks[1].id.clone();
         application
             .set_track_instrument(
                 &built_in_track_id,
@@ -1286,7 +1304,7 @@ mod tests {
             false,
         );
         core.application(&storage)
-            .add_track("Main", TrackKind::Audio)
+            .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap();
 
         let undone = core.undo(&storage).unwrap();
@@ -1309,7 +1327,7 @@ mod tests {
             false,
         );
         core.application(&storage)
-            .add_track("Old project", TrackKind::Audio)
+            .add_track_with_created_ids("Old project", TrackKind::Audio)
             .unwrap();
         let saved_before_activation = storage.sessions.lock().unwrap().len();
 
@@ -1346,7 +1364,7 @@ mod tests {
         );
         let base = core.snapshot().unwrap().session;
         core.application(&storage)
-            .add_track("Current", TrackKind::Audio)
+            .add_track_with_created_ids("Current", TrackKind::Audio)
             .unwrap();
         let mut stale = base.clone();
         stale.project_name = Some("stale result".into());
@@ -1392,7 +1410,7 @@ mod tests {
         };
 
         core.application(&*storage)
-            .add_track("operation b", TrackKind::Audio)
+            .add_track_with_created_ids("operation b", TrackKind::Audio)
             .unwrap();
         release.wait();
         let committed = operation.join().unwrap();
@@ -1431,7 +1449,7 @@ mod tests {
         assert_eq!(initial.history, HistoryState::default());
 
         core.application(&storage)
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let committed = core.canonical_state().unwrap();
         assert_eq!(committed.sequence, 1);
@@ -1457,9 +1475,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         let prepared = application
             .prepare_track_instrument(
                 &track_id,
@@ -1506,7 +1524,7 @@ mod tests {
 
         let error = core
             .application(&FailingStorage)
-            .add_track("Main", TrackKind::Audio)
+            .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap_err();
 
         assert_eq!(error, ApplicationError::Storage("disk full".into()));
@@ -1591,10 +1609,10 @@ mod tests {
 
         let committed = core
             .application(&storage)
-            .add_track("Main", TrackKind::Audio)
+            .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap();
 
-        assert_eq!(committed.arrangement.tracks[0].color, None);
+        assert_eq!(committed.session.arrangement.tracks[0].color, None);
     }
 
     #[test]
@@ -1609,9 +1627,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1628,12 +1646,12 @@ mod tests {
             })
             .unwrap();
         application
-            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
         let with_second = application
-            .add_midi_note("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
             .unwrap();
-        let ids: Vec<String> = with_second.arrangement.midi_clips[0]
+        let ids: Vec<String> = with_second.session.arrangement.midi_clips[0]
             .notes
             .iter()
             .map(|note| note.id.clone())
@@ -1668,9 +1686,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1687,10 +1705,10 @@ mod tests {
             })
             .unwrap();
         application
-            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
         application
-            .add_midi_note("midi:1", TimelineTick(480), 64, 240, 40, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
             .unwrap();
 
         let transformed = application
@@ -1714,9 +1732,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1733,7 +1751,7 @@ mod tests {
             })
             .unwrap();
         application
-            .add_midi_note("midi:1", TimelineTick(0), 120, 480, 20, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 120, 480, 20, 1)
             .unwrap();
 
         let transformed = application
@@ -1757,9 +1775,9 @@ mod tests {
         );
         let application = core.application(&storage);
         let track = application
-            .add_track("Keys", TrackKind::Instrument)
+            .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let track_id = track.arrangement.tracks[0].id.clone();
+        let track_id = track.session.arrangement.tracks[0].id.clone();
         application
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
@@ -1776,7 +1794,7 @@ mod tests {
             })
             .unwrap();
         application
-            .add_midi_note("midi:1", TimelineTick(0), 60, 480, 100, 1)
+            .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
 
         let error = application

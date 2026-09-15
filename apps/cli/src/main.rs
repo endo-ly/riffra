@@ -9,7 +9,7 @@ use attached::AttachedBackend;
 use clap::Parser;
 use output::{compact_agent_response, write_audio_diagnostics};
 use riffra_control::{
-    CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostDiscovery,
+    CommandResult, ControlRequest, ControlResponse, ErrorCode, LocalHostDiscovery,
     LocalHostRegistry, ProtocolError,
 };
 use riffra_runtime::Dispatcher;
@@ -246,17 +246,7 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
             discovered.into_iter().next()
         };
         if let Some(host) = candidate {
-            let client = LocalHostClient::connect_registration(&host.registration);
-            match client.verify_connection() {
-                Ok(()) => return Ok(host),
-                Err(_error) if attempt + 1 < MAX_ATTEMPTS => {
-                    thread::sleep(Duration::from_millis(100));
-                    continue;
-                }
-                Err(error) => {
-                    return Err(format!("Host handshake failed: {error}"));
-                }
-            }
+            return Ok(host);
         }
         if attempt + 1 < MAX_ATTEMPTS {
             thread::sleep(Duration::from_millis(100));

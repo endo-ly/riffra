@@ -21,16 +21,6 @@ where
         Ok(self.get_session()?.arrangement.midi_clips)
     }
 
-    /// Adds a Track to the Arrangement.
-    pub fn add_track(
-        &self,
-        name: impl Into<String>,
-        kind: TrackKind,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.add_track_with_created_ids(name, kind)
-            .map(|mutation| mutation.session)
-    }
-
     /// Adds a Track and returns the identity allocated by Core.
     pub fn add_track_with_created_ids(
         &self,
@@ -56,12 +46,6 @@ where
         self.commit_arrangement(|arrangement| {
             arrangement.remove_track(track_id).map_err(Into::into)
         })
-    }
-
-    /// Duplicates a Track and its owned timeline and automation objects.
-    pub fn duplicate_track(&self, track_id: &str) -> Result<CreativeSession, ApplicationError> {
-        self.duplicate_track_with_created_ids(track_id)
-            .map(|mutation| mutation.session)
     }
 
     /// Duplicates a Track and returns every identity allocated for its copy.
@@ -231,21 +215,6 @@ where
         })
     }
 
-    /// Adds an Audio Asset to the timeline, selecting an existing Audio Track
-    /// or creating one when no target was supplied or available.
-    ///
-    /// # Errors
-    /// Returns an error when the target Track or Asset is invalid, or when the
-    /// resulting session cannot be persisted.
-    pub fn add_audio_asset_clip(
-        &self,
-        placement: AudioAssetClipPlacement,
-        asset_exists: impl Fn(&crate::domain::asset::AssetId) -> bool,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.add_audio_asset_clip_with_created_ids(placement, asset_exists)
-            .map(|mutation| mutation.session)
-    }
-
     /// Adds an Audio Asset Clip and returns identities allocated by Core.
     pub fn add_audio_asset_clip_with_created_ids(
         &self,
@@ -315,7 +284,8 @@ where
         self.commit_arrangement(|arrangement| arrangement.add_midi_clip(clip).map_err(Into::into))
     }
 
-    /// Creates an empty MIDI Clip on an existing Instrument Track.
+    /// Creates a MIDI Clip on an existing Instrument Track and returns its
+    /// Core-allocated identity.
     ///
     /// The Core owns the Clip identity, default name, empty content, and
     /// duration normalization so hosts only submit user intent.
@@ -324,18 +294,6 @@ where
     ///
     /// Returns an error when the track is missing, is not an Instrument Track,
     /// or the resulting Clip cannot be validated or persisted.
-    pub fn create_midi_clip(
-        &self,
-        track_id: &str,
-        start_tick: TimelineTick,
-        duration_ticks: u64,
-        name: Option<String>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.create_midi_clip_with_created_ids(track_id, start_tick, duration_ticks, name)
-            .map(|mutation| mutation.session)
-    }
-
-    /// Creates a MIDI Clip and returns its Core-allocated identity.
     pub fn create_midi_clip_with_created_ids(
         &self,
         track_id: &str,
@@ -358,21 +316,12 @@ where
         Ok(ApplicationMutation::new(session, created_entity_ids))
     }
 
-    /// Adds parsed MIDI Asset content to the timeline with Core-owned
-    /// identities, creating an Instrument Track when necessary.
+    /// Adds parsed MIDI Asset content to the timeline, creates an Instrument
+    /// Track when necessary, and returns the Core-owned identities.
     ///
     /// # Errors
     /// Returns an error when the target Track or MIDI content is invalid, or
     /// when the resulting session cannot be persisted.
-    pub fn add_midi_asset_clip(
-        &self,
-        placement: MidiAssetClipPlacement,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.add_midi_asset_clip_with_created_ids(placement)
-            .map(|mutation| mutation.session)
-    }
-
-    /// Adds a MIDI Asset Clip and returns identities allocated by Core.
     pub fn add_midi_asset_clip_with_created_ids(
         &self,
         placement: MidiAssetClipPlacement,
@@ -531,17 +480,6 @@ where
         })
     }
 
-    /// Duplicates selected Clips at one timeline anchor.
-    pub fn paste_timeline_clips(
-        &self,
-        audio_clip_ids: Vec<String>,
-        midi_clip_ids: Vec<String>,
-        start_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.paste_timeline_clips_with_created_ids(audio_clip_ids, midi_clip_ids, start_tick)
-            .map(|mutation| mutation.session)
-    }
-
     /// Pastes selected Clips and returns the newly allocated Clip IDs.
     pub fn paste_timeline_clips_with_created_ids(
         &self,
@@ -592,16 +530,6 @@ where
         })
     }
 
-    /// Splits an Audio Clip at a musical position.
-    pub fn split_audio_clip(
-        &self,
-        clip_id: &str,
-        split_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.split_audio_clip_with_created_ids(clip_id, split_tick)
-            .map(|mutation| mutation.session)
-    }
-
     /// Splits an Audio Clip and returns the newly created right-hand Clip ID.
     pub fn split_audio_clip_with_created_ids(
         &self,
@@ -615,12 +543,6 @@ where
                 .map_err(Into::into)
         })?;
         Ok(ApplicationMutation::one(session, "audioClips", right_id))
-    }
-
-    /// Duplicates an Audio Clip with a Core-owned identity.
-    pub fn duplicate_audio_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
-        self.duplicate_audio_clip_with_created_ids(clip_id)
-            .map(|mutation| mutation.session)
     }
 
     /// Duplicates an Audio Clip and returns its new Clip ID.
@@ -655,16 +577,6 @@ where
         })
     }
 
-    /// Splits a MIDI Clip at a musical position.
-    pub fn split_midi_clip(
-        &self,
-        clip_id: &str,
-        split_tick: TimelineTick,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.split_midi_clip_with_created_ids(clip_id, split_tick)
-            .map(|mutation| mutation.session)
-    }
-
     /// Splits a MIDI Clip and returns the newly created right-hand Clip ID.
     pub fn split_midi_clip_with_created_ids(
         &self,
@@ -680,12 +592,6 @@ where
         Ok(ApplicationMutation::one(session, "midiClips", right_id))
     }
 
-    /// Duplicates a MIDI Clip with a Core-owned identity.
-    pub fn duplicate_midi_clip(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
-        self.duplicate_midi_clip_with_created_ids(clip_id)
-            .map(|mutation| mutation.session)
-    }
-
     /// Duplicates a MIDI Clip and returns its new Clip ID.
     pub fn duplicate_midi_clip_with_created_ids(
         &self,
@@ -698,27 +604,6 @@ where
                 .map_err(Into::into)
         })?;
         Ok(ApplicationMutation::one(session, "midiClips", duplicate_id))
-    }
-
-    /// Adds one MIDI note to an existing MIDI clip.
-    pub fn add_midi_note(
-        &self,
-        clip_id: &str,
-        start_tick: TimelineTick,
-        pitch: u8,
-        duration_ticks: u64,
-        velocity: u8,
-        channel: u8,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.add_midi_note_with_created_ids(
-            clip_id,
-            start_tick,
-            pitch,
-            duration_ticks,
-            velocity,
-            channel,
-        )
-        .map(|mutation| mutation.session)
     }
 
     /// Adds one MIDI note and returns its Core-allocated identity.
@@ -770,22 +655,13 @@ where
         Ok(ApplicationMutation::one(session, "midiNotes", id))
     }
 
-    /// Inserts multiple identity-free MIDI notes as one atomic edit.
+    /// Inserts multiple MIDI notes as one atomic edit and returns their
+    /// Core-allocated identities.
     ///
     /// # Errors
     ///
     /// Returns an error for an empty input, invalid MIDI values, an unknown
     /// Clip, or a note that would make the Clip invalid.
-    pub fn insert_midi_notes(
-        &self,
-        clip_id: &str,
-        inputs: Vec<MidiNoteInput>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.insert_midi_notes_with_created_ids(clip_id, inputs)
-            .map(|mutation| mutation.session)
-    }
-
-    /// Inserts MIDI notes atomically and returns all allocated Note IDs.
     pub fn insert_midi_notes_with_created_ids(
         &self,
         clip_id: &str,
@@ -1050,17 +926,6 @@ where
         })
     }
 
-    /// Duplicates selected MIDI notes within one clip.
-    pub fn duplicate_midi_notes(
-        &self,
-        clip_id: &str,
-        note_ids: Vec<String>,
-        offset_ticks: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.duplicate_midi_notes_with_created_ids(clip_id, note_ids, offset_ticks)
-            .map(|mutation| mutation.session)
-    }
-
     /// Duplicates MIDI notes and returns all newly allocated Note IDs.
     pub fn duplicate_midi_notes_with_created_ids(
         &self,
@@ -1078,16 +943,6 @@ where
         let mut created_entity_ids = CreatedEntityIds::new();
         created_entity_ids.insert("midiNotes".into(), created_ids);
         Ok(ApplicationMutation::new(session, created_entity_ids))
-    }
-
-    /// Adds a named timeline marker.
-    pub fn add_marker(
-        &self,
-        tick: TimelineTick,
-        name: String,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.add_marker_with_created_ids(tick, name)
-            .map(|mutation| mutation.session)
     }
 
     /// Adds a timeline marker and returns its Core-allocated identity.

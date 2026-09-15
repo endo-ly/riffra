@@ -42,8 +42,13 @@ impl AttachedBackend {
     }
 
     /// Polls an existing background job until it reaches a terminal state.
-    pub fn wait_for_job(&self, job_id: &str, timeout_ms: u64) -> Result<ControlResponse, String> {
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    pub fn wait_for_job(
+        &self,
+        job_id: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<ControlResponse, String> {
+        let deadline =
+            timeout_ms.map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
         loop {
             let response = self.request(&ControlRequest::new(
                 format!("cli-job-wait-{}", new_instance_id()),
@@ -65,7 +70,7 @@ impl AttachedBackend {
             if matches!(state, "cancelled" | "completed" | "failed") {
                 return Ok(response);
             }
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(format!("timed out waiting for background job: {job_id}"));
             }
             thread::sleep(Duration::from_millis(100));

@@ -116,21 +116,12 @@ where
         })
     }
 
-    /// Places a recorded Take as a new timeline clip.
+    /// Places a recorded Take as a new timeline clip and returns the allocated
+    /// clip identity.
     ///
     /// The host may provide a decoded MIDI clip because reading the source
     /// asset is an infrastructure concern. Core assigns the new clip identity
     /// and owns the arrangement mutation.
-    pub fn place_take_as_separate_clip(
-        &self,
-        take_id: &str,
-        midi_clip: Option<MidiClip>,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.place_take_as_separate_clip_with_created_ids(take_id, midi_clip)
-            .map(|mutation| mutation.session)
-    }
-
-    /// Places a recorded Take and returns the newly allocated clip identity.
     pub fn place_take_as_separate_clip_with_created_ids(
         &self,
         take_id: &str,

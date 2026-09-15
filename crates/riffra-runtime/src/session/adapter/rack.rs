@@ -962,7 +962,7 @@ mod tests {
                 riffra_host::SessionStore::new(&hook_root, "01900000-0000-7000-8000-000000000001");
             hook_core
                 .application(&store)
-                .add_marker(TimelineTick(7), "concurrent".into())
+                .add_marker_with_created_ids(TimelineTick(7), "concurrent".into())
                 .unwrap();
         }));
         let context = candidate_context(&root, &runtime, &audio, core.as_ref());
@@ -1008,7 +1008,7 @@ mod tests {
         let candidate = prepared_plugin_candidate(&context);
         let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         core.application(&store)
-            .add_marker(TimelineTick(7), "concurrent".into())
+            .add_marker_with_created_ids(TimelineTick(7), "concurrent".into())
             .unwrap();
 
         // Act
