@@ -7,11 +7,15 @@ const MIN_PREVIEW_TEMPO_BPM: f64 = 30.0;
 const MAX_PREVIEW_TEMPO_BPM: f64 = 300.0;
 const MIN_PREVIEW_TICKS_PER_BEAT: u16 = 1;
 const MAX_PREVIEW_TICKS_PER_BEAT: u16 = 32_767;
+const MAX_PREVIEW_NUMERATOR: u8 = 32;
 const MAX_PREVIEW_DENOMINATOR: u8 = 128;
 const MIN_PREVIEW_NOTES: usize = 1;
 const MAX_PREVIEW_NOTES: usize = 32;
 const MAX_PREVIEW_DURATION_SECONDS: f64 = 10.0;
 const MAX_MIDI_NOTE: u8 = 127;
+const MAX_CATEGORY_CHARS: usize = 64;
+const MAX_TAG_COUNT: usize = 12;
+const MAX_TAG_CHARS: usize = 32;
 
 /// Metadata presented to clients for one built-in instrument.
 #[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
@@ -157,8 +161,9 @@ impl BuiltInInstrumentCatalog {
             }
             let author = normalize_optional_text(preset.author);
             let description = normalize_optional_text(preset.description);
-            let category = preset.category.trim().to_owned();
-            let tags = normalize_tags(preset.tags, &id)?;
+            validate_manifest_text(&preset.category, MAX_CATEGORY_CHARS, "category", &id)?;
+            let category = preset.category;
+            let tags = validate_tags(preset.tags, &id)?;
             validate_summary_metadata(
                 &id,
                 &category,
@@ -249,21 +254,43 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_owned()))
 }
 
-fn normalize_tags(tags: Vec<String>, id: &str) -> Result<Vec<String>, String> {
-    let mut normalized = Vec::with_capacity(tags.len());
+fn validate_manifest_text(
+    value: &str,
+    maximum_chars: usize,
+    field: &str,
+    id: &str,
+) -> Result<(), String> {
+    if value.is_empty()
+        || value.trim() != value
+        || value.chars().count() > maximum_chars
+        || value.chars().any(|character| character.is_control())
+    {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid {field}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_tags(tags: Vec<String>, id: &str) -> Result<Vec<String>, String> {
+    if tags.is_empty() {
+        return Err(format!("built-in instrument preset '{id}' has no tags"));
+    }
+    if tags.len() > MAX_TAG_COUNT {
+        return Err(format!(
+            "built-in instrument preset '{id}' has too many tags"
+        ));
+    }
     let mut seen = BTreeSet::new();
-    for tag in tags {
-        let tag = tag.trim().to_owned();
-        if tag.is_empty() {
+    for tag in &tags {
+        validate_manifest_text(tag, MAX_TAG_CHARS, "tag", id)?;
+        if !seen.insert(tag.to_ascii_lowercase()) {
             return Err(format!(
-                "built-in instrument preset '{id}' has an empty tag"
+                "built-in instrument preset '{id}' has duplicate tags"
             ));
         }
-        if seen.insert(tag.to_lowercase()) {
-            normalized.push(tag);
-        }
     }
-    Ok(normalized)
+    Ok(tags)
 }
 
 fn validate_summary_metadata(
@@ -303,6 +330,7 @@ fn validate_summary_metadata(
         ));
     }
     if preview.time_signature.numerator == 0
+        || preview.time_signature.numerator > MAX_PREVIEW_NUMERATOR
         || !is_valid_preview_denominator(preview.time_signature.denominator)
     {
         return Err(format!(
@@ -320,7 +348,14 @@ fn validate_summary_metadata(
             "built-in instrument preset '{id}' has an invalid preview note count"
         ));
     }
+    let mut previous_tick = None;
     for note in &preview.notes {
+        if previous_tick.is_some_and(|previous| note.tick < previous) {
+            return Err(format!(
+                "built-in instrument preset '{id}' has unsorted preview notes"
+            ));
+        }
+        previous_tick = Some(note.tick);
         if note.duration_ticks == 0
             || note.tick >= preview.length_ticks
             || note.duration_ticks > preview.length_ticks - note.tick
@@ -459,7 +494,10 @@ mod tests {
 
     fn assert_rejected(preset: serde_json::Value, message: &str) {
         let error = load_single_preset_error(preset);
-        assert!(error.contains(message), "{error}");
+        assert!(
+            error.contains(message),
+            "expected error containing '{message}', got '{error}'"
+        );
     }
 
     #[test]
@@ -621,6 +659,87 @@ mod tests {
                 denominator
             );
         }
+    }
+
+    #[test]
+    fn accepts_maximum_preview_numerator_and_equal_note_ticks() {
+        let root = TempRoot::new();
+        write_definition(&root.0, "sound.data", "opaque");
+        fs::create_dir_all(root.0.join("resources")).unwrap();
+        let mut preset = manifest_entry(
+            "01-valid-preview",
+            "Valid Preview",
+            None,
+            "sound.data",
+            "resources",
+        );
+        preset["preview"]["timeSignature"]["numerator"] = serde_json::json!(32);
+        preset["preview"]["notes"] = serde_json::json!([
+            {"tick": 0, "durationTicks": 480, "note": 48, "velocity": 100},
+            {"tick": 0, "durationTicks": 240, "note": 52, "velocity": 100}
+        ]);
+        write_manifest(&root.0, &[preset]);
+
+        let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
+
+        assert_eq!(catalog.summaries()[0].preview.time_signature.numerator, 32);
+        assert_eq!(catalog.summaries()[0].preview.notes.len(), 2);
+    }
+
+    #[test]
+    fn rejects_manifest_text_and_preview_order_violations() {
+        let base = || {
+            manifest_entry(
+                "01-invalid-text",
+                "Invalid Text",
+                None,
+                "sound.data",
+                "resources",
+            )
+        };
+
+        let mut preset = base();
+        preset["category"] = serde_json::json!(" Test");
+        assert_rejected(preset, "invalid category");
+
+        let mut preset = base();
+        preset["category"] = serde_json::json!("x".repeat(65));
+        assert_rejected(preset, "invalid category");
+
+        let mut preset = base();
+        preset["category"] = serde_json::json!("Test\n");
+        assert_rejected(preset, "invalid category");
+
+        let mut preset = base();
+        preset["tags"] = serde_json::Value::Array(vec![serde_json::json!("tag"); 13]);
+        assert_rejected(preset, "too many tags");
+
+        let mut preset = base();
+        preset["tags"] = serde_json::json!([" tag"]);
+        assert_rejected(preset, "invalid tag");
+
+        let mut preset = base();
+        preset["tags"] = serde_json::json!(["x".repeat(33)]);
+        assert_rejected(preset, "invalid tag");
+
+        let mut preset = base();
+        preset["tags"] = serde_json::json!(["tag\n"]);
+        assert_rejected(preset, "invalid tag");
+
+        let mut preset = base();
+        preset["tags"] = serde_json::json!(["Test", "test"]);
+        assert_rejected(preset, "duplicate tags");
+
+        let mut preset = base();
+        preset["preview"]["timeSignature"]["numerator"] = serde_json::json!(33);
+        assert_rejected(preset, "invalid preview time signature");
+
+        let mut preset = base();
+        preset["preview"]["notes"] = serde_json::json!([
+            {"tick": 480, "durationTicks": 240, "note": 48, "velocity": 100},
+            {"tick": 0, "durationTicks": 240, "note": 52, "velocity": 100}
+        ]);
+        assert_rejected(preset, "unsorted preview notes");
     }
 
     #[test]
