@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "audio/InstrumentPreviewSession.h"
+#include "audio/InstrumentPreviewTiming.h"
 #include "audio/PreviewEngine.h"
 
 namespace riffra {
@@ -41,6 +42,12 @@ TEST(InstrumentPreviewSessionTest, RejectsInvalidPreviewNotesBeforeRuntimeCreati
 
     EXPECT_EQ(session, nullptr);
     EXPECT_FALSE(error.isEmpty());
+}
+
+TEST(InstrumentPreviewSessionTest, CalculatesBarPositionForCompoundMeters) {
+    const auto barPosition = instrument_preview::barPositionForFrame(72'000, 48'000.0, 120.0, 6, 8);
+
+    EXPECT_NEAR(barPosition, 1.0, 1.0e-12);
 }
 
 TEST(InstrumentPreviewSessionTest, RendersPreparedBuiltInNoteEvents) {

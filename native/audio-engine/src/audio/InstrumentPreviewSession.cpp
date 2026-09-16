@@ -8,6 +8,7 @@
 
 #include "../instruments/SonalloyInstrumentRuntime.h"
 #include "InstrumentPreviewContract.h"
+#include "InstrumentPreviewTiming.h"
 
 namespace riffra {
 
@@ -139,7 +140,9 @@ void InstrumentPreviewSession::process(float* const* outputChannels, const int o
         renderedFrames,
         spec.tempoBpm,
         beatPosition,
-        beatPosition / static_cast<double>(spec.timeSignature.numerator),
+        instrument_preview::barPositionForFrame(renderedFrames, sampleRate, spec.tempoBpm,
+                                                spec.timeSignature.numerator,
+                                                spec.timeSignature.denominator),
         spec.timeSignature.numerator,
         spec.timeSignature.denominator,
         true,
