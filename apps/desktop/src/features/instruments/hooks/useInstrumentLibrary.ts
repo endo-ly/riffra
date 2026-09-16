@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
 import type { AudioApi, InstrumentLibraryApi, NativeEventApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
+import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
 import {
   filterInstruments,
   getInstrumentCategories,
@@ -261,17 +262,23 @@ export function useInstrumentLibrary(
         }
         return;
       }
-      setPreviewingId(null);
       try {
         const next = await previewBuiltInInstrument(item.presetId);
         if (isCurrentRequest()) {
           nativeBuiltInPreviewing.current = next.builtInPreviewing;
-          setPreviewingId(next.builtInPreviewing ? item.id : null);
+          if (!audioCommandSucceeded(next)) {
+            if (!next.builtInPreviewing) setPreviewingId(null);
+            setError(next.message);
+          } else if (next.builtInPreviewing) {
+            setPreviewingId(item.id);
+          } else {
+            setPreviewingId(null);
+          }
           setAudio(next);
         }
       } catch (cause) {
         if (isCurrentRequest()) {
-          setPreviewingId(null);
+          if (!nativeBuiltInPreviewing.current) setPreviewingId(null);
           setError(cause instanceof Error ? cause.message : String(cause));
           logNativeError('previewBuiltInInstrument')(cause);
         }

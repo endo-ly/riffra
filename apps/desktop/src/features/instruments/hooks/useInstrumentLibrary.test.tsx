@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioStatus } from '@/model/domain';
-import { FakeNativeApi } from '@/native/native-api-fake';
+import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { useInstrumentLibrary } from './useInstrumentLibrary';
 
 function useLibraryHarness(api: FakeNativeApi, query = '', hostGeneration = 1) {
@@ -130,7 +130,7 @@ describe('useInstrumentLibrary', () => {
     act(() => {
       api.emitAudioStatus({ ...api.audio, previewing: true, builtInPreviewing: false });
     });
-    expect(result.current.previewingId).toBeNull();
+    expect(result.current.previewingId).toBe(first.id);
 
     act(() => {
       resolveStart({ ...api.audio, previewing: true, builtInPreviewing: true });
@@ -141,6 +141,37 @@ describe('useInstrumentLibrary', () => {
 
     expect(result.current.previewingId).toBe(second.id);
     expect(result.current.previewPendingId).toBeNull();
+  });
+
+  it('keeps the current preview when a replacement preview fails', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useLibraryHarness(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const first = result.current.items[0];
+    const second = result.current.items[1];
+
+    await act(async () => {
+      await result.current.preview(first);
+    });
+    api.setResponse('previewBuiltInInstrument', () =>
+      Promise.resolve(
+        fakeAudioStatus({
+          previewing: true,
+          builtInPreviewing: true,
+          message:
+            'Preview built-in instrument failed: replacement preview failed. Audio state was not changed. Saved data is safe.',
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.preview(second);
+    });
+
+    expect(result.current.previewingId).toBe(first.id);
+    expect(result.current.previewPendingId).toBeNull();
+    expect(result.current.error).toContain('replacement preview failed');
   });
 
   it('reloads item memberships after deleting a collection', async () => {
