@@ -16,7 +16,7 @@ interface UseArrangeDropOptions {
     ArrangeWorkspaceApi,
     'importMidiBytes' | 'addAudioClipToArrangement' | 'addMidiClipToArrangement'
   > &
-    Partial<Pick<ArrangeWorkspaceApi, 'setTrackBuiltInInstrument'>>;
+    Pick<ArrangeWorkspaceApi, 'setTrackBuiltInInstrument'>;
   commit: ArrangeCommit;
   hostGeneration: number;
   pixelsPerTick: number;
@@ -80,10 +80,6 @@ export function useArrangeDrop({
             ? 'Drop an Instrument on an Instrument Track.'
             : 'Instruments can only be assigned to an Instrument Track.',
         );
-        return;
-      }
-      if (!api.setTrackBuiltInInstrument) {
-        setMessage('Instrument assignment is unavailable.');
         return;
       }
       await commit(api.setTrackBuiltInInstrument(trackId, instrument.presetId));

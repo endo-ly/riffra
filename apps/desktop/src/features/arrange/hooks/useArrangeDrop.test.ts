@@ -67,6 +67,7 @@ describe('useArrangeDrop', () => {
       importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
+      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const setMessage = vi.fn();
     const { result } = renderHook(() =>
@@ -106,6 +107,7 @@ describe('useArrangeDrop', () => {
       importMidiBytes: vi.fn(async () => toAssetId('asset:lead')),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
+      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const commit = commitStub();
     const { result } = renderHook(() =>
@@ -150,6 +152,7 @@ describe('useArrangeDrop', () => {
       ),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
+      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const commit = commitStub();
     const { result } = renderHook(() =>
