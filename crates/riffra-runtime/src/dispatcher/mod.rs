@@ -607,6 +607,7 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "audio.driver.set"
             | "asset.preview"
             | "asset.preview.stop"
+            | "instrument.builtin.preview"
             | "plugin.catalog.list"
             | "plugin.scan"
             | "plugin.scan.start"
@@ -615,6 +616,15 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "library.search"
             | "library.asset.update"
             | "library.related"
+            | "library.instrument.list"
+            | "library.instrument.favorite.set"
+            | "library.instrument.category.set"
+            | "library.instrument.tags.set"
+            | "library.instrument.collection.list"
+            | "library.instrument.collection.create"
+            | "library.instrument.collection.rename"
+            | "library.instrument.collection.delete"
+            | "library.instrument.collection.membership.set"
             | "analysis.start"
     )
 }
@@ -781,6 +791,16 @@ mod tests {
             "plugin.catalog.list",
             "plugin.scan",
             "instrument.builtin.list",
+            "instrument.builtin.preview",
+            "library.instrument.list",
+            "library.instrument.favorite.set",
+            "library.instrument.category.set",
+            "library.instrument.tags.set",
+            "library.instrument.collection.list",
+            "library.instrument.collection.create",
+            "library.instrument.collection.rename",
+            "library.instrument.collection.delete",
+            "library.instrument.collection.membership.set",
         ] {
             assert!(!super::command_requires_project_id(command), "{command}");
         }

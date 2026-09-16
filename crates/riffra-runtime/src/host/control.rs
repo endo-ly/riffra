@@ -2391,9 +2391,132 @@ mod tests {
             "project.list",
             "instrument.vst3.set",
             "effect.add",
+            "instrument.builtin.preview",
+            "library.instrument.list",
         ] {
             assert!(!super::requires_command_gate(command), "{command}");
         }
+    }
+
+    #[test]
+    fn instrument_library_commands_preserve_canonical_state() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-instrument-library-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let preset_root = data_root.join("built-in-instruments").join("01-bass");
+        std::fs::create_dir_all(&preset_root).unwrap();
+        std::fs::write(preset_root.join("definition.json"), br#"{}"#).unwrap();
+        std::fs::write(
+            preset_root.parent().unwrap().join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-bass","name":"Bass","author":"Riffra","description":"Low","category":"Bass","tags":["Low"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-bass/definition.json","resourceBasePath":"01-bass"}]}"#,
+        )
+        .unwrap();
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            built_in_instruments_root: preset_root.parent().unwrap().to_path_buf(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let before = host.canonical_state().unwrap();
+
+        let dispatch = |command: &str, params: serde_json::Value| {
+            let response = host.dispatch_control(ControlRequest::new(
+                command,
+                ControlCommand::new(command, params),
+                Some(0),
+            ));
+            assert!(response.ok, "{command}: {:?}", response.error);
+            assert_eq!(response.sequence, Some(0), "{command}");
+            response.result.unwrap().value
+        };
+
+        let listed: Vec<crate::InstrumentLibraryItem> =
+            serde_json::from_value(dispatch("library.instrument.list", serde_json::json!({})))
+                .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "builtin:01-bass");
+
+        let favorite: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.favorite.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","favorite":true}),
+        ))
+        .unwrap();
+        assert!(favorite.favorite);
+
+        let overridden: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.category.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","category":" Basses "}),
+        ))
+        .unwrap();
+        assert_eq!(overridden.category, "Basses");
+        let restored: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.category.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","category":null}),
+        ))
+        .unwrap();
+        assert_eq!(restored.category, "Bass");
+
+        let tagged: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.tags.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","tags":["Verse","verse"," Lead "]}),
+        ))
+        .unwrap();
+        assert_eq!(tagged.user_tags, ["Lead", "Verse"]);
+
+        let created: crate::InstrumentCollection = serde_json::from_value(dispatch(
+            "library.instrument.collection.create",
+            serde_json::json!({"name":"Live Set"}),
+        ))
+        .unwrap();
+        let member: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.collection.membership.set",
+            serde_json::json!({"collectionId":created.id,"instrumentId":"builtin:01-bass","included":true}),
+        ))
+        .unwrap();
+        assert_eq!(member.collection_ids, [created.id]);
+
+        let renamed: crate::InstrumentCollection = serde_json::from_value(dispatch(
+            "library.instrument.collection.rename",
+            serde_json::json!({"id":created.id,"name":"Rehearsal"}),
+        ))
+        .unwrap();
+        assert_eq!(renamed.name, "Rehearsal");
+        let collections: Vec<crate::InstrumentCollection> = serde_json::from_value(dispatch(
+            "library.instrument.collection.list",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        assert_eq!(collections, [renamed]);
+
+        let removed: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.collection.membership.set",
+            serde_json::json!({"collectionId":created.id,"instrumentId":"builtin:01-bass","included":false}),
+        ))
+        .unwrap();
+        assert!(removed.collection_ids.is_empty());
+        let deleted = dispatch(
+            "library.instrument.collection.delete",
+            serde_json::json!({"id":created.id}),
+        );
+        assert!(deleted.is_null());
+        let collections: Vec<crate::InstrumentCollection> = serde_json::from_value(dispatch(
+            "library.instrument.collection.list",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        assert!(collections.is_empty());
+
+        assert_eq!(host.canonical_state().unwrap(), before);
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 
     #[test]
