@@ -74,8 +74,6 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
       <div className={styles.metadataGrid}>
         <span>Origin</span>
         <strong>Built-in</strong>
-        <span>Author</span>
-        <strong>{props.item.author ?? '—'}</strong>
         <span>Category</span>
         <strong>{props.item.category}</strong>
         <span>Tags</span>
