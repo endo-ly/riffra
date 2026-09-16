@@ -61,7 +61,7 @@ export function BrowserPanel({
         <label className={styles.search}>
           <Icon name="search" />
           <input
-            aria-label="Library search"
+            aria-label="Browser search"
             value={library.query}
             onChange={(event) => library.setQuery(event.target.value)}
             placeholder="Search"

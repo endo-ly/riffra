@@ -1,6 +1,6 @@
-export const INSTRUMENT_MIME = 'application/x-riffra-instrument';
+export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';
 
-export interface InstrumentDragPayload {
+export interface RiffraInstrumentDragPayload {
   version: 1;
   presetId: string;
   name: string;
@@ -9,14 +9,14 @@ export interface InstrumentDragPayload {
 
 export function writeInstrumentDrag(
   dataTransfer: DataTransfer,
-  payload: InstrumentDragPayload,
+  payload: RiffraInstrumentDragPayload,
 ): void {
-  dataTransfer.setData(INSTRUMENT_MIME, JSON.stringify(payload));
+  dataTransfer.setData(RIFFRA_INSTRUMENT_MIME, JSON.stringify(payload));
   dataTransfer.effectAllowed = 'copy';
 }
 
-export function readInstrumentDrag(dataTransfer: DataTransfer): InstrumentDragPayload | null {
-  const raw = dataTransfer.getData(INSTRUMENT_MIME);
+export function readInstrumentDrag(dataTransfer: DataTransfer): RiffraInstrumentDragPayload | null {
+  const raw = dataTransfer.getData(RIFFRA_INSTRUMENT_MIME);
   if (!raw) return null;
   try {
     const value: unknown = JSON.parse(raw);
@@ -27,9 +27,9 @@ export function readInstrumentDrag(dataTransfer: DataTransfer): InstrumentDragPa
   }
 }
 
-function isInstrumentDragPayload(value: unknown): value is InstrumentDragPayload {
+function isInstrumentDragPayload(value: unknown): value is RiffraInstrumentDragPayload {
   if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<InstrumentDragPayload>;
+  const candidate = value as Partial<RiffraInstrumentDragPayload>;
   return (
     candidate.version === 1 &&
     typeof candidate.presetId === 'string' &&

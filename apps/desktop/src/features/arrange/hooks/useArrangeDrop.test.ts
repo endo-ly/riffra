@@ -7,7 +7,7 @@ import type { ArrangementMutationResult, CreativeSession } from '@/model/domain'
 import { getHostGeneration, setHostGeneration } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
-import { INSTRUMENT_MIME } from '@/shared/instrument-drag';
+import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
 import { useArrangeDrop } from './useArrangeDrop';
 
 afterEach(() => {
@@ -54,8 +54,8 @@ function instrumentDropEvent(payload: unknown): DragEvent {
   return {
     dataTransfer: {
       files: [],
-      getData: (type: string) => (type === INSTRUMENT_MIME ? JSON.stringify(payload) : ''),
-      types: [INSTRUMENT_MIME],
+      getData: (type: string) => (type === RIFFRA_INSTRUMENT_MIME ? JSON.stringify(payload) : ''),
+      types: [RIFFRA_INSTRUMENT_MIME],
     },
     preventDefault: vi.fn(),
   } as unknown as DragEvent;

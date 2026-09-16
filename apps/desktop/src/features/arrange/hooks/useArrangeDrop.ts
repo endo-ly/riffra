@@ -2,7 +2,7 @@ import { useCallback, type DragEvent } from 'react';
 import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
 import { getHostGeneration } from '@/native/invoke';
 import { readAssetDrag } from '@/shared/asset-drag';
-import { INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
+import { RIFFRA_INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 
@@ -124,7 +124,7 @@ export function useArrangeDrop({
         void handleOsMidiDrop(event.dataTransfer.files, trackId, trackKind);
         return;
       }
-      if (event.dataTransfer.types.includes(INSTRUMENT_MIME)) {
+      if (event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
         void handleInstrumentDrop(event, trackId, trackKind);
         return;
       }

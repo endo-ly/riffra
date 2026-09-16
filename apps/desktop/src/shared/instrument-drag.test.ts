@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  INSTRUMENT_MIME,
   readInstrumentDrag,
   writeInstrumentDrag,
-  type InstrumentDragPayload,
+  RIFFRA_INSTRUMENT_MIME,
+  type RiffraInstrumentDragPayload,
 } from './instrument-drag';
 
-const payload: InstrumentDragPayload = {
+const payload: RiffraInstrumentDragPayload = {
   version: 1,
   presetId: '01-clean-sub-bass',
   name: 'Clean Sub Bass',
@@ -28,7 +28,10 @@ describe('instrument drag payload', () => {
 
     writeInstrumentDrag(dataTransfer, payload);
 
-    expect(dataTransfer.setData).toHaveBeenCalledWith(INSTRUMENT_MIME, JSON.stringify(payload));
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      RIFFRA_INSTRUMENT_MIME,
+      JSON.stringify(payload),
+    );
     expect(dataTransfer.effectAllowed).toBe('copy');
     expect(readInstrumentDrag(dataTransferWith(JSON.stringify(payload)))).toEqual(payload);
   });

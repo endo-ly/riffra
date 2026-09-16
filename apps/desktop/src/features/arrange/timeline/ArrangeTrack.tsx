@@ -20,7 +20,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
-import { INSTRUMENT_MIME } from '@/shared/instrument-drag';
+import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
 import { resolveTrackColor } from '../inspector/track-colors';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
@@ -459,7 +459,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         onDragOver={(event) => {
           if (
             !event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) &&
-            !event.dataTransfer.types.includes(INSTRUMENT_MIME)
+            !event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)
           )
             return;
           event.preventDefault();
