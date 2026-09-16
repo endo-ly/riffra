@@ -48,10 +48,10 @@ const pad: InstrumentLibraryItem = {
 };
 
 describe('instrument library model', () => {
-  it('searches metadata, effective tags, and collection names', () => {
+  it('searches metadata, effective tags, and collection names without author', () => {
     const collections = [{ id: 1, name: 'Sketches' }];
 
-    expect(matchesInstrumentQuery(bass, 'aster', collections)).toBe(true);
+    expect(matchesInstrumentQuery(bass, 'aster', collections)).toBe(false);
     expect(matchesInstrumentQuery(bass, 'low-frequency', collections)).toBe(true);
     expect(matchesInstrumentQuery(bass, 'warm', collections)).toBe(true);
     expect(matchesInstrumentQuery(bass, 'sketches', collections)).toBe(true);

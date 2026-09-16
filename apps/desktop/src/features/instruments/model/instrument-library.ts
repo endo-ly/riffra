@@ -2,7 +2,6 @@ import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/domain
 
 interface InstrumentSearchable {
   name: string;
-  author?: string | null;
   description?: string | null;
   category?: string;
   defaultCategory?: string;
@@ -35,7 +34,6 @@ function searchableValues(item: InstrumentSearchable, collections: CollectionLoo
     .filter((name): name is string => Boolean(name));
   return [
     item.name,
-    item.author ?? '',
     item.description ?? '',
     item.category ?? '',
     item.defaultCategory ?? '',
