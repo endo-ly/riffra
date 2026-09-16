@@ -4,7 +4,7 @@
 
 .filterBar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px;
   padding: 4px 5px;
 }
@@ -22,13 +22,31 @@
   border-radius: var(--radius-sm);
 }
 
+.filterBar select:nth-of-type(2),
+.filterBar select:nth-of-type(3) {
+  grid-column: 1 / -1;
+}
+
 .favoriteFilter {
   display: flex;
-  grid-column: 1 / -1;
+  grid-column: 2;
+  grid-row: 1;
   align-items: center;
   gap: 5px;
+  min-height: 24px;
+  padding: 0 4px;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.favoriteFilter:hover,
+.favoriteFilter[aria-pressed='true'] {
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-status-warning) 10%, transparent);
 }
 
 .instrumentRows {
@@ -204,6 +222,73 @@
   font-size: var(--font-size-micro);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.fieldEditor,
+.tagInputRow {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fieldEditor input,
+.tagInputRow input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldEditor button,
+.tagInputRow button {
+  min-height: 22px;
+  padding: 0 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fieldEditor button:hover,
+.tagInputRow button:hover:not(:disabled) {
+  border-color: var(--color-accent-primary);
+}
+
+.tagEditor {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tagChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.tagChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 3px 2px 5px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-micro);
+}
+
+.tagRemove {
+  padding: 0 2px;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.tagRemove:hover {
+  color: var(--color-status-danger);
 }
 
 .collectionList {

@@ -67,14 +67,15 @@ export function InstrumentBrowserSection({
             </option>
           ))}
         </select>
-        <label className={styles.favoriteFilter}>
-          <input
-            type="checkbox"
-            checked={controller.filters.favoritesOnly}
-            onChange={(event) => updateFilters({ favoritesOnly: event.target.checked })}
-          />
+        <button
+          type="button"
+          className={styles.favoriteFilter}
+          aria-pressed={controller.filters.favoritesOnly}
+          onClick={() => updateFilters({ favoritesOnly: !controller.filters.favoritesOnly })}
+        >
+          <span aria-hidden="true">★</span>
           Favorites
-        </label>
+        </button>
       </div>
       {controller.loading && <small className={styles.message}>Loading instruments…</small>}
       {controller.error && (
@@ -148,6 +149,7 @@ function InstrumentRow(props: {
       }
       onClick={props.onSelect}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           props.onSelect();
@@ -161,7 +163,7 @@ function InstrumentRow(props: {
       <span className={styles.instrumentText}>
         <strong>{props.item.name}</strong>
         <small>
-          {props.item.category} · {props.item.tags.join(', ')}
+          {props.item.category} · {props.item.tags.slice(0, 3).join(', ')}
         </small>
       </span>
       <button
@@ -181,7 +183,7 @@ function InstrumentRow(props: {
       <button
         type="button"
         className={styles.previewButton}
-        aria-label={`${props.previewing ? 'Stop' : 'Preview'} ${props.item.name}`}
+        aria-label={`${props.previewing ? 'Stop previewing' : 'Preview'} ${props.item.name}`}
         disabled={props.previewDisabled}
         onClick={(event) => {
           event.stopPropagation();

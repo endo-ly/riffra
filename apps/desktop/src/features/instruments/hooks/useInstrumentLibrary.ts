@@ -178,14 +178,24 @@ export function useInstrumentLibrary(
         setFilters((current) =>
           current.collectionId === id ? { ...current, collectionId: null } : current,
         );
-        await reload();
+        setItems((current) =>
+          current.map((item) =>
+            item.collectionIds.includes(id)
+              ? {
+                  ...item,
+                  collectionIds: item.collectionIds.filter((collectionId) => collectionId !== id),
+                }
+              : item,
+          ),
+        );
+        await reloadCollections();
       } catch (cause) {
         if (currentHostGeneration.current !== requestGeneration) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError('deleteInstrumentCollection')(cause);
       }
     },
-    [deleteInstrumentCollection, hostGeneration, reload],
+    [deleteInstrumentCollection, hostGeneration, reloadCollections],
   );
 
   const setCollectionMembership = useCallback(

@@ -25,7 +25,7 @@ interface InstrumentDetailProps {
 
 export function InstrumentDetail(props: InstrumentDetailProps) {
   const [category, setCategory] = useState(props.item.category);
-  const [tags, setTags] = useState(props.item.userTags.join(', '));
+  const [newTag, setNewTag] = useState('');
   const [newCollectionName, setNewCollectionName] = useState('');
   const [editingCollection, setEditingCollection] = useState<{
     id: number;
@@ -35,11 +35,22 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
 
   useEffect(() => {
     setCategory(props.item.category);
-    setTags(props.item.userTags.join(', '));
+    setNewTag('');
   }, [props.item.id, props.item.category, props.item.userTags]);
 
   const isInstrumentTrack = props.selectedTrack?.kind === 'instrument';
   const applyDisabled = props.projectSwitching || !isInstrumentTrack;
+  const saveCategory = () => props.onCategory(category.trim() || null);
+  const resetCategory = () => {
+    setCategory(props.item.defaultCategory);
+    props.onCategory(null);
+  };
+  const addTag = () => {
+    const tag = newTag.trim();
+    if (!tag) return;
+    props.onTags([...props.item.userTags, tag]);
+    setNewTag('');
+  };
 
   return (
     <section className={styles.detail} aria-labelledby="instrument-detail-title">
@@ -47,7 +58,7 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
         <div>
           <span className={surface.eyebrow}>INSTRUMENT DETAIL</span>
           <h3 id="instrument-detail-title">{props.item.name}</h3>
-          <small>{props.item.author ?? 'Built-in instrument'}</small>
+          <small>Built-in</small>
         </div>
         <button
           type="button"
@@ -61,8 +72,14 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
       </header>
       {props.item.description && <p className={styles.description}>{props.item.description}</p>}
       <div className={styles.metadataGrid}>
+        <span>Origin</span>
+        <strong>Built-in</strong>
+        <span>Author</span>
+        <strong>{props.item.author ?? '—'}</strong>
         <span>Category</span>
         <strong>{props.item.category}</strong>
+        <span>Tags</span>
+        <strong>{props.item.tags.join(', ') || '—'}</strong>
         <span>Range</span>
         <strong>
           {formatMidiNote(props.item.recommendedRange.minMidi)}–
@@ -74,50 +91,72 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
           {props.item.preview.timeSignature.denominator}
         </strong>
       </div>
-      <label className={styles.field}>
+      <div className={styles.field}>
         <span>Category override</span>
-        <input
-          value={category === props.item.defaultCategory ? '' : category}
-          placeholder={props.item.defaultCategory}
-          maxLength={64}
-          onChange={(event) => setCategory(event.target.value)}
-          onBlur={() => props.onCategory(category.trim() || null)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              props.onCategory(category.trim() || null);
-            }
-          }}
-        />
-      </label>
-      <label className={styles.field}>
+        <div className={styles.fieldEditor}>
+          <input
+            aria-label="Category override"
+            value={category === props.item.defaultCategory ? '' : category}
+            placeholder={props.item.defaultCategory}
+            maxLength={64}
+            onChange={(event) => setCategory(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                saveCategory();
+              }
+            }}
+          />
+          <button type="button" onClick={saveCategory}>
+            Save
+          </button>
+          <button type="button" onClick={resetCategory}>
+            Reset
+          </button>
+        </div>
+      </div>
+      <div className={styles.field}>
         <span>User tags</span>
-        <input
-          value={tags}
-          placeholder="Separate tags with commas"
-          maxLength={512}
-          onChange={(event) => setTags(event.target.value)}
-          onBlur={() =>
-            props.onTags(
-              tags
-                .split(',')
-                .map((tag) => tag.trim())
-                .filter(Boolean),
-            )
-          }
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              props.onTags(
-                tags
-                  .split(',')
-                  .map((tag) => tag.trim())
-                  .filter(Boolean),
-              );
-            }
-          }}
-        />
-      </label>
+        <div className={styles.tagEditor}>
+          {props.item.userTags.length > 0 && (
+            <div className={styles.tagChips}>
+              {props.item.userTags.map((tag) => (
+                <span className={styles.tagChip} key={tag}>
+                  {tag}
+                  <button
+                    type="button"
+                    className={styles.tagRemove}
+                    aria-label={`Remove tag ${tag}`}
+                    onClick={() =>
+                      props.onTags(props.item.userTags.filter((value) => value !== tag))
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className={styles.tagInputRow}>
+            <input
+              aria-label="New user tag"
+              value={newTag}
+              placeholder="Add tag"
+              maxLength={32}
+              onChange={(event) => setNewTag(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  addTag();
+                }
+              }}
+            />
+            <button type="button" onClick={addTag} disabled={!newTag.trim()}>
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
       <div className={styles.collectionList}>
         <span className={surface.eyebrow}>COLLECTIONS</span>
         {props.collections.map((collection) => (
@@ -204,11 +243,27 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
         </form>
       </div>
       <div className={styles.detailActions}>
-        <button type="button" onClick={props.onPreview} disabled={props.safeMode}>
+        <button
+          type="button"
+          aria-label={`${props.previewing ? 'Stop previewing' : 'Preview'} ${props.item.name}`}
+          onClick={props.onPreview}
+          disabled={props.safeMode}
+        >
           {props.previewing ? 'Stop preview' : 'Preview'}
         </button>
-        <button type="button" onClick={props.onApply} disabled={applyDisabled}>
-          Apply to {isInstrumentTrack ? props.selectedTrack?.name : 'Instrument Track'}
+        <button
+          type="button"
+          aria-label={
+            isInstrumentTrack
+              ? `Apply ${props.item.name} to ${props.selectedTrack?.name}`
+              : `Select an Instrument Track to apply ${props.item.name}`
+          }
+          onClick={props.onApply}
+          disabled={applyDisabled}
+        >
+          {isInstrumentTrack
+            ? `Apply ${props.item.name} to ${props.selectedTrack?.name}`
+            : 'Select an Instrument Track'}
         </button>
       </div>
       {!props.selectedTrack && (
