@@ -4,11 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LibraryPanel } from './LibraryPanel';
+import { BrowserPanel } from '@/features/browser/BrowserPanel';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/domain';
 
-// This suite verifies LibraryPanel's callback wiring only. useInbox/FakeNativeApi
+// This suite verifies BrowserPanel's callback wiring only. useInbox/FakeNativeApi
 // behavior is covered separately by the useInbox hook tests.
 
 const recordingA: RecordingAsset = {
@@ -122,7 +122,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const user = userEvent.setup();
     const onAddPlugin = vi.fn();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={{
           ...rackStub,
@@ -170,7 +170,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const user = userEvent.setup();
     const onAddPlugin = vi.fn();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={{
           ...rackStub,
@@ -207,7 +207,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const inbox = makeInbox();
     const user = userEvent.setup();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={recordingsStub}
@@ -246,7 +246,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const inbox = makeInbox();
     const user = userEvent.setup();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={recordingsStub}
@@ -266,7 +266,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     const inbox = makeInbox();
     const user = userEvent.setup();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={recordingsStub}
@@ -286,7 +286,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     inbox.selected = broken;
     inbox.selectedId = broken.id;
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={{ ...recordingsStub, visibleRecordings: [broken] }}
@@ -301,7 +301,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     inbox.message = null;
     inbox.error = 'The audio engine is offline.';
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={recordingsStub}
@@ -320,7 +320,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
     };
     const setData = vi.fn();
     render(
-      <LibraryPanel
+      <BrowserPanel
         library={libraryStub}
         plugins={rackStub}
         recordings={{ ...recordingsStub, visibleRecordings: [recording] }}

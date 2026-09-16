@@ -35,6 +35,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
+import { INSTRUMENT_MIME } from '@/shared/instrument-drag';
 import { HostConnectionChangedError, getHostGeneration } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
@@ -583,7 +584,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             <div
               className={`${styles.empty} ${emptyDragOver ? styles.emptyDragOver : ''}`}
               onDragOver={(event) => {
-                if (!event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) && !isOsFileDrag(event))
+                if (
+                  !event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) &&
+                  !event.dataTransfer.types.includes(INSTRUMENT_MIME) &&
+                  !isOsFileDrag(event)
+                )
                   return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'copy';

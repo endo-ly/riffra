@@ -4,6 +4,8 @@ import type {
   AudioStatus,
   BackgroundJobStatus,
   BuiltInInstrumentSummary,
+  InstrumentCollection,
+  InstrumentLibraryItem,
   BootstrapState,
   CanonicalState,
   MissingDependency,
@@ -35,6 +37,8 @@ export interface FakeNativeApiOptions {
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
   builtInInstruments?: BuiltInInstrumentSummary[];
+  instruments?: InstrumentLibraryItem[];
+  instrumentCollections?: InstrumentCollection[];
   missingDependencies?: MissingDependency[];
   responses?: Partial<Record<keyof NativeApi, ResponseValue>>;
   failures?: Partial<Record<keyof NativeApi, Error>>;
@@ -132,6 +136,8 @@ export class FakeNativeApi implements NativeApi {
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
   builtInInstruments: BuiltInInstrumentSummary[];
+  instruments: InstrumentLibraryItem[];
+  instrumentCollections: InstrumentCollection[];
   bootstrapState: BootstrapState;
   hostConnectionState: HostConnectionState;
   missing: MissingDependency[];
@@ -172,6 +178,10 @@ export class FakeNativeApi implements NativeApi {
         : undefined),
     });
     this.builtInInstruments = this.bootstrapState.builtInInstruments;
+    this.instruments =
+      options.instruments ??
+      this.builtInInstruments.map((summary) => instrumentLibraryItem(summary));
+    this.instrumentCollections = options.instrumentCollections ?? [];
     this.hostConnectionState = {
       ...this.bootstrapState.hostConnection,
       ...options.hostConnection,
@@ -330,6 +340,35 @@ export class FakeNativeApi implements NativeApi {
   relatedLibraryAssets(...args: Parameters<NativeApi['relatedLibraryAssets']>) {
     return this.command('relatedLibraryAssets', args);
   }
+  listInstruments(...args: Parameters<NativeApi['listInstruments']>) {
+    return this.command('listInstruments', args);
+  }
+  setInstrumentFavorite(...args: Parameters<NativeApi['setInstrumentFavorite']>) {
+    return this.command('setInstrumentFavorite', args);
+  }
+  setInstrumentCategoryOverride(...args: Parameters<NativeApi['setInstrumentCategoryOverride']>) {
+    return this.command('setInstrumentCategoryOverride', args);
+  }
+  setInstrumentUserTags(...args: Parameters<NativeApi['setInstrumentUserTags']>) {
+    return this.command('setInstrumentUserTags', args);
+  }
+  listInstrumentCollections(...args: Parameters<NativeApi['listInstrumentCollections']>) {
+    return this.command('listInstrumentCollections', args);
+  }
+  createInstrumentCollection(...args: Parameters<NativeApi['createInstrumentCollection']>) {
+    return this.command('createInstrumentCollection', args);
+  }
+  renameInstrumentCollection(...args: Parameters<NativeApi['renameInstrumentCollection']>) {
+    return this.command('renameInstrumentCollection', args);
+  }
+  deleteInstrumentCollection(...args: Parameters<NativeApi['deleteInstrumentCollection']>) {
+    return this.command('deleteInstrumentCollection', args);
+  }
+  setInstrumentCollectionMembership(
+    ...args: Parameters<NativeApi['setInstrumentCollectionMembership']>
+  ) {
+    return this.command('setInstrumentCollectionMembership', args);
+  }
   analyzeAsset(...args: Parameters<NativeApi['analyzeAsset']>) {
     return this.command('analyzeAsset', args);
   }
@@ -344,6 +383,9 @@ export class FakeNativeApi implements NativeApi {
   }
   previewAsset(...args: Parameters<NativeApi['previewAsset']>) {
     return this.command('previewAsset', args);
+  }
+  previewBuiltInInstrument(...args: Parameters<NativeApi['previewBuiltInInstrument']>) {
+    return this.command('previewBuiltInInstrument', args);
   }
   stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
     return this.command('stopPreview', args);
@@ -642,6 +684,18 @@ export class FakeNativeApi implements NativeApi {
     this.calls.push(String(name));
   }
 
+  private instrumentById(instrumentId: string): InstrumentLibraryItem {
+    const instrument = this.instruments.find((item) => item.id === instrumentId);
+    if (!instrument) throw new Error(`instrument was not found: ${instrumentId}`);
+    return instrument;
+  }
+
+  private replaceInstrument(instrument: InstrumentLibraryItem): void {
+    this.instruments = this.instruments.map((item) =>
+      item.id === instrument.id ? instrument : item,
+    );
+  }
+
   setResponse<K extends keyof NativeApi>(name: K, response: ResponseValue): void {
     this.responses.set(name, response);
   }
@@ -757,6 +811,87 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(this.bootstrapState);
       case 'listBuiltInInstruments':
         return Promise.resolve(this.builtInInstruments);
+      case 'listInstruments':
+        return Promise.resolve(this.instruments);
+      case 'setInstrumentFavorite': {
+        const [instrumentId, favorite] = arguments_ as [string, boolean];
+        const instrument = this.instrumentById(instrumentId);
+        const updated = { ...instrument, favorite };
+        this.replaceInstrument(updated);
+        return Promise.resolve(updated);
+      }
+      case 'setInstrumentCategoryOverride': {
+        const [instrumentId, category] = arguments_ as [string, string | null];
+        const instrument = this.instrumentById(instrumentId);
+        const normalized = category?.trim() || null;
+        const updated = {
+          ...instrument,
+          category: normalized ?? instrument.defaultCategory,
+        };
+        this.replaceInstrument(updated);
+        return Promise.resolve(updated);
+      }
+      case 'setInstrumentUserTags': {
+        const [instrumentId, tags] = arguments_ as [string, string[]];
+        const instrument = this.instrumentById(instrumentId);
+        const userTags = Array.from(
+          new Map(tags.map((tag) => [tag.trim().toLocaleLowerCase(), tag.trim()])).values(),
+        ).filter(Boolean);
+        const tagsWithDefaults = Array.from(
+          new Map(
+            [...instrument.defaultTags, ...userTags].map((tag) => [tag.toLocaleLowerCase(), tag]),
+          ).values(),
+        );
+        const updated = { ...instrument, userTags, tags: tagsWithDefaults };
+        this.replaceInstrument(updated);
+        return Promise.resolve(updated);
+      }
+      case 'listInstrumentCollections':
+        return Promise.resolve(this.instrumentCollections);
+      case 'createInstrumentCollection': {
+        const [name] = arguments_ as [string];
+        const collection = {
+          id: Math.max(0, ...this.instrumentCollections.map((item) => item.id)) + 1,
+          name: name.trim(),
+        };
+        this.instrumentCollections = [...this.instrumentCollections, collection];
+        return Promise.resolve(collection);
+      }
+      case 'renameInstrumentCollection': {
+        const [id, name] = arguments_ as [number, string];
+        const collection = this.instrumentCollections.find((item) => item.id === id);
+        if (!collection) return Promise.reject(new Error('instrument collection was not found'));
+        const updated = { ...collection, name: name.trim() };
+        this.instrumentCollections = this.instrumentCollections.map((item) =>
+          item.id === id ? updated : item,
+        );
+        return Promise.resolve(updated);
+      }
+      case 'deleteInstrumentCollection': {
+        const [id] = arguments_ as [number];
+        this.instrumentCollections = this.instrumentCollections.filter((item) => item.id !== id);
+        this.instruments = this.instruments.map((instrument) => ({
+          ...instrument,
+          collectionIds: instrument.collectionIds.filter((collectionId) => collectionId !== id),
+        }));
+        return Promise.resolve(undefined);
+      }
+      case 'setInstrumentCollectionMembership': {
+        const [collectionId, instrumentId, included] = arguments_ as [number, string, boolean];
+        const instrument = this.instrumentById(instrumentId);
+        const collectionIds = included
+          ? Array.from(new Set([...instrument.collectionIds, collectionId])).sort((a, b) => a - b)
+          : instrument.collectionIds.filter((id) => id !== collectionId);
+        const updated = { ...instrument, collectionIds };
+        this.replaceInstrument(updated);
+        return Promise.resolve(updated);
+      }
+      case 'previewBuiltInInstrument':
+        this.audio = { ...this.audio, previewing: true };
+        return Promise.resolve(this.audio);
+      case 'stopPreview':
+        this.audio = { ...this.audio, previewing: false };
+        return Promise.resolve(this.audio);
       case 'getHostConnectionState':
         return Promise.resolve(this.hostConnectionState);
       case 'listLocalHosts':
@@ -993,7 +1128,6 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
 
 const audioMethodNames = new Set<keyof NativeApi>([
   'previewAsset',
-  'stopPreview',
   'recoverAudioDevice',
   'retryStartupRuntime',
   'setAudioDriver',
@@ -1028,7 +1162,50 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
       {
         id: '01-clean-sub-bass',
         name: 'Clean Sub Bass',
+        author: 'Riffra',
         description: 'A focused low-frequency bass instrument.',
+        category: 'Bass',
+        tags: ['bass', 'sub'],
+        recommendedRange: { minMidi: 28, maxMidi: 72 },
+        preview: {
+          tempoBpm: 110,
+          ticksPerBeat: 480,
+          timeSignature: { numerator: 4, denominator: 4 },
+          lengthTicks: 1920,
+          notes: [{ tick: 0, durationTicks: 960, note: 36, velocity: 100 }],
+        },
+      },
+      {
+        id: '02-warm-poly-pad',
+        name: 'Warm Poly Pad',
+        author: 'Riffra',
+        description: 'A soft sustained pad for harmonic beds.',
+        category: 'Keys',
+        tags: ['pad', 'polyphonic'],
+        recommendedRange: { minMidi: 36, maxMidi: 96 },
+        preview: {
+          tempoBpm: 90,
+          ticksPerBeat: 480,
+          timeSignature: { numerator: 4, denominator: 4 },
+          lengthTicks: 1920,
+          notes: [{ tick: 0, durationTicks: 1440, note: 60, velocity: 88 }],
+        },
+      },
+      {
+        id: '03-tight-drums',
+        name: 'Tight Drums',
+        author: 'Riffra',
+        description: 'A compact kit for rhythmic sketches.',
+        category: 'Drums',
+        tags: ['drums', 'kit'],
+        recommendedRange: { minMidi: 36, maxMidi: 84 },
+        preview: {
+          tempoBpm: 120,
+          ticksPerBeat: 480,
+          timeSignature: { numerator: 4, denominator: 4 },
+          lengthTicks: 1920,
+          notes: [{ tick: 0, durationTicks: 120, note: 36, velocity: 110 }],
+        },
       },
     ],
     projectState: {
@@ -1059,5 +1236,25 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
     },
     ...overrides,
     canonical,
+  };
+}
+
+function instrumentLibraryItem(summary: BuiltInInstrumentSummary): InstrumentLibraryItem {
+  return {
+    id: `builtin:${summary.id}`,
+    presetId: summary.id,
+    origin: 'builtIn',
+    name: summary.name,
+    author: summary.author,
+    description: summary.description,
+    defaultCategory: summary.category,
+    category: summary.category,
+    defaultTags: summary.tags,
+    userTags: [],
+    tags: summary.tags,
+    favorite: false,
+    collectionIds: [],
+    recommendedRange: summary.recommendedRange,
+    preview: summary.preview,
   };
 }

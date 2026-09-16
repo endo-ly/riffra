@@ -1,0 +1,99 @@
+// @vitest-environment jsdom
+
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { FakeNativeApi } from '@/native/native-api-fake';
+import { useInstrumentLibrary } from './useInstrumentLibrary';
+
+function useLibraryHarness(api: FakeNativeApi, query = '', hostGeneration = 1) {
+  return useInstrumentLibrary(api, {
+    query,
+    hostGeneration,
+    safeMode: false,
+    setAudio: vi.fn(),
+  });
+}
+
+describe('useInstrumentLibrary', () => {
+  it('loads the catalog, persists favorite changes, and applies filters', async () => {
+    const api = new FakeNativeApi();
+    const { result, rerender } = renderHook(
+      ({ query, hostGeneration }) => useLibraryHarness(api, query, hostGeneration),
+      { initialProps: { query: '', hostGeneration: 1 } },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.items).toHaveLength(3);
+
+    await act(async () => {
+      await result.current.toggleFavorite(result.current.items[0]);
+    });
+    expect(result.current.items[0].favorite).toBe(true);
+
+    act(() => {
+      result.current.setFilters({
+        category: 'Keys',
+        tag: null,
+        collectionId: null,
+        favoritesOnly: false,
+      });
+    });
+    expect(result.current.visibleItems.map((item) => item.name)).toEqual(['Warm Poly Pad']);
+
+    rerender({ query: 'drums', hostGeneration: 1 });
+    expect(result.current.visibleItems.map((item) => item.name)).toEqual([]);
+  });
+
+  it('does not start preview in Safe Mode and reloads on host generation changes', async () => {
+    const api = new FakeNativeApi();
+    const setAudio = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ hostGeneration, safeMode }) =>
+        useInstrumentLibrary(api, {
+          query: '',
+          hostGeneration,
+          safeMode,
+          setAudio,
+        }),
+      { initialProps: { hostGeneration: 1, safeMode: true } },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.preview(result.current.items[0]);
+    });
+    expect(api.calls).not.toContain('previewBuiltInInstrument');
+
+    rerender({ hostGeneration: 2, safeMode: false });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.filters).toEqual({
+      category: null,
+      tag: null,
+      collectionId: null,
+      favoritesOnly: false,
+    });
+  });
+
+  it('reloads item memberships after deleting a collection', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useLibraryHarness(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.createCollection('Sketches');
+    });
+    const collection = result.current.collections[0];
+    await act(async () => {
+      await result.current.setCollectionMembership(result.current.items[0], collection.id, true);
+    });
+    expect(result.current.items[0].collectionIds).toEqual([collection.id]);
+
+    await act(async () => {
+      await result.current.deleteCollection(collection.id);
+    });
+
+    expect(result.current.collections).toEqual([]);
+    expect(result.current.items[0].collectionIds).toEqual([]);
+  });
+});

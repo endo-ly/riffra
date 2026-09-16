@@ -60,6 +60,14 @@ export async function previewAsset(
   }
 }
 
+export async function previewBuiltInInstrument(presetId: string): Promise<AudioStatus> {
+  try {
+    return await invokeHost<AudioStatus>('preview_built_in_instrument', { presetId });
+  } catch (error) {
+    return await audioCommandError('Preview built-in instrument', error);
+  }
+}
+
 export async function stopPreview(): Promise<AudioStatus> {
   try {
     return await invokeHost<AudioStatus>('stop_preview');

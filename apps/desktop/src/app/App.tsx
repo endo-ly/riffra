@@ -12,7 +12,7 @@ import { useAppController } from '@/app/useAppController';
 import { useArrangeShell } from '@/features/arrange/hooks/useArrangeShell';
 import { WorkspaceArrange } from '@/features/arrange/WorkspaceArrange';
 import { PropertiesPanel } from '@/features/arrange/inspector/PropertiesPanel';
-import { LibraryPanel } from '@/features/library/LibraryPanel';
+import { BrowserPanel } from '@/features/browser/BrowserPanel';
 import { MissingDependencies } from '@/features/project/MissingDependencies';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AudioSettingsDialog } from '@/features/audio/AudioSettingsDialog';
@@ -95,16 +95,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     session,
     audio,
     setAudio,
-    libraryQuery,
     importMidi,
-    libraryResults,
     plugins,
-    visiblePlugins,
-    visibleRecordings,
-    inbox,
-    selectedLibraryAsset,
-    relatedAssets,
-    query,
     recordings,
     transportPlaying,
     transportStarting,
@@ -129,7 +121,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     commandOpen,
     historyState,
     applyCanonicalState,
-    setLibraryQuery,
     setCommandOpen,
     refreshAudioDevices,
     probeAudioChannels,
@@ -157,6 +148,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     goToStart,
     toggleRecording,
     api: nativeApi,
+    browser,
   } = useAppController(api);
   const arrange = useArrangeShell(
     nativeApi,
@@ -455,31 +447,31 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           propertiesHeight={propertiesHeight}
           onPropertiesHeightChange={setPropertiesHeight}
           browser={
-            <LibraryPanel
+            <BrowserPanel
               projectSwitching={projectSwitching}
+              safeMode={boot?.safeMode ?? false}
               library={{
-                query: libraryQuery,
-                setQuery: setLibraryQuery,
-                results: libraryResults,
-                searchQuery: query,
-                selectedAsset: selectedLibraryAsset,
-                relatedAssets,
+                ...browser.library,
+                query: browser.query,
+                setQuery: browser.setQuery,
+                searchQuery: browser.library.query,
                 onSelectAsset: (asset) => void selectLibraryAsset(asset),
                 onPreviewAsset: () => void previewSelectedLibraryAsset(),
                 onUpdateAsset: (tag, note) => void updateSelectedLibraryAsset(tag, note),
                 onImportMidi: () => void importMidi(),
               }}
               plugins={{
-                plugins,
-                visiblePlugins,
+                ...browser.plugins,
                 selectedTrack: arrange.selectedTrack,
                 onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
               }}
+              instruments={browser.instruments}
+              onApplyBuiltInInstrument={(presetId) => void arrange.applyBuiltInInstrument(presetId)}
               recordings={{
-                visibleRecordings,
+                ...browser.recordings,
                 count: recordings.length,
               }}
-              inbox={inbox}
+              inbox={browser.inbox}
             />
           }
           properties={

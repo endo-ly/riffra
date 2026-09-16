@@ -7,7 +7,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 import { toast } from '@/shared/toasts';
 
 export function useArrangeShell(
-  api: Pick<ArrangeApi, 'setTrackVst3Instrument' | 'addTrackEffect'>,
+  api: Pick<ArrangeApi, 'setTrackBuiltInInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'>,
   session: CreativeSession | null,
   applyCanonicalState: (canonical: CanonicalState) => boolean,
   hostGeneration = 0,
@@ -59,6 +59,22 @@ export function useArrangeShell(
     }
   };
 
+  const applyBuiltInInstrument = async (presetId: string) => {
+    if (!selectedTrack || selectedTrack.kind !== 'instrument') return;
+    const requestGeneration = hostGeneration;
+    try {
+      const next = await api.setTrackBuiltInInstrument(selectedTrack.id, presetId);
+      if (currentHostGeneration.current !== requestGeneration) return;
+      applyArrangementMutation(next, applyCanonicalState, (message) =>
+        toast(message, { kind: 'error' }),
+      );
+    } catch (error) {
+      if (error instanceof HostConnectionChangedError) return;
+      if (currentHostGeneration.current !== requestGeneration) return;
+      logNativeError('Apply built-in instrument')(error);
+    }
+  };
+
   return {
     selection,
     setSelection,
@@ -66,5 +82,6 @@ export function useArrangeShell(
     setFocusedTrackId,
     selectedTrack,
     addPlugin,
+    applyBuiltInInstrument,
   };
 }

@@ -7,6 +7,7 @@ import type { ArrangementMutationResult, CreativeSession } from '@/model/domain'
 import { getHostGeneration, setHostGeneration } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
+import { INSTRUMENT_MIME } from '@/shared/instrument-drag';
 import { useArrangeDrop } from './useArrangeDrop';
 
 afterEach(() => {
@@ -44,6 +45,17 @@ function osMidiDropEvent(files: File[]): DragEvent {
     dataTransfer: {
       files,
       types: ['Files'],
+    },
+    preventDefault: vi.fn(),
+  } as unknown as DragEvent;
+}
+
+function instrumentDropEvent(payload: unknown): DragEvent {
+  return {
+    dataTransfer: {
+      files: [],
+      getData: (type: string) => (type === INSTRUMENT_MIME ? JSON.stringify(payload) : ''),
+      types: [INSTRUMENT_MIME],
     },
     preventDefault: vi.fn(),
   } as unknown as DragEvent;
@@ -163,5 +175,53 @@ describe('useArrangeDrop', () => {
     await waitFor(() => expect(api.importMidiBytes).toHaveBeenCalled());
     expect(api.addMidiClipToArrangement).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('assigns a dragged built-in instrument only to an Instrument Track', async () => {
+    const api = {
+      importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
+      addAudioClipToArrangement: vi.fn(async () => null),
+      addMidiClipToArrangement: vi.fn(async () => null),
+      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
+    };
+    const commit = commitStub();
+    const setMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useArrangeDrop({
+        api,
+        commit,
+        hostGeneration: getHostGeneration(),
+        pixelsPerTick: 1,
+        snapTick: (raw) => Math.round(raw),
+        setMessage,
+      }),
+    );
+    const payload = {
+      version: 1,
+      presetId: '01-clean-sub-bass',
+      name: 'Clean Sub Bass',
+      origin: 'builtIn',
+    };
+
+    act(() => {
+      result.current.handleDrop(instrumentDropEvent(payload), 'track:instrument', 'instrument');
+    });
+    await waitFor(() =>
+      expect(api.setTrackBuiltInInstrument).toHaveBeenCalledWith(
+        'track:instrument',
+        '01-clean-sub-bass',
+      ),
+    );
+    expect(commit).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.handleDrop(instrumentDropEvent(payload), 'track:audio', 'audio');
+    });
+    await waitFor(() =>
+      expect(setMessage).toHaveBeenCalledWith(
+        'Instruments can only be assigned to an Instrument Track.',
+      ),
+    );
+    expect(api.setTrackBuiltInInstrument).toHaveBeenCalledTimes(1);
   });
 });

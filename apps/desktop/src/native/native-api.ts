@@ -34,6 +34,8 @@ import type {
   AutomationPoint,
   TrackKind,
   BuiltInInstrumentSummary,
+  InstrumentCollection,
+  InstrumentLibraryItem,
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
@@ -152,6 +154,25 @@ export interface LibraryApi {
   relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 }
 
+export interface InstrumentLibraryApi {
+  listInstruments(): Promise<InstrumentLibraryItem[]>;
+  setInstrumentFavorite(instrumentId: string, favorite: boolean): Promise<InstrumentLibraryItem>;
+  setInstrumentCategoryOverride(
+    instrumentId: string,
+    category: string | null,
+  ): Promise<InstrumentLibraryItem>;
+  setInstrumentUserTags(instrumentId: string, tags: string[]): Promise<InstrumentLibraryItem>;
+  listInstrumentCollections(): Promise<InstrumentCollection[]>;
+  createInstrumentCollection(name: string): Promise<InstrumentCollection>;
+  renameInstrumentCollection(id: number, name: string): Promise<InstrumentCollection>;
+  deleteInstrumentCollection(id: number): Promise<void>;
+  setInstrumentCollectionMembership(
+    collectionId: number,
+    instrumentId: string,
+    included: boolean,
+  ): Promise<InstrumentLibraryItem>;
+}
+
 export interface AnalysisApi {
   analyzeAsset(assetId: AssetId): Promise<AudioAnalysis | null>;
 }
@@ -175,6 +196,7 @@ export interface AudioApi {
    * options object so the contract stays readable as the preview tuning grows.
    */
   previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
+  previewBuiltInInstrument(presetId: string): Promise<AudioStatus>;
   stopPreview(): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;
@@ -445,6 +467,7 @@ export interface NativeApi
     ProjectSettingsApi,
     JobApi,
     LibraryApi,
+    InstrumentLibraryApi,
     AnalysisApi,
     RenderApi,
     AudioApi,
