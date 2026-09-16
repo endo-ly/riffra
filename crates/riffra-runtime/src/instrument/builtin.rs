@@ -3,6 +3,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+const MIN_PREVIEW_TEMPO_BPM: f64 = 30.0;
+const MAX_PREVIEW_TEMPO_BPM: f64 = 300.0;
+const MIN_PREVIEW_TICKS_PER_BEAT: u16 = 1;
+const MAX_PREVIEW_TICKS_PER_BEAT: u16 = 32_767;
+const MAX_PREVIEW_DENOMINATOR: u8 = 128;
+const MIN_PREVIEW_NOTES: usize = 1;
+const MAX_PREVIEW_NOTES: usize = 32;
+const MAX_PREVIEW_DURATION_SECONDS: f64 = 10.0;
+const MAX_MIDI_NOTE: u8 = 127;
+
 /// Metadata presented to clients for one built-in instrument.
 #[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -269,40 +279,56 @@ fn validate_summary_metadata(
     if tags.is_empty() {
         return Err(format!("built-in instrument preset '{id}' has no tags"));
     }
-    if range.min_midi > range.max_midi {
+    if range.min_midi > MAX_MIDI_NOTE
+        || range.max_midi > MAX_MIDI_NOTE
+        || range.min_midi > range.max_midi
+    {
         return Err(format!(
             "built-in instrument preset '{id}' has an invalid recommended MIDI range"
         ));
     }
-    if !preview.tempo_bpm.is_finite() || preview.tempo_bpm <= 0.0 {
+    if !preview.tempo_bpm.is_finite()
+        || preview.tempo_bpm < MIN_PREVIEW_TEMPO_BPM
+        || preview.tempo_bpm > MAX_PREVIEW_TEMPO_BPM
+    {
         return Err(format!(
             "built-in instrument preset '{id}' has an invalid preview tempo"
         ));
     }
-    if preview.ticks_per_beat == 0 {
+    if preview.ticks_per_beat < MIN_PREVIEW_TICKS_PER_BEAT
+        || preview.ticks_per_beat > MAX_PREVIEW_TICKS_PER_BEAT
+    {
         return Err(format!(
             "built-in instrument preset '{id}' has an invalid preview ticks-per-beat value"
         ));
     }
     if preview.time_signature.numerator == 0
-        || !matches!(preview.time_signature.denominator, 1 | 2 | 4 | 8 | 16 | 32)
+        || !is_valid_preview_denominator(preview.time_signature.denominator)
     {
         return Err(format!(
             "built-in instrument preset '{id}' has an invalid preview time signature"
         ));
     }
-    if preview.length_ticks == 0 {
+    if preview.length_ticks == 0 || preview_duration_seconds(preview) > MAX_PREVIEW_DURATION_SECONDS
+    {
         return Err(format!(
-            "built-in instrument preset '{id}' has an empty preview"
+            "built-in instrument preset '{id}' has an invalid preview length"
+        ));
+    }
+    if !(MIN_PREVIEW_NOTES..=MAX_PREVIEW_NOTES).contains(&preview.notes.len()) {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid preview note count"
         ));
     }
     for note in &preview.notes {
         if note.duration_ticks == 0
             || note.tick >= preview.length_ticks
-            || note.tick.saturating_add(note.duration_ticks) > preview.length_ticks
+            || note.duration_ticks > preview.length_ticks - note.tick
             || note.note < range.min_midi
             || note.note > range.max_midi
             || note.velocity == 0
+            || note.note > MAX_MIDI_NOTE
+            || note.velocity > MAX_MIDI_NOTE
         {
             return Err(format!(
                 "built-in instrument preset '{id}' has an invalid preview note"
@@ -310,6 +336,14 @@ fn validate_summary_metadata(
         }
     }
     Ok(())
+}
+
+fn is_valid_preview_denominator(value: u8) -> bool {
+    value > 0 && value <= MAX_PREVIEW_DENOMINATOR && (value & (value - 1)) == 0
+}
+
+fn preview_duration_seconds(preview: &InstrumentPreviewDefinition) -> f64 {
+    preview.length_ticks as f64 * 60.0 / (preview.ticks_per_beat as f64 * preview.tempo_bpm)
 }
 
 fn resolve_bundle_path(root: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
@@ -413,6 +447,19 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+    }
+
+    fn load_single_preset_error(preset: serde_json::Value) -> String {
+        let root = TempRoot::new();
+        write_definition(&root.0, "sound.data", "opaque");
+        fs::create_dir_all(root.0.join("resources")).unwrap();
+        write_manifest(&root.0, &[preset]);
+        BuiltInInstrumentCatalog::load(&root.0).unwrap_err()
+    }
+
+    fn assert_rejected(preset: serde_json::Value, message: &str) {
+        let error = load_single_preset_error(preset);
+        assert!(error.contains(message), "{error}");
     }
 
     #[test]
@@ -549,5 +596,80 @@ mod tests {
         let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
 
         assert!(error.contains("invalid preview note"));
+    }
+
+    #[test]
+    fn accepts_power_of_two_preview_denominators_through_128() {
+        for denominator in [64, 128] {
+            let root = TempRoot::new();
+            write_definition(&root.0, "sound.data", "opaque");
+            fs::create_dir_all(root.0.join("resources")).unwrap();
+            let mut preset = manifest_entry(
+                "01-valid-meter",
+                "Valid Meter",
+                None,
+                "sound.data",
+                "resources",
+            );
+            preset["preview"]["timeSignature"]["denominator"] = serde_json::json!(denominator);
+            write_manifest(&root.0, &[preset]);
+
+            let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
+
+            assert_eq!(
+                catalog.summaries()[0].preview.time_signature.denominator,
+                denominator
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_manifest_values_outside_public_preview_contract() {
+        let base = || {
+            manifest_entry(
+                "01-invalid-contract",
+                "Invalid Contract",
+                None,
+                "sound.data",
+                "resources",
+            )
+        };
+
+        let mut preset = base();
+        preset["recommendedRange"]["maxMidi"] = serde_json::json!(128);
+        assert_rejected(preset, "invalid recommended MIDI range");
+
+        let mut preset = base();
+        preset["preview"]["tempoBpm"] = serde_json::json!(29.9);
+        assert_rejected(preset, "invalid preview tempo");
+
+        let mut preset = base();
+        preset["preview"]["tempoBpm"] = serde_json::json!(300.1);
+        assert_rejected(preset, "invalid preview tempo");
+
+        let mut preset = base();
+        preset["preview"]["ticksPerBeat"] = serde_json::json!(32_768);
+        assert_rejected(preset, "invalid preview ticks-per-beat");
+
+        let mut preset = base();
+        preset["preview"]["timeSignature"]["denominator"] = serde_json::json!(3);
+        assert_rejected(preset, "invalid preview time signature");
+
+        let mut preset = base();
+        preset["preview"]["lengthTicks"] = serde_json::json!(9_601);
+        assert_rejected(preset, "invalid preview length");
+
+        let mut preset = base();
+        preset["preview"]["notes"] = serde_json::json!([]);
+        assert_rejected(preset, "invalid preview note count");
+
+        let mut preset = base();
+        let note = preset["preview"]["notes"][0].clone();
+        preset["preview"]["notes"] = serde_json::Value::Array(vec![note; 33]);
+        assert_rejected(preset, "invalid preview note count");
+
+        let mut preset = base();
+        preset["preview"]["notes"][0]["velocity"] = serde_json::json!(128);
+        assert_rejected(preset, "invalid preview note");
     }
 }

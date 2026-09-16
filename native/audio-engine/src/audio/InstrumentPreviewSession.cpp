@@ -7,35 +7,33 @@
 #include <utility>
 
 #include "../instruments/SonalloyInstrumentRuntime.h"
+#include "InstrumentPreviewContract.h"
 
 namespace riffra {
-namespace {
-
-bool validDenominator(const std::uint8_t denominator) noexcept {
-    return denominator == 1 || denominator == 2 || denominator == 4 || denominator == 8 ||
-           denominator == 16 || denominator == 32;
-}
-
-}  // namespace
 
 std::unique_ptr<InstrumentPreviewSession> InstrumentPreviewSession::create(
     const juce::String& definitionJson, const juce::String& definitionBaseDir,
     InstrumentPreviewSpec spec, const double sampleRate, const int blockSize, juce::String& error) {
     if (definitionJson.isEmpty() || definitionBaseDir.isEmpty() || !std::isfinite(sampleRate) ||
-        sampleRate <= 0.0 || blockSize <= 0 || !std::isfinite(spec.tempoBpm) ||
-        spec.tempoBpm <= 0.0 || spec.ticksPerBeat == 0 || spec.lengthTicks == 0 ||
-        spec.timeSignature.numerator == 0 || !validDenominator(spec.timeSignature.denominator)) {
+        sampleRate <= 0.0 || blockSize <= 0 || !instrument_preview::isValidTempo(spec.tempoBpm) ||
+        !instrument_preview::isValidTicksPerBeat(spec.ticksPerBeat) ||
+        !instrument_preview::isWithinDurationLimit(spec.tempoBpm, spec.ticksPerBeat,
+                                                   spec.lengthTicks) ||
+        spec.timeSignature.numerator == 0 ||
+        !instrument_preview::isValidDenominator(spec.timeSignature.denominator)) {
         error = "Built-in instrument preview specification is invalid.";
         return nullptr;
     }
-    if (spec.notes.size() > 4096) {
-        error = "Built-in instrument preview contains too many notes.";
+    if (spec.notes.size() < instrument_preview::kMinimumNoteCount ||
+        spec.notes.size() > instrument_preview::kMaximumNoteCount) {
+        error = "Built-in instrument preview contains an invalid number of notes.";
         return nullptr;
     }
     for (const auto& note : spec.notes) {
         if (note.durationTicks == 0 || note.durationTicks > spec.lengthTicks ||
             note.tick >= spec.lengthTicks || note.tick > spec.lengthTicks - note.durationTicks ||
-            note.note > 127 || note.velocity == 0 || note.velocity > 127) {
+            note.note > instrument_preview::kMaximumMidiValue || note.velocity == 0 ||
+            note.velocity > instrument_preview::kMaximumMidiValue) {
             error = "Built-in instrument preview contains an invalid note.";
             return nullptr;
         }

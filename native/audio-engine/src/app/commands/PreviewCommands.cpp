@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "../AudioCommandDispatcher.h"
+#include "audio/InstrumentPreviewContract.h"
 #include "audio/InstrumentPreviewSession.h"
 #include "midi/MidiInputService.h"
 #include "protocol/AudioProtocol.h"
@@ -49,11 +50,6 @@ bool readPreviewNumber(const juce::var& object, const char* const propertyName, 
     return std::isfinite(value);
 }
 
-bool validPreviewDenominator(const std::uint8_t denominator) noexcept {
-    return denominator == 1 || denominator == 2 || denominator == 4 || denominator == 8 ||
-           denominator == 16 || denominator == 32;
-}
-
 bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce::String& error) {
     if (!value.isObject()) {
         error = "Built-in instrument preview must contain an object preview definition.";
@@ -63,13 +59,15 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
     double tempoBpm = 0.0;
     std::uint64_t ticksPerBeat = 0;
     std::uint64_t lengthTicks = 0;
-    if (!readPreviewNumber(value, "tempoBpm", tempoBpm) || tempoBpm <= 0.0 ||
-        !readPreviewInteger(value, "ticksPerBeat", std::numeric_limits<std::uint16_t>::max(),
+    if (!readPreviewNumber(value, "tempoBpm", tempoBpm) ||
+        !readPreviewInteger(value, "ticksPerBeat", instrument_preview::kMaximumTicksPerBeat,
                             ticksPerBeat) ||
-        ticksPerBeat == 0 ||
         !readPreviewInteger(value, "lengthTicks", std::numeric_limits<std::uint64_t>::max(),
                             lengthTicks) ||
-        lengthTicks == 0) {
+        !instrument_preview::isValidTempo(tempoBpm) ||
+        !instrument_preview::isValidTicksPerBeat(static_cast<std::uint16_t>(ticksPerBeat)) ||
+        !instrument_preview::isWithinDurationLimit(
+            tempoBpm, static_cast<std::uint16_t>(ticksPerBeat), lengthTicks)) {
         error = "Built-in instrument preview has an invalid tempo or length.";
         return false;
     }
@@ -83,13 +81,14 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
         numerator == 0 ||
         !readPreviewInteger(timeSignature, "denominator", std::numeric_limits<std::uint8_t>::max(),
                             denominator) ||
-        !validPreviewDenominator(static_cast<std::uint8_t>(denominator))) {
+        !instrument_preview::isValidDenominator(static_cast<std::uint8_t>(denominator))) {
         error = "Built-in instrument preview has an invalid time signature.";
         return false;
     }
 
     const auto notes = value.getProperty("notes", {});
-    if (!notes.isArray() || notes.size() > 4096) {
+    if (!notes.isArray() || notes.size() < instrument_preview::kMinimumNoteCount ||
+        notes.size() > instrument_preview::kMaximumNoteCount) {
         error = "Built-in instrument preview notes are invalid.";
         return false;
     }
