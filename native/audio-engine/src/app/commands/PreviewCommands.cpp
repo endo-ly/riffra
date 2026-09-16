@@ -78,7 +78,7 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
     if (!timeSignature.isObject() ||
         !readPreviewInteger(timeSignature, "numerator", std::numeric_limits<std::uint8_t>::max(),
                             numerator) ||
-        numerator == 0 ||
+        !instrument_preview::isValidNumerator(static_cast<std::uint8_t>(numerator)) ||
         !readPreviewInteger(timeSignature, "denominator", std::numeric_limits<std::uint8_t>::max(),
                             denominator) ||
         !instrument_preview::isValidDenominator(static_cast<std::uint8_t>(denominator))) {
@@ -100,6 +100,8 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
     spec.lengthTicks = lengthTicks;
     spec.notes.clear();
     spec.notes.reserve(static_cast<std::size_t>(notes.size()));
+    std::uint64_t previousTick = 0;
+    bool hasPreviousTick = false;
     for (const auto& noteValue : *notes.getArray()) {
         if (!noteValue.isObject()) {
             error = "Built-in instrument preview contains an invalid note.";
@@ -116,10 +118,13 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
             !readPreviewInteger(noteValue, "note", 127, note) ||
             !readPreviewInteger(noteValue, "velocity", 127, velocity) || durationTicks == 0 ||
             tick >= lengthTicks || durationTicks > lengthTicks ||
-            tick > lengthTicks - durationTicks || velocity == 0) {
+            tick > lengthTicks - durationTicks || velocity == 0 ||
+            (hasPreviousTick && tick < previousTick)) {
             error = "Built-in instrument preview contains an invalid note.";
             return false;
         }
+        previousTick = tick;
+        hasPreviousTick = true;
         spec.notes.push_back(InstrumentPreviewNote{tick, durationTicks,
                                                    static_cast<std::uint8_t>(note),
                                                    static_cast<std::uint8_t>(velocity)});
@@ -343,6 +348,14 @@ CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) 
     if (type == "stopPreview") {
         context.pipeline.stopPreview();
         context.pipeline.allNotesOff();
+        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
+                                                    context.pipeline, &context.midiInputs.monitor(),
+                                                    {}, &context.timelineEngine));
+        return {};
+    }
+
+    if (type == "stopBuiltInInstrumentPreview") {
+        context.pipeline.stopBuiltInPreview();
         writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
                                                     context.pipeline, &context.midiInputs.monitor(),
                                                     {}, &context.timelineEngine));

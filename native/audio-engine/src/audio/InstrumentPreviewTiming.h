@@ -11,7 +11,7 @@ inline double barPositionForFrame(const std::uint64_t frame, const double sample
                                   const double tempoBpm, const std::uint8_t numerator,
                                   const std::uint8_t denominator) noexcept {
     if (!std::isfinite(sampleRate) || sampleRate <= 0.0 || !isValidTempo(tempoBpm) ||
-        numerator == 0 || !isValidDenominator(denominator))
+        !isValidNumerator(numerator) || !isValidDenominator(denominator))
         return 0.0;
     const auto beatPosition = static_cast<double>(frame) / sampleRate * tempoBpm / 60.0;
     const auto beatsPerBar =

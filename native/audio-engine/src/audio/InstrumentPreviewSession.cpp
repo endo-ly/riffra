@@ -20,7 +20,7 @@ std::unique_ptr<InstrumentPreviewSession> InstrumentPreviewSession::create(
         !instrument_preview::isValidTicksPerBeat(spec.ticksPerBeat) ||
         !instrument_preview::isWithinDurationLimit(spec.tempoBpm, spec.ticksPerBeat,
                                                    spec.lengthTicks) ||
-        spec.timeSignature.numerator == 0 ||
+        !instrument_preview::isValidNumerator(spec.timeSignature.numerator) ||
         !instrument_preview::isValidDenominator(spec.timeSignature.denominator)) {
         error = "Built-in instrument preview specification is invalid.";
         return nullptr;
@@ -30,7 +30,15 @@ std::unique_ptr<InstrumentPreviewSession> InstrumentPreviewSession::create(
         error = "Built-in instrument preview contains an invalid number of notes.";
         return nullptr;
     }
+    std::uint64_t previousTick = 0;
+    bool hasPreviousTick = false;
     for (const auto& note : spec.notes) {
+        if (hasPreviousTick && note.tick < previousTick) {
+            error = "Built-in instrument preview notes are not sorted by tick.";
+            return nullptr;
+        }
+        previousTick = note.tick;
+        hasPreviousTick = true;
         if (note.durationTicks == 0 || note.durationTicks > spec.lengthTicks ||
             note.tick >= spec.lengthTicks || note.tick > spec.lengthTicks - note.durationTicks ||
             note.note > instrument_preview::kMaximumMidiValue || note.velocity == 0 ||

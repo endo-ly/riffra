@@ -25,6 +25,7 @@ public:
     bool startBuiltInPreview(const juce::String& definitionJson,
                              const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
                              double sampleRate, int blockSize, juce::String& error);
+    void stopBuiltInPreview() noexcept;
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -33,6 +34,7 @@ public:
     void stopSynthNote(int note) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
+    [[nodiscard]] bool isBuiltInPreviewing() const noexcept;
 
     // Device lifecycle/control side only.
     void prepare() noexcept;

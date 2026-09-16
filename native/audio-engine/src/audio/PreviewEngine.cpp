@@ -101,8 +101,15 @@ bool PreviewEngine::startBuiltInPreview(const juce::String& definitionJson,
     return true;
 }
 
+void PreviewEngine::stopBuiltInPreview() noexcept {
+    const PreviewControlGuard lock(*this);
+    if (builtInSession != nullptr) builtInSession->allNotesOff();
+    builtInSession.reset();
+}
+
 void PreviewEngine::stopPreview() noexcept {
     const PreviewControlGuard lock(*this);
+    if (builtInSession != nullptr) builtInSession->allNotesOff();
     builtInSession.reset();
     for (auto& voice : previewVoices) {
         voice.active = false;
@@ -173,6 +180,11 @@ bool PreviewEngine::isPreviewing() const noexcept {
     for (const auto& voice : previewVoices)
         if (voice.active) return true;
     return false;
+}
+
+bool PreviewEngine::isBuiltInPreviewing() const noexcept {
+    const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
+    return builtInSession != nullptr && !builtInSession->isFinished();
 }
 
 void PreviewEngine::prepare() noexcept { (void)lookupSine(0.0f); }

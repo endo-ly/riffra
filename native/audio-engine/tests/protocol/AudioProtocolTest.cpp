@@ -79,6 +79,7 @@ TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
     EXPECT_TRUE(status.hasProperty("invalidSamples"));
     EXPECT_TRUE(status.hasProperty("feedbackSuspected"));
     EXPECT_TRUE(status.hasProperty("previewing"));
+    EXPECT_TRUE(status.hasProperty("builtInPreviewing"));
     EXPECT_TRUE(status.hasProperty("recording"));
     EXPECT_TRUE(status.hasProperty("diagnostics"));
     EXPECT_TRUE(status.hasProperty("midiInputs"));

@@ -10,6 +10,7 @@ inline constexpr double kMinimumTempoBpm = 30.0;
 inline constexpr double kMaximumTempoBpm = 300.0;
 inline constexpr std::uint16_t kMinimumTicksPerBeat = 1;
 inline constexpr std::uint16_t kMaximumTicksPerBeat = 32'767;
+inline constexpr std::uint8_t kMaximumTimeSignatureNumerator = 32;
 inline constexpr std::uint8_t kMaximumTimeSignatureDenominator = 128;
 inline constexpr std::size_t kMinimumNoteCount = 1;
 inline constexpr std::size_t kMaximumNoteCount = 32;
@@ -27,6 +28,10 @@ inline bool isValidTicksPerBeat(const std::uint16_t ticksPerBeat) noexcept {
 inline bool isValidDenominator(const std::uint8_t denominator) noexcept {
     return denominator > 0 && denominator <= kMaximumTimeSignatureDenominator &&
            (denominator & static_cast<std::uint8_t>(denominator - 1)) == 0;
+}
+
+inline bool isValidNumerator(const std::uint8_t numerator) noexcept {
+    return numerator > 0 && numerator <= kMaximumTimeSignatureNumerator;
 }
 
 inline bool isWithinDurationLimit(const double tempoBpm, const std::uint16_t ticksPerBeat,
