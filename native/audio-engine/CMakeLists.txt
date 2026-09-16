@@ -111,6 +111,7 @@ target_sources(riffra-audio-core PRIVATE
   src/app/CommandRouting.h
   src/protocol/AudioProtocol.cpp
   src/protocol/AudioProtocol.h
+  src/protocol/OutputQueue.h
   src/app/AudioStatusBuilder.cpp
   src/app/AudioStatusBuilder.h
   src/device/AudioConfiguration.h

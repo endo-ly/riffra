@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "OutputQueue.h"
 #include "plugins/FaultInjection.h"
 
 namespace riffra {
@@ -29,14 +30,16 @@ public:
         {
             const std::lock_guard lock(mutex);
             ensureStarted();
-            if (kind == OutputKind::telemetry && telemetryQueue.size() >= kTelemetryQueueLimit) {
-                droppedTelemetry.fetch_add(1, std::memory_order_relaxed);
-                return;
+            if (kind == OutputKind::control) {
+                // A control response is an ordering barrier for lossy telemetry. Any telemetry
+                // still queued here describes an earlier state and must not overtake this response.
+                const auto dropped = outputQueue.enqueueControl(std::move(line));
+                droppedTelemetry.fetch_add(static_cast<std::uint64_t>(dropped),
+                                           std::memory_order_relaxed);
+            } else {
+                if (!outputQueue.enqueueTelemetry(std::move(line)))
+                    droppedTelemetry.fetch_add(1, std::memory_order_relaxed);
             }
-            if (kind == OutputKind::control)
-                controlQueue.push_back(std::move(line));
-            else
-                telemetryQueue.push_back(std::move(line));
         }
         wake.notify_one();
     }
@@ -72,7 +75,6 @@ public:
     }
 
 private:
-    static constexpr std::size_t kTelemetryQueueLimit = 32;
     static constexpr std::size_t kStateQueueLimit = 256;
 
     void ensureStarted() {
@@ -86,15 +88,11 @@ private:
             {
                 std::unique_lock lock(mutex);
                 wake.wait(lock, [this] {
-                    return stopping || !controlQueue.empty() || !stateQueue.empty() ||
-                           !telemetryQueue.empty();
+                    return stopping || !outputQueue.empty() || !stateQueue.empty();
                 });
-                if (stopping && controlQueue.empty() && stateQueue.empty() &&
-                    telemetryQueue.empty())
-                    return;
-                if (!controlQueue.empty()) {
-                    line = std::move(controlQueue.front());
-                    controlQueue.pop_front();
+                if (stopping && outputQueue.empty() && stateQueue.empty()) return;
+                if (outputQueue.hasControl()) {
+                    line = outputQueue.takeControl();
                 } else if (!stateQueue.empty()) {
                     const auto key = std::move(stateOrder.front());
                     stateOrder.pop_front();
@@ -104,8 +102,7 @@ private:
                         stateQueue.erase(event);
                     }
                 } else {
-                    line = std::move(telemetryQueue.front());
-                    telemetryQueue.pop_front();
+                    line = outputQueue.takeTelemetry();
                 }
             }
             std::cout << line << '\n' << std::flush;
@@ -125,10 +122,9 @@ private:
 
     mutable std::mutex mutex;
     std::condition_variable wake;
-    std::deque<std::string> controlQueue;
     std::deque<std::string> stateOrder;
     std::unordered_map<std::string, std::string> stateQueue;
-    std::deque<std::string> telemetryQueue;
+    OutputQueue outputQueue;
     std::thread writer;
     std::atomic<std::uint64_t> droppedTelemetry{0};
     std::atomic<std::uint64_t> droppedState{0};

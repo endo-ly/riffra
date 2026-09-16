@@ -5,6 +5,7 @@
 #include "device/AudioDeviceService.h"
 #include "midi/MidiInputService.h"
 #include "protocol/AudioProtocol.h"
+#include "protocol/OutputQueue.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
@@ -48,6 +49,16 @@ TEST(AudioProtocolTest, CreatesSafeErrorPayload) {
     EXPECT_EQ(error.getProperty("message", {}).toString(), "invalid request");
     EXPECT_EQ(error.getProperty("operation", {}).toString(), "protocol");
     EXPECT_TRUE(error.getProperty("details", {}).isObject());
+}
+
+TEST(AudioProtocolTest, ControlOutputDiscardsQueuedTelemetry) {
+    OutputQueue queue;
+
+    ASSERT_TRUE(queue.enqueueTelemetry("old telemetry"));
+    EXPECT_EQ(queue.enqueueControl("new control"), 1u);
+    ASSERT_TRUE(queue.hasControl());
+    EXPECT_EQ(queue.takeControl(), "new control");
+    EXPECT_FALSE(queue.hasTelemetry());
 }
 
 TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
