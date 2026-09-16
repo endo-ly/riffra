@@ -5,16 +5,26 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace riffra {
+
+struct InstrumentPreviewSpec;
+class InstrumentPreviewSession;
 
 /// Owns preview sample voices and the fallback MIDI synthesizer.
 class PreviewEngine final {
 public:
+    PreviewEngine();
+    ~PreviewEngine();
+
     // Non-audio callback threads only. Audio playback observes the state
     // through the non-blocking audio guard.
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
                       bool loop, juce::String& error, int voiceKey = -1);
+    bool startBuiltInPreview(const juce::String& definitionJson,
+                             const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
+                             double sampleRate, int blockSize, juce::String& error);
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -94,6 +104,7 @@ private:
     std::atomic_flag previewBusy = ATOMIC_FLAG_INIT;
     std::array<PreviewVoice, kPreviewVoiceCount> previewVoices;
     std::uint64_t previewSequence = 0;
+    std::unique_ptr<InstrumentPreviewSession> builtInSession;
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;
     std::atomic<bool> synthPanicRequested{false};
 };

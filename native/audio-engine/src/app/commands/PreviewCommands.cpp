@@ -1,9 +1,139 @@
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <future>
+#include <limits>
+#include <memory>
+
 #include "../AudioCommandDispatcher.h"
+#include "audio/InstrumentPreviewSession.h"
 #include "midi/MidiInputService.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
+namespace {
+
+bool readPreviewInteger(const juce::var& object, const char* const propertyName,
+                        const std::uint64_t maximum, std::uint64_t& value) {
+    const auto property = object.getProperty(propertyName, {});
+    if (property.isInt()) {
+        const auto candidate = static_cast<int>(property);
+        if (candidate < 0) return false;
+        value = static_cast<std::uint64_t>(candidate);
+        return value <= maximum;
+    }
+    if (property.isInt64()) {
+        const auto candidate = static_cast<juce::int64>(property);
+        if (candidate < 0) return false;
+        value = static_cast<std::uint64_t>(candidate);
+        return value <= maximum;
+    }
+    if (!property.isDouble()) return false;
+    const auto candidate = static_cast<long double>(static_cast<double>(property));
+    if (!std::isfinite(static_cast<double>(candidate)) || candidate < 0.0L ||
+        std::floor(candidate) != candidate || candidate > static_cast<long double>(maximum) ||
+        (maximum == std::numeric_limits<std::uint64_t>::max() &&
+         candidate >= static_cast<long double>(std::numeric_limits<std::uint64_t>::max())))
+        return false;
+    value = static_cast<std::uint64_t>(candidate);
+    return true;
+}
+
+bool readPreviewNumber(const juce::var& object, const char* const propertyName, double& value) {
+    const auto property = object.getProperty(propertyName, {});
+    if (!property.isInt() && !property.isInt64() && !property.isDouble()) return false;
+    value = static_cast<double>(property);
+    return std::isfinite(value);
+}
+
+bool validPreviewDenominator(const std::uint8_t denominator) noexcept {
+    return denominator == 1 || denominator == 2 || denominator == 4 || denominator == 8 ||
+           denominator == 16 || denominator == 32;
+}
+
+bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce::String& error) {
+    if (!value.isObject()) {
+        error = "Built-in instrument preview must contain an object preview definition.";
+        return false;
+    }
+
+    double tempoBpm = 0.0;
+    std::uint64_t ticksPerBeat = 0;
+    std::uint64_t lengthTicks = 0;
+    if (!readPreviewNumber(value, "tempoBpm", tempoBpm) || tempoBpm <= 0.0 ||
+        !readPreviewInteger(value, "ticksPerBeat", std::numeric_limits<std::uint16_t>::max(),
+                            ticksPerBeat) ||
+        ticksPerBeat == 0 ||
+        !readPreviewInteger(value, "lengthTicks", std::numeric_limits<std::uint64_t>::max(),
+                            lengthTicks) ||
+        lengthTicks == 0) {
+        error = "Built-in instrument preview has an invalid tempo or length.";
+        return false;
+    }
+
+    const auto timeSignature = value.getProperty("timeSignature", {});
+    std::uint64_t numerator = 0;
+    std::uint64_t denominator = 0;
+    if (!timeSignature.isObject() ||
+        !readPreviewInteger(timeSignature, "numerator", std::numeric_limits<std::uint8_t>::max(),
+                            numerator) ||
+        numerator == 0 ||
+        !readPreviewInteger(timeSignature, "denominator", std::numeric_limits<std::uint8_t>::max(),
+                            denominator) ||
+        !validPreviewDenominator(static_cast<std::uint8_t>(denominator))) {
+        error = "Built-in instrument preview has an invalid time signature.";
+        return false;
+    }
+
+    const auto notes = value.getProperty("notes", {});
+    if (!notes.isArray() || notes.size() > 4096) {
+        error = "Built-in instrument preview notes are invalid.";
+        return false;
+    }
+
+    spec.tempoBpm = tempoBpm;
+    spec.ticksPerBeat = static_cast<std::uint16_t>(ticksPerBeat);
+    spec.timeSignature = InstrumentPreviewTimeSignature{static_cast<std::uint8_t>(numerator),
+                                                        static_cast<std::uint8_t>(denominator)};
+    spec.lengthTicks = lengthTicks;
+    spec.notes.clear();
+    spec.notes.reserve(static_cast<std::size_t>(notes.size()));
+    for (const auto& noteValue : *notes.getArray()) {
+        if (!noteValue.isObject()) {
+            error = "Built-in instrument preview contains an invalid note.";
+            return false;
+        }
+        std::uint64_t tick = 0;
+        std::uint64_t durationTicks = 0;
+        std::uint64_t note = 0;
+        std::uint64_t velocity = 0;
+        if (!readPreviewInteger(noteValue, "tick", std::numeric_limits<std::uint64_t>::max(),
+                                tick) ||
+            !readPreviewInteger(noteValue, "durationTicks",
+                                std::numeric_limits<std::uint64_t>::max(), durationTicks) ||
+            !readPreviewInteger(noteValue, "note", 127, note) ||
+            !readPreviewInteger(noteValue, "velocity", 127, velocity) || durationTicks == 0 ||
+            tick >= lengthTicks || durationTicks > lengthTicks ||
+            tick > lengthTicks - durationTicks || velocity == 0) {
+            error = "Built-in instrument preview contains an invalid note.";
+            return false;
+        }
+        spec.notes.push_back(InstrumentPreviewNote{tick, durationTicks,
+                                                   static_cast<std::uint8_t>(note),
+                                                   static_cast<std::uint8_t>(velocity)});
+    }
+    return true;
+}
+
+struct BuiltInPreviewResult final {
+    bool success = false;
+    juce::String error;
+};
+
+}  // namespace
 
 CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) {
     const auto type = command.getProperty("type", {}).toString();
@@ -152,6 +282,57 @@ CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) 
         }
         if (previewError.isNotEmpty()) {
             writeJson(makeError("preview", previewError));
+            return {};
+        }
+        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
+                                                    context.pipeline, &context.midiInputs.monitor(),
+                                                    {}, &context.timelineEngine));
+        return {};
+    }
+
+    if (type == "previewBuiltInInstrument") {
+        if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
+            writeJson(makeError("timelineBusy",
+                                "The Arrangement Graph is still loading a VST3. Preview "
+                                "can be retried shortly."));
+            return {};
+        }
+        const auto definitionJson = command.getProperty("definitionJson", {}).toString();
+        const auto definitionBaseDir = command.getProperty("definitionBaseDir", {}).toString();
+        InstrumentPreviewSpec spec;
+        juce::String previewError;
+        if (definitionJson.isEmpty() || definitionBaseDir.isEmpty() ||
+            !parsePreviewSpec(command.getProperty("preview", {}), spec, previewError)) {
+            if (previewError.isEmpty())
+                previewError = "Built-in instrument preview definition is unavailable.";
+            writeJson(makeError("preview", previewError));
+            return {};
+        }
+
+        constexpr auto preparationTimeout = std::chrono::seconds(45);
+        const auto result = std::make_shared<BuiltInPreviewResult>();
+        const auto completion = std::make_shared<std::promise<void>>();
+        auto completed = completion->get_future();
+        const auto submitted = context.runtimeLifecycle.submit(
+            [this, definitionJson, definitionBaseDir, spec = std::move(spec), result,
+             completion]() mutable {
+                try {
+                    result->success = context.pipeline.startBuiltInPreview(
+                        definitionJson, definitionBaseDir, std::move(spec), result->error);
+                    if (!result->success && result->error.isEmpty())
+                        result->error = "Built-in instrument preview could not be prepared.";
+                } catch (...) {
+                    result->error = "Built-in instrument preview could not be prepared.";
+                }
+                completion->set_value();
+            },
+            preparationTimeout);
+        if (!submitted || completed.wait_for(preparationTimeout) != std::future_status::ready) {
+            writeJson(makeError("preview", "Built-in instrument preview preparation timed out."));
+            return {};
+        }
+        if (!result->success) {
+            writeJson(makeError("preview", result->error));
             return {};
         }
         writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),

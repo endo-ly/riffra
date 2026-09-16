@@ -4,8 +4,14 @@
 #include <array>
 #include <cmath>
 #include <thread>
+#include <utility>
+
+#include "InstrumentPreviewSession.h"
 
 namespace riffra {
+
+PreviewEngine::PreviewEngine() = default;
+PreviewEngine::~PreviewEngine() = default;
 
 PreviewEngine::PreviewControlGuard::PreviewControlGuard(PreviewEngine& ownerIn) noexcept
     : owner(ownerIn) {
@@ -37,6 +43,7 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
         error = "Preview range is empty.";
         return false;
     }
+    if (voiceKey < 0) builtInSession.reset();
     PreviewVoice* target = nullptr;
     if (voiceKey >= 0) {
         for (auto& voice : previewVoices) {
@@ -71,8 +78,32 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
     return true;
 }
 
+bool PreviewEngine::startBuiltInPreview(const juce::String& definitionJson,
+                                        const juce::String& definitionBaseDir,
+                                        InstrumentPreviewSpec spec, const double sampleRate,
+                                        const int blockSize, juce::String& error) {
+    auto session = InstrumentPreviewSession::create(definitionJson, definitionBaseDir,
+                                                    std::move(spec), sampleRate, blockSize, error);
+    if (session == nullptr) return false;
+
+    const PreviewControlGuard lock(*this);
+    for (auto& voice : previewVoices) {
+        if (!voice.active || voice.key == 1) continue;
+        voice.active = false;
+        voice.key = -1;
+        voice.start = 0;
+        voice.cursor = 0;
+        voice.end = 0;
+        voice.loop = false;
+        voice.buffer.setSize(0, 0);
+    }
+    builtInSession = std::move(session);
+    return true;
+}
+
 void PreviewEngine::stopPreview() noexcept {
     const PreviewControlGuard lock(*this);
+    builtInSession.reset();
     for (auto& voice : previewVoices) {
         voice.active = false;
         voice.key = -1;
@@ -132,11 +163,13 @@ void PreviewEngine::stopSynthNote(const int note) noexcept {
 
 void PreviewEngine::allNotesOff() noexcept {
     const PreviewControlGuard lock(*this);
+    if (builtInSession != nullptr) builtInSession->allNotesOff();
     for (auto& voice : synthVoices) voice.releasing = true;
 }
 
 bool PreviewEngine::isPreviewing() const noexcept {
     const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
+    if (builtInSession != nullptr && !builtInSession->isFinished()) return true;
     for (const auto& voice : previewVoices)
         if (voice.active) return true;
     return false;
@@ -148,6 +181,8 @@ bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputC
                            const int numSamples, const double sampleRate) noexcept {
     const PreviewAudioGuard previewTry(*this);
     if (!previewTry.acquired()) return false;
+    if (builtInSession != nullptr)
+        builtInSession->process(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixPreview(outputChannelData, numOutputChannels, numSamples);
     mixSynth(outputChannelData, numOutputChannels, numSamples, sampleRate);
     return true;
