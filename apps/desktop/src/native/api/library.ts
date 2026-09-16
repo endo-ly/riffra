@@ -1,4 +1,9 @@
-import type { LibraryAsset, RecordingAsset } from '@/model/domain';
+import type {
+  InstrumentCollection,
+  InstrumentLibraryItem,
+  LibraryAsset,
+  RecordingAsset,
+} from '@/model/domain';
 import { invokeHostOrFallback, invokeHost } from '../invoke';
 
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
@@ -48,4 +53,63 @@ export async function updateLibraryAsset(
 
 export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
   return invokeHostOrFallback<LibraryAsset[]>('related_library_assets', { id }, []);
+}
+
+export async function listInstruments(): Promise<InstrumentLibraryItem[]> {
+  return invokeHostOrFallback<InstrumentLibraryItem[]>('list_instruments', {}, []);
+}
+
+export async function setInstrumentFavorite(
+  instrumentId: string,
+  favorite: boolean,
+): Promise<InstrumentLibraryItem> {
+  return invokeHost<InstrumentLibraryItem>('set_instrument_favorite', { instrumentId, favorite });
+}
+
+export async function setInstrumentCategoryOverride(
+  instrumentId: string,
+  category: string | null,
+): Promise<InstrumentLibraryItem> {
+  return invokeHost<InstrumentLibraryItem>('set_instrument_category_override', {
+    instrumentId,
+    category,
+  });
+}
+
+export async function setInstrumentUserTags(
+  instrumentId: string,
+  tags: string[],
+): Promise<InstrumentLibraryItem> {
+  return invokeHost<InstrumentLibraryItem>('set_instrument_user_tags', { instrumentId, tags });
+}
+
+export async function listInstrumentCollections(): Promise<InstrumentCollection[]> {
+  return invokeHostOrFallback<InstrumentCollection[]>('list_instrument_collections', {}, []);
+}
+
+export async function createInstrumentCollection(name: string): Promise<InstrumentCollection> {
+  return invokeHost<InstrumentCollection>('create_instrument_collection', { name });
+}
+
+export async function renameInstrumentCollection(
+  id: number,
+  name: string,
+): Promise<InstrumentCollection> {
+  return invokeHost<InstrumentCollection>('rename_instrument_collection', { id, name });
+}
+
+export async function deleteInstrumentCollection(id: number): Promise<void> {
+  await invokeHost('delete_instrument_collection', { id });
+}
+
+export async function setInstrumentCollectionMembership(
+  collectionId: number,
+  instrumentId: string,
+  included: boolean,
+): Promise<InstrumentLibraryItem> {
+  return invokeHost<InstrumentLibraryItem>('set_instrument_collection_membership', {
+    collectionId,
+    instrumentId,
+    included,
+  });
 }

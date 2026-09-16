@@ -5,6 +5,7 @@
 #include "device/AudioDeviceService.h"
 #include "midi/MidiInputService.h"
 #include "protocol/AudioProtocol.h"
+#include "protocol/OutputQueue.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
@@ -50,6 +51,16 @@ TEST(AudioProtocolTest, CreatesSafeErrorPayload) {
     EXPECT_TRUE(error.getProperty("details", {}).isObject());
 }
 
+TEST(AudioProtocolTest, ControlOutputDiscardsQueuedTelemetry) {
+    OutputQueue queue;
+
+    ASSERT_TRUE(queue.enqueueTelemetry("old telemetry"));
+    EXPECT_EQ(queue.enqueueControl("new control"), 1u);
+    ASSERT_TRUE(queue.hasControl());
+    EXPECT_EQ(queue.takeControl(), "new control");
+    EXPECT_FALSE(queue.hasTelemetry());
+}
+
 TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
@@ -79,6 +90,7 @@ TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
     EXPECT_TRUE(status.hasProperty("invalidSamples"));
     EXPECT_TRUE(status.hasProperty("feedbackSuspected"));
     EXPECT_TRUE(status.hasProperty("previewing"));
+    EXPECT_TRUE(status.hasProperty("builtInPreviewing"));
     EXPECT_TRUE(status.hasProperty("recording"));
     EXPECT_TRUE(status.hasProperty("diagnostics"));
     EXPECT_TRUE(status.hasProperty("midiInputs"));

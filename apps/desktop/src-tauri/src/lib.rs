@@ -145,6 +145,8 @@ pub fn run() {
             session::commands::set_live_midi_target,
             session::commands::panic_midi_track,
             stop_preview,
+            preview_built_in_instrument,
+            stop_built_in_instrument_preview,
             // Session Application Operations.
             session::commands::undo_session,
             session::commands::redo_session,
@@ -242,6 +244,15 @@ pub fn run() {
             library::commands::search_library,
             library::commands::update_library_asset,
             library::commands::related_library_assets,
+            library::commands::list_instruments,
+            library::commands::set_instrument_favorite,
+            library::commands::set_instrument_category_override,
+            library::commands::set_instrument_user_tags,
+            library::commands::list_instrument_collections,
+            library::commands::create_instrument_collection,
+            library::commands::rename_instrument_collection,
+            library::commands::delete_instrument_collection,
+            library::commands::set_instrument_collection_membership,
             // MIDI export.
             // Background-job orchestration per feature.
             analysis::commands::analyze_asset,

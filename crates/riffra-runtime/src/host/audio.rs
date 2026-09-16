@@ -402,7 +402,7 @@ mod tests {
             .instrument_faults
             .push(crate::model::AudioInstrumentFault {
                 track_id: "track:piano".into(),
-                instrument_type: "Sonalloy".into(),
+                instrument_type: "Built-in".into(),
                 fault_code: 0,
                 dropped_midi_events: 0,
             });
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(report["mute"]["userEmergency"], true);
         assert_eq!(report["mute"]["deviceFault"], true);
         assert_eq!(report["realtime"]["callbackOverruns"], 3);
-        assert_eq!(report["instrumentFaults"][0]["instrumentType"], "Sonalloy");
+        assert_eq!(report["instrumentFaults"][0]["instrumentType"], "Built-in");
         assert!(report.get("projection").is_none());
         assert!(report.get("timeline").is_none());
         assert!(report.get("debug").is_none());

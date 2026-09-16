@@ -63,6 +63,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
+    builtInPreviewing: false,
     muteReasons: 0,
     diagnostics: {
       callbackCount: 0,

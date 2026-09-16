@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { BuiltInInstrumentSummary, PluginEntry } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
+import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
 import styles from '../WorkspaceArrangeOverlay.module.css';
+
+type QuickPickerInstrument = Pick<BuiltInInstrumentSummary, 'id' | 'name' | 'description'> &
+  Partial<Pick<BuiltInInstrumentSummary, 'author' | 'category' | 'tags'>>;
 
 interface InstrumentPickerProps {
   api?: Pick<JobApi, 'scanVst3Folder'>;
-  builtInInstruments: BuiltInInstrumentSummary[];
+  builtInInstruments: QuickPickerInstrument[];
   plugins?: PluginEntry[];
   onSelectBuiltIn: (presetId: string) => void;
   onSelectVst3: (plugin: PluginEntry) => void;
@@ -64,13 +68,9 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
   const trimmedQuery = query.trim().toLowerCase();
   const filteredBuiltIns = useMemo(
     () =>
-      trimmedQuery
-        ? props.builtInInstruments.filter(
-            (instrument) =>
-              instrument.name.toLowerCase().includes(trimmedQuery) ||
-              (instrument.description ?? '').toLowerCase().includes(trimmedQuery),
-          )
-        : props.builtInInstruments,
+      props.builtInInstruments.filter((instrument) =>
+        matchesInstrumentQuery(instrument, trimmedQuery),
+      ),
     [props.builtInInstruments, trimmedQuery],
   );
   const filteredPlugins = useMemo(

@@ -12,7 +12,7 @@ include(CTest)
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
-set(RIFFRA_SONALLOY_VERSION "2026.9.14")
+set(RIFFRA_SONALLOY_VERSION "2026.9.16")
 set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
@@ -94,11 +94,11 @@ target_sources(riffra-render-core PRIVATE
   src/plugins/PluginRack.cpp
   src/plugins/PluginRackState.cpp
   src/plugins/PluginRack.h
-  src/timeline/instruments/InstrumentRuntime.h
-  src/timeline/instruments/Vst3InstrumentRuntime.cpp
-  src/timeline/instruments/Vst3InstrumentRuntime.h
-  src/timeline/instruments/SonalloyInstrumentRuntime.cpp
-  src/timeline/instruments/SonalloyInstrumentRuntime.h
+  src/instruments/InstrumentRuntime.h
+  src/instruments/Vst3InstrumentRuntime.cpp
+  src/instruments/Vst3InstrumentRuntime.h
+  src/instruments/SonalloyInstrumentRuntime.cpp
+  src/instruments/SonalloyInstrumentRuntime.h
   src/concurrency/BoundedMpmcQueue.h
   src/plugins/PluginChain.cpp
   src/plugins/PluginChain.h
@@ -111,6 +111,7 @@ target_sources(riffra-audio-core PRIVATE
   src/app/CommandRouting.h
   src/protocol/AudioProtocol.cpp
   src/protocol/AudioProtocol.h
+  src/protocol/OutputQueue.h
   src/app/AudioStatusBuilder.cpp
   src/app/AudioStatusBuilder.h
   src/device/AudioConfiguration.h
@@ -124,6 +125,8 @@ target_sources(riffra-audio-core PRIVATE
   src/audio/AudioMetrics.h
   src/audio/PreviewEngine.cpp
   src/audio/PreviewEngine.h
+  src/audio/InstrumentPreviewSession.cpp
+  src/audio/InstrumentPreviewSession.h
   src/audio/AudioRenderPipeline.cpp
   src/audio/AudioRenderPipeline.h
   src/app/RecordingController.cpp
@@ -405,6 +408,7 @@ if(BUILD_TESTING)
     tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
     tests/audio/AudioSafetyDspTest.cpp
+    tests/audio/InstrumentPreviewSessionTest.cpp
     tests/device/AudioDeviceControllerTest.cpp
     tests/plugins/PluginRackTest.cpp
     tests/plugins/PluginChainTest.cpp

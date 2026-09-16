@@ -19,6 +19,10 @@ activeInputChannels: Array<number>, outputDevice: string | null, outputChannels:
  */
 activeOutputChannels: Array<number>, sampleRate: number | null, bufferSize: number | null, roundTripMs: number | null, timelineTick: number | null, recording: RecordingStatus, midiInputs: Array<MidiDeviceInfo>, midiOutputs: Array<MidiDeviceInfo>, midiInputActive: boolean, midiMessages: number, lastMidiNote: number | null, inputPeak: number, outputPeak: number, invalidSamples: number, feedbackSuspected: boolean, previewing: boolean,
 /**
+ * Whether the prepared built-in instrument preview is active.
+ */
+builtInPreviewing: boolean,
+/**
  * Bitmask owned by the Native safety callback. Each bit identifies the
  * owner that currently keeps the output muted.
  */

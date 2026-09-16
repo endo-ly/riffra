@@ -11,7 +11,9 @@ import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionSt
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
+import { useBrowserSearch } from '@/features/browser/hooks/useBrowserSearch';
 import { useInbox } from '@/features/library/hooks/useInbox';
+import { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
 import { useAudioSettings } from '@/features/audio/hooks/useAudioSettings';
 import { useMissingDependencies } from '@/features/project/hooks/useMissingDependencies';
 import { useRecording } from '@/features/recording/hooks/useRecording';
@@ -144,23 +146,31 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleRecording,
   } = recording;
 
+  const browserSearch = useBrowserSearch();
+  const { query, setQuery, normalizedQuery } = browserSearch;
+
   const library = useLibrary(api, {
     setAudio,
+    query: normalizedQuery,
+    onSearchRequested: setQuery,
     hostGeneration: hostConnection.state.generation,
     projectId,
   });
   const {
-    libraryQuery,
-    setLibraryQuery,
     libraryResults,
     selectedLibraryAsset,
     relatedAssets,
-    query,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     updateSelectedLibraryAsset,
     importMidi,
   } = library;
+  const instruments = useInstrumentLibrary(api, {
+    query: normalizedQuery,
+    hostGeneration: hostConnection.state.generation,
+    safeMode: boot?.safeMode ?? false,
+    setAudio,
+  });
 
   const inbox = useInbox(api, recordings, {
     hostGeneration: hostConnection.state.generation,
@@ -238,14 +248,18 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     return () => window.removeEventListener('keydown', onKey);
   }, [hostReady, redo, toggleMute, undo]);
 
-  const visiblePlugins = query
+  const visiblePlugins = normalizedQuery
     ? plugins.filter((plugin) =>
-        `${plugin.name} ${plugin.vendor ?? ''} ${plugin.path}`.toLowerCase().includes(query),
+        `${plugin.name} ${plugin.vendor ?? ''} ${plugin.path}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery),
       )
     : plugins;
-  const visibleRecordings = query
+  const visibleRecordings = normalizedQuery
     ? recordings.filter((recording) =>
-        `${recording.name} ${recording.state} ${recording.path}`.toLowerCase().includes(query),
+        `${recording.name} ${recording.state} ${recording.path}`
+          .toLocaleLowerCase()
+          .includes(normalizedQuery),
       )
     : recordings;
   return {
@@ -279,8 +293,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     deviceProbe,
     refreshAudioDevices,
     probeAudioChannels,
-    libraryQuery,
-    setLibraryQuery,
     libraryResults,
     selectedLibraryAsset,
     relatedAssets,
@@ -313,7 +325,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleMute,
     resetFeedback,
     toggleRecording,
-    query,
     visiblePlugins,
     visibleRecordings,
     inbox,
@@ -323,5 +334,23 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runtimeProjectionFailure: runtimeProjection.failure,
     runtimeProjectionRetrying: runtimeProjection.retrying,
     retryRuntimeProjection: runtimeProjection.retry,
+    browser: {
+      query,
+      setQuery,
+      library: {
+        query: normalizedQuery,
+        results: libraryResults,
+        selectedAsset: selectedLibraryAsset,
+        relatedAssets,
+        onSelectAsset: selectLibraryAsset,
+        onPreviewAsset: previewSelectedLibraryAsset,
+        onUpdateAsset: updateSelectedLibraryAsset,
+        onImportMidi: importMidi,
+      },
+      instruments,
+      plugins: { plugins, visiblePlugins },
+      recordings: { visibleRecordings, count: recordings.length },
+      inbox,
+    },
   };
 }

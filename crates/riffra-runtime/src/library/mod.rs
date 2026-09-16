@@ -10,6 +10,7 @@ use std::{
 use ts_rs::TS;
 
 pub mod index;
+pub mod instruments;
 
 const SEARCH_LIMIT: i64 = 200;
 
@@ -76,6 +77,7 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
              CREATE INDEX IF NOT EXISTS idx_library_entries_kind ON library_entries(kind);",
         )
         .map_err(|error| format!("Library schema could not be prepared: {error}"))?;
+    instruments::ensure_schema(connection)?;
     Ok(())
 }
 

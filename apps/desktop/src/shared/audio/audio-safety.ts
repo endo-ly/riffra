@@ -8,10 +8,12 @@ import type { AudioStatus } from '@/model/domain';
 
 /**
  * Returns true when an audio command's returned status represents a usable
- * (non-faulted, non-offline) engine.
+ * (non-faulted, non-offline) engine and does not report a command failure.
  */
-export function audioCommandSucceeded(audio: Pick<AudioStatus, 'state'>): boolean {
-  return audio.state !== 'faulted' && audio.state !== 'offline';
+export function audioCommandSucceeded(audio: Pick<AudioStatus, 'state' | 'message'>): boolean {
+  return (
+    audio.state !== 'faulted' && audio.state !== 'offline' && !audio.message.includes(' failed: ')
+  );
 }
 
 /** Returns whether the Audio Runtime is currently forcing output silent. */

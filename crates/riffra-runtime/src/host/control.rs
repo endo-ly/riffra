@@ -926,6 +926,44 @@ impl HostState {
                     .map_err(serialize_error)?,
                 current.sequence,
             )),
+            "instrument.builtin.preview" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode blocks built-in instrument preview",
+                    ));
+                }
+                let params: BuiltInInstrumentPreviewParams = decode(params)?;
+                let definition = self
+                    .built_in_instruments
+                    .resolve(&params.preset_id)
+                    .map_err(command_error)?;
+                let status = self
+                    .core
+                    .audio()
+                    .preview_built_in_instrument(
+                        &definition.definition_json,
+                        &definition.base_dir,
+                        &definition.summary.preview,
+                    )
+                    .map_err(audio_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "instrument.builtin.preview.stop" => {
+                let status = self
+                    .core
+                    .audio()
+                    .stop_built_in_instrument_preview()
+                    .map_err(audio_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
             "midi.send" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
@@ -1208,6 +1246,115 @@ impl HostState {
                     library::related(&self.data_root, &params.id).map_err(command_error)?;
                 Ok((
                     "library",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.list" => Ok((
+                "instrumentLibrary",
+                serde_json::to_value(
+                    library::instruments::list(&self.data_root, self.built_in_instruments.as_ref())
+                        .map_err(command_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "library.instrument.favorite.set" => {
+                let params: InstrumentFavoriteParams = decode(params)?;
+                let result = library::instruments::set_favorite(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.favorite,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.category.set" => {
+                let params: InstrumentCategoryParams = decode(params)?;
+                let result = library::instruments::set_category_override(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.category,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.tags.set" => {
+                let params: InstrumentTagsParams = decode(params)?;
+                let result = library::instruments::set_user_tags(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.tags,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.list" => Ok((
+                "instrumentCollections",
+                serde_json::to_value(
+                    library::instruments::list_collections(&self.data_root)
+                        .map_err(command_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "library.instrument.collection.create" => {
+                let params: InstrumentCollectionCreateParams = decode(params)?;
+                let result = library::instruments::create_collection(&self.data_root, params.name)
+                    .map_err(command_error)?;
+                Ok((
+                    "instrumentCollection",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.rename" => {
+                let params: InstrumentCollectionRenameParams = decode(params)?;
+                let result = library::instruments::rename_collection(
+                    &self.data_root,
+                    params.id,
+                    params.name,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentCollection",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.delete" => {
+                let params: InstrumentCollectionIdParams = decode(params)?;
+                library::instruments::delete_collection(&self.data_root, params.id)
+                    .map_err(command_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "library.instrument.collection.membership.set" => {
+                let params: InstrumentCollectionMembershipParams = decode(params)?;
+                let result = library::instruments::set_collection_membership(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    params.collection_id,
+                    &params.instrument_id,
+                    params.included,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
                     serde_json::to_value(result).map_err(serialize_error)?,
                     current.sequence,
                 ))
@@ -1916,6 +2063,8 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "audio.driver.get"
             | "asset.preview"
             | "asset.preview.stop"
+            | "instrument.builtin.preview"
+            | "instrument.builtin.preview.stop"
             | "midi.send"
             | "midi.target.set"
             | "midi.panic"
@@ -1939,6 +2088,15 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "library.search"
             | "library.asset.update"
             | "library.related"
+            | "library.instrument.list"
+            | "library.instrument.favorite.set"
+            | "library.instrument.category.set"
+            | "library.instrument.tags.set"
+            | "library.instrument.collection.list"
+            | "library.instrument.collection.create"
+            | "library.instrument.collection.rename"
+            | "library.instrument.collection.delete"
+            | "library.instrument.collection.membership.set"
             | "analysis.start"
             | "plugin.editor.open"
             | "device.inspect"
@@ -1965,6 +2123,12 @@ struct TrackIdParams {
 #[serde(rename_all = "camelCase")]
 struct BuiltInInstrumentParams {
     track_id: String,
+    preset_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuiltInInstrumentPreviewParams {
     preset_id: String,
 }
 
@@ -2163,6 +2327,54 @@ struct LibraryIdParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct InstrumentFavoriteParams {
+    instrument_id: String,
+    favorite: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCategoryParams {
+    instrument_id: String,
+    category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentTagsParams {
+    instrument_id: String,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionIdParams {
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionCreateParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionRenameParams {
+    id: i64,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionMembershipParams {
+    collection_id: i64,
+    instrument_id: String,
+    included: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AnalysisParams {
     asset_id: Option<String>,
     path: Option<String>,
@@ -2192,9 +2404,132 @@ mod tests {
             "project.list",
             "instrument.vst3.set",
             "effect.add",
+            "instrument.builtin.preview",
+            "library.instrument.list",
         ] {
             assert!(!super::requires_command_gate(command), "{command}");
         }
+    }
+
+    #[test]
+    fn instrument_library_commands_preserve_canonical_state() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-instrument-library-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let preset_root = data_root.join("built-in-instruments").join("01-bass");
+        std::fs::create_dir_all(&preset_root).unwrap();
+        std::fs::write(preset_root.join("definition.json"), br#"{}"#).unwrap();
+        std::fs::write(
+            preset_root.parent().unwrap().join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-bass","name":"Bass","author":"Riffra","description":"Low","category":"Bass","tags":["Low"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-bass/definition.json","resourceBasePath":"01-bass"}]}"#,
+        )
+        .unwrap();
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            built_in_instruments_root: preset_root.parent().unwrap().to_path_buf(),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let before = host.canonical_state().unwrap();
+
+        let dispatch = |command: &str, params: serde_json::Value| {
+            let response = host.dispatch_control(ControlRequest::new(
+                command,
+                ControlCommand::new(command, params),
+                Some(0),
+            ));
+            assert!(response.ok, "{command}: {:?}", response.error);
+            assert_eq!(response.sequence, Some(0), "{command}");
+            response.result.unwrap().value
+        };
+
+        let listed: Vec<crate::InstrumentLibraryItem> =
+            serde_json::from_value(dispatch("library.instrument.list", serde_json::json!({})))
+                .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "builtin:01-bass");
+
+        let favorite: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.favorite.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","favorite":true}),
+        ))
+        .unwrap();
+        assert!(favorite.favorite);
+
+        let overridden: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.category.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","category":" Basses "}),
+        ))
+        .unwrap();
+        assert_eq!(overridden.category, "Basses");
+        let restored: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.category.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","category":null}),
+        ))
+        .unwrap();
+        assert_eq!(restored.category, "Bass");
+
+        let tagged: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.tags.set",
+            serde_json::json!({"instrumentId":"builtin:01-bass","tags":["Verse","verse"," Lead "]}),
+        ))
+        .unwrap();
+        assert_eq!(tagged.user_tags, ["Lead", "Verse"]);
+
+        let created: crate::InstrumentCollection = serde_json::from_value(dispatch(
+            "library.instrument.collection.create",
+            serde_json::json!({"name":"Live Set"}),
+        ))
+        .unwrap();
+        let member: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.collection.membership.set",
+            serde_json::json!({"collectionId":created.id,"instrumentId":"builtin:01-bass","included":true}),
+        ))
+        .unwrap();
+        assert_eq!(member.collection_ids, [created.id]);
+
+        let renamed: crate::InstrumentCollection = serde_json::from_value(dispatch(
+            "library.instrument.collection.rename",
+            serde_json::json!({"id":created.id,"name":"Rehearsal"}),
+        ))
+        .unwrap();
+        assert_eq!(renamed.name, "Rehearsal");
+        let collections: Vec<crate::InstrumentCollection> = serde_json::from_value(dispatch(
+            "library.instrument.collection.list",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        assert_eq!(collections, [renamed]);
+
+        let removed: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+            "library.instrument.collection.membership.set",
+            serde_json::json!({"collectionId":created.id,"instrumentId":"builtin:01-bass","included":false}),
+        ))
+        .unwrap();
+        assert!(removed.collection_ids.is_empty());
+        let deleted = dispatch(
+            "library.instrument.collection.delete",
+            serde_json::json!({"id":created.id}),
+        );
+        assert!(deleted.is_null());
+        let collections: Vec<crate::InstrumentCollection> = serde_json::from_value(dispatch(
+            "library.instrument.collection.list",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        assert!(collections.is_empty());
+
+        assert_eq!(host.canonical_state().unwrap(), before);
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
     }
 
     #[test]

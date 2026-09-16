@@ -7,23 +7,30 @@ import { isNativeRuntime, logNativeError } from '@/native/invoke';
 
 interface UseLibraryOptions {
   setAudio: (audio: AudioStatus) => void;
+  query: string;
+  onSearchRequested: (query: string) => void;
   hostGeneration?: number;
   projectId?: string | null;
 }
 
 export function useLibrary(
   api: LibraryApi & AudioApi & Pick<ProjectApi, 'importMidiFile'>,
-  { setAudio, hostGeneration = 0, projectId = null }: UseLibraryOptions,
+  {
+    setAudio,
+    query: requestedQuery,
+    onSearchRequested,
+    hostGeneration = 0,
+    projectId = null,
+  }: UseLibraryOptions,
 ) {
   const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
-  const [libraryQuery, setLibraryQuery] = useState('');
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
   const [selectedLibraryAsset, setSelectedLibraryAsset] = useState<LibraryAsset | null>(null);
   const [relatedAssets, setRelatedAssets] = useState<LibraryAsset[]>([]);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
 
-  const query = libraryQuery.trim().toLowerCase();
+  const query = requestedQuery.trim().toLowerCase();
 
   useEffect(() => {
     currentHostGeneration.current = hostGeneration;
@@ -107,11 +114,11 @@ export function useLibrary(
         ?.replace(/\.(mid|midi)$/i, '') ?? 'midi';
     try {
       const assetId = await api.importMidiFile(selected);
-      if (assetId && currentHostGeneration.current === requestGeneration) setLibraryQuery(stem);
+      if (assetId && currentHostGeneration.current === requestGeneration) onSearchRequested(stem);
     } catch (error) {
       logNativeError('importMidiFile')(error);
     }
-  }, [api, hostGeneration]);
+  }, [api, hostGeneration, onSearchRequested]);
 
   useEffect(() => {
     let active = true;
@@ -134,8 +141,6 @@ export function useLibrary(
   }, [hostGeneration, query, searchLibrary]);
 
   return {
-    libraryQuery,
-    setLibraryQuery,
     libraryResults,
     selectedLibraryAsset,
     relatedAssets,

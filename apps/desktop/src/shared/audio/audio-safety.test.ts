@@ -21,6 +21,14 @@ describe('audioCommandSucceeded', () => {
     expect(audioCommandSucceeded(audio('faulted'))).toBe(false);
     expect(audioCommandSucceeded(audio('offline'))).toBe(false);
   });
+
+  it('treats a recoverable command error as a failed command', () => {
+    expect(
+      audioCommandSucceeded(
+        makeAudioStatus({ state: 'ready', message: 'Preview failed: the preset was rejected.' }),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe('isOutputMuted', () => {

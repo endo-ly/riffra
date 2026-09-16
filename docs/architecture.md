@@ -64,7 +64,7 @@ React フロントエンド
   ├─ 状態: CreativeSession を保持・描画する
   ├─ 編集: 機能別の窓口（NativeApi capability）経由で Tauri 命令を呼ぶ
   ├─ app: 起動処理（bootstrap）/ アプリ全体の組み立て（Composition）/ 全体のRuntime寿命管理
-  ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、library、plugins、project、recording、transport）
+  ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、browser、instruments、library、plugins、project、recording、transport）
   ├─ shared: 機能に属さない共通UI・汎用部品（Toast、ContextMenu、audio meters など）
   ├─ native: ReactとTauriの境界（窓口の定義・invoke実装・テスト用の偽装 FakeNativeApi）
   └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
@@ -335,7 +335,7 @@ Audio Status の診断値は、コールバック計測（回数・平均/最大
 
 ## 8. ライブラリ索引（リードモデル）
 
-ライブラリは SQLite の**読み取り専用モデル**であり、正準状態は常にセッションと Assets である。
+ライブラリは SQLite の**読み取りモデル**であり、正準状態は常にセッションと Assets である。Instrument Library のお気に入り・カテゴリ上書き・ユーザータグ・コレクションは、このモデルに属するユーザー設定として保存し、Project Session の sequence には含めない。
 
 - 素材（Asset）、録音（Recording Session/Pass/Take）、セッション内容の全文検索用の眺めを提供する
 - 正準コミットごとに `library::index::refresh()` が索引を同期更新する。呼び出し側のコミット経路から直接呼ばれ、失敗時は警告に留める

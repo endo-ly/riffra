@@ -435,6 +435,8 @@ pub struct AudioStatus {
     pub invalid_samples: u64,
     pub feedback_suspected: bool,
     pub previewing: bool,
+    /// Whether the prepared built-in instrument preview is active.
+    pub built_in_previewing: bool,
     /// Bitmask owned by the Native safety callback. Each bit identifies the
     /// owner that currently keeps the output muted.
     pub mute_reasons: u32,

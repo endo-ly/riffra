@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
+#include "InstrumentPreviewSession.h"
 #include "PreviewEngine.h"
 #include "timeline/TimelineEngine.h"
 
@@ -84,6 +86,17 @@ int AudioRenderPipeline::getInputChannel() const noexcept {
 
 double AudioRenderPipeline::getSampleRate() const noexcept {
     return activeSampleRate.load(std::memory_order_acquire);
+}
+
+int AudioRenderPipeline::getBlockSize() const noexcept {
+    return activeBlockSize.load(std::memory_order_acquire);
+}
+
+bool AudioRenderPipeline::startBuiltInPreview(const juce::String& definitionJson,
+                                              const juce::String& definitionBaseDir,
+                                              InstrumentPreviewSpec spec, juce::String& error) {
+    return previewEngine.startBuiltInPreview(definitionJson, definitionBaseDir, std::move(spec),
+                                             getSampleRate(), getBlockSize(), error);
 }
 
 void AudioRenderPipeline::silenceAndCommit(float* const* outputChannelData,
@@ -272,6 +285,7 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
     const auto outputChannels =
         device != nullptr ? device->getActiveOutputChannels().countNumberOfSetBits() : 0;
     const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+    activeBlockSize.store(blockSize, std::memory_order_release);
     limiterPrepared = sampleRate > 0.0 && outputChannels > 0 && blockSize > 0;
     if (limiterPrepared) {
         limiter.prepare({sampleRate, static_cast<juce::uint32>(blockSize),
@@ -286,6 +300,7 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
 
 void AudioRenderPipeline::deviceStopped() noexcept {
     activeSampleRate.store(0.0, std::memory_order_release);
+    activeBlockSize.store(0, std::memory_order_release);
     limiterPrepared = false;
     currentGainLinear = 0.0f;
     audioMetrics.resetForDevice();

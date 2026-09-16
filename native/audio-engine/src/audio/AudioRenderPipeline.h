@@ -77,6 +77,7 @@ public:
     [[nodiscard]] bool isPreviewing() const noexcept;
     [[nodiscard]] juce::var recordingStatus() const { return recordingController.status(); }
     [[nodiscard]] double getSampleRate() const noexcept;
+    [[nodiscard]] int getBlockSize() const noexcept;
 
     [[nodiscard]] AudioMetrics& metrics() noexcept { return audioMetrics; }
     [[nodiscard]] const AudioMetrics& metrics() const noexcept { return audioMetrics; }
@@ -113,6 +114,10 @@ public:
         return previewEngine.startPreview(buffer, startSample, endSample, gain, loop, error,
                                           voiceKey);
     }
+    bool startBuiltInPreview(const juce::String& definitionJson,
+                             const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
+                             juce::String& error);
+    void stopBuiltInPreview() noexcept { previewEngine.stopBuiltInPreview(); }
     void stopPreview() noexcept { previewEngine.stopPreview(); }
     void stopPreviewForKey(int voiceKey) noexcept { previewEngine.stopPreviewForKey(voiceKey); }
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -124,6 +129,9 @@ public:
     }
     void stopSynthNote(int note) noexcept { previewEngine.stopSynthNote(note); }
     void allNotesOff() noexcept { previewEngine.allNotesOff(); }
+    [[nodiscard]] bool isBuiltInPreviewing() const noexcept {
+        return previewEngine.isBuiltInPreviewing();
+    }
 
     // Audio thread only. The processing order is the contract of the engine.
     void processBlock(const float* const* inputChannelData, int numInputChannels,
@@ -159,6 +167,7 @@ private:
     std::atomic<bool> resetGainOnNextCallback{true};
     std::atomic<bool> feedbackSuspected{false};
     std::atomic<double> activeSampleRate{0.0};
+    std::atomic<int> activeBlockSize{0};
     float currentGainLinear = 0.0f;
     float fadeStep = 0.0f;
     DCBlocker dcBlocker;

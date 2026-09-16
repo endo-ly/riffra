@@ -2,6 +2,7 @@ import { useCallback, type DragEvent } from 'react';
 import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
 import { getHostGeneration } from '@/native/invoke';
 import { readAssetDrag } from '@/shared/asset-drag';
+import { RIFFRA_INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 
@@ -14,7 +15,8 @@ interface UseArrangeDropOptions {
   api: Pick<
     ArrangeWorkspaceApi,
     'importMidiBytes' | 'addAudioClipToArrangement' | 'addMidiClipToArrangement'
-  >;
+  > &
+    Pick<ArrangeWorkspaceApi, 'setTrackBuiltInInstrument'>;
   commit: ArrangeCommit;
   hostGeneration: number;
   pixelsPerTick: number;
@@ -65,6 +67,26 @@ export function useArrangeDrop({
     [api, commit, pixelsPerTick, setMessage, snapTick],
   );
 
+  const handleInstrumentDrop = useCallback(
+    async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
+      const instrument = readInstrumentDrag(event.dataTransfer);
+      if (!instrument) {
+        setMessage('The dragged Instrument is not valid.');
+        return;
+      }
+      if (!trackId || trackKind !== 'instrument') {
+        setMessage(
+          !trackId
+            ? 'Drop an Instrument on an Instrument Track.'
+            : 'Instruments can only be assigned to an Instrument Track.',
+        );
+        return;
+      }
+      await commit(api.setTrackBuiltInInstrument(trackId, instrument.presetId));
+    },
+    [api, commit, setMessage],
+  );
+
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       if (trackKind === 'audio') {
@@ -98,9 +120,13 @@ export function useArrangeDrop({
         void handleOsMidiDrop(event.dataTransfer.files, trackId, trackKind);
         return;
       }
+      if (event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
+        void handleInstrumentDrop(event, trackId, trackKind);
+        return;
+      }
       void handleAssetDrop(event, trackId, trackKind);
     },
-    [handleAssetDrop, handleOsMidiDrop],
+    [handleAssetDrop, handleInstrumentDrop, handleOsMidiDrop],
   );
 
   return { handleDrop, isOsFileDrag };

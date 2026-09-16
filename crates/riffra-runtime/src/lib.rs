@@ -40,7 +40,10 @@ pub use host::{
 };
 pub use instrument::{
     BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
+    InstrumentPreviewDefinition, InstrumentPreviewNote, InstrumentPreviewTimeSignature,
+    InstrumentRecommendedRange,
 };
+pub use library::instruments::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 pub use model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioAccessMode, AudioChannelInfo,
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDiagnostics,

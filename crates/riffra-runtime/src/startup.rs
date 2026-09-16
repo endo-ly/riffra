@@ -488,6 +488,7 @@ mod tests {
                 invalid_samples: 0,
                 feedback_suspected: false,
                 previewing: false,
+                built_in_previewing: false,
                 mute_reasons: 0,
                 diagnostics: Default::default(),
                 message: "fake".into(),
