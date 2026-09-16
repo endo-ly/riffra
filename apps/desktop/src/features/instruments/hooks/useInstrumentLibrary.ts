@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
-import type { InstrumentLibraryApi, AudioApi } from '@/native/native-api';
+import type { AudioApi, InstrumentLibraryApi, NativeEventApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import {
   filterInstruments,
@@ -17,7 +17,8 @@ interface UseInstrumentLibraryOptions {
 }
 
 type InstrumentLibraryFeatureApi = InstrumentLibraryApi &
-  Pick<AudioApi, 'previewBuiltInInstrument' | 'stopPreview'>;
+  Pick<AudioApi, 'previewBuiltInInstrument' | 'stopPreview'> &
+  Pick<NativeEventApi, 'onAudioStatus'>;
 
 /** Owns the catalog-backed Browser state and its persisted instrument preferences. */
 export function useInstrumentLibrary(
@@ -50,6 +51,7 @@ export function useInstrumentLibrary(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
+  const nativePreviewing = useRef(false);
   currentHostGeneration.current = hostGeneration;
 
   const reload = useCallback(async () => {
@@ -94,6 +96,21 @@ export function useInstrumentLibrary(
     setPreviewingId(null);
     void reload();
   }, [hostGeneration, reload]);
+
+  useEffect(() => {
+    nativePreviewing.current = false;
+    const requestGeneration = hostGeneration;
+    return api.onAudioStatus((status) => {
+      if (currentHostGeneration.current !== requestGeneration) return;
+      if (status.previewing) {
+        nativePreviewing.current = true;
+        return;
+      }
+      if (!nativePreviewing.current) return;
+      nativePreviewing.current = false;
+      setPreviewingId(null);
+    });
+  }, [api, hostGeneration]);
 
   const replaceItem = useCallback((next: InstrumentLibraryItem) => {
     setItems((current) => current.map((item) => (item.id === next.id ? next : item)));

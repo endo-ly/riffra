@@ -75,6 +75,23 @@ describe('useInstrumentLibrary', () => {
     });
   });
 
+  it('clears the preview state when native playback finishes naturally', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useLibraryHarness(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.preview(result.current.items[0]);
+    });
+    expect(result.current.previewingId).toBe(result.current.items[0].id);
+
+    act(() => {
+      api.emitAudioStatus({ ...api.audio, previewing: false });
+    });
+
+    await waitFor(() => expect(result.current.previewingId).toBeNull());
+  });
+
   it('reloads item memberships after deleting a collection', async () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() => useLibraryHarness(api));

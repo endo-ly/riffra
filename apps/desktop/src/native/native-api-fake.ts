@@ -888,9 +888,11 @@ export class FakeNativeApi implements NativeApi {
       }
       case 'previewBuiltInInstrument':
         this.audio = { ...this.audio, previewing: true };
+        this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'stopPreview':
         this.audio = { ...this.audio, previewing: false };
+        this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'getHostConnectionState':
         return Promise.resolve(this.hostConnectionState);
