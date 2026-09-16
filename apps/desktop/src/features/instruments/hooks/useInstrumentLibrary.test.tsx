@@ -2,6 +2,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { AudioStatus } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import { useInstrumentLibrary } from './useInstrumentLibrary';
 
@@ -91,6 +92,55 @@ describe('useInstrumentLibrary', () => {
 
     await waitFor(() => expect(result.current.previewingId).toBeNull());
     expect(api.audio.previewing).toBe(true);
+  });
+
+  it('commits the latest preview after the previous preview ends during start', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useLibraryHarness(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const first = result.current.items[0];
+    const second = result.current.items[1];
+
+    await act(async () => {
+      await result.current.preview(first);
+    });
+    expect(result.current.previewingId).toBe(first.id);
+
+    let resolveStart!: (status: AudioStatus) => void;
+    const pendingStart = new Promise<AudioStatus>((resolve) => {
+      resolveStart = resolve;
+    });
+    api.setResponse('previewBuiltInInstrument', () => pendingStart);
+
+    let request: Promise<void> | undefined;
+    act(() => {
+      request = result.current.preview(second);
+    });
+    await waitFor(() => {
+      expect(api.calls.filter((call) => call === 'previewBuiltInInstrument')).toHaveLength(2);
+      expect(result.current.previewPendingId).toBe(second.id);
+    });
+
+    await act(async () => {
+      await result.current.preview(second);
+    });
+    expect(api.calls.filter((call) => call === 'previewBuiltInInstrument')).toHaveLength(2);
+
+    act(() => {
+      api.emitAudioStatus({ ...api.audio, previewing: true, builtInPreviewing: false });
+    });
+    expect(result.current.previewingId).toBeNull();
+
+    act(() => {
+      resolveStart({ ...api.audio, previewing: true, builtInPreviewing: true });
+    });
+    await act(async () => {
+      await request;
+    });
+
+    expect(result.current.previewingId).toBe(second.id);
+    expect(result.current.previewPendingId).toBeNull();
   });
 
   it('reloads item memberships after deleting a collection', async () => {

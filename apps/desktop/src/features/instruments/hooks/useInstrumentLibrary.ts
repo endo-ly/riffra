@@ -48,10 +48,13 @@ export function useInstrumentLibrary(
     favoritesOnly: false,
   });
   const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [previewPendingId, setPreviewPendingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
   const nativeBuiltInPreviewing = useRef(false);
+  const previewPendingIdRef = useRef<string | null>(null);
+  const previewRequestRef = useRef(0);
   currentHostGeneration.current = hostGeneration;
 
   const reload = useCallback(async () => {
@@ -94,6 +97,9 @@ export function useInstrumentLibrary(
     setSelectedId(null);
     setFilters({ category: null, tag: null, collectionId: null, favoritesOnly: false });
     setPreviewingId(null);
+    previewPendingIdRef.current = null;
+    setPreviewPendingId(null);
+    previewRequestRef.current += 1;
     void reload();
   }, [hostGeneration, reload]);
 
@@ -108,6 +114,7 @@ export function useInstrumentLibrary(
       }
       if (!nativeBuiltInPreviewing.current) return;
       nativeBuiltInPreviewing.current = false;
+      if (previewPendingIdRef.current !== null) return;
       setPreviewingId(null);
     });
   }, [api, hostGeneration]);
@@ -227,29 +234,51 @@ export function useInstrumentLibrary(
   const preview = useCallback(
     async (item: InstrumentLibraryItem) => {
       if (safeMode) return;
+      if (previewPendingIdRef.current !== null) return;
       const requestGeneration = hostGeneration;
+      const requestId = ++previewRequestRef.current;
+      previewPendingIdRef.current = item.id;
+      setPreviewPendingId(item.id);
+      const isCurrentRequest = () =>
+        currentHostGeneration.current === requestGeneration &&
+        previewRequestRef.current === requestId;
+
       if (previewingId === item.id) {
         try {
           const next = await stopBuiltInInstrumentPreview();
-          if (currentHostGeneration.current === requestGeneration) {
-            setPreviewingId(null);
+          if (isCurrentRequest()) {
+            nativeBuiltInPreviewing.current = next.builtInPreviewing;
+            setPreviewingId(next.builtInPreviewing ? item.id : null);
             setAudio(next);
           }
         } catch (cause) {
-          if (currentHostGeneration.current === requestGeneration)
-            logNativeError('stopBuiltInInstrumentPreview')(cause);
+          if (isCurrentRequest()) logNativeError('stopBuiltInInstrumentPreview')(cause);
+        } finally {
+          if (isCurrentRequest()) {
+            previewPendingIdRef.current = null;
+            setPreviewPendingId(null);
+          }
         }
         return;
       }
-      setPreviewingId(item.id);
+      setPreviewingId(null);
       try {
         const next = await previewBuiltInInstrument(item.presetId);
-        if (currentHostGeneration.current === requestGeneration) setAudio(next);
+        if (isCurrentRequest()) {
+          nativeBuiltInPreviewing.current = next.builtInPreviewing;
+          setPreviewingId(next.builtInPreviewing ? item.id : null);
+          setAudio(next);
+        }
       } catch (cause) {
-        if (currentHostGeneration.current === requestGeneration) {
+        if (isCurrentRequest()) {
           setPreviewingId(null);
           setError(cause instanceof Error ? cause.message : String(cause));
           logNativeError('previewBuiltInInstrument')(cause);
+        }
+      } finally {
+        if (isCurrentRequest()) {
+          previewPendingIdRef.current = null;
+          setPreviewPendingId(null);
         }
       }
     },
@@ -283,6 +312,7 @@ export function useInstrumentLibrary(
     categories,
     tags,
     previewingId,
+    previewPendingId,
     loading,
     error,
     toggleFavorite,
