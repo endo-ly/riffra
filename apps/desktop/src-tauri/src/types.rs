@@ -40,6 +40,7 @@ use riffra_runtime::{
     PluginStateSnapshot, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
     TrackSummary,
 };
+use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
 
 #[test]
@@ -129,6 +130,9 @@ fn export_types() {
     AudioAnalysis::export_all(&cfg).expect("AudioAnalysis bindings");
     AudioDriverConfig::export_all(&cfg).expect("AudioDriverConfig bindings");
     LibraryAsset::export_all(&cfg).expect("LibraryAsset bindings");
+    InstrumentCollection::export_all(&cfg).expect("InstrumentCollection bindings");
+    InstrumentLibraryItem::export_all(&cfg).expect("InstrumentLibraryItem bindings");
+    InstrumentOrigin::export_all(&cfg).expect("InstrumentOrigin bindings");
     MissingDependency::export_all(&cfg).expect("MissingDependency bindings");
     PluginEntry::export_all(&cfg).expect("PluginEntry bindings");
     PluginFormat::export_all(&cfg).expect("PluginFormat bindings");

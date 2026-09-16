@@ -1,6 +1,7 @@
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::AudioDeviceReopenOutcome;
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor};
+use crate::instrument::InstrumentPreviewDefinition;
 use crate::model::AudioStatus;
 use crate::preferences::AudioDriverConfig;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
@@ -396,6 +397,23 @@ impl AudioSupervisor {
         self.send_command(
             command,
             "Sample preview queued through the safety limiter; output remains muted until unmuted.",
+        )
+    }
+
+    pub fn preview_built_in_instrument(
+        &self,
+        definition_json: &str,
+        definition_base_dir: &Path,
+        preview: &InstrumentPreviewDefinition,
+    ) -> NativeAudioResult<AudioStatus> {
+        self.send_command(
+            serde_json::json!({
+                "type": "previewBuiltInInstrument",
+                "definitionJson": definition_json,
+                "definitionBaseDir": definition_base_dir.to_string_lossy(),
+                "preview": preview,
+            }),
+            "Built-in instrument preview started through the realtime runtime.",
         )
     }
 

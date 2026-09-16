@@ -3,13 +3,55 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// Minimal metadata presented to clients for one built-in instrument.
-#[derive(Clone, Debug, Deserialize, serde::Serialize, ts_rs::TS)]
+/// Metadata presented to clients for one built-in instrument.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BuiltInInstrumentSummary {
     pub id: String,
     pub name: String,
+    pub author: Option<String>,
     pub description: Option<String>,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub recommended_range: InstrumentRecommendedRange,
+    pub preview: InstrumentPreviewDefinition,
+}
+
+/// The MIDI range in which an instrument is intended to be used.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentRecommendedRange {
+    pub min_midi: u8,
+    pub max_midi: u8,
+}
+
+/// The deterministic MIDI pattern used for built-in instrument previews.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentPreviewDefinition {
+    pub tempo_bpm: f64,
+    pub ticks_per_beat: u16,
+    pub time_signature: InstrumentPreviewTimeSignature,
+    pub length_ticks: u64,
+    pub notes: Vec<InstrumentPreviewNote>,
+}
+
+/// The meter used by an instrument preview.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentPreviewTimeSignature {
+    pub numerator: u8,
+    pub denominator: u8,
+}
+
+/// One MIDI note in an instrument preview.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentPreviewNote {
+    pub tick: u64,
+    pub duration_ticks: u64,
+    pub note: u8,
+    pub velocity: u8,
 }
 
 /// A resolved built-in instrument definition retained by the Host.
@@ -41,8 +83,13 @@ struct ResourceManifest {
 struct ResourceManifestPreset {
     id: String,
     name: String,
+    author: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    category: String,
+    tags: Vec<String>,
+    recommended_range: InstrumentRecommendedRange,
+    preview: InstrumentPreviewDefinition,
     definition_path: String,
     resource_base_path: String,
 }
@@ -98,6 +145,17 @@ impl BuiltInInstrumentCatalog {
                     "built-in instrument resource manifest preset '{id}' has no name"
                 ));
             }
+            let author = normalize_optional_text(preset.author);
+            let description = normalize_optional_text(preset.description);
+            let category = preset.category.trim().to_owned();
+            let tags = normalize_tags(preset.tags, &id)?;
+            validate_summary_metadata(
+                &id,
+                &category,
+                &tags,
+                &preset.recommended_range,
+                &preset.preview,
+            )?;
             let definition_path =
                 resolve_bundle_path(&root, &preset.definition_path, "definitionPath")?;
             let base_dir =
@@ -120,16 +178,18 @@ impl BuiltInInstrumentCatalog {
                     continue;
                 }
             };
-            let description = preset.description.and_then(|description| {
-                (!description.trim().is_empty()).then(|| description.trim().to_owned())
-            });
             definitions.insert(
                 id.clone(),
                 BuiltInInstrumentDefinition {
                     summary: BuiltInInstrumentSummary {
                         id,
                         name,
+                        author,
                         description,
+                        category,
+                        tags,
+                        recommended_range: preset.recommended_range,
+                        preview: preset.preview,
                     },
                     definition_json,
                     base_dir,
@@ -173,6 +233,83 @@ impl BuiltInInstrumentCatalog {
             }
         })
     }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_owned()))
+}
+
+fn normalize_tags(tags: Vec<String>, id: &str) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::with_capacity(tags.len());
+    let mut seen = BTreeSet::new();
+    for tag in tags {
+        let tag = tag.trim().to_owned();
+        if tag.is_empty() {
+            return Err(format!(
+                "built-in instrument preset '{id}' has an empty tag"
+            ));
+        }
+        if seen.insert(tag.to_lowercase()) {
+            normalized.push(tag);
+        }
+    }
+    Ok(normalized)
+}
+
+fn validate_summary_metadata(
+    id: &str,
+    category: &str,
+    tags: &[String],
+    range: &InstrumentRecommendedRange,
+    preview: &InstrumentPreviewDefinition,
+) -> Result<(), String> {
+    if category.is_empty() {
+        return Err(format!("built-in instrument preset '{id}' has no category"));
+    }
+    if tags.is_empty() {
+        return Err(format!("built-in instrument preset '{id}' has no tags"));
+    }
+    if range.min_midi > range.max_midi {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid recommended MIDI range"
+        ));
+    }
+    if !preview.tempo_bpm.is_finite() || preview.tempo_bpm <= 0.0 {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid preview tempo"
+        ));
+    }
+    if preview.ticks_per_beat == 0 {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid preview ticks-per-beat value"
+        ));
+    }
+    if preview.time_signature.numerator == 0
+        || !matches!(preview.time_signature.denominator, 1 | 2 | 4 | 8 | 16 | 32)
+    {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an invalid preview time signature"
+        ));
+    }
+    if preview.length_ticks == 0 {
+        return Err(format!(
+            "built-in instrument preset '{id}' has an empty preview"
+        ));
+    }
+    for note in &preview.notes {
+        if note.duration_ticks == 0
+            || note.tick >= preview.length_ticks
+            || note.tick.saturating_add(note.duration_ticks) > preview.length_ticks
+            || note.note < range.min_midi
+            || note.note > range.max_midi
+            || note.velocity == 0
+        {
+            return Err(format!(
+                "built-in instrument preset '{id}' has an invalid preview note"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn resolve_bundle_path(root: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
@@ -250,6 +387,17 @@ mod tests {
             "id": id,
             "name": name,
             "description": description,
+            "author": "Riffra",
+            "category": "Test",
+            "tags": ["test"],
+            "recommendedRange": {"minMidi": 36, "maxMidi": 84},
+            "preview": {
+                "tempoBpm": 120.0,
+                "ticksPerBeat": 480,
+                "timeSignature": {"numerator": 4, "denominator": 4},
+                "lengthTicks": 1920,
+                "notes": [{"tick": 0, "durationTicks": 480, "note": 48, "velocity": 100}]
+            },
             "definitionPath": definition_path,
             "resourceBasePath": resource_base_path,
         })
@@ -381,5 +529,25 @@ mod tests {
         );
         let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
         assert!(error.contains("duplicate preset ids"));
+    }
+
+    #[test]
+    fn rejects_preview_notes_outside_recommended_range() {
+        let root = TempRoot::new();
+        write_definition(&root.0, "sound.data", "opaque");
+        fs::create_dir_all(root.0.join("resources")).unwrap();
+        let mut preset = manifest_entry(
+            "01-invalid-preview",
+            "Invalid Preview",
+            None,
+            "sound.data",
+            "resources",
+        );
+        preset["preview"]["notes"][0]["note"] = serde_json::json!(85);
+        write_manifest(&root.0, &[preset]);
+
+        let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
+
+        assert!(error.contains("invalid preview note"));
     }
 }

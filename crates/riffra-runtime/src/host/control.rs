@@ -926,6 +926,32 @@ impl HostState {
                     .map_err(serialize_error)?,
                 current.sequence,
             )),
+            "instrument.builtin.preview" => {
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode blocks built-in instrument preview",
+                    ));
+                }
+                let params: BuiltInInstrumentPreviewParams = decode(params)?;
+                let definition = self
+                    .built_in_instruments
+                    .resolve(&params.preset_id)
+                    .map_err(command_error)?;
+                let status = self
+                    .core
+                    .audio()
+                    .preview_built_in_instrument(
+                        &definition.definition_json,
+                        &definition.base_dir,
+                        &definition.summary.preview,
+                    )
+                    .map_err(audio_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
             "midi.send" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
@@ -1208,6 +1234,115 @@ impl HostState {
                     library::related(&self.data_root, &params.id).map_err(command_error)?;
                 Ok((
                     "library",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.list" => Ok((
+                "instrumentLibrary",
+                serde_json::to_value(
+                    library::instruments::list(&self.data_root, self.built_in_instruments.as_ref())
+                        .map_err(command_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "library.instrument.favorite.set" => {
+                let params: InstrumentFavoriteParams = decode(params)?;
+                let result = library::instruments::set_favorite(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.favorite,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.category.set" => {
+                let params: InstrumentCategoryParams = decode(params)?;
+                let result = library::instruments::set_category_override(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.category,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.tags.set" => {
+                let params: InstrumentTagsParams = decode(params)?;
+                let result = library::instruments::set_user_tags(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                    params.tags,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.list" => Ok((
+                "instrumentCollections",
+                serde_json::to_value(
+                    library::instruments::list_collections(&self.data_root)
+                        .map_err(command_error)?,
+                )
+                .map_err(serialize_error)?,
+                current.sequence,
+            )),
+            "library.instrument.collection.create" => {
+                let params: InstrumentCollectionCreateParams = decode(params)?;
+                let result = library::instruments::create_collection(&self.data_root, params.name)
+                    .map_err(command_error)?;
+                Ok((
+                    "instrumentCollection",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.rename" => {
+                let params: InstrumentCollectionRenameParams = decode(params)?;
+                let result = library::instruments::rename_collection(
+                    &self.data_root,
+                    params.id,
+                    params.name,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentCollection",
+                    serde_json::to_value(result).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
+            "library.instrument.collection.delete" => {
+                let params: InstrumentCollectionIdParams = decode(params)?;
+                library::instruments::delete_collection(&self.data_root, params.id)
+                    .map_err(command_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
+            "library.instrument.collection.membership.set" => {
+                let params: InstrumentCollectionMembershipParams = decode(params)?;
+                let result = library::instruments::set_collection_membership(
+                    &self.data_root,
+                    self.built_in_instruments.as_ref(),
+                    params.collection_id,
+                    &params.instrument_id,
+                    params.included,
+                )
+                .map_err(command_error)?;
+                Ok((
+                    "instrumentLibraryItem",
                     serde_json::to_value(result).map_err(serialize_error)?,
                     current.sequence,
                 ))
@@ -1916,6 +2051,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "audio.driver.get"
             | "asset.preview"
             | "asset.preview.stop"
+            | "instrument.builtin.preview"
             | "midi.send"
             | "midi.target.set"
             | "midi.panic"
@@ -1939,6 +2075,15 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "library.search"
             | "library.asset.update"
             | "library.related"
+            | "library.instrument.list"
+            | "library.instrument.favorite.set"
+            | "library.instrument.category.set"
+            | "library.instrument.tags.set"
+            | "library.instrument.collection.list"
+            | "library.instrument.collection.create"
+            | "library.instrument.collection.rename"
+            | "library.instrument.collection.delete"
+            | "library.instrument.collection.membership.set"
             | "analysis.start"
             | "plugin.editor.open"
             | "device.inspect"
@@ -1965,6 +2110,12 @@ struct TrackIdParams {
 #[serde(rename_all = "camelCase")]
 struct BuiltInInstrumentParams {
     track_id: String,
+    preset_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuiltInInstrumentPreviewParams {
     preset_id: String,
 }
 
@@ -2159,6 +2310,54 @@ struct LibraryUpdateParams {
 #[serde(rename_all = "camelCase")]
 struct LibraryIdParams {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentFavoriteParams {
+    instrument_id: String,
+    favorite: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCategoryParams {
+    instrument_id: String,
+    category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentTagsParams {
+    instrument_id: String,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionIdParams {
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionCreateParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionRenameParams {
+    id: i64,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentCollectionMembershipParams {
+    collection_id: i64,
+    instrument_id: String,
+    included: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,4 +4,6 @@ mod builtin;
 
 pub use builtin::{
     BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
+    InstrumentPreviewDefinition, InstrumentPreviewNote, InstrumentPreviewTimeSignature,
+    InstrumentRecommendedRange,
 };

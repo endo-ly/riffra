@@ -734,7 +734,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             root.join("manifest.json"),
-            br#"{"sourceRelease":"vtest","presets":[{"id":"01-clean-sub-bass","name":"Clean Sub Bass","description":"Test preset","definitionPath":"01-clean-sub-bass/definition.json","resourceBasePath":"01-clean-sub-bass"}]}"#,
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-clean-sub-bass","name":"Clean Sub Bass","description":"Test preset","author":"Riffra","category":"Bass","tags":["test"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120.0,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-clean-sub-bass/definition.json","resourceBasePath":"01-clean-sub-bass"}]}"#,
         )
         .unwrap();
         crate::instrument::BuiltInInstrumentCatalog::load(root).unwrap()
