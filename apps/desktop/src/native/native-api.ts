@@ -197,6 +197,7 @@ export interface AudioApi {
    */
   previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
   previewBuiltInInstrument(presetId: string): Promise<AudioStatus>;
+  stopBuiltInInstrumentPreview(): Promise<AudioStatus>;
   stopPreview(): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;

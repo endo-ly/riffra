@@ -146,6 +146,7 @@ pub fn run() {
             session::commands::panic_midi_track,
             stop_preview,
             preview_built_in_instrument,
+            stop_built_in_instrument_preview,
             // Session Application Operations.
             session::commands::undo_session,
             session::commands::redo_session,

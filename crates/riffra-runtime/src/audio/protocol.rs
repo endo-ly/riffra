@@ -52,6 +52,8 @@ struct NativeStatus {
     diagnostics: Option<NativeDiagnostics>,
     feedback_suspected: Option<bool>,
     previewing: Option<bool>,
+    #[serde(default)]
+    built_in_previewing: bool,
     message: Option<String>,
 }
 
@@ -64,6 +66,7 @@ struct NativeMeters {
     mute_reasons: Option<u32>,
     feedback_suspected: Option<bool>,
     previewing: Option<bool>,
+    built_in_previewing: Option<bool>,
     pre_limiter_peak: Option<f64>,
     limiter_gain_reduction_db: Option<f64>,
     hard_clip_samples: Option<u64>,
@@ -270,6 +273,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         invalid_samples: native.invalid_samples.unwrap_or_default(),
         feedback_suspected: native.feedback_suspected.unwrap_or(false),
         previewing: native.previewing.unwrap_or(false),
+        built_in_previewing: native.built_in_previewing,
         mute_reasons,
         diagnostics: native
             .diagnostics
@@ -462,6 +466,12 @@ pub(super) fn handle_native_stdout(
                     current.previewing = previewing;
                     status_changed = true;
                 }
+                if let Some(built_in_previewing) = meters.built_in_previewing
+                    && current.built_in_previewing != built_in_previewing
+                {
+                    current.built_in_previewing = built_in_previewing;
+                    status_changed = true;
+                }
                 if let Some(mute_reasons) = meters.mute_reasons {
                     status_changed |= apply_mute_reasons(&mut current, mute_reasons);
                 }
@@ -581,6 +591,7 @@ mod tests {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
+            built_in_previewing: false,
             mute_reasons: 0,
             diagnostics: Default::default(),
             message: "ready".into(),
@@ -627,11 +638,39 @@ mod tests {
 
         let finished = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":2,"previewing":false}"#,
+            br#"{"type":"audioMeters","requestId":2,"previewing":false,"builtInPreviewing":false}"#,
         )
         .expect("preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
         assert!(!status.lock().unwrap().previewing);
+        assert!(!status.lock().unwrap().built_in_previewing);
+    }
+
+    #[test]
+    fn built_in_preview_meter_transition_emits_audio_status_without_changing_other_preview_state() {
+        let status = test_status();
+
+        let started = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":3,"previewing":true,"builtInPreviewing":true}"#,
+        )
+        .expect("built-in preview start meter reply");
+        assert!(matches!(started.event, NativeEvent::AudioStatus));
+        {
+            let current = status.lock().unwrap();
+            assert!(current.previewing);
+            assert!(current.built_in_previewing);
+        }
+
+        let finished = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":4,"previewing":true,"builtInPreviewing":false}"#,
+        )
+        .expect("built-in preview finish meter reply");
+        assert!(matches!(finished.event, NativeEvent::AudioStatus));
+        let current = status.lock().unwrap();
+        assert!(current.previewing);
+        assert!(!current.built_in_previewing);
     }
 
     #[test]

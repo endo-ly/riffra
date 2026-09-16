@@ -101,6 +101,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
+    builtInPreviewing: false,
     muteReasons: 0,
     diagnostics: {
       callbackCount: 0,
@@ -386,6 +387,9 @@ export class FakeNativeApi implements NativeApi {
   }
   previewBuiltInInstrument(...args: Parameters<NativeApi['previewBuiltInInstrument']>) {
     return this.command('previewBuiltInInstrument', args);
+  }
+  stopBuiltInInstrumentPreview(...args: Parameters<NativeApi['stopBuiltInInstrumentPreview']>) {
+    return this.command('stopBuiltInInstrumentPreview', args);
   }
   stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
     return this.command('stopPreview', args);
@@ -887,11 +891,15 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(updated);
       }
       case 'previewBuiltInInstrument':
-        this.audio = { ...this.audio, previewing: true };
+        this.audio = { ...this.audio, previewing: true, builtInPreviewing: true };
+        this.emitAudioStatus(this.audio);
+        return Promise.resolve(this.audio);
+      case 'stopBuiltInInstrumentPreview':
+        this.audio = { ...this.audio, builtInPreviewing: false };
         this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'stopPreview':
-        this.audio = { ...this.audio, previewing: false };
+        this.audio = { ...this.audio, previewing: false, builtInPreviewing: false };
         this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'getHostConnectionState':

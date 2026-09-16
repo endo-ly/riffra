@@ -952,6 +952,18 @@ impl HostState {
                     current.sequence,
                 ))
             }
+            "instrument.builtin.preview.stop" => {
+                let status = self
+                    .core
+                    .audio()
+                    .stop_built_in_instrument_preview()
+                    .map_err(audio_error)?;
+                Ok((
+                    "audioStatus",
+                    serde_json::to_value(status).map_err(serialize_error)?,
+                    current.sequence,
+                ))
+            }
             "midi.send" => {
                 if self.core.safe_mode() {
                     return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
@@ -2052,6 +2064,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "asset.preview"
             | "asset.preview.stop"
             | "instrument.builtin.preview"
+            | "instrument.builtin.preview.stop"
             | "midi.send"
             | "midi.target.set"
             | "midi.panic"

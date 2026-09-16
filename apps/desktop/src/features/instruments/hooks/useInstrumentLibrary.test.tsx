@@ -86,10 +86,11 @@ describe('useInstrumentLibrary', () => {
     expect(result.current.previewingId).toBe(result.current.items[0].id);
 
     act(() => {
-      api.emitAudioStatus({ ...api.audio, previewing: false });
+      api.emitAudioStatus({ ...api.audio, previewing: true, builtInPreviewing: false });
     });
 
     await waitFor(() => expect(result.current.previewingId).toBeNull());
+    expect(api.audio.previewing).toBe(true);
   });
 
   it('reloads item memberships after deleting a collection', async () => {

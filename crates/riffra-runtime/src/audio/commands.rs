@@ -424,6 +424,13 @@ impl AudioSupervisor {
         )
     }
 
+    pub fn stop_built_in_instrument_preview(&self) -> NativeAudioResult<AudioStatus> {
+        self.send_command(
+            serde_json::json!({"type": "stopBuiltInInstrumentPreview"}),
+            "Built-in instrument preview stopped; other previews remain active.",
+        )
+    }
+
     pub fn start_take_comparison(
         &self,
         raw_path: &Path,
