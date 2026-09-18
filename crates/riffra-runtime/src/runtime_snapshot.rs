@@ -54,6 +54,27 @@ pub fn runtime_timeline_snapshot(
                         "definitionBaseDir": base_dir.to_string_lossy().into_owned(),
                     })
                 }
+                TrackInstrumentSource::Internal {
+                    definition_json,
+                    resource:
+                        InternalInstrumentResource::UserSnapshot {
+                            instrument_id,
+                            snapshot_id,
+                        },
+                } => {
+                    let base_dir = data_root.join("project-instruments").join(snapshot_id);
+                    serde_json::json!({
+                        "id": instrument.id,
+                        "name": instrument.name,
+                        "type": "internal",
+                        "bypassed": instrument.bypassed,
+                        "resourceType": "userSnapshot",
+                        "instrumentId": instrument_id,
+                        "snapshotId": snapshot_id,
+                        "definitionJson": definition_json,
+                        "definitionBaseDir": base_dir.to_string_lossy().into_owned(),
+                    })
+                }
                 TrackInstrumentSource::Vst3 {
                     path,
                     parameter_values,
@@ -156,7 +177,9 @@ pub fn runtime_timeline_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AssetKind, AudioClip, AudioTakeVariant, TimelineTick, Track};
+    use riffra_core::{
+        AssetKind, AudioClip, AudioTakeVariant, TimelineTick, Track, TrackInstrument,
+    };
     use std::fs;
 
     #[test]
@@ -211,5 +234,54 @@ mod tests {
         assert_eq!(clips[1]["takeVariant"], serde_json::json!("processed"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn projects_user_snapshot_with_project_snapshot_base_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-runtime-snapshot-user-instrument-{}-{}",
+            std::process::id(),
+            riffra_control::new_instance_id()
+        ));
+        let instrument_id = format!("user:{}", riffra_control::new_instance_id());
+        let snapshot_id = riffra_control::new_instance_id();
+        let mut session = CreativeSession::new(1);
+        let mut track = Track::instrument("track:instrument".into(), "Instrument".into());
+        track.instrument = Some(
+            TrackInstrument::user_snapshot(
+                "slot:instrument".into(),
+                "User Instrument".into(),
+                instrument_id.clone(),
+                snapshot_id.clone(),
+                r#"{"version":1}"#.into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(track);
+
+        let snapshot = runtime_timeline_snapshot(
+            &root,
+            crate::test_support::empty_built_in_catalog(),
+            &session,
+        );
+        let instrument = &snapshot["tracks"][0]["instrument"];
+        assert_eq!(
+            instrument["resourceType"],
+            serde_json::json!("userSnapshot")
+        );
+        assert_eq!(instrument["instrumentId"], serde_json::json!(instrument_id));
+        assert_eq!(
+            instrument["snapshotId"],
+            serde_json::json!(snapshot_id.clone())
+        );
+        assert_eq!(
+            instrument["definitionBaseDir"],
+            serde_json::json!(
+                root.join("project-instruments")
+                    .join(snapshot_id)
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
     }
 }

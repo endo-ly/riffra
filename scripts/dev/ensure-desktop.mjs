@@ -10,7 +10,7 @@ const binariesRoot = join(desktopRoot, 'binaries');
 const resourcesRoot = join(desktopRoot, 'resources');
 const runtimeStampPath = join(binariesRoot, '.riffra-desktop-runtime.json');
 const nativeBuildConfiguration = 'RelWithDebInfo';
-const sidecarNames = ['riffra-audio', 'riffra-plugin-scan', 'riffra-render'];
+const sidecarNames = ['riffra-audio', 'riffra-plugin-scan', 'riffra-render', 'sonalloy'];
 
 function getRustHostTriple() {
   try {

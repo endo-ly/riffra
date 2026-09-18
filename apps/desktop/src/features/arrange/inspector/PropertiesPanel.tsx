@@ -2,9 +2,9 @@ import type {
   AudioStatus,
   CanonicalState,
   CreativeSession,
+  InstrumentLibraryItem,
   MissingDependency,
   PluginEntry,
-  BuiltInInstrumentSummary,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
@@ -26,7 +26,7 @@ interface PropertiesPanelProps {
   setArrangeSelection: (selection: ArrangeSelection) => void;
   missingDependencies: MissingDependency[];
   plugins: PluginEntry[];
-  builtInInstruments?: BuiltInInstrumentSummary[];
+  instruments?: InstrumentLibraryItem[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -69,7 +69,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               onReplaceMissingPlugin={props.onReplaceMissingPlugin}
               onRescanMissingPlugins={props.onRescanMissingPlugins}
               plugins={props.plugins}
-              builtInInstruments={props.builtInInstruments ?? []}
+              instruments={props.instruments ?? []}
               api={props.api}
             />
             <TakeInspector

@@ -4,6 +4,6 @@ import type { InstrumentPreviewDefinition } from "./InstrumentPreviewDefinition"
 import type { InstrumentRecommendedRange } from "./InstrumentRecommendedRange";
 
 /**
- * A user-visible built-in instrument with persisted library preferences.
+ * A user-visible instrument with persisted library preferences.
  */
-export type InstrumentLibraryItem = { id: string, presetId: string, origin: InstrumentOrigin, name: string, author: string | null, description: string | null, defaultCategory: string, category: string, defaultTags: Array<string>, userTags: Array<string>, tags: Array<string>, favorite: boolean, collectionIds: Array<number>, recommendedRange: InstrumentRecommendedRange, preview: InstrumentPreviewDefinition, };
+export type InstrumentLibraryItem = { id: string, presetId: string | null, origin: InstrumentOrigin, name: string, author: string | null, description: string | null, defaultCategory: string | null, category: string | null, defaultTags: Array<string>, userTags: Array<string>, tags: Array<string>, favorite: boolean, collectionIds: Array<number>, recommendedRange: InstrumentRecommendedRange | null, preview: InstrumentPreviewDefinition | null, };

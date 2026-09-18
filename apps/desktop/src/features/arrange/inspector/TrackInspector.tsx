@@ -3,9 +3,9 @@ import clsx from 'clsx';
 import type {
   ArrangementMutationResult,
   AudioStatus,
-  BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
+  InstrumentLibraryItem,
   PluginEntry,
   Track,
 } from '@/model/domain';
@@ -26,7 +26,7 @@ interface TrackInspectorProps {
   audio: AudioStatus;
   missingDeviceIds: string[];
   plugins: PluginEntry[];
-  builtInInstruments?: BuiltInInstrumentSummary[];
+  instruments?: InstrumentLibraryItem[];
   onDisableMissingPlugin: (deviceId: string) => Promise<void>;
   onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
   onRescanMissingPlugins: () => Promise<void>;
@@ -59,8 +59,8 @@ export function TrackInspector(props: TrackInspectorProps) {
     },
     [props.applyCanonicalState, runOperation, setOperationMessage],
   );
-  const setBuiltInInstrument = (presetId: string) => {
-    commit(props.api.setTrackBuiltInInstrument(props.track.id, presetId));
+  const setInstrument = (instrumentId: string) => {
+    commit(props.api.applyInstrument(props.track.id, instrumentId));
   };
   const setVst3Instrument = (plugin: PluginEntry) => {
     commit(props.api.setTrackVst3Instrument(props.track.id, plugin.path));
@@ -359,10 +359,10 @@ export function TrackInspector(props: TrackInspectorProps) {
             {instrumentPickerOpen && (
               <InstrumentPicker
                 api={props.api}
-                builtInInstruments={props.builtInInstruments ?? []}
+                instruments={props.instruments ?? []}
                 plugins={props.plugins}
-                onSelectBuiltIn={(presetId) => {
-                  setBuiltInInstrument(presetId);
+                onSelectInstrument={(instrumentId) => {
+                  setInstrument(instrumentId);
                   setInstrumentPickerOpen(false);
                 }}
                 onSelectVst3={(plugin) => {

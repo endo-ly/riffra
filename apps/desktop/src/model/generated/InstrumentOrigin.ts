@@ -3,4 +3,4 @@
 /**
  * The origin of an instrument exposed by the library.
  */
-export type InstrumentOrigin = "builtIn";
+export type InstrumentOrigin = "builtIn" | "user";

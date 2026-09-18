@@ -3,7 +3,6 @@ import type {
   ArrangementMutationResult,
   AudioStatus,
   BackgroundJobStatus,
-  BuiltInInstrumentSummary,
   InstrumentCollection,
   InstrumentLibraryItem,
   BootstrapState,
@@ -36,7 +35,6 @@ export interface FakeNativeApiOptions {
   audio?: AudioStatus;
   recordings?: RecordingAsset[];
   plugins?: ScanReport['plugins'];
-  builtInInstruments?: BuiltInInstrumentSummary[];
   instruments?: InstrumentLibraryItem[];
   instrumentCollections?: InstrumentCollection[];
   missingDependencies?: MissingDependency[];
@@ -136,7 +134,6 @@ export class FakeNativeApi implements NativeApi {
   runtimeProjection: RuntimeProjectionStatus;
   recordings: RecordingAsset[];
   plugins: ScanReport['plugins'];
-  builtInInstruments: BuiltInInstrumentSummary[];
   instruments: InstrumentLibraryItem[];
   instrumentCollections: InstrumentCollection[];
   bootstrapState: BootstrapState;
@@ -172,16 +169,8 @@ export class FakeNativeApi implements NativeApi {
     this.recordings = options.recordings ?? [];
     this.plugins = options.plugins ?? [];
     this.missing = options.missingDependencies ?? [];
-    this.bootstrapState = mergeBootstrap({
-      ...options.bootstrapState,
-      ...(options.builtInInstruments
-        ? { builtInInstruments: options.builtInInstruments }
-        : undefined),
-    });
-    this.builtInInstruments = this.bootstrapState.builtInInstruments;
-    this.instruments =
-      options.instruments ??
-      this.builtInInstruments.map((summary) => instrumentLibraryItem(summary));
+    this.bootstrapState = mergeBootstrap(options.bootstrapState);
+    this.instruments = options.instruments ?? defaultInstrumentLibraryItems();
     this.instrumentCollections = options.instrumentCollections ?? [];
     this.hostConnectionState = {
       ...this.bootstrapState.hostConnection,
@@ -505,11 +494,8 @@ export class FakeNativeApi implements NativeApi {
   setTrackMidiInput(...args: Parameters<NativeApi['setTrackMidiInput']>) {
     return this.command('setTrackMidiInput', args);
   }
-  listBuiltInInstruments(...args: Parameters<NativeApi['listBuiltInInstruments']>) {
-    return this.command('listBuiltInInstruments', args);
-  }
-  setTrackBuiltInInstrument(...args: Parameters<NativeApi['setTrackBuiltInInstrument']>) {
-    return this.command('setTrackBuiltInInstrument', args);
+  applyInstrument(...args: Parameters<NativeApi['applyInstrument']>) {
+    return this.command('applyInstrument', args);
   }
   setTrackVst3Instrument(...args: Parameters<NativeApi['setTrackVst3Instrument']>) {
     return this.command('setTrackVst3Instrument', args);
@@ -813,8 +799,6 @@ export class FakeNativeApi implements NativeApi {
     switch (name) {
       case 'bootstrap':
         return Promise.resolve(this.bootstrapState);
-      case 'listBuiltInInstruments':
-        return Promise.resolve(this.builtInInstruments);
       case 'listInstruments':
         return Promise.resolve(this.instruments);
       case 'setInstrumentFavorite': {
@@ -1105,7 +1089,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'setTrackAutomation',
   'setTrackAudioInput',
   'setTrackMidiInput',
-  'setTrackBuiltInInstrument',
+  'applyInstrument',
   'setTrackVst3Instrument',
   'clearTrackInstrument',
   'addTrackEffect',
@@ -1168,56 +1152,6 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
   };
   return {
     pluginCatalog: [],
-    builtInInstruments: [
-      {
-        id: '01-clean-sub-bass',
-        name: 'Clean Sub Bass',
-        author: 'Riffra',
-        description: 'A focused low-frequency bass instrument.',
-        category: 'Bass',
-        tags: ['bass', 'sub'],
-        recommendedRange: { minMidi: 28, maxMidi: 72 },
-        preview: {
-          tempoBpm: 110,
-          ticksPerBeat: 480,
-          timeSignature: { numerator: 4, denominator: 4 },
-          lengthTicks: 1920,
-          notes: [{ tick: 0, durationTicks: 960, note: 36, velocity: 100 }],
-        },
-      },
-      {
-        id: '02-warm-poly-pad',
-        name: 'Warm Poly Pad',
-        author: 'Riffra',
-        description: 'A soft sustained pad for harmonic beds.',
-        category: 'Keys',
-        tags: ['pad', 'polyphonic'],
-        recommendedRange: { minMidi: 36, maxMidi: 96 },
-        preview: {
-          tempoBpm: 90,
-          ticksPerBeat: 480,
-          timeSignature: { numerator: 4, denominator: 4 },
-          lengthTicks: 1920,
-          notes: [{ tick: 0, durationTicks: 1440, note: 60, velocity: 88 }],
-        },
-      },
-      {
-        id: '03-tight-drums',
-        name: 'Tight Drums',
-        author: 'Riffra',
-        description: 'A compact kit for rhythmic sketches.',
-        category: 'Drums',
-        tags: ['drums', 'kit'],
-        recommendedRange: { minMidi: 36, maxMidi: 84 },
-        preview: {
-          tempoBpm: 120,
-          ticksPerBeat: 480,
-          timeSignature: { numerator: 4, denominator: 4 },
-          lengthTicks: 1920,
-          notes: [{ tick: 0, durationTicks: 120, note: 36, velocity: 110 }],
-        },
-      },
-    ],
     projectState: {
       activeProjectId: '01900000-0000-7000-8000-000000000001',
       projects: [
@@ -1249,22 +1183,76 @@ function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState
   };
 }
 
-function instrumentLibraryItem(summary: BuiltInInstrumentSummary): InstrumentLibraryItem {
-  return {
-    id: `builtin:${summary.id}`,
-    presetId: summary.id,
-    origin: 'builtIn',
-    name: summary.name,
-    author: summary.author,
-    description: summary.description,
-    defaultCategory: summary.category,
-    category: summary.category,
-    defaultTags: summary.tags,
-    userTags: [],
-    tags: summary.tags,
-    favorite: false,
-    collectionIds: [],
-    recommendedRange: summary.recommendedRange,
-    preview: summary.preview,
-  };
+function defaultInstrumentLibraryItems(): InstrumentLibraryItem[] {
+  return [
+    {
+      id: 'builtin:01-clean-sub-bass',
+      presetId: '01-clean-sub-bass',
+      origin: 'builtIn',
+      name: 'Clean Sub Bass',
+      author: 'Riffra',
+      description: 'A focused low-frequency bass instrument.',
+      defaultCategory: 'Bass',
+      category: 'Bass',
+      defaultTags: ['bass', 'sub'],
+      userTags: [],
+      tags: ['bass', 'sub'],
+      favorite: false,
+      collectionIds: [],
+      recommendedRange: { minMidi: 28, maxMidi: 72 },
+      preview: {
+        tempoBpm: 110,
+        ticksPerBeat: 480,
+        timeSignature: { numerator: 4, denominator: 4 },
+        lengthTicks: 1920,
+        notes: [{ tick: 0, durationTicks: 960, note: 36, velocity: 100 }],
+      },
+    },
+    {
+      id: 'builtin:02-warm-poly-pad',
+      presetId: '02-warm-poly-pad',
+      origin: 'builtIn',
+      name: 'Warm Poly Pad',
+      author: 'Riffra',
+      description: 'A soft sustained pad for harmonic beds.',
+      defaultCategory: 'Keys',
+      category: 'Keys',
+      defaultTags: ['pad', 'polyphonic'],
+      userTags: [],
+      tags: ['pad', 'polyphonic'],
+      favorite: false,
+      collectionIds: [],
+      recommendedRange: { minMidi: 36, maxMidi: 96 },
+      preview: {
+        tempoBpm: 90,
+        ticksPerBeat: 480,
+        timeSignature: { numerator: 4, denominator: 4 },
+        lengthTicks: 1920,
+        notes: [{ tick: 0, durationTicks: 1440, note: 60, velocity: 88 }],
+      },
+    },
+    {
+      id: 'builtin:03-tight-drums',
+      presetId: '03-tight-drums',
+      origin: 'builtIn',
+      name: 'Tight Drums',
+      author: 'Riffra',
+      description: 'A compact kit for rhythmic sketches.',
+      defaultCategory: 'Drums',
+      category: 'Drums',
+      defaultTags: ['drums', 'kit'],
+      userTags: [],
+      tags: ['drums', 'kit'],
+      favorite: false,
+      collectionIds: [],
+      recommendedRange: { minMidi: 36, maxMidi: 84 },
+      preview: {
+        tempoBpm: 120,
+        ticksPerBeat: 480,
+        timeSignature: { numerator: 4, denominator: 4 },
+        lengthTicks: 1920,
+        notes: [{ tick: 0, durationTicks: 120, note: 36, velocity: 110 }],
+      },
+    },
+  ];
 }

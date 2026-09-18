@@ -16,7 +16,7 @@ interface UseArrangeDropOptions {
     ArrangeWorkspaceApi,
     'importMidiBytes' | 'addAudioClipToArrangement' | 'addMidiClipToArrangement'
   > &
-    Pick<ArrangeWorkspaceApi, 'setTrackBuiltInInstrument'>;
+    Pick<ArrangeWorkspaceApi, 'applyInstrument'>;
   commit: ArrangeCommit;
   hostGeneration: number;
   pixelsPerTick: number;
@@ -26,7 +26,7 @@ interface UseArrangeDropOptions {
 
 const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
 
-/** Coordinates OS MIDI-file drops and Library asset drops in the Arrange workspace. */
+/** Coordinates instrument, Library asset, and OS MIDI-file drops in the Arrange workspace. */
 export function useArrangeDrop({
   api,
   commit,
@@ -82,7 +82,7 @@ export function useArrangeDrop({
         );
         return;
       }
-      await commit(api.setTrackBuiltInInstrument(trackId, instrument.presetId));
+      await commit(api.applyInstrument(trackId, instrument.instrumentId));
     },
     [api, commit, setMessage],
   );

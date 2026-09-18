@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use riffra_control::ControlCommand;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::ffi::OsString;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -1094,27 +1095,58 @@ pub struct ProjectExportArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum InstrumentCommand {
-    #[command(name = "builtin")]
-    BuiltIn {
-        #[command(subcommand)]
-        command: BuiltInInstrumentCommand,
-    },
+    /// Initialize or forward to the bundled Sonalloy instrument command.
+    Init(SonalloyArgs),
+    /// Validate a Sonalloy instrument definition.
+    Validate(SonalloyArgs),
+    /// Inspect a Sonalloy instrument definition.
+    Inspect(SonalloyArgs),
+    /// Render through the bundled Sonalloy renderer.
+    Render(SonalloyArgs),
+    /// Audition through the bundled Sonalloy renderer.
+    Audition(SonalloyArgs),
+    /// List built-in and User Instruments.
+    List,
+    /// Save a Sonalloy definition package as a User Instrument.
+    Save(InstrumentSaveArgs),
+    /// Export a User Instrument package.
+    Export(InstrumentExportArgs),
+    /// Apply a built-in or User Instrument to an Instrument Track.
+    Apply(InstrumentApplyArgs),
     Clear(IdArg),
 }
 
-#[derive(Debug, Subcommand)]
-pub enum BuiltInInstrumentCommand {
-    List,
-    Set(BuiltInInstrumentSetArgs),
+#[derive(Debug, Args)]
+pub struct SonalloyArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub args: Vec<OsString>,
 }
 
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuiltInInstrumentSetArgs {
+pub struct InstrumentSaveArgs {
+    pub definition_path: PathBuf,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instrument_id: Option<String>,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentExportArgs {
+    #[arg(long)]
+    pub instrument_id: String,
+    #[arg(long)]
+    pub output: PathBuf,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentApplyArgs {
     #[arg(long)]
     pub track_id: String,
     #[arg(long)]
-    pub preset_id: String,
+    pub instrument_id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1849,10 +1881,17 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             ProjectCommand::Import(args) => value("project.import", json!({"path":args.path})),
         },
         CliCommand::Instrument { command } => match command {
-            InstrumentCommand::BuiltIn { command } => match command {
-                BuiltInInstrumentCommand::List => simple("instrument.builtin.list"),
-                BuiltInInstrumentCommand::Set(args) => value("instrument.builtin.set", args),
-            },
+            InstrumentCommand::Init(_)
+            | InstrumentCommand::Validate(_)
+            | InstrumentCommand::Inspect(_)
+            | InstrumentCommand::Render(_)
+            | InstrumentCommand::Audition(_) => {
+                unreachable!("Sonalloy instrument commands are handled directly by the CLI")
+            }
+            InstrumentCommand::List => simple("instrument.list"),
+            InstrumentCommand::Save(args) => value("instrument.save", args),
+            InstrumentCommand::Export(args) => value("instrument.export", args),
+            InstrumentCommand::Apply(args) => value("instrument.apply", args),
             InstrumentCommand::Clear(args) => {
                 value("instrument.clear", json!({"trackId": args.track_id}))
             }
@@ -2389,37 +2428,44 @@ mod tests {
     }
 
     #[test]
-    fn instrument_commands_keep_built_in_and_vst3_sources_distinct() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "instrument",
-            "builtin",
-            "list",
-        ])
-        .unwrap();
-        assert_eq!(cli.request().unwrap().name, "instrument.builtin.list");
+    fn instrument_commands_use_common_ids_and_keep_vst3_distinct() {
+        let cli =
+            Cli::try_parse_from(["riffra", "--data-root", "data", "instrument", "list"]).unwrap();
+        assert_eq!(cli.request().unwrap().name, "instrument.list");
 
         let cli = Cli::try_parse_from([
             "riffra",
             "--data-root",
             "data",
             "instrument",
-            "builtin",
-            "set",
+            "apply",
             "--track-id",
             "track:keys",
-            "--preset-id",
-            "01-clean-sub-bass",
+            "--instrument-id",
+            "builtin:01-clean-sub-bass",
         ])
         .unwrap();
         let request = cli.request().unwrap();
-        assert_eq!(request.name, "instrument.builtin.set");
+        assert_eq!(request.name, "instrument.apply");
         assert_eq!(
             request.params,
-            json!({"trackId":"track:keys","presetId":"01-clean-sub-bass"})
+            json!({"trackId":"track:keys","instrumentId":"builtin:01-clean-sub-bass"})
         );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "instrument",
+            "save",
+            "definition.json",
+            "--instrument-id",
+            "user:018f5d40-1b9e-7b9d-a70b-7a5b4f4e4c3e",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "instrument.save");
+        assert_eq!(request.params["definitionPath"], "definition.json");
 
         let cli = Cli::try_parse_from([
             "riffra",

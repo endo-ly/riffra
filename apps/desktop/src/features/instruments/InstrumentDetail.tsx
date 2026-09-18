@@ -40,7 +40,7 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
 
   const isInstrumentTrack = props.selectedTrack?.kind === 'instrument';
   const applyDisabled = props.projectSwitching || !isInstrumentTrack;
-  const saveCategory = () => props.onCategory(category.trim() || null);
+  const saveCategory = () => props.onCategory(category?.trim() || null);
   const resetCategory = () => {
     setCategory(props.item.defaultCategory);
     props.onCategory(null);
@@ -58,7 +58,7 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
         <div>
           <span className={surface.eyebrow}>INSTRUMENT DETAIL</span>
           <h3 id="instrument-detail-title">{props.item.name}</h3>
-          <small>Built-in</small>
+          <small>{props.item.origin === 'builtIn' ? 'Built-in' : 'User Instrument'}</small>
         </div>
         <button
           type="button"
@@ -73,20 +73,22 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
       {props.item.description && <p className={styles.description}>{props.item.description}</p>}
       <div className={styles.metadataGrid}>
         <span>Origin</span>
-        <strong>Built-in</strong>
+        <strong>{props.item.origin === 'builtIn' ? 'Built-in' : 'User Instrument'}</strong>
         <span>Category</span>
-        <strong>{props.item.category}</strong>
+        <strong>{props.item.category ?? '—'}</strong>
         <span>Tags</span>
         <strong>{props.item.tags.join(', ') || '—'}</strong>
         <span>Range</span>
         <strong>
-          {formatMidiNote(props.item.recommendedRange.minMidi)}–
-          {formatMidiNote(props.item.recommendedRange.maxMidi)}
+          {props.item.recommendedRange
+            ? `${formatMidiNote(props.item.recommendedRange.minMidi)}–${formatMidiNote(props.item.recommendedRange.maxMidi)}`
+            : '—'}
         </strong>
         <span>Preview</span>
         <strong>
-          {props.item.preview.tempoBpm} BPM · {props.item.preview.timeSignature.numerator}/
-          {props.item.preview.timeSignature.denominator}
+          {props.item.preview
+            ? `${props.item.preview.tempoBpm} BPM · ${props.item.preview.timeSignature.numerator}/${props.item.preview.timeSignature.denominator}`
+            : 'Unavailable'}
         </strong>
       </div>
       <div className={styles.field}>
@@ -94,8 +96,8 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
         <div className={styles.fieldEditor}>
           <input
             aria-label="Category override"
-            value={category === props.item.defaultCategory ? '' : category}
-            placeholder={props.item.defaultCategory}
+            value={category === props.item.defaultCategory ? '' : (category ?? '')}
+            placeholder={props.item.defaultCategory ?? 'Add category'}
             maxLength={64}
             onChange={(event) => setCategory(event.target.value)}
             onKeyDown={(event) => {
@@ -245,7 +247,7 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
           type="button"
           aria-label={`${props.previewing ? 'Stop previewing' : 'Preview'} ${props.item.name}`}
           onClick={props.onPreview}
-          disabled={props.safeMode}
+          disabled={props.safeMode || props.item.preview === null}
         >
           {props.previewing ? 'Stop preview' : 'Preview'}
         </button>

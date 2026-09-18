@@ -37,6 +37,42 @@ if(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY)
   return()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  set(RIFFRA_SONALLOY_CLI_SUFFIX ".exe")
+else()
+  set(RIFFRA_SONALLOY_CLI_SUFFIX "")
+endif()
+set(RIFFRA_SONALLOY_CARGO_TARGET_DIR
+  "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-cargo-target")
+set(RIFFRA_SONALLOY_CLI_BINARY
+  "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-cli/sonalloy${RIFFRA_SONALLOY_CLI_SUFFIX}")
+set(RIFFRA_SONALLOY_CARGO_BINARY
+  "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}/release/sonalloy${RIFFRA_SONALLOY_CLI_SUFFIX}")
+add_custom_command(
+  OUTPUT "${RIFFRA_SONALLOY_CLI_BINARY}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    "${CMAKE_CURRENT_BINARY_DIR}/sonalloy-cli"
+  COMMAND cargo build
+    --manifest-path "${sonalloy_SOURCE_DIR}/Cargo.toml"
+    --package sonalloy-cli
+    --bin sonalloy
+    --release
+    --target-dir "${RIFFRA_SONALLOY_CARGO_TARGET_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${RIFFRA_SONALLOY_CARGO_BINARY}"
+    "${RIFFRA_SONALLOY_CLI_BINARY}"
+  DEPENDS "${sonalloy_SOURCE_DIR}/Cargo.toml"
+  VERBATIM
+)
+add_custom_target(sonalloy-cli-build ALL
+  DEPENDS "${RIFFRA_SONALLOY_CLI_BINARY}"
+)
+add_executable(riffra-sonalloy-cli IMPORTED GLOBAL)
+set_property(TARGET riffra-sonalloy-cli PROPERTY IMPORTED_LOCATION
+  "${RIFFRA_SONALLOY_CLI_BINARY}")
+add_dependencies(riffra-sonalloy-cli sonalloy-cli-build)
+add_executable(sonalloy::cli ALIAS riffra-sonalloy-cli)
+
 FetchContent_Declare(
   JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -65,7 +101,7 @@ juce_add_console_app(riffra-render
 )
 
 add_custom_target(riffra-runtime-sidecars
-  DEPENDS riffra-audio riffra-plugin-scan riffra-render
+  DEPENDS riffra-audio riffra-plugin-scan riffra-render sonalloy-cli-build
 )
 
 add_library(riffra-render-core STATIC)
@@ -508,6 +544,19 @@ foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
     )
   endif()
 endforeach()
+
+install(PROGRAMS "${RIFFRA_SONALLOY_CLI_BINARY}"
+    DESTINATION "apps/desktop/src-tauri/binaries"
+    RENAME "sonalloy-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
+    COMPONENT riffra-sidecars
+)
+if(RIFFRA_HEADLESS_BINARIES_DESTINATION)
+  install(PROGRAMS "${RIFFRA_SONALLOY_CLI_BINARY}"
+      DESTINATION "${RIFFRA_HEADLESS_BINARIES_DESTINATION}"
+      RENAME "sonalloy${RIFFRA_BINARY_SUFFIX}"
+      COMPONENT riffra-sidecars
+  )
+endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin/"
     DESTINATION "apps/desktop/src-tauri/resources/instruments/builtin"

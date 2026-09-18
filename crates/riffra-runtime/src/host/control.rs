@@ -238,6 +238,7 @@ impl HostState {
                 &storage,
                 &self.project_store,
                 &self.data_root,
+                &self.binaries.sonalloy,
                 &self.built_in_instruments,
             )
             .dispatch_with_canonical(
@@ -559,12 +560,6 @@ impl HostState {
                         .map_err(|error| command_error(error.to_string()))?,
                 )
                 .map_err(serialize_error)?,
-                current.sequence,
-            )),
-            "instrument.builtin.list" => Ok((
-                "builtInInstruments",
-                serde_json::to_value(self.built_in_instruments.summaries())
-                    .map_err(serialize_error)?,
                 current.sequence,
             )),
             "host.shutdown" => {
@@ -926,16 +921,19 @@ impl HostState {
                     .map_err(serialize_error)?,
                 current.sequence,
             )),
-            "instrument.builtin.preview" => {
+            "instrument.preview" => {
                 if self.core.safe_mode() {
-                    return Err(runtime_unavailable(
-                        "Safe Mode blocks built-in instrument preview",
-                    ));
+                    return Err(runtime_unavailable("Safe Mode blocks instrument preview"));
                 }
-                let params: BuiltInInstrumentPreviewParams = decode(params)?;
+                let params: InstrumentPreviewParams = decode(params)?;
+                let preset_id = params
+                    .instrument_id
+                    .strip_prefix("builtin:")
+                    .filter(|preset_id| !preset_id.is_empty())
+                    .ok_or_else(|| command_error("User Instruments do not provide previews"))?;
                 let definition = self
                     .built_in_instruments
-                    .resolve(&params.preset_id)
+                    .resolve(preset_id)
                     .map_err(command_error)?;
                 let status = self
                     .core
@@ -952,7 +950,7 @@ impl HostState {
                     current.sequence,
                 ))
             }
-            "instrument.builtin.preview.stop" => {
+            "instrument.preview.stop" => {
                 let status = self
                     .core
                     .audio()
@@ -1440,18 +1438,6 @@ impl HostState {
                         &context,
                         &params.track_id,
                         riffra_core::MidiInputRoute::default(),
-                    )
-                    .map_err(|error| error.protocol_error())?,
-                )
-            }
-            "instrument.builtin.set" => {
-                let params: BuiltInInstrumentParams = decode(params)?;
-                Some(
-                    session_adapter::set_track_builtin_instrument_with_expected_sequence(
-                        &context,
-                        &params.track_id,
-                        &params.preset_id,
-                        Some(current_sequence),
                     )
                     .map_err(|error| error.protocol_error())?,
                 )
@@ -2030,7 +2016,7 @@ fn requires_command_gate(command: &str) -> bool {
 fn is_long_project_operation(command: &str) -> bool {
     matches!(
         command,
-        "instrument.builtin.set" | "instrument.vst3.set" | "effect.add" | "missing.replace-plugin"
+        "instrument.apply" | "instrument.vst3.set" | "effect.add" | "missing.replace-plugin"
     )
 }
 
@@ -2041,7 +2027,6 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "host.info"
             | "host.bootstrap"
             | "host.shutdown"
-            | "instrument.builtin.list"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
             | "audio.feedback-protection.reset"
@@ -2063,8 +2048,8 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "audio.driver.get"
             | "asset.preview"
             | "asset.preview.stop"
-            | "instrument.builtin.preview"
-            | "instrument.builtin.preview.stop"
+            | "instrument.preview"
+            | "instrument.preview.stop"
             | "midi.send"
             | "midi.target.set"
             | "midi.panic"
@@ -2121,15 +2106,8 @@ struct TrackIdParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BuiltInInstrumentParams {
-    track_id: String,
-    preset_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BuiltInInstrumentPreviewParams {
-    preset_id: String,
+struct InstrumentPreviewParams {
+    instrument_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2404,7 +2382,7 @@ mod tests {
             "project.list",
             "instrument.vst3.set",
             "effect.add",
-            "instrument.builtin.preview",
+            "instrument.preview",
             "library.instrument.list",
         ] {
             assert!(!super::requires_command_gate(command), "{command}");
@@ -2468,13 +2446,13 @@ mod tests {
             serde_json::json!({"instrumentId":"builtin:01-bass","category":" Basses "}),
         ))
         .unwrap();
-        assert_eq!(overridden.category, "Basses");
+        assert_eq!(overridden.category.as_deref(), Some("Basses"));
         let restored: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
             "library.instrument.category.set",
             serde_json::json!({"instrumentId":"builtin:01-bass","category":null}),
         ))
         .unwrap();
-        assert_eq!(restored.category, "Bass");
+        assert_eq!(restored.category.as_deref(), Some("Bass"));
 
         let tagged: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
             "library.instrument.tags.set",

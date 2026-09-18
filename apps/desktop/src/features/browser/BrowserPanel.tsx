@@ -32,7 +32,7 @@ export interface BrowserPanelProps {
     onAddPlugin: (plugin: PluginEntry, target: 'instrument' | 'effect') => void;
   };
   instruments?: ReturnType<typeof useInstrumentLibrary>;
-  onApplyBuiltInInstrument?: (presetId: string) => void;
+  onApplyInstrument?: (instrumentId: string) => void;
   recordings: {
     visibleRecordings: RecordingAsset[];
     count: number;
@@ -44,7 +44,7 @@ export function BrowserPanel({
   library,
   plugins,
   instruments,
-  onApplyBuiltInInstrument = () => undefined,
+  onApplyInstrument = () => undefined,
   recordings,
   inbox,
   projectSwitching = false,
@@ -100,7 +100,7 @@ export function BrowserPanel({
               selectedTrack={plugins.selectedTrack}
               projectSwitching={projectSwitching}
               safeMode={safeMode}
-              onApply={onApplyBuiltInInstrument}
+              onApply={onApplyInstrument}
             />
           </BrowserSection>
         )}

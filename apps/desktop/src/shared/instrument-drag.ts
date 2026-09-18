@@ -2,9 +2,9 @@ export const RIFFRA_INSTRUMENT_MIME = 'application/x-riffra-instrument';
 
 export interface RiffraInstrumentDragPayload {
   version: 1;
-  presetId: string;
+  instrumentId: string;
   name: string;
-  origin: 'builtIn';
+  origin: 'builtIn' | 'user';
 }
 
 export function writeInstrumentDrag(
@@ -32,10 +32,10 @@ function isInstrumentDragPayload(value: unknown): value is RiffraInstrumentDragP
   const candidate = value as Partial<RiffraInstrumentDragPayload>;
   return (
     candidate.version === 1 &&
-    typeof candidate.presetId === 'string' &&
-    candidate.presetId.trim().length > 0 &&
+    typeof candidate.instrumentId === 'string' &&
+    candidate.instrumentId.trim().length > 0 &&
     typeof candidate.name === 'string' &&
     candidate.name.trim().length > 0 &&
-    candidate.origin === 'builtIn'
+    (candidate.origin === 'builtIn' || candidate.origin === 'user')
   );
 }

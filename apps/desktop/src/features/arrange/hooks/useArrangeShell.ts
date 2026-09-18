@@ -7,7 +7,7 @@ import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mut
 import { toast } from '@/shared/toasts';
 
 export function useArrangeShell(
-  api: Pick<ArrangeApi, 'setTrackBuiltInInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'>,
+  api: Pick<ArrangeApi, 'applyInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'>,
   session: CreativeSession | null,
   applyCanonicalState: (canonical: CanonicalState) => boolean,
   hostGeneration = 0,
@@ -59,11 +59,11 @@ export function useArrangeShell(
     }
   };
 
-  const applyBuiltInInstrument = async (presetId: string) => {
+  const applyInstrument = async (instrumentId: string) => {
     if (!selectedTrack || selectedTrack.kind !== 'instrument') return;
     const requestGeneration = hostGeneration;
     try {
-      const next = await api.setTrackBuiltInInstrument(selectedTrack.id, presetId);
+      const next = await api.applyInstrument(selectedTrack.id, instrumentId);
       if (currentHostGeneration.current !== requestGeneration) return;
       applyArrangementMutation(next, applyCanonicalState, (message) =>
         toast(message, { kind: 'error' }),
@@ -71,7 +71,7 @@ export function useArrangeShell(
     } catch (error) {
       if (error instanceof HostConnectionChangedError) return;
       if (currentHostGeneration.current !== requestGeneration) return;
-      logNativeError('Apply built-in instrument')(error);
+      logNativeError('Apply instrument')(error);
     }
   };
 
@@ -82,6 +82,6 @@ export function useArrangeShell(
     setFocusedTrackId,
     selectedTrack,
     addPlugin,
-    applyBuiltInInstrument,
+    applyInstrument,
   };
 }

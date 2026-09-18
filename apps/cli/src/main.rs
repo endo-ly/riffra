@@ -1,5 +1,6 @@
 mod args;
 mod attached;
+mod instrument;
 mod output;
 mod resources;
 mod serve;
@@ -19,14 +20,39 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    if let Err(error) = run() {
+    let cli = Cli::parse_from(instrument::prepare_cli_args(std::env::args_os()));
+    if let Some(command) = instrument::passthrough_command(&cli) {
+        if cli.interactive {
+            eprintln!("riffra: instrument passthrough cannot be combined with --interactive");
+            std::process::exit(1);
+        }
+        if cli.attach {
+            eprintln!("riffra: instrument passthrough cannot be combined with --attach");
+            std::process::exit(1);
+        }
+        if cli.host.is_some() {
+            eprintln!("riffra: instrument passthrough cannot be combined with --host");
+            std::process::exit(1);
+        }
+        if cli.expected_sequence.is_some() {
+            eprintln!("riffra: instrument passthrough cannot be combined with --expected-sequence");
+            std::process::exit(1);
+        }
+        if let Err(error) = instrument::run(command, cli.data_root.as_deref()) {
+            if !error.message.is_empty() {
+                eprintln!("riffra: {}", error.message);
+            }
+            std::process::exit(error.exit_code);
+        }
+        return;
+    }
+    if let Err(error) = run(cli) {
         eprintln!("riffra: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), String> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<(), String> {
     if cli.interactive && cli.command.is_some() {
         return Err("--interactive cannot be combined with a one-shot command".into());
     }
@@ -691,9 +717,9 @@ mod tests {
             &dispatcher,
             &json!({
                 "requestId":"instrument",
-                "command":"instrument.builtin.set",
+                "command":"instrument.apply",
                 "expectedSequence":3,
-                "params":{"trackId":drums_id,"presetId":"drum-kit"}
+                "params":{"trackId":drums_id,"instrumentId":"builtin:drum-kit"}
             })
             .to_string(),
         );

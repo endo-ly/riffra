@@ -2,7 +2,7 @@ use super::HostError;
 use super::events::{HostEventHub, HostEventSubscription, SharedHostEventSink};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
-use crate::instrument::{BuiltInInstrumentCatalog, BuiltInInstrumentSummary};
+use crate::instrument::BuiltInInstrumentCatalog;
 use crate::jobs::JobRegistry;
 use crate::model::{AudioStatus, ProjectRecoveryState, ProjectState, RuntimeProjectionStatus};
 use crate::projects;
@@ -24,7 +24,6 @@ pub struct HostBootstrap {
     pub canonical: CanonicalState,
     pub project_state: ProjectState,
     pub plugin_catalog: Vec<plugins::PluginEntry>,
-    pub built_in_instruments: Vec<BuiltInInstrumentSummary>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
     pub runtime_projection: RuntimeProjectionStatus,
@@ -84,7 +83,6 @@ impl HostState {
             project_state: projects::state(&self.project_store).map_err(HostError::State)?,
             plugin_catalog: plugins::load(&self.data_root)
                 .map_err(|error| HostError::State(error.to_string()))?,
-            built_in_instruments: self.built_in_instruments.summaries(),
             runtime_started: self.core.audio().startup_completed(),
             runtime_startup_finished: self.core.audio().startup_finished(),
             runtime_projection: self.runtime.status(),

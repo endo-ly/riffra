@@ -12,7 +12,7 @@ interface InstrumentBrowserSectionProps {
   selectedTrack: Track | null;
   projectSwitching: boolean;
   safeMode: boolean;
-  onApply: (presetId: string) => void;
+  onApply: (instrumentId: string) => void;
 }
 
 export function InstrumentBrowserSection({
@@ -86,14 +86,14 @@ export function InstrumentBrowserSection({
       {!controller.loading && controller.visibleItems.length === 0 && (
         <small className={styles.message}>No instruments match.</small>
       )}
-      <div className={styles.instrumentRows} role="list" aria-label="Built-in instruments">
+      <div className={styles.instrumentRows} role="list" aria-label="Instruments">
         {controller.visibleItems.map((item) => (
           <InstrumentRow
             key={item.id}
             item={item}
             selected={item.id === controller.selectedId}
             previewing={item.id === controller.previewingId}
-            previewDisabled={safeMode}
+            previewDisabled={safeMode || item.preview === null}
             onSelect={() => controller.setSelectedId(item.id)}
             onFavorite={() => void controller.toggleFavorite(item)}
             onPreview={() => void controller.preview(item)}
@@ -118,7 +118,7 @@ export function InstrumentBrowserSection({
           onRenameCollection={(id, name) => void controller.renameCollection(id, name)}
           onDeleteCollection={(id) => void controller.deleteCollection(id)}
           onPreview={() => void controller.preview(selected)}
-          onApply={() => onApply(selected.presetId)}
+          onApply={() => onApply(selected.id)}
         />
       )}
     </div>
@@ -142,9 +142,9 @@ function InstrumentRow(props: {
       onDragStart={(event) =>
         writeInstrumentDrag(event.dataTransfer, {
           version: 1,
-          presetId: props.item.presetId,
+          instrumentId: props.item.id,
           name: props.item.name,
-          origin: 'builtIn',
+          origin: props.item.origin === 'builtIn' ? 'builtIn' : 'user',
         })
       }
       onClick={props.onSelect}
@@ -163,7 +163,7 @@ function InstrumentRow(props: {
       <span className={styles.instrumentText}>
         <strong>{props.item.name}</strong>
         <small>
-          {props.item.category} · {props.item.tags.slice(0, 3).join(', ')}
+          {props.item.category ?? 'Uncategorized'} · {props.item.tags.slice(0, 3).join(', ')}
         </small>
       </span>
       <button

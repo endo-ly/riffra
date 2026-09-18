@@ -8,7 +8,7 @@ import {
 
 const payload: RiffraInstrumentDragPayload = {
   version: 1,
-  presetId: '01-clean-sub-bass',
+  instrumentId: 'builtin:01-clean-sub-bass',
   name: 'Clean Sub Bass',
   origin: 'builtIn',
 };
@@ -39,7 +39,7 @@ describe('instrument drag payload', () => {
   it.each([
     ['invalid JSON', '{'],
     ['version mismatch', JSON.stringify({ ...payload, version: 2 })],
-    ['missing preset ID', JSON.stringify({ ...payload, presetId: '' })],
+    ['missing instrument ID', JSON.stringify({ ...payload, instrumentId: '' })],
     ['missing origin', JSON.stringify({ ...payload, origin: 'external' })],
   ])('rejects %s', (_case, value) => {
     expect(readInstrumentDrag(dataTransferWith(value))).toBeNull();

@@ -5,9 +5,7 @@ use super::*;
 pub(super) fn handles(command: &str) -> bool {
     matches!(
         command,
-        "instrument.builtin.list"
-            | "instrument.builtin.set"
-            | "instrument.vst3.set"
+        "instrument.vst3.set"
             | "instrument.clear"
             | "effect.add"
             | "effect.remove"
@@ -33,48 +31,6 @@ pub(super) fn dispatch<A>(
     request: ControlCommand,
 ) -> Result<DispatchResult, DispatchError> {
     Ok(match request.name.as_str() {
-        "instrument.builtin.list" => dispatcher.value(
-            "builtInInstruments",
-            dispatcher.built_in_instruments.summaries(),
-        ),
-        "instrument.builtin.set" => {
-            let params: BuiltInInstrumentParams = decode(request.params)?;
-            let definition = dispatcher
-                .built_in_instruments
-                .resolve(&params.preset_id)
-                .map_err(DispatchError::CommandFailed)?;
-            let snapshot = dispatcher.core.snapshot()?;
-            let track = snapshot
-                .session
-                .arrangement
-                .tracks
-                .iter()
-                .find(|track| track.id == params.track_id)
-                .ok_or_else(|| format!("track is not registered: {}", params.track_id))?;
-            let id = track
-                .instrument
-                .as_ref()
-                .map(|device| device.id.clone())
-                .unwrap_or_else(|| format!("device:instrument:{}", params.track_id));
-            let creates_device = track.instrument.is_none();
-            let instrument = riffra_core::TrackInstrument::built_in(
-                id.clone(),
-                definition.summary.name.clone(),
-                params.preset_id,
-                definition.definition_json.clone(),
-            )
-            .map_err(DispatchError::CommandFailed)?;
-            let mut result = dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .set_track_instrument(&params.track_id, Some(instrument))?,
-            );
-            if creates_device {
-                result.created_entity_ids.insert("devices".into(), vec![id]);
-            }
-            result
-        }
         "instrument.vst3.set" => {
             let params: PluginPathParams = decode(request.params)?;
             let snapshot = dispatcher.core.snapshot()?;
@@ -324,13 +280,6 @@ pub(crate) struct DeviceBypassParams {
 pub(crate) struct PluginPathParams {
     pub(crate) track_id: String,
     pub(crate) plugin_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct BuiltInInstrumentParams {
-    pub(crate) track_id: String,
-    pub(crate) preset_id: String,
 }
 
 fn plugin_name(path: &str) -> String {

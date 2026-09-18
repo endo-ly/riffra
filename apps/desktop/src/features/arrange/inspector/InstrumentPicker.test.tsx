@@ -7,11 +7,18 @@ import { InstrumentPicker } from './InstrumentPicker';
 
 afterEach(cleanup);
 
-const builtInInstruments = [
+const instruments = [
   {
-    id: '01-clean-sub-bass',
+    id: 'builtin:01-clean-sub-bass',
     name: 'Clean Sub Bass',
     description: 'A focused low-frequency bass instrument.',
+    origin: 'builtIn' as const,
+  },
+  {
+    id: 'user:01a0b3d5-b173-7ac1-a7e4-686e99599f94',
+    name: 'User Piano',
+    description: 'A user instrument.',
+    origin: 'user' as const,
   },
 ];
 
@@ -32,9 +39,9 @@ const plugins = [
 function renderPicker() {
   return render(
     <InstrumentPicker
-      builtInInstruments={builtInInstruments}
+      instruments={instruments}
       plugins={plugins}
-      onSelectBuiltIn={vi.fn()}
+      onSelectInstrument={vi.fn()}
       onSelectVst3={vi.fn()}
       onClose={vi.fn()}
     />,
@@ -42,14 +49,17 @@ function renderPicker() {
 }
 
 describe('InstrumentPicker', () => {
-  it('shows built-in and external candidates in one flat picker', () => {
+  it('shows user and built-in instruments with external candidates in one picker', () => {
     renderPicker();
 
-    expect(screen.getByText('Built-in Instruments')).toBeInTheDocument();
+    expect(screen.getByText('Instruments')).toBeInTheDocument();
     expect(
       screen.getByRole('button', {
         name: 'Clean Sub Bass — A focused low-frequency bass instrument.',
       }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'User Piano — A user instrument.' }),
     ).toBeInTheDocument();
     expect(screen.getByText('External Plugins')).toBeInTheDocument();
     expect(
@@ -59,13 +69,13 @@ describe('InstrumentPicker', () => {
   });
 
   it('routes built-in and VST3 selections to their distinct callbacks', () => {
-    const onSelectBuiltIn = vi.fn();
+    const onSelectInstrument = vi.fn();
     const onSelectVst3 = vi.fn();
     render(
       <InstrumentPicker
-        builtInInstruments={builtInInstruments}
+        instruments={instruments}
         plugins={plugins}
-        onSelectBuiltIn={onSelectBuiltIn}
+        onSelectInstrument={onSelectInstrument}
         onSelectVst3={onSelectVst3}
         onClose={vi.fn()}
       />,
@@ -78,7 +88,7 @@ describe('InstrumentPicker', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'External Keys — Example Vendor' }));
 
-    expect(onSelectBuiltIn).toHaveBeenCalledWith('01-clean-sub-bass');
+    expect(onSelectInstrument).toHaveBeenCalledWith('builtin:01-clean-sub-bass');
     expect(onSelectVst3).toHaveBeenCalledWith(plugins[0]);
   });
 });

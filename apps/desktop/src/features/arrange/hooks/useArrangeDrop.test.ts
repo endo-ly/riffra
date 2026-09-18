@@ -67,7 +67,7 @@ describe('useArrangeDrop', () => {
       importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
-      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
+      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const setMessage = vi.fn();
     const { result } = renderHook(() =>
@@ -107,7 +107,7 @@ describe('useArrangeDrop', () => {
       importMidiBytes: vi.fn(async () => toAssetId('asset:lead')),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
-      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
+      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const commit = commitStub();
     const { result } = renderHook(() =>
@@ -152,7 +152,7 @@ describe('useArrangeDrop', () => {
       ),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
-      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
+      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const commit = commitStub();
     const { result } = renderHook(() =>
@@ -185,7 +185,7 @@ describe('useArrangeDrop', () => {
       importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
       addAudioClipToArrangement: vi.fn(async () => null),
       addMidiClipToArrangement: vi.fn(async () => null),
-      setTrackBuiltInInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
+      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
     };
     const commit = commitStub();
     const setMessage = vi.fn();
@@ -201,7 +201,7 @@ describe('useArrangeDrop', () => {
     );
     const payload = {
       version: 1,
-      presetId: '01-clean-sub-bass',
+      instrumentId: 'builtin:01-clean-sub-bass',
       name: 'Clean Sub Bass',
       origin: 'builtIn',
     };
@@ -210,9 +210,9 @@ describe('useArrangeDrop', () => {
       result.current.handleDrop(instrumentDropEvent(payload), 'track:instrument', 'instrument');
     });
     await waitFor(() =>
-      expect(api.setTrackBuiltInInstrument).toHaveBeenCalledWith(
+      expect(api.applyInstrument).toHaveBeenCalledWith(
         'track:instrument',
-        '01-clean-sub-bass',
+        'builtin:01-clean-sub-bass',
       ),
     );
     expect(commit).toHaveBeenCalledTimes(1);
@@ -225,6 +225,6 @@ describe('useArrangeDrop', () => {
         'Instruments can only be assigned to an Instrument Track.',
       ),
     );
-    expect(api.setTrackBuiltInInstrument).toHaveBeenCalledTimes(1);
+    expect(api.applyInstrument).toHaveBeenCalledTimes(1);
   });
 });

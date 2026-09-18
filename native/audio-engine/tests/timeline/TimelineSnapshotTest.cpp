@@ -27,6 +27,24 @@ TEST(TimelineEngineTest, RebuildsTimelineForTheCurrentAudioDeviceFormat) {
     EXPECT_TRUE(passed);
 }
 
+TEST(TimelineEngineTest, LoadsUserInstrumentSnapshotThroughTheInternalRuntime) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:user-snapshot");
+    auto tracks = snapshot.getProperty("tracks", {});
+    ASSERT_TRUE(tracks.isArray());
+    ASSERT_EQ(tracks.getArray()->size(), 1);
+    auto* track = tracks.getArray()->getFirst().getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto* instrument = track->getProperty("instrument").getDynamicObject();
+    ASSERT_NE(instrument, nullptr);
+    instrument->setProperty("resourceType", "userSnapshot");
+
+    EXPECT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+}
+
 TEST(TimelineEngineTest, ReclaimsRetiredGraphsAfterAudioReadersLeave) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();

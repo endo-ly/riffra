@@ -16,3 +16,4 @@ thiserror = "2"
 tracing = "0.1"
 ts-rs = "12"
 rusqlite = { version = "0.40", features = ["bundled"] }
+uuid = { version = "1.23", features = ["v7"] }
