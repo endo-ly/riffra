@@ -34,6 +34,7 @@ impl Drop for TestDataRoot {
 struct RunningHost {
     child: Child,
     data_root: TestDataRoot,
+    built_in_instruments_root: Option<PathBuf>,
 }
 
 fn prepare_safe_mode_resource_root(data_root: &Path) -> PathBuf {
@@ -73,7 +74,11 @@ impl RunningHost {
         let endpoint = data_root.path.join("control").join("host.json");
         for _ in 0..200 {
             if endpoint.is_file() {
-                return Self { child, data_root };
+                return Self {
+                    child,
+                    data_root,
+                    built_in_instruments_root: safe_mode_resources,
+                };
             }
             if let Some(status) = child
                 .try_wait()
@@ -138,10 +143,17 @@ fn attached(instance_id: &str, arguments: &[&str]) -> Output {
         .expect("attached command should start")
 }
 
-fn standalone(data_root: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_riffra"))
-        .arg("--data-root")
-        .arg(data_root)
+fn standalone(
+    data_root: &Path,
+    built_in_instruments_root: Option<&Path>,
+    arguments: &[&str],
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_riffra"));
+    command.arg("--data-root").arg(data_root);
+    if let Some(resource_root) = built_in_instruments_root {
+        command.env("RIFFRA_BUILTIN_INSTRUMENTS_ROOT", resource_root);
+    }
+    command
         .args(arguments)
         .output()
         .expect("standalone command should start")
@@ -299,7 +311,11 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     assert!(!data_root.join("control").join("host.sock").exists());
 
     let reopened = success_json(
-        standalone(&data_root, &["session", "get"]),
+        standalone(
+            &data_root,
+            host.built_in_instruments_root.as_deref(),
+            &["session", "get"],
+        ),
         "session reopen",
     );
     assert_eq!(reopened["result"]["type"], "session");
