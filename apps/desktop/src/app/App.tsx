@@ -466,7 +466,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
               }}
               instruments={browser.instruments}
-              onApplyBuiltInInstrument={(presetId) => void arrange.applyBuiltInInstrument(presetId)}
+              onApplyInstrument={(instrumentId) => void arrange.applyInstrument(instrumentId)}
               recordings={{
                 ...browser.recordings,
                 count: recordings.length,
@@ -492,7 +492,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 setArrangeSelection={arrange.setSelection}
                 missingDependencies={missingDependencies}
                 plugins={plugins}
-                builtInInstruments={boot?.builtInInstruments ?? []}
+                instruments={browser.instruments.items}
                 onDisableMissingPlugin={disableMissingPluginDevice}
                 onReplaceMissingPlugin={replaceMissingPluginDevice}
                 onRescanMissingPlugins={rescanMissingPlugins}
@@ -532,7 +532,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 void (transportPlaying || transportStarting ? stopTransport() : playTransport())
               }
               plugins={plugins}
-              builtInInstruments={boot?.builtInInstruments ?? []}
+              instruments={browser.instruments.items}
               focusedTrackId={arrange.focusedTrackId}
               onFocusTrack={arrange.setFocusedTrackId}
               missingDeviceIds={missingDependencies

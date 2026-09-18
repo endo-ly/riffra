@@ -1,7 +1,7 @@
 import type {
   ArrangementMutationResult,
-  BuiltInInstrumentSummary,
   CreativeSession,
+  InstrumentLibraryItem,
   PluginEntry,
 } from '@/model/domain';
 import type { ArrangeApi, JobApi } from '@/native/native-api';
@@ -28,10 +28,10 @@ interface ArrangeMarkerRenameController {
 }
 
 interface ArrangeOverlaysProps {
-  api: Pick<ArrangeApi, 'setTrackBuiltInInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'> &
+  api: Pick<ArrangeApi, 'applyInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'> &
     Pick<JobApi, 'scanVst3Folder'>;
   plugins?: PluginEntry[];
-  builtInInstruments: BuiltInInstrumentSummary[];
+  instruments: InstrumentLibraryItem[];
   commit: (operation: Promise<ArrangementMutationResult | null>) => Promise<CreativeSession | null>;
   ruler: ArrangeMarkerRenameController;
   contextMenu: { x: number; y: number; items: ContextMenuItem[] } | null;
@@ -50,12 +50,12 @@ export function ArrangeOverlays(props: ArrangeOverlaysProps) {
         (pluginPicker.kind === 'instrument' ? (
           <InstrumentPicker
             api={props.api}
-            builtInInstruments={props.builtInInstruments}
+            instruments={props.instruments}
             plugins={props.plugins}
-            onSelectBuiltIn={(presetId) => {
+            onSelectInstrument={(instrumentId) => {
               const { trackId } = pluginPicker;
               props.setPluginPicker(null);
-              void props.commit(props.api.setTrackBuiltInInstrument(trackId, presetId));
+              void props.commit(props.api.applyInstrument(trackId, instrumentId));
             }}
             onSelectVst3={(plugin) => {
               const { trackId } = pluginPicker;

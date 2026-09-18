@@ -21,7 +21,7 @@ type InstrumentLibraryFeatureApi = InstrumentLibraryApi &
   Pick<AudioApi, 'previewBuiltInInstrument' | 'stopBuiltInInstrumentPreview'> &
   Pick<NativeEventApi, 'onAudioStatus'>;
 
-/** Owns the catalog-backed Browser state and its persisted instrument preferences. */
+/** Owns the shared instrument Browser state and its persisted preferences. */
 export function useInstrumentLibrary(
   api: InstrumentLibraryFeatureApi,
   { query, hostGeneration = 0, safeMode = false, setAudio }: UseInstrumentLibraryOptions,
@@ -235,6 +235,7 @@ export function useInstrumentLibrary(
   const preview = useCallback(
     async (item: InstrumentLibraryItem) => {
       if (safeMode) return;
+      if (item.origin !== 'builtIn' || item.preview === null) return;
       if (previewPendingIdRef.current !== null) return;
       const requestGeneration = hostGeneration;
       const requestId = ++previewRequestRef.current;
@@ -263,7 +264,7 @@ export function useInstrumentLibrary(
         return;
       }
       try {
-        const next = await previewBuiltInInstrument(item.presetId);
+        const next = await previewBuiltInInstrument(item.id);
         if (isCurrentRequest()) {
           nativeBuiltInPreviewing.current = next.builtInPreviewing;
           if (!audioCommandSucceeded(next)) {

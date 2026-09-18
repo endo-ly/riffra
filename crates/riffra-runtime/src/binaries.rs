@@ -9,19 +9,22 @@ pub struct RuntimeBinaries {
     pub plugin_scan: PathBuf,
     /// Isolated offline renderer.
     pub render: PathBuf,
+    /// Bundled Sonalloy CLI used by instrument authoring commands.
+    pub sonalloy: PathBuf,
 }
 
 impl RuntimeBinaries {
     /// Creates explicit binary paths.
-    pub fn new(audio: PathBuf, plugin_scan: PathBuf, render: PathBuf) -> Self {
+    pub fn new(audio: PathBuf, plugin_scan: PathBuf, render: PathBuf, sonalloy: PathBuf) -> Self {
         Self {
             audio,
             plugin_scan,
             render,
+            sonalloy,
         }
     }
 
-    /// Resolves the three native executables beside a distribution binary.
+    /// Resolves the runtime executables beside a distribution binary.
     pub fn beside(executable: &Path) -> Result<Self, String> {
         let directory = executable
             .parent()
@@ -33,6 +36,7 @@ impl RuntimeBinaries {
                 std::env::consts::EXE_SUFFIX
             )),
             directory.join(format!("riffra-render{}", std::env::consts::EXE_SUFFIX)),
+            directory.join(format!("sonalloy{}", std::env::consts::EXE_SUFFIX)),
         ))
     }
 

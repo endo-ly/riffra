@@ -10,13 +10,14 @@
 
 ## 実行形態
 
-3 つのサイドカーと 2 つの静的ライブラリから構成される。
+3 つの音声サイドカー、Sonalloy CLI、2 つの静的ライブラリから構成される。
 
 | 成果物               | 種別           | 役割                                                                                                               |
 | -------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `riffra-audio`       | サイドカー     | リアルタイム音声の本体。デバイスを開き、タイムライングラフを再生し、録音・プレビュー・MIDI を扱う                  |
 | `riffra-plugin-scan` | サイドカー     | VST3 の列挙と読み込み検証。スキャン結果を型タグ付き JSON Lines で返す                                              |
 | `riffra-render`      | サイドカー     | オフライン書き出し専用ワーカー。stdin の 1 行要求から WAV を生成する                                               |
+| `sonalloy`           | CLI            | Instrument の作成・検証・Inspect・Render・Auditionを提供する同梱コマンド                                           |
 | `riffra-render-core` | 静的ライブラリ | デバイス非依存の再生基盤（タイムライン、プラグイン、録音、レンダー）。`riffra-audio` と `riffra-render` で共有する |
 | `riffra-audio-core`  | 静的ライブラリ | デバイス接続側の基盤（命令配送、デバイス制御、パイプライン）。`riffra-render-core` の上に積む                      |
 
@@ -171,7 +172,7 @@ native/audio-engine/
 ./build.sh Debug
 ```
 
-ラッパーは configure、3 sidecar の build、CTest、`cmake --install`（Tauri 用とヘッドレス用の配置）までを一括で行う。主な選択肢は次の通り。
+ラッパーは configure、音声サイドカーと Sonalloy CLI の build、CTest、`cmake --install`（Tauri 用とヘッドレス用の配置）までを一括で行う。主な選択肢は次の通り。
 
 | 構成             | ネイティブ                           | Sonalloy の Cargo プロファイル | ヘッドレス配置先  |
 | ---------------- | ------------------------------------ | ------------------------------ | ----------------- |
@@ -180,7 +181,7 @@ native/audio-engine/
 | `Release`        | 配布用                               | `release`                      | `target/release/` |
 
 - 既定の Visual Studio 生成子は `Visual Studio 17 2022` と `x64`。`-Generator` / `-Architecture` で変更できる
-- `-SidecarsOnly`（`build.sh` は `SIDECARS_ONLY=1`）でテスト用ターゲットを除く 3 sidecar だけを build する。開発起動の ensure 処理もこの形態を使う
+- `-SidecarsOnly`（`build.sh` は `SIDECARS_ONLY=1`）でテスト用ターゲットを除く音声サイドカーと Sonalloy CLI だけを build する。開発起動の ensure 処理もこの形態を使う
 - クロスコンパイル時は `-DRIFFRA_TARGET_TRIPLE=<triple>` を CMake に渡す。既定はホストに従う
 - 配置先: Tauri 用は `apps/desktop/src-tauri/binaries/<名前>-<triple>[.exe]`、ヘッドレス用は接尾辞なし複製。`RIFFRA_HEADLESS_BINARIES_DESTINATION` で変更できる
 - ビルトイン音源バンドルも同時に配置される（Tauri 用 `apps/desktop/src-tauri/resources/instruments/builtin/` とヘッドレス用 `riffra-resources/instruments/builtin/`、`RIFFRA_HEADLESS_RESOURCES_DESTINATION` で変更可）。配置先以外のバンドルを使う場合は `RIFFRA_BUILTIN_INSTRUMENTS_ROOT` に `instruments/builtin` の場所を指定する

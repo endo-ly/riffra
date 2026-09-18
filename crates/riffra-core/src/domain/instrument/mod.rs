@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use uuid::Uuid;
 
 /// One instrument assigned to a timeline Track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -55,6 +56,15 @@ pub enum InternalInstrumentResource {
         #[ts(rename = "presetId")]
         preset_id: String,
     },
+    /// A package snapshot owned by the Project at Apply time.
+    UserSnapshot {
+        #[serde(rename = "instrumentId")]
+        #[ts(rename = "instrumentId")]
+        instrument_id: String,
+        #[serde(rename = "snapshotId")]
+        #[ts(rename = "snapshotId")]
+        snapshot_id: String,
+    },
 }
 
 impl TrackInstrument {
@@ -89,6 +99,30 @@ impl TrackInstrument {
             source: TrackInstrumentSource::Internal {
                 definition_json,
                 resource: InternalInstrumentResource::BuiltInPreset { preset_id },
+            },
+        };
+        validate_and_normalize(&mut instrument)?;
+        Ok(instrument)
+    }
+
+    /// Creates an assignment from a User Instrument package snapshot.
+    pub fn user_snapshot(
+        id: String,
+        name: String,
+        instrument_id: String,
+        snapshot_id: String,
+        definition_json: String,
+    ) -> Result<Self, String> {
+        let mut instrument = Self {
+            id,
+            name,
+            bypassed: false,
+            source: TrackInstrumentSource::Internal {
+                definition_json,
+                resource: InternalInstrumentResource::UserSnapshot {
+                    instrument_id,
+                    snapshot_id,
+                },
             },
         };
         validate_and_normalize(&mut instrument)?;
@@ -169,7 +203,23 @@ impl TrackInstrument {
                 resource: InternalInstrumentResource::BuiltInPreset { preset_id },
                 ..
             } => Some(preset_id),
+            TrackInstrumentSource::Internal { .. } => None,
             TrackInstrumentSource::Vst3 { .. } => None,
+        }
+    }
+
+    /// Returns the User Instrument and Project snapshot IDs, if assigned.
+    pub fn user_snapshot_ids(&self) -> Option<(&str, &str)> {
+        match &self.source {
+            TrackInstrumentSource::Internal {
+                resource:
+                    InternalInstrumentResource::UserSnapshot {
+                        instrument_id,
+                        snapshot_id,
+                    },
+                ..
+            } => Some((instrument_id, snapshot_id)),
+            _ => None,
         }
     }
 }
@@ -202,15 +252,26 @@ pub(crate) fn validate_and_normalize(instrument: &mut TrackInstrument) -> Result
     match &mut instrument.source {
         TrackInstrumentSource::Internal {
             definition_json,
-            resource: InternalInstrumentResource::BuiltInPreset { preset_id },
+            resource,
         } => {
             if definition_json.trim().is_empty() {
-                return Err("built-in instrument definition must not be empty".into());
+                return Err("internal instrument definition must not be empty".into());
             }
-            if preset_id.trim().is_empty() {
-                return Err("built-in instrument preset id must not be empty".into());
+            match resource {
+                InternalInstrumentResource::BuiltInPreset { preset_id } => {
+                    if preset_id.trim().is_empty() {
+                        return Err("built-in instrument preset id must not be empty".into());
+                    }
+                    *preset_id = preset_id.trim().to_owned();
+                }
+                InternalInstrumentResource::UserSnapshot {
+                    instrument_id,
+                    snapshot_id,
+                } => {
+                    validate_user_instrument_id(instrument_id)?;
+                    validate_uuid(snapshot_id, "user instrument snapshot id")?;
+                }
             }
-            *preset_id = preset_id.trim().to_owned();
         }
         TrackInstrumentSource::Vst3 {
             path,
@@ -235,6 +296,21 @@ pub(crate) fn validate_and_normalize(instrument: &mut TrackInstrument) -> Result
                 *state = state.chars().take(4_000_000).collect();
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_user_instrument_id(value: &str) -> Result<(), String> {
+    let Some(uuid) = value.strip_prefix("user:") else {
+        return Err("user instrument id must use the user: prefix".into());
+    };
+    validate_uuid(uuid, "user instrument id")
+}
+
+fn validate_uuid(value: &str, label: &str) -> Result<(), String> {
+    let parsed = Uuid::parse_str(value).map_err(|_| format!("{label} must be a UUID"))?;
+    if parsed.to_string() != value {
+        return Err(format!("{label} must use canonical lowercase UUID form"));
     }
     Ok(())
 }
@@ -279,6 +355,30 @@ mod tests {
             instrument.as_internal().map(|(definition, _)| definition),
             Some(r#"{"completelyOpaque":"value"}"#)
         );
+    }
+
+    #[test]
+    fn user_snapshot_round_trips_with_canonical_ids() {
+        let instrument_id = format!("user:{}", Uuid::now_v7());
+        let snapshot_id = Uuid::now_v7().to_string();
+        let instrument = TrackInstrument::user_snapshot(
+            "device:instrument".into(),
+            "User Piano".into(),
+            instrument_id.clone(),
+            snapshot_id.clone(),
+            r#"{"schemaVersion":1}"#.into(),
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_value(&instrument).unwrap();
+        let decoded: TrackInstrument = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(decoded, instrument);
+        assert_eq!(
+            decoded.user_snapshot_ids(),
+            Some((instrument_id.as_str(), snapshot_id.as_str()))
+        );
+        assert!(decoded.built_in_preset_id().is_none());
     }
 
     #[test]

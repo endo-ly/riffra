@@ -2,9 +2,9 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties
 import type {
   AutomationParameter,
   AudioStatus,
-  BuiltInInstrumentSummary,
   CanonicalState,
   CreativeSession,
+  InstrumentLibraryItem,
   PluginEntry,
   RuntimeProjectionStatus,
   TrackKind,
@@ -69,7 +69,7 @@ interface WorkspaceArrangeProps {
   onRetryRuntimeProjection: () => Promise<void>;
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
-  builtInInstruments?: BuiltInInstrumentSummary[];
+  instruments?: InstrumentLibraryItem[];
   playSurfaceHost: HTMLElement | null;
 }
 
@@ -465,7 +465,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       <ArrangeOverlays
         api={props.api}
         plugins={props.plugins}
-        builtInInstruments={props.builtInInstruments ?? []}
+        instruments={props.instruments ?? []}
         commit={commit}
         ruler={ruler}
         contextMenu={menus.contextMenu}

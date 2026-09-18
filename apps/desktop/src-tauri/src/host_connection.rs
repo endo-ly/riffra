@@ -1129,7 +1129,6 @@ impl HostConnectionManager {
             canonical: bootstrap.canonical.clone(),
             project_state: bootstrap.project_state.clone(),
             plugin_catalog: bootstrap.plugin_catalog.clone(),
-            built_in_instruments: bootstrap.built_in_instruments.clone(),
             runtime_started: bootstrap.runtime_started,
             runtime_startup_finished: bootstrap.runtime_startup_finished,
             recovery: ProjectRecoveryState {
@@ -1475,6 +1474,7 @@ mod tests {
             root.join("riffra-audio"),
             root.join("riffra-plugin-scan"),
             root.join("riffra-render"),
+            root.join("sonalloy"),
         )
     }
 

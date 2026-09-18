@@ -22,7 +22,6 @@ export type {
   AudioState,
   AudioStatus,
   BackgroundJobStatus,
-  BuiltInInstrumentSummary,
   InstrumentCollection,
   InstrumentLibraryItem,
   InstrumentOrigin,

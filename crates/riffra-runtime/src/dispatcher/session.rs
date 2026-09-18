@@ -51,7 +51,7 @@ pub(super) fn dispatch<A>(
 #[cfg(test)]
 mod tests {
     use crate::dispatcher::Dispatcher;
-    use riffra_control::ControlCommand;
+    use riffra_control::{ControlCommand, new_instance_id};
     use riffra_host::now_ms;
     use serde_json::{Value, json};
     use std::fs;
@@ -198,10 +198,10 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
 
         let listed = dispatcher
-            .dispatch(request("instrument.builtin.list", Value::Null))
+            .dispatch(request("instrument.list", Value::Null))
             .unwrap();
-        assert_eq!(listed.result_type, "builtInInstruments");
-        assert_eq!(listed.value[0]["id"], "01-clean-sub-bass");
+        assert_eq!(listed.result_type, "instrumentLibrary");
+        assert_eq!(listed.value[0]["id"], "builtin:01-clean-sub-bass");
         assert_eq!(listed.value[0]["name"], "Clean Sub Bass");
 
         let track = dispatcher
@@ -214,8 +214,8 @@ mod tests {
         let track_id = session.arrangement.tracks[0].id.clone();
         let assigned = dispatcher
             .dispatch(request(
-                "instrument.builtin.set",
-                json!({"trackId":track_id,"presetId":"01-clean-sub-bass"}),
+                "instrument.apply",
+                json!({"trackId":track_id,"instrumentId":"builtin:01-clean-sub-bass"}),
             ))
             .unwrap();
         assert_eq!(assigned.result_type, "arrangementMutation");
@@ -234,8 +234,8 @@ mod tests {
             .dispatch(request("session.get", Value::Null))
             .unwrap();
         let unknown = dispatcher.dispatch(request(
-            "instrument.builtin.set",
-            json!({"trackId":track_id,"presetId":"99-unknown"}),
+            "instrument.apply",
+            json!({"trackId":track_id,"instrumentId":"builtin:99-unknown"}),
         ));
         assert!(unknown.is_err());
         let after = dispatcher
@@ -243,6 +243,143 @@ mod tests {
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(after.value, before.value);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn user_instrument_apply_keeps_project_snapshots_isolated_from_library_updates() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-user-{}", now_ms()));
+        let resources = crate::test_support::prepare_built_in_resource_root(&root);
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let package = root.join("instruments/user").join(&user_uuid);
+        fs::create_dir_all(package.join("samples")).unwrap();
+        fs::write(
+            package.join("definition.json"),
+            r#"{"version":1,"sample":"samples/attack.wav"}"#,
+        )
+        .unwrap();
+        fs::write(package.join("samples/attack.wav"), b"v1").unwrap();
+        fs::write(
+            package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id,
+                "name": "User Piano",
+                "author": null,
+                "description": null,
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
+
+        let first_track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"First","kind":"instrument"}),
+            ))
+            .unwrap();
+        let first_session: riffra_core::CreativeSession =
+            serde_json::from_value(first_track.value).unwrap();
+        let first_track_id = first_session.arrangement.tracks[0].id.clone();
+        let first = dispatcher
+            .dispatch(request(
+                "instrument.apply",
+                json!({"trackId":first_track_id,"instrumentId":user_id.clone()}),
+            ))
+            .unwrap();
+        let first_instrument =
+            &first.value["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"];
+        assert_eq!(
+            first_instrument["source"]["resource"]["type"],
+            "userSnapshot"
+        );
+        assert_eq!(
+            first_instrument["source"]["definitionJson"],
+            r#"{"version":1,"sample":"samples/attack.wav"}"#
+        );
+        let first_snapshot = first_instrument["source"]["resource"]["snapshotId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            root.join("project-instruments")
+                .join(&first_snapshot)
+                .join("definition.json")
+                .is_file()
+        );
+        assert_eq!(
+            fs::read(
+                root.join("project-instruments")
+                    .join(&first_snapshot)
+                    .join("samples/attack.wav")
+            )
+            .unwrap(),
+            b"v1"
+        );
+
+        fs::write(
+            package.join("definition.json"),
+            r#"{"version":2,"sample":"samples/attack.wav"}"#,
+        )
+        .unwrap();
+        fs::write(package.join("samples/attack.wav"), b"v2").unwrap();
+        let second_track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Second","kind":"instrument"}),
+            ))
+            .unwrap();
+        let second_session: riffra_core::CreativeSession =
+            serde_json::from_value(second_track.value).unwrap();
+        let second_track_id = second_session.arrangement.tracks[1].id.clone();
+        let second = dispatcher
+            .dispatch(request(
+                "instrument.apply",
+                json!({"trackId":second_track_id,"instrumentId":user_id}),
+            ))
+            .unwrap();
+        let tracks = second.value["canonical"]["session"]["arrangement"]["tracks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            tracks[0]["instrument"]["source"]["definitionJson"],
+            r#"{"version":1,"sample":"samples/attack.wav"}"#
+        );
+        assert_eq!(
+            tracks[1]["instrument"]["source"]["definitionJson"],
+            r#"{"version":2,"sample":"samples/attack.wav"}"#
+        );
+        assert_ne!(
+            tracks[0]["instrument"]["source"]["resource"]["snapshotId"],
+            tracks[1]["instrument"]["source"]["resource"]["snapshotId"]
+        );
+        let second_snapshot = tracks[1]["instrument"]["source"]["resource"]["snapshotId"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            fs::read(
+                root.join("project-instruments")
+                    .join(&first_snapshot)
+                    .join("samples/attack.wav")
+            )
+            .unwrap(),
+            b"v1"
+        );
+        assert_eq!(
+            fs::read(
+                root.join("project-instruments")
+                    .join(second_snapshot)
+                    .join("samples/attack.wav")
+            )
+            .unwrap(),
+            b"v2"
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 }

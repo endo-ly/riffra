@@ -37,7 +37,8 @@
     "externalBin": [
       "binaries/riffra-audio",
       "binaries/riffra-plugin-scan",
-      "binaries/riffra-render"
+      "binaries/riffra-render",
+      "binaries/sonalloy"
     ],
     "resources": {
       "resources/instruments/builtin": "instruments/builtin",

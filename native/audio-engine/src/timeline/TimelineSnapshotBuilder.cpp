@@ -305,8 +305,10 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
                     if (track->runtime->instrument() == nullptr)
                         return roleError("instrument", runtimeError);
                 }
-            } else if (type == "internal" &&
-                       instrument.getProperty("resourceType", {}).toString() == "builtInPreset") {
+            } else if (type == "internal") {
+                const auto resourceType = instrument.getProperty("resourceType", {}).toString();
+                if (resourceType != "builtInPreset" && resourceType != "userSnapshot")
+                    return roleError("instrument", "Instrument source is invalid.");
                 const auto definitionJson = instrument.getProperty("definitionJson", {}).toString();
                 const auto definitionBaseDir =
                     instrument.getProperty("definitionBaseDir", {}).toString();

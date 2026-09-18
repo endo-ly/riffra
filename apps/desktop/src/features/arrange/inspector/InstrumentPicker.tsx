@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { BuiltInInstrumentSummary, PluginEntry } from '@/model/domain';
+import type { InstrumentLibraryItem, PluginEntry } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
 import { matchesInstrumentQuery } from '@/features/instruments/model/instrument-library';
 import styles from '../WorkspaceArrangeOverlay.module.css';
 
-type QuickPickerInstrument = Pick<BuiltInInstrumentSummary, 'id' | 'name' | 'description'> &
-  Partial<Pick<BuiltInInstrumentSummary, 'author' | 'category' | 'tags'>>;
+type QuickPickerInstrument = Pick<InstrumentLibraryItem, 'id' | 'name' | 'description' | 'origin'>;
 
 interface InstrumentPickerProps {
   api?: Pick<JobApi, 'scanVst3Folder'>;
-  builtInInstruments: QuickPickerInstrument[];
+  instruments: QuickPickerInstrument[];
   plugins?: PluginEntry[];
-  onSelectBuiltIn: (presetId: string) => void;
+  onSelectInstrument: (instrumentId: string) => void;
   onSelectVst3: (plugin: PluginEntry) => void;
   onClose: () => void;
 }
@@ -66,12 +65,10 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
 
   const plugins = props.plugins ?? scannedPlugins;
   const trimmedQuery = query.trim().toLowerCase();
-  const filteredBuiltIns = useMemo(
+  const filteredInstruments = useMemo(
     () =>
-      props.builtInInstruments.filter((instrument) =>
-        matchesInstrumentQuery(instrument, trimmedQuery),
-      ),
-    [props.builtInInstruments, trimmedQuery],
+      props.instruments.filter((instrument) => matchesInstrumentQuery(instrument, trimmedQuery)),
+    [props.instruments, trimmedQuery],
   );
   const filteredPlugins = useMemo(
     () =>
@@ -112,21 +109,21 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
           onChange={(event) => setQuery(event.currentTarget.value)}
         />
         <div className={styles.pluginPickerList}>
-          <strong>Built-in Instruments</strong>
-          {filteredBuiltIns.map((instrument) => (
+          <strong>Instruments</strong>
+          {filteredInstruments.map((instrument) => (
             <button
               key={instrument.id}
               type="button"
               className={styles.pluginPickerItem}
               aria-label={`${instrument.name}${instrument.description ? ` — ${instrument.description}` : ''}`}
-              onClick={() => props.onSelectBuiltIn(instrument.id)}
+              onClick={() => props.onSelectInstrument(instrument.id)}
             >
               <span>{instrument.name}</span>
               {instrument.description && <small>{instrument.description}</small>}
             </button>
           ))}
-          {!filteredBuiltIns.length && (
-            <p className={styles.pluginPickerEmpty}>No built-in instruments match your search.</p>
+          {!filteredInstruments.length && (
+            <p className={styles.pluginPickerEmpty}>No instruments match your search.</p>
           )}
 
           <strong>External Plugins</strong>

@@ -1,3 +1,4 @@
+use crate::RuntimeBinaries;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
@@ -29,6 +30,7 @@ use std::sync::{Arc, Mutex};
 mod asset;
 mod clips;
 mod device;
+mod instrument;
 mod music;
 mod project;
 mod session;
@@ -221,6 +223,7 @@ pub struct HostDispatcher<'a, A> {
     storage: StorageRef<'a>,
     project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
+    sonalloy: PathBuf,
     built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     allow_runtime_commands: bool,
 }
@@ -274,12 +277,14 @@ impl HostDispatcher<'static, ()> {
             loaded.recovered_from_generation,
             false,
         );
+        let sonalloy = RuntimeBinaries::beside_current_executable()?.sonalloy;
         Ok(Self {
             _lease: Some(lease),
             core: CoreRef::Owned(core),
             storage: StorageRef::Owned(Mutex::new(storage)),
             project_store: ProjectStoreRef::Owned(project_store),
             data_root,
+            sonalloy,
             built_in_instruments,
             allow_runtime_commands: false,
         })
@@ -293,6 +298,7 @@ impl<'a, A> HostDispatcher<'a, A> {
         storage: &'a SessionStore,
         project_store: &'a ProjectStore,
         data_root: &'a Path,
+        sonalloy: &'a Path,
         built_in_instruments: &'a Arc<BuiltInInstrumentCatalog>,
     ) -> Self {
         Self {
@@ -301,6 +307,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             storage: StorageRef::Borrowed(storage),
             project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
+            sonalloy: sonalloy.to_path_buf(),
             built_in_instruments: Arc::clone(built_in_instruments),
             allow_runtime_commands: true,
         }
@@ -388,6 +395,8 @@ impl<'a, A> HostDispatcher<'a, A> {
             asset::dispatch(self, request, canonical.clone())?
         } else if project::handles(&command) {
             project::dispatch(self, request, canonical.clone())?
+        } else if instrument::handles(&command) {
+            instrument::dispatch(self, request)?
         } else if device::handles(&command) {
             device::dispatch(self, request)?
         } else {
@@ -406,6 +415,7 @@ impl<'a, A> HostDispatcher<'a, A> {
         };
         if is_arrangement_mutation_command(&command) {
             let canonical = self.core.canonical_state()?;
+            let projection_effect = result.projection_effect;
             return Ok(DispatchResult {
                 result_type: "arrangementMutation",
                 value: serde_json::to_value(ArrangementMutationResult {
@@ -416,7 +426,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                 .expect("arrangement mutation results serialize"),
                 sequence: canonical.sequence,
                 created_entity_ids,
-                projection_effect: CanonicalMutationEffect::CanonicalOnly,
+                projection_effect,
             });
         }
         Ok(DispatchResult {
@@ -553,7 +563,9 @@ fn is_read_command(command: &str) -> bool {
             | "plugin.state.get"
             | "project.export"
             | "project.list"
-            | "instrument.builtin.list"
+            | "instrument.list"
+            | "instrument.save"
+            | "instrument.export"
     )
 }
 
@@ -592,7 +604,9 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "host.bootstrap"
             | "host.shutdown"
             | "project.list"
-            | "instrument.builtin.list"
+            | "instrument.list"
+            | "instrument.save"
+            | "instrument.export"
             | "audio.master-gain.preview"
             | "audio.emergency-mute"
             | "midi.listening.enable"
@@ -607,8 +621,8 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "audio.driver.set"
             | "asset.preview"
             | "asset.preview.stop"
-            | "instrument.builtin.preview"
-            | "instrument.builtin.preview.stop"
+            | "instrument.preview"
+            | "instrument.preview.stop"
             | "plugin.catalog.list"
             | "plugin.scan"
             | "plugin.scan.start"
@@ -633,11 +647,11 @@ fn is_host_scoped_command(command: &str) -> bool {
 fn is_arrangement_mutation_command(command: &str) -> bool {
     matches!(
         command,
-        "track.audio-input.set"
+        "instrument.apply"
+            | "track.audio-input.set"
             | "track.audio-input.clear"
             | "track.midi-input.set"
             | "track.midi-input.clear"
-            | "instrument.builtin.set"
             | "instrument.vst3.set"
             | "instrument.clear"
             | "effect.add"
@@ -672,7 +686,7 @@ fn is_runtime_host_only(command: &str) -> bool {
             | "audio.driver.set"
             | "asset.preview"
             | "asset.preview.stop"
-            | "instrument.builtin.preview.stop"
+            | "instrument.preview.stop"
             | "midi.send"
             | "midi.panic"
             | "device.inspect"
@@ -792,9 +806,11 @@ mod tests {
             "audio.driver.get",
             "plugin.catalog.list",
             "plugin.scan",
-            "instrument.builtin.list",
-            "instrument.builtin.preview",
-            "instrument.builtin.preview.stop",
+            "instrument.list",
+            "instrument.save",
+            "instrument.export",
+            "instrument.preview",
+            "instrument.preview.stop",
             "library.instrument.list",
             "library.instrument.favorite.set",
             "library.instrument.category.set",
@@ -822,7 +838,7 @@ mod tests {
             "plugin.editor.open",
             "take.comparison.start",
             "instrument.vst3.set",
-            "instrument.builtin.set",
+            "instrument.apply",
             "missing.disable-plugin",
             "undo",
             "redo",

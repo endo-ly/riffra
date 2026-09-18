@@ -168,7 +168,7 @@ describe('Arrange Inspectors', () => {
         audio={fakeAudioStatus()}
         missingDeviceIds={[]}
         plugins={[]}
-        builtInInstruments={[]}
+        instruments={[]}
         onDisableMissingPlugin={async () => undefined}
         onReplaceMissingPlugin={async () => undefined}
         onRescanMissingPlugins={async () => undefined}

@@ -12,7 +12,7 @@ include(CTest)
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
-set(RIFFRA_SONALLOY_VERSION "2026.9.16")
+set(RIFFRA_SONALLOY_VERSION "2026.9.18")
 set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
@@ -64,8 +64,8 @@ juce_add_console_app(riffra-render
   VERSION "${PROJECT_VERSION}"
 )
 
-add_custom_target(riffra-runtime-sidecars
-  DEPENDS riffra-audio riffra-plugin-scan riffra-render
+add_custom_target(riffra-runtime-sidecars ALL
+  DEPENDS riffra-audio riffra-plugin-scan riffra-render sonalloy::cli
 )
 
 add_library(riffra-render-core STATIC)
@@ -508,6 +508,19 @@ foreach(sidecar IN ITEMS riffra-audio riffra-plugin-scan riffra-render)
     )
   endif()
 endforeach()
+
+install(PROGRAMS "$<TARGET_FILE:sonalloy::cli>"
+    DESTINATION "apps/desktop/src-tauri/binaries"
+    RENAME "sonalloy-${RIFFRA_TARGET_TRIPLE}${RIFFRA_BINARY_SUFFIX}"
+    COMPONENT riffra-sidecars
+)
+if(RIFFRA_HEADLESS_BINARIES_DESTINATION)
+  install(PROGRAMS "$<TARGET_FILE:sonalloy::cli>"
+      DESTINATION "${RIFFRA_HEADLESS_BINARIES_DESTINATION}"
+      RENAME "sonalloy${RIFFRA_BINARY_SUFFIX}"
+      COMPONENT riffra-sidecars
+  )
+endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/riffra-resources/instruments/builtin/"
     DESTINATION "apps/desktop/src-tauri/resources/instruments/builtin"

@@ -3,4 +3,4 @@
 /**
  * Resource origin for an internal instrument definition.
  */
-export type InternalInstrumentResource = { "type": "builtInPreset", presetId: string, };
+export type InternalInstrumentResource = { "type": "builtInPreset", presetId: string, } | { "type": "userSnapshot", instrumentId: string, snapshotId: string, };

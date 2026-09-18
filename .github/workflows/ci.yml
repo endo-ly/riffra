@@ -280,6 +280,13 @@ jobs:
           SCCACHE_GHA_ENABLED: 'true'
         run: bash scripts/ci/headless-host-process.sh
 
+      - name: Verify Sonalloy CLI package
+        shell: bash
+        run: |
+          test -x target/debug/sonalloy
+          target_triple="$(rustc -vV | sed -n 's/^host: //p')"
+          test -x "apps/desktop/src-tauri/binaries/sonalloy-${target_triple}"
+
   native-windows:
     name: Native audio engine (Windows)
     needs: changes
@@ -328,6 +335,14 @@ jobs:
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
         run: .\scripts\ci\headless-host-process.ps1
+
+      - name: Verify Sonalloy CLI package
+        shell: pwsh
+        run: |
+          $targetTriple = (rustc -vV | Select-String '^host: ').ToString().Split(':', 2)[1].Trim()
+          if (!(Test-Path -LiteralPath 'target/debug/sonalloy.exe' -PathType Leaf)) { throw 'target/debug/sonalloy.exe is missing' }
+          $packaged = "apps/desktop/src-tauri/binaries/sonalloy-$targetTriple.exe"
+          if (!(Test-Path -LiteralPath $packaged -PathType Leaf)) { throw "$packaged is missing" }
 
   native-macos:
     name: Native audio engine (macOS arm64)
@@ -383,9 +398,11 @@ jobs:
           test -x target/debug/riffra-audio
           test -x target/debug/riffra-plugin-scan
           test -x target/debug/riffra-render
+          test -x target/debug/sonalloy
           test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
           test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
           test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/sonalloy-aarch64-apple-darwin
           test -f target/debug/riffra-resources/instruments/builtin/manifest.json
           test -f target/debug/riffra-resources/THIRD_PARTY_NOTICES.md
           test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json
@@ -400,9 +417,11 @@ jobs:
           test -x target/release/riffra-audio
           test -x target/release/riffra-plugin-scan
           test -x target/release/riffra-render
+          test -x target/release/sonalloy
           test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
           test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
           test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
+          test -x apps/desktop/src-tauri/binaries/sonalloy-aarch64-apple-darwin
           test -f target/release/riffra-resources/instruments/builtin/manifest.json
           test -f target/release/riffra-resources/THIRD_PARTY_NOTICES.md
           test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json

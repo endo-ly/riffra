@@ -2,7 +2,7 @@ use crate::asset;
 use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     fs,
     io::{Read, Write},
     path::{Component, Path},
@@ -10,7 +10,6 @@ use std::{
 use uuid::Uuid;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const MANIFEST_VERSION: u32 = 2;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Summary of a completed project export.
@@ -38,22 +37,30 @@ struct PackagedAsset {
     state: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PackagedInstrumentSnapshot {
+    snapshot_id: String,
+    files: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectManifest<'a> {
-    manifest_version: u32,
     exported_at_ms: u64,
     session: &'a CreativeSession,
     assets: Vec<PackagedAsset>,
+    instrument_snapshots: Vec<PackagedInstrumentSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ProjectManifestOwned {
-    manifest_version: u32,
     exported_at_ms: u64,
     session: CreativeSession,
     assets: Vec<PackagedAsset>,
+    #[serde(default)]
+    instrument_snapshots: Vec<PackagedInstrumentSnapshot>,
 }
 
 /// Collects the distinct asset ids referenced by a session's clips.
@@ -80,7 +87,7 @@ fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
     ids
 }
 
-/// Exports a session and its referenced Assets into a versioned package.
+/// Exports a session and its referenced Assets into a project package.
 ///
 /// # Errors
 /// Returns an error when the output archive, Asset content, or manifest cannot
@@ -143,12 +150,13 @@ pub fn export(
             state,
         });
     }
+    let instrument_snapshots = referenced_instrument_snapshots(data_root, session)?;
 
     let manifest = ProjectManifest {
-        manifest_version: MANIFEST_VERSION,
         exported_at_ms,
         session,
         assets: assets.clone(),
+        instrument_snapshots: instrument_snapshots.clone(),
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
@@ -191,6 +199,25 @@ pub fn export(
                 .map_err(|error| format!("Project Asset could not be opened: {error}"))?;
             std::io::copy(&mut source, &mut archive)
                 .map_err(|error| format!("Project Asset could not be archived: {error}"))?;
+        }
+        for snapshot in &instrument_snapshots {
+            for package_path in &snapshot.files {
+                let entry = package_path.as_str();
+                archive.start_file(entry, options).map_err(|error| {
+                    format!("Project instrument snapshot could not be archived: {error}")
+                })?;
+                let relative = snapshot_file_relative_path(&snapshot.snapshot_id, package_path)?;
+                let source_path = data_root
+                    .join("project-instruments")
+                    .join(&snapshot.snapshot_id)
+                    .join(relative);
+                let mut source = fs::File::open(&source_path).map_err(|error| {
+                    format!("Project instrument snapshot could not be opened: {error}")
+                })?;
+                std::io::copy(&mut source, &mut archive).map_err(|error| {
+                    format!("Project instrument snapshot could not be archived: {error}")
+                })?;
+            }
         }
         let file = archive
             .finish()
@@ -248,19 +275,21 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
     }
     let manifest = serde_json::from_slice::<ProjectManifestOwned>(&manifest_payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
-    if manifest.manifest_version != MANIFEST_VERSION {
-        return Err(format!(
-            "Unsupported project manifest version {}.",
-            manifest.manifest_version
-        ));
-    }
     let _exported_at_ms = manifest.exported_at_ms;
     let session = manifest.session.validate_and_normalize()?;
+    validate_instrument_snapshot_references(&session, &manifest.instrument_snapshots)?;
+    let import_id = Uuid::now_v7();
     let staging_dir = data_root
         .join("assets")
-        .join(format!(".riffra-import-{}", Uuid::now_v7()));
+        .join(format!(".riffra-import-{import_id}"));
+    let snapshot_staging_dir = data_root
+        .join("project-instruments")
+        .join(format!(".riffra-import-{import_id}"));
     fs::create_dir_all(&staging_dir)
         .map_err(|error| format!("Project Asset staging folder could not be created: {error}"))?;
+    fs::create_dir_all(&snapshot_staging_dir).map_err(|error| {
+        format!("Project instrument snapshot staging folder could not be created: {error}")
+    })?;
     let result = (|| {
         let mut staged_assets = Vec::new();
         let mut missing_assets = Vec::new();
@@ -312,9 +341,20 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
         for asset in missing_assets {
             import_missing_asset(data_root, &asset)?;
         }
+        stage_instrument_snapshots(
+            &mut archive,
+            &manifest.instrument_snapshots,
+            &snapshot_staging_dir,
+        )?;
+        install_instrument_snapshots(
+            data_root,
+            &manifest.instrument_snapshots,
+            &snapshot_staging_dir,
+        )?;
         Ok(session)
     })();
     let _ = fs::remove_dir_all(&staging_dir);
+    let _ = fs::remove_dir_all(&snapshot_staging_dir);
     result
 }
 
@@ -395,6 +435,333 @@ fn import_missing_asset(data_root: &Path, asset: &PackagedAsset) -> Result<(), S
     )
 }
 
+fn referenced_instrument_snapshots(
+    data_root: &Path,
+    session: &CreativeSession,
+) -> Result<Vec<PackagedInstrumentSnapshot>, String> {
+    let snapshot_ids = referenced_instrument_snapshot_ids(session)?;
+    let mut snapshots = snapshot_ids
+        .into_iter()
+        .map(|snapshot_id| {
+            let root = data_root.join("project-instruments").join(&snapshot_id);
+            let metadata = fs::symlink_metadata(&root).map_err(|error| {
+                format!("Project instrument snapshot {snapshot_id} could not be read: {error}")
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+                return Err(format!(
+                    "Project instrument snapshot {snapshot_id} is not a directory"
+                ));
+            }
+            let mut files = Vec::new();
+            collect_snapshot_files(&root, &root, &snapshot_id, &mut files)?;
+            if !files.iter().any(|path| path.ends_with("/definition.json")) {
+                return Err(format!(
+                    "Project instrument snapshot {snapshot_id} has no definition.json"
+                ));
+            }
+            Ok(PackagedInstrumentSnapshot { snapshot_id, files })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    snapshots.sort_by(|left, right| left.snapshot_id.cmp(&right.snapshot_id));
+    Ok(snapshots)
+}
+
+fn referenced_instrument_snapshot_ids(
+    session: &CreativeSession,
+) -> Result<HashSet<String>, String> {
+    let mut snapshot_ids = HashSet::new();
+    for track in &session.arrangement.tracks {
+        let Some((_, snapshot_id)) = track
+            .instrument
+            .as_ref()
+            .and_then(riffra_core::TrackInstrument::user_snapshot_ids)
+        else {
+            continue;
+        };
+        snapshot_ids.insert(canonical_snapshot_id(snapshot_id)?);
+    }
+    Ok(snapshot_ids)
+}
+
+fn validate_instrument_snapshot_references(
+    session: &CreativeSession,
+    snapshots: &[PackagedInstrumentSnapshot],
+) -> Result<(), String> {
+    let referenced = referenced_instrument_snapshot_ids(session)?;
+    let mut packaged = HashSet::new();
+    for snapshot in snapshots {
+        let snapshot_id = canonical_snapshot_id(&snapshot.snapshot_id)?;
+        if !packaged.insert(snapshot_id.clone()) {
+            return Err(format!(
+                "Project contains duplicate instrument snapshot: {snapshot_id}"
+            ));
+        }
+    }
+    if referenced != packaged {
+        return Err(
+            "Project instrument snapshots do not match the snapshots referenced by the session."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn collect_snapshot_files(
+    root: &Path,
+    current: &Path,
+    snapshot_id: &str,
+    files: &mut Vec<String>,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| format!("Project instrument snapshot could not be enumerated: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Project instrument snapshot entry could not be read: {error}"))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let source = entry.path();
+        let metadata = fs::symlink_metadata(&source).map_err(|error| {
+            format!("Project instrument snapshot metadata could not be read: {error}")
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(format!(
+                "Project instrument snapshot contains a symlink: {}",
+                source.display()
+            ));
+        }
+        if file_type.is_dir() {
+            collect_snapshot_files(root, &source, snapshot_id, files)?;
+        } else if file_type.is_file() {
+            let relative = source
+                .strip_prefix(root)
+                .map_err(|_| "Project instrument snapshot path escaped its root".to_string())?;
+            let relative = relative
+                .to_str()
+                .ok_or_else(|| "Project instrument snapshot path is not valid UTF-8".to_string())?;
+            resolve_packaged_path(Path::new("."), relative)?;
+            files.push(format!(
+                "instrument-snapshots/{snapshot_id}/{}",
+                relative.replace('\\', "/")
+            ));
+        } else {
+            return Err(format!(
+                "Project instrument snapshot contains a special file: {}",
+                source.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn canonical_snapshot_id(value: &str) -> Result<String, String> {
+    let parsed = Uuid::parse_str(value)
+        .map_err(|_| format!("Project instrument snapshot id is invalid: {value}"))?;
+    let normalized = parsed.to_string();
+    if normalized != value {
+        return Err(format!(
+            "Project instrument snapshot id must use canonical lowercase UUID form: {value}"
+        ));
+    }
+    Ok(normalized)
+}
+
+fn snapshot_file_relative_path(
+    snapshot_id: &str,
+    package_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let prefix = format!("instrument-snapshots/{snapshot_id}/");
+    let relative = package_path
+        .strip_prefix(&prefix)
+        .filter(|relative| !relative.is_empty())
+        .ok_or_else(|| "Project instrument snapshot archive path is invalid.".to_string())?;
+    resolve_packaged_path(Path::new(""), relative)
+}
+
+fn stage_instrument_snapshots(
+    archive: &mut ZipArchive<fs::File>,
+    snapshots: &[PackagedInstrumentSnapshot],
+    staging_root: &Path,
+) -> Result<(), String> {
+    let mut seen_snapshots = HashSet::new();
+    let mut seen_files = HashSet::new();
+    for snapshot in snapshots {
+        let snapshot_id = canonical_snapshot_id(&snapshot.snapshot_id)?;
+        if !seen_snapshots.insert(snapshot_id.clone()) {
+            return Err(format!(
+                "Project contains duplicate instrument snapshot: {snapshot_id}"
+            ));
+        }
+        let destination_root = staging_root.join(&snapshot_id);
+        fs::create_dir_all(&destination_root).map_err(|error| {
+            format!("Project instrument snapshot staging folder could not be created: {error}")
+        })?;
+        let mut has_definition = false;
+        for package_path in &snapshot.files {
+            let relative = snapshot_file_relative_path(&snapshot_id, package_path)?;
+            if !seen_files.insert(package_path.clone()) {
+                return Err(format!(
+                    "Project contains duplicate instrument snapshot file: {package_path}"
+                ));
+            }
+            if relative.file_name().and_then(|name| name.to_str()) == Some("definition.json")
+                && relative.components().count() == 1
+            {
+                has_definition = true;
+            }
+            let destination = destination_root.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "Project instrument snapshot staging folder could not be created: {error}"
+                    )
+                })?;
+            }
+            let mut entry = archive.by_name(package_path).map_err(|error| {
+                format!("Project instrument snapshot file is missing from the archive: {error}")
+            })?;
+            if entry.is_dir() {
+                return Err(format!(
+                    "Project instrument snapshot archive entry is not a file: {package_path}"
+                ));
+            }
+            let mut output = fs::File::create(&destination).map_err(|error| {
+                format!("Project instrument snapshot staging file could not be created: {error}")
+            })?;
+            std::io::copy(&mut entry, &mut output).map_err(|error| {
+                format!("Project instrument snapshot staging file could not be written: {error}")
+            })?;
+            output.sync_all().map_err(|error| {
+                format!(
+                    "Project instrument snapshot staging file could not be synchronized: {error}"
+                )
+            })?;
+        }
+        if !has_definition {
+            return Err(format!(
+                "Project instrument snapshot {snapshot_id} has no definition.json"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn install_instrument_snapshots(
+    data_root: &Path,
+    snapshots: &[PackagedInstrumentSnapshot],
+    staging_root: &Path,
+) -> Result<(), String> {
+    let destination_root = data_root.join("project-instruments");
+    fs::create_dir_all(&destination_root).map_err(|error| {
+        format!("Project instrument snapshot root could not be created: {error}")
+    })?;
+    let mut to_install = Vec::new();
+    for snapshot in snapshots {
+        let snapshot_id = canonical_snapshot_id(&snapshot.snapshot_id)?;
+        let destination = destination_root.join(&snapshot_id);
+        match fs::symlink_metadata(&destination) {
+            Ok(_) => {
+                let staged = staging_root.join(&snapshot_id);
+                if snapshot_directories_equal(&destination, &staged)? {
+                    fs::remove_dir_all(&staged).map_err(|error| {
+                        format!(
+                            "Project instrument snapshot staging folder could not be removed: {error}"
+                        )
+                    })?;
+                } else {
+                    return Err(format!(
+                        "Project instrument snapshot already exists with different content: {snapshot_id}"
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                to_install.push(snapshot_id);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Project instrument snapshot could not be inspected: {error}"
+                ));
+            }
+        }
+    }
+    for snapshot_id in to_install {
+        fs::rename(
+            staging_root.join(&snapshot_id),
+            destination_root.join(&snapshot_id),
+        )
+        .map_err(|error| format!("Project instrument snapshot could not be installed: {error}"))?;
+    }
+    Ok(())
+}
+
+fn snapshot_directories_equal(left: &Path, right: &Path) -> Result<bool, String> {
+    let left_files = snapshot_file_set(left)?;
+    let right_files = snapshot_file_set(right)?;
+    if left_files != right_files {
+        return Ok(false);
+    }
+    for relative in left_files {
+        if !files_equal_with_label(
+            &left.join(&relative),
+            &right.join(&relative),
+            "Project instrument snapshot",
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn snapshot_file_set(root: &Path) -> Result<BTreeSet<std::path::PathBuf>, String> {
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("Project instrument snapshot could not be inspected: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err("Project instrument snapshot is not a regular directory".into());
+    }
+    let mut files = BTreeSet::new();
+    collect_snapshot_file_set(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_snapshot_file_set(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<(), String> {
+    let mut directory_entries = fs::read_dir(current)
+        .map_err(|error| format!("Project instrument snapshot could not be enumerated: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Project instrument snapshot entry could not be read: {error}"))?;
+    directory_entries.sort_by_key(|entry| entry.file_name());
+    for entry in directory_entries {
+        let source = entry.path();
+        let relative = source
+            .strip_prefix(root)
+            .map_err(|_| "Project instrument snapshot path escaped its root".to_string())?
+            .to_path_buf();
+        let metadata = fs::symlink_metadata(&source).map_err(|error| {
+            format!("Project instrument snapshot metadata could not be read: {error}")
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(format!(
+                "Project instrument snapshot contains a symlink: {}",
+                source.display()
+            ));
+        }
+        if file_type.is_dir() {
+            collect_snapshot_file_set(root, &source, files)?;
+        } else if file_type.is_file() {
+            files.insert(relative);
+        } else {
+            return Err(format!(
+                "Project instrument snapshot contains a special file: {}",
+                source.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn install_staged_asset(staging_path: &Path, destination: &Path) -> Result<(), String> {
     fs::rename(staging_path, destination)
         .map_err(|error| format!("Imported asset could not be installed: {error}"))
@@ -440,11 +807,15 @@ fn safe_name(value: &str) -> String {
 }
 
 fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
+    files_equal_with_label(left, right, "Asset")
+}
+
+fn files_equal_with_label(left: &Path, right: &Path, label: &str) -> Result<bool, String> {
     let left_size = fs::metadata(left)
-        .map_err(|error| format!("Asset file could not be compared: {error}"))?
+        .map_err(|error| format!("{label} file could not be compared: {error}"))?
         .len();
     let right_size = fs::metadata(right)
-        .map_err(|error| format!("Asset file could not be compared: {error}"))?
+        .map_err(|error| format!("{label} file could not be compared: {error}"))?
         .len();
     if left_size != right_size {
         return Ok(false);
@@ -453,16 +824,16 @@ fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
     let mut left = fs::File::open(left)
         .map_err(|error| format!("Asset file could not be compared: {error}"))?;
     let mut right = fs::File::open(right)
-        .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+        .map_err(|error| format!("{label} file could not be compared: {error}"))?;
     let mut left_buffer = vec![0u8; 1 << 20];
     let mut right_buffer = vec![0u8; 1 << 20];
     loop {
         let left_read = left
             .read(&mut left_buffer)
-            .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+            .map_err(|error| format!("{label} file could not be compared: {error}"))?;
         let right_read = right
             .read(&mut right_buffer)
-            .map_err(|error| format!("Asset file could not be compared: {error}"))?;
+            .map_err(|error| format!("{label} file could not be compared: {error}"))?;
         if left_read != right_read {
             return Ok(false);
         }
@@ -493,7 +864,7 @@ mod tests {
     use super::*;
     use crate::midi_file::parse_smf;
     use crate::storage::now_ms;
-    use riffra_core::{AssetId, AssetKind, mint_asset_id};
+    use riffra_core::{AssetId, AssetKind, TrackInstrument, mint_asset_id};
     use riffra_core::{AudioClip, CreativeSession, MidiClip, TimelineTick, Track};
 
     fn register(root: &Path, name: &str, content: &[u8]) -> AssetId {
@@ -575,13 +946,13 @@ mod tests {
     }
 
     #[test]
-    fn exports_versioned_session_manifest_without_path_traversal() {
+    fn exports_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
         let session = CreativeSession::new(now_ms());
         let output = package_path(&root, "roundtrip.riffra");
         let exported = export(&root, &session, 42, &output).unwrap();
         let manifest = read_manifest(Path::new(&exported.path));
-        assert_eq!(manifest["manifestVersion"], MANIFEST_VERSION);
+        assert_eq!(manifest["exportedAtMs"], 42);
         assert_eq!(exported.asset_count, 0);
         let imported = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(imported.session_id, session.session_id);
@@ -595,7 +966,6 @@ mod tests {
         let session = CreativeSession::new(now_ms());
         let manifest_path = package_path(&root, "traversal.riffra");
         let mut manifest = serde_json::json!({
-            "manifestVersion": MANIFEST_VERSION,
             "exportedAtMs": 42,
             "session": session,
             "assets": []
@@ -616,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn import_requires_the_current_manifest_fields() {
+    fn import_requires_the_required_manifest_fields() {
         let root = std::env::temp_dir().join(format!("riffra-project-manifest-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let session = CreativeSession::new(now_ms());
@@ -624,25 +994,12 @@ mod tests {
         write_manifest_package(
             &package,
             &serde_json::json!({
-                "manifestVersion": MANIFEST_VERSION,
                 "exportedAtMs": 42,
                 "session": session
             }),
         );
         let error = import(&root, &package).unwrap_err();
         assert!(error.contains("missing field `assets`"));
-
-        let package = package_path(&root, "unknown-field.riffra");
-        let mut manifest = serde_json::json!({
-            "manifestVersion": MANIFEST_VERSION,
-            "exportedAtMs": 42,
-            "session": CreativeSession::new(now_ms()),
-            "assets": []
-        });
-        manifest["unexpected"] = serde_json::json!(true);
-        write_manifest_package(&package, &manifest);
-        let error = import(&root, &package).unwrap_err();
-        assert!(error.contains("unknown field `unexpected`"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -847,5 +1204,139 @@ mod tests {
 
         let _ = fs::remove_dir_all(source_root);
         let _ = fs::remove_dir_all(target_root);
+    }
+
+    #[test]
+    fn export_import_round_trips_user_instrument_snapshots() {
+        let root = std::env::temp_dir().join(format!("riffra-project-instrument-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let snapshot_id = Uuid::now_v7().to_string();
+        let instrument_id = format!("user:{}", Uuid::now_v7());
+        let snapshot_root = root.join("project-instruments").join(&snapshot_id);
+        fs::create_dir_all(snapshot_root.join("samples")).unwrap();
+        fs::write(snapshot_root.join("definition.json"), r#"{"version":1}"#).unwrap();
+        fs::write(snapshot_root.join("samples/attack.wav"), b"sample").unwrap();
+
+        let mut session = CreativeSession::new(now_ms());
+        let mut track = Track::instrument("instrument".into(), "Instrument".into());
+        track.instrument = Some(
+            TrackInstrument::user_snapshot(
+                "device:instrument".into(),
+                "User Piano".into(),
+                instrument_id,
+                snapshot_id.clone(),
+                r#"{"version":1}"#.into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(track);
+        let package = root.join("snapshot.riffra");
+        export(&root, &session, 42, &package).unwrap();
+
+        let manifest = read_manifest(&package);
+        assert_eq!(
+            manifest["instrumentSnapshots"][0]["snapshotId"],
+            snapshot_id
+        );
+        let file = fs::File::open(&package).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert!(
+            archive
+                .by_name(&format!(
+                    "instrument-snapshots/{snapshot_id}/definition.json"
+                ))
+                .is_ok()
+        );
+        assert!(
+            archive
+                .by_name(&format!(
+                    "instrument-snapshots/{snapshot_id}/samples/attack.wav"
+                ))
+                .is_ok()
+        );
+
+        fs::remove_dir_all(&snapshot_root).unwrap();
+        let imported = import(&root, &package).unwrap();
+        assert_eq!(
+            imported.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .unwrap()
+                .user_snapshot_ids()
+                .map(|(_, snapshot)| snapshot),
+            Some(snapshot_id.as_str())
+        );
+        assert_eq!(
+            fs::read(
+                root.join("project-instruments")
+                    .join(&snapshot_id)
+                    .join("samples/attack.wav")
+            )
+            .unwrap(),
+            b"sample"
+        );
+
+        fs::create_dir_all(
+            root.join("project-instruments")
+                .join(&snapshot_id)
+                .join("unused"),
+        )
+        .unwrap();
+        let imported_again = import(&root, &package).unwrap();
+        assert_eq!(
+            imported_again.arrangement.tracks[0]
+                .instrument
+                .as_ref()
+                .unwrap()
+                .user_snapshot_ids()
+                .map(|(_, snapshot)| snapshot),
+            Some(snapshot_id.as_str())
+        );
+
+        fs::write(
+            root.join("project-instruments")
+                .join(&snapshot_id)
+                .join("samples/attack.wav"),
+            b"changed",
+        )
+        .unwrap();
+        let error = import(&root, &package).unwrap_err();
+        assert!(error.contains("already exists with different content"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_rejects_snapshot_references_missing_from_the_package() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-project-snapshot-reference-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let snapshot_id = Uuid::now_v7().to_string();
+        let mut session = CreativeSession::new(now_ms());
+        let mut track = Track::instrument("instrument".into(), "Instrument".into());
+        track.instrument = Some(
+            TrackInstrument::user_snapshot(
+                "device:instrument".into(),
+                "User Piano".into(),
+                format!("user:{}", Uuid::now_v7()),
+                snapshot_id,
+                r#"{"version":1}"#.into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(track);
+        let package = root.join("missing-snapshot.riffra");
+        write_manifest_package(
+            &package,
+            &serde_json::json!({
+                "exportedAtMs": 42,
+                "session": session,
+                "assets": [],
+                "instrumentSnapshots": []
+            }),
+        );
+
+        let error = import(&root, &package).unwrap_err();
+        assert!(error.contains("do not match the snapshots referenced by the session"));
+        let _ = fs::remove_dir_all(root);
     }
 }

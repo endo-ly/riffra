@@ -1,10 +1,11 @@
 import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
 
 interface InstrumentSearchable {
+  id?: string;
   name: string;
   description?: string | null;
-  category?: string;
-  defaultCategory?: string;
+  category?: string | null;
+  defaultCategory?: string | null;
   defaultTags?: string[];
   userTags?: string[];
   tags?: string[];
@@ -44,7 +45,7 @@ function searchableValues(item: InstrumentSearchable, collections: CollectionLoo
   ];
 }
 
-/** Returns whether a built-in instrument matches a case-insensitive query. */
+/** Returns whether an instrument matches a case-insensitive query. */
 export function matchesInstrumentQuery(
   item: InstrumentSearchable,
   query: string,
@@ -101,7 +102,7 @@ export function filterInstruments(
   const normalizedTag = filters.tag?.trim().toLocaleLowerCase();
   return items.filter((item) => {
     if (!matchesInstrumentQuery(item, query, collections)) return false;
-    if (normalizedCategory && item.category.toLocaleLowerCase() !== normalizedCategory)
+    if (normalizedCategory && (item.category ?? '').toLocaleLowerCase() !== normalizedCategory)
       return false;
     if (normalizedTag && !item.tags.some((tag) => tag.toLocaleLowerCase() === normalizedTag)) {
       return false;
