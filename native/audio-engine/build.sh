@@ -56,6 +56,11 @@ fi
 if [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
   configure_args+=("-DCMAKE_CXX_COMPILER_LAUNCHER=$CMAKE_CXX_COMPILER_LAUNCHER")
 fi
+if [ "$SKIP_TESTS" -eq 1 ]; then
+  configure_args+=("-DBUILD_TESTING=OFF")
+else
+  configure_args+=("-DBUILD_TESTING=ON")
+fi
 "$CMAKE" "${configure_args[@]}"
 build_args=(--build "$BUILD_DIR" --config "$CONFIG")
 if [[ "$SIDECARS_ONLY" -eq 1 ]]; then

@@ -165,19 +165,27 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     ASSERT_EQ(manifestPresetIds, stagedPresetIds);
 }
 
-TEST(SonalloyInstrumentRuntimeTest, NoteOnProducesFiniteNonZeroStereoOutput) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
+TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysRepresentativePresets) {
+    constexpr std::array representativePresetIds{
+        "01-clean-sub-bass", "11-supersaw-lead",          "17-warm-analog-pad",
+        "35-fm-bell",        "50-rhythmic-wave-sequence",
+    };
 
-    juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
-    processBlock(*runtime, output, &midi);
+    for (const auto* presetId : representativePresetIds) {
+        SCOPED_TRACE(presetId);
+        juce::String error;
+        auto runtime = loadPreset(presetRoot().getChildFile(presetId), error);
+        ASSERT_NE(runtime, nullptr) << error.toStdString();
 
-    expectFinite(output);
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_EQ(runtime->faultCode(), 0u);
+        juce::AudioBuffer<float> output(2, 256);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+        processBlock(*runtime, output, &midi);
+
+        expectFinite(output);
+        EXPECT_GT(maximumMagnitude(output), 0.0f);
+        EXPECT_EQ(runtime->faultCode(), 0u);
+    }
 }
 
 TEST(SonalloyInstrumentRuntimeTest, NoteOffReleasesTheNewestVoice) {

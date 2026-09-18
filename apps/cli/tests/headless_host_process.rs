@@ -36,9 +36,22 @@ struct RunningHost {
     data_root: TestDataRoot,
 }
 
+fn prepare_safe_mode_resource_root(data_root: &Path) -> PathBuf {
+    let resource_root = data_root.join("safe-mode-resources");
+    fs::create_dir_all(&resource_root).expect("Safe Mode resource root should be created");
+    fs::write(
+        resource_root.join("manifest.json"),
+        br#"{"sourceRelease":"vtest","presets":[]}"#,
+    )
+    .expect("Safe Mode resource manifest should be written");
+    resource_root
+}
+
 impl RunningHost {
     fn start(safe_mode: bool) -> Self {
         let data_root = TestDataRoot::new();
+        let safe_mode_resources =
+            safe_mode.then(|| prepare_safe_mode_resource_root(&data_root.path));
         let stdout = File::create(data_root.path.join("serve.stdout.log"))
             .expect("Host stdout log should be created");
         let stderr = File::create(data_root.path.join("serve.stderr.log"))
@@ -52,6 +65,9 @@ impl RunningHost {
             .stderr(stderr);
         if safe_mode {
             command.arg("--safe-mode");
+        }
+        if let Some(resource_root) = &safe_mode_resources {
+            command.env("RIFFRA_BUILTIN_INSTRUMENTS_ROOT", resource_root);
         }
         let mut child = command.spawn().expect("riffra serve should start");
         let endpoint = data_root.path.join("control").join("host.json");
@@ -114,9 +130,9 @@ fn host_list() -> Output {
         .expect("host list should start")
 }
 
-fn attached(arguments: &[&str]) -> Output {
+fn attached(instance_id: &str, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_riffra"))
-        .arg("--attach")
+        .args(["--attach", "--host", instance_id])
         .args(arguments)
         .output()
         .expect("attached command should start")
@@ -131,9 +147,9 @@ fn standalone(data_root: &Path, arguments: &[&str]) -> Output {
         .expect("standalone command should start")
 }
 
-fn interactive_bootstrap() -> Output {
+fn interactive_bootstrap(instance_id: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_riffra"))
-        .args(["--attach", "--interactive"])
+        .args(["--attach", "--host", instance_id, "--interactive"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -187,30 +203,48 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     };
     let mut host = RunningHost::start(safe_mode);
     let data_root = host.data_root().to_path_buf();
+    let data_root_string = data_root.to_string_lossy().into_owned();
 
     let hosts = success_json(host_list(), "host list");
-    assert_eq!(hosts.as_array().map(Vec::len), Some(1));
-    assert_eq!(hosts[0]["dataRoot"], data_root.to_string_lossy().as_ref());
+    let matching_hosts = hosts
+        .as_array()
+        .expect("host list should return an array")
+        .iter()
+        .filter(|host| {
+            host.get("dataRoot").and_then(Value::as_str) == Some(data_root_string.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_hosts.len(),
+        1,
+        "the started Host should be discoverable exactly once"
+    );
+    let instance_id = matching_hosts[0]["instanceId"]
+        .as_str()
+        .expect("the discovered Host should have an instance id");
 
-    let session = success_json(attached(&["session", "get"]), "session.get");
+    let session = success_json(attached(instance_id, &["session", "get"]), "session.get");
     assert_eq!(session["result"]["type"], "session");
     assert_eq!(session["sequence"], 0);
 
-    let bootstrap = success_json(interactive_bootstrap(), "host.bootstrap");
+    let bootstrap = success_json(interactive_bootstrap(instance_id), "host.bootstrap");
     assert_eq!(bootstrap["result"]["type"], "hostBootstrap");
     assert_eq!(bootstrap["result"]["value"]["canonical"]["sequence"], 0);
 
     let track = success_json(
-        attached(&[
-            "--expected-sequence",
-            "0",
-            "track",
-            "add",
-            "--name",
-            "Process Test",
-            "--kind",
-            "instrument",
-        ]),
+        attached(
+            instance_id,
+            &[
+                "--expected-sequence",
+                "0",
+                "track",
+                "add",
+                "--name",
+                "Process Test",
+                "--kind",
+                "instrument",
+            ],
+        ),
         "track.add",
     );
     assert_eq!(track["result"]["type"], "mutation");
@@ -223,28 +257,40 @@ fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     );
     assert!(track["result"]["value"].get("canonical").is_none());
 
-    let undo = success_json(attached(&["--expected-sequence", "1", "undo"]), "undo");
+    let undo = success_json(
+        attached(instance_id, &["--expected-sequence", "1", "undo"]),
+        "undo",
+    );
     assert_eq!(undo["result"]["type"], "mutation");
     assert_eq!(undo["sequence"], 2);
     assert!(undo["result"]["value"].get("canonical").is_none());
 
     if safe_mode {
-        let audio = success_json(attached(&["audio", "status"]), "audio.status");
+        let audio = success_json(attached(instance_id, &["audio", "status"]), "audio.status");
         assert_eq!(audio["result"]["type"], "audioStatus");
-        assert_runtime_unavailable(attached(&["transport", "play"]), "transport.play");
-        assert_runtime_unavailable(attached(&["audio", "probe"]), "audio.probe");
         assert_runtime_unavailable(
-            attached(&["plugin", "scan", "--path", data_root.to_str().unwrap()]),
+            attached(instance_id, &["transport", "play"]),
+            "transport.play",
+        );
+        assert_runtime_unavailable(attached(instance_id, &["audio", "probe"]), "audio.probe");
+        assert_runtime_unavailable(
+            attached(
+                instance_id,
+                &["plugin", "scan", "--path", data_root.to_str().unwrap()],
+            ),
             "plugin.scan",
         );
     } else {
-        let status = success_json(attached(&["host", "status"]), "host.status");
+        let status = success_json(attached(instance_id, &["host", "status"]), "host.status");
         assert_eq!(status["result"]["type"], "hostStatus");
-        let audio = success_json(attached(&["audio", "status"]), "audio.status");
+        let audio = success_json(attached(instance_id, &["audio", "status"]), "audio.status");
         assert_eq!(audio["result"]["type"], "audioStatus");
     }
 
-    let shutdown = success_json(attached(&["host", "shutdown"]), "host.shutdown");
+    let shutdown = success_json(
+        attached(instance_id, &["host", "shutdown"]),
+        "host.shutdown",
+    );
     assert_eq!(shutdown["result"]["type"], "ok");
     host.wait_for_shutdown();
 

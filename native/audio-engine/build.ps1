@@ -65,6 +65,11 @@ if ($env:CMAKE_C_COMPILER_LAUNCHER) {
 if ($env:CMAKE_CXX_COMPILER_LAUNCHER) {
     $configureArgs += "-DCMAKE_CXX_COMPILER_LAUNCHER=$($env:CMAKE_CXX_COMPILER_LAUNCHER)"
 }
+if ($SkipTests) {
+    $configureArgs += '-DBUILD_TESTING=OFF'
+} else {
+    $configureArgs += '-DBUILD_TESTING=ON'
+}
 & $cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Native audio engine configuration failed.' }
 
