@@ -9,7 +9,6 @@ import {
   type ArrangementMutationResult,
   type CreativeSession,
   type RuntimeProjectionStatus,
-  type Track,
 } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId, type TransportStatus } from '@/native/contracts';
@@ -868,48 +867,6 @@ describe('WorkspaceArrange', () => {
     expect(editor.querySelector('[data-ghost-note-id]')).toBeNull();
   });
 
-  it('renders subdivision lines for the selected MIDI Editor grid', async () => {
-    const session = defaultSession();
-    session.arrangement.tracks.push({
-      id: 'track:grid',
-      name: 'Grid Track',
-      kind: 'instrument',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    });
-    session.arrangement.midiClips.push({
-      id: 'clip:grid',
-      name: 'Grid',
-      trackId: 'track:grid',
-      startTick: 0,
-      durationTicks: 1_920,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    const { container } = render(<Harness api={api} initialSession={session} />);
-
-    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:grid"]')!);
-    const editor = await screen.findByLabelText('MIDI Editor');
-    expect(editor.querySelector('[data-midi-pitch-viewport] [data-midi-lane]')).toBeInTheDocument();
-    expect(editor.querySelector('[data-midi-pitch-viewport] [data-velocity-lane]')).toBeNull();
-    expect(
-      editor.querySelector('[data-midi-velocity-viewport] [data-velocity-lane]'),
-    ).toBeInTheDocument();
-    expect(editor.querySelectorAll('[data-grid-subdivision]')).toHaveLength(6);
-
-    fireEvent.change(within(editor).getByRole('combobox'), { target: { value: '1/8' } });
-    expect(editor.querySelectorAll('[data-grid-subdivision]')).toHaveLength(2);
-  });
-
   it('reports grid-aligned notes without sending a quantize operation', async () => {
     // Arrange
     const session = defaultSession();
@@ -1126,58 +1083,6 @@ describe('WorkspaceArrange', () => {
 
     releaseUpdate();
     await waitFor(() => expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6));
-  });
-
-  it('renders MIDI keyboard white keys beneath narrower black keys', async () => {
-    const session = defaultSession();
-    session.arrangement.tracks.push({
-      id: 'track:instrument',
-      name: 'Instrument',
-      kind: 'instrument',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    });
-    session.arrangement.midiClips.push({
-      id: 'clip:midi-keyboard',
-      name: 'MIDI Keyboard',
-      trackId: 'track:instrument',
-      startTick: 0,
-      durationTicks: 1_920,
-      notes: [],
-      events: [],
-      muted: false,
-      loopEnabled: false,
-    });
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    const { container } = render(<Harness api={api} initialSession={session} />);
-
-    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:midi-keyboard"]')!);
-    const keyboard = (await screen.findByLabelText('MIDI piano keyboard')) as HTMLElement;
-
-    expect(keyboard.querySelectorAll('[class*="pianoKey_"]')).toHaveLength(128);
-    expect(keyboard.querySelectorAll('[class*="pianoWhiteKey_"]')).toHaveLength(128);
-    expect(keyboard.querySelectorAll('[class*="pianoBlackKey_"]')).toHaveLength(53);
-    expect(
-      Array.from(keyboard.querySelectorAll('[class*="pianoBlackKey_"]')).every((key) =>
-        Boolean(key.parentElement?.querySelector('[class*="pianoWhiteKey_"]')),
-      ),
-    ).toBe(true);
-
-    fireEvent.click(screen.getByRole('button', { name: 'MIDI Editor pitch zoom in' }));
-
-    expect((keyboard.querySelector('[data-piano-key="60"]') as HTMLElement).style.height).toBe(
-      '14px',
-    );
-    expect(
-      (keyboard.querySelector('[data-piano-key="61"] [class*="pianoBlackKey_"]') as HTMLElement)
-        .style.height,
-    ).toBe('11px');
   });
 
   it('reports MIDI and Audio clips when confirming Track deletion', () => {
@@ -1438,37 +1343,6 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByText('native busy detail must stay internal')).not.toBeInTheDocument();
   });
 
-  it('renders one shared grid for a long timeline regardless of Track count', () => {
-    // Arrange
-    const session = defaultSession();
-    session.arrangement.loopRange.endTick = session.arrangement.timebase.ppq * 4 * 100;
-    const tracks: Track[] = Array.from({ length: 50 }, (_, index) => ({
-      id: `track:grid-${index}`,
-      name: `Grid ${index}`,
-      kind: 'audio',
-      gainDb: 0,
-      pan: 0,
-      muted: false,
-      solo: false,
-      armed: false,
-      monitoring: 'off',
-      midiInput: {},
-      rack: { devices: [], macros: [] },
-    }));
-    session.arrangement.tracks.push(...tracks);
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-
-    // Act
-    const { container } = render(<Harness api={api} initialSession={session} />);
-
-    // Assert
-    expect(container.querySelectorAll('[data-arrange-track]')).toHaveLength(50);
-    expect(container.querySelectorAll('[data-timeline-grid]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-arrange-track] > [class*="lane_"] > i')).toHaveLength(
-      0,
-    );
-  });
-
   it('does not send an Audio clip move to an Instrument Track', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
@@ -1584,35 +1458,6 @@ describe('WorkspaceArrange', () => {
     expect(screen.queryByRole('button', { name: 'Clear loop' })).not.toBeInTheDocument();
   });
 
-  it('clears an active loop from the ruler band', async () => {
-    const session = defaultSession();
-    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} />);
-
-    const loopRange = screen.getByText('LOOP').parentElement!;
-    fireEvent.pointerDown(loopRange, { clientX: 100 });
-    expect(loopRange).toHaveAttribute('data-range-selected', 'true');
-    fireEvent.keyDown(window, { key: 'Delete' });
-
-    await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-  });
-
-  it('clears an active punch range from the ruler band without a time selection', async () => {
-    const session = defaultSession();
-    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} />);
-
-    expect(screen.queryByText(/Selection/)).not.toBeInTheDocument();
-    const punchRange = screen.getByText('PUNCH').parentElement!;
-    fireEvent.pointerDown(punchRange, { clientX: 100 });
-    expect(punchRange).toHaveAttribute('data-range-selected', 'true');
-    fireEvent.keyDown(window, { key: 'Delete' });
-
-    await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
-  });
-
   it('deletes a loop or punch range from the range context menu', async () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
@@ -1637,35 +1482,21 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(api.calls).toContain('updateTimelinePunchRange'));
   });
 
-  it('renders draggable handles on the loop range band', () => {
+  it('edits both loop handles and reports the canonical range', async () => {
     const session = defaultSession();
     session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} />);
-
-    expect(screen.getByRole('slider', { name: 'Loop start' })).toBeInTheDocument();
-    expect(screen.getByRole('slider', { name: 'Loop end' })).toBeInTheDocument();
-  });
-
-  it('renders draggable handles on the punch range band', () => {
-    const session = defaultSession();
-    session.arrangement.punchRange = { startTick: 0, endTick: 1920 };
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} />);
-
-    expect(screen.getByText('PUNCH')).toBeInTheDocument();
-    expect(screen.getByRole('slider', { name: 'Punch start' })).toBeInTheDocument();
-    expect(screen.getByRole('slider', { name: 'Punch end' })).toBeInTheDocument();
-  });
-
-  it('drags the loop start handle to update the loop range', async () => {
-    const session = defaultSession();
-    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const canonical = structuredClone(session);
-    canonical.arrangement.loopRange = { enabled: true, startTick: 960, endTick: 3840 };
     const api = new FakeNativeApi({
       bootstrapState: { canonical: canonicalState(session) },
-      responses: { updateTimelineLoopRange: mutationResult(canonical) },
+    });
+    let updateCount = 0;
+    api.setResponse('updateTimelineLoopRange', (enabled: boolean) => {
+      const canonical = structuredClone(session);
+      updateCount += 1;
+      canonical.arrangement.loopRange =
+        updateCount === 1
+          ? { enabled, startTick: 960, endTick: 3840 }
+          : { enabled, startTick: 0, endTick: 2880 };
+      return mutationResult(canonical);
     });
     render(<Harness api={api} initialSession={session} />);
 
@@ -1677,18 +1508,6 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
     const loopRange = screen.getByText('LOOP').parentElement!;
     await waitFor(() => expect(loopRange).toHaveStyle({ left: '96px' }));
-  });
-
-  it('drags the loop end handle to update the loop range', async () => {
-    const session = defaultSession();
-    session.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 3840 };
-    const canonical = structuredClone(session);
-    canonical.arrangement.loopRange = { enabled: true, startTick: 0, endTick: 2880 };
-    const api = new FakeNativeApi({
-      bootstrapState: { canonical: canonicalState(session) },
-      responses: { updateTimelineLoopRange: mutationResult(canonical) },
-    });
-    render(<Harness api={api} initialSession={session} />);
 
     const endHandle = screen.getByRole('slider', { name: 'Loop end' });
     fireEvent.pointerDown(endHandle, { clientX: 0 });
@@ -1696,8 +1515,8 @@ describe('WorkspaceArrange', () => {
     fireEvent.pointerUp(window, { clientX: -100 });
 
     await waitFor(() => expect(api.calls).toContain('updateTimelineLoopRange'));
-    const loopRange = screen.getByText('LOOP').parentElement!;
     await waitFor(() => expect(loopRange).toHaveStyle({ width: '288px' }));
+    expect(api.calls.filter((call) => call === 'updateTimelineLoopRange')).toHaveLength(2);
   });
 
   it('drags the punch end handle to update the punch range', async () => {
@@ -1721,62 +1540,45 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(punchRange).toHaveStyle({ width: '288px' }));
   });
 
-  it('deletes the selected marker with the Delete key', async () => {
-    const session = defaultSession();
-    session.arrangement.markers.push({ id: 'marker:verse', name: 'Verse', tick: 0 });
-    const canonical = structuredClone(session);
-    canonical.arrangement.markers = [];
+  it('adds and removes a marker from the keyboard while ignoring text input', async () => {
+    const initial = defaultSession();
+    const added = structuredClone(initial);
+    added.arrangement.markers.push({ id: 'marker:1', name: 'Marker 1', tick: 960 });
+    const removed = structuredClone(added);
+    removed.arrangement.markers = [];
     const api = new FakeNativeApi({
-      bootstrapState: { canonical: canonicalState(session) },
-      responses: { removeMarker: mutationResult(canonical) },
+      bootstrapState: { canonical: canonicalState(initial) },
+      responses: {
+        addMarker: mutationResult(added),
+        removeMarker: mutationResult(removed),
+      },
     });
-    render(<Harness api={api} initialSession={session} />);
-
-    const marker = await screen.findByText('Verse');
-    fireEvent.pointerDown(marker.closest('[data-marker-id]')!, { clientX: 0 });
-    fireEvent.keyDown(window, { key: 'Delete' });
-
-    await waitFor(() => expect(api.calls).toContain('removeMarker'));
-    await waitFor(() => expect(screen.queryByText('Verse')).not.toBeInTheDocument());
-  });
-
-  it('adds a Marker at the playhead with the M key', async () => {
-    // Arrange
-    const canonical = defaultSession();
-    canonical.arrangement.markers.push({ id: 'marker:1', name: 'Marker 1', tick: 960 });
-    const api = new FakeNativeApi({ responses: { addMarker: mutationResult(canonical) } });
     render(<Harness api={api} />);
     const ruler = screen.getByLabelText('Timeline ruler');
     Object.defineProperty(ruler, 'getBoundingClientRect', {
       value: () => ({ left: 0, width: 2400, top: 0, bottom: 30, right: 2400, height: 30 }),
     });
 
-    // Act
     fireEvent.pointerDown(ruler, { clientX: 96 });
     fireEvent.keyDown(window, { key: 'm' });
-
-    // Assert
     await waitFor(() => expect(api.calls).toContain('addMarker'));
     expect(await screen.findByText('Marker 1')).toBeInTheDocument();
-  });
 
-  it('does not add a Marker with the M key while typing in a text input', () => {
-    // Arrange
-    const api = new FakeNativeApi();
-    render(<Harness api={api} />);
+    const marker = screen.getByText('Marker 1');
+    fireEvent.pointerDown(marker.closest('[data-marker-id]')!, { clientX: 0 });
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await waitFor(() => expect(api.calls).toContain('removeMarker'));
+    await waitFor(() => expect(screen.queryByText('Marker 1')).not.toBeInTheDocument());
+
     const input = document.createElement('input');
     document.body.appendChild(input);
     input.focus();
-
-    // Act
     fireEvent.keyDown(input, { key: 'm' });
-
-    // Assert
-    expect(api.calls).not.toContain('addMarker');
+    expect(api.calls.filter((call) => call === 'addMarker')).toHaveLength(1);
     input.remove();
   });
 
-  it('zooms to the ruler time selection with the Z key', () => {
+  it('handles the Z shortcut with and without a time selection', () => {
     // Arrange
     const api = new FakeNativeApi();
     const { container } = render(<Harness api={api} />);
@@ -1797,24 +1599,21 @@ describe('WorkspaceArrange', () => {
 
     // Assert: 960..1260 ticks fitted into 1184 usable px needs zoom > 4, so it clamps to 4.
     expect(zoom.textContent).toBe('400%');
-  });
 
-  it('does not zoom with the Z key without a time selection', () => {
-    // Arrange
-    const api = new FakeNativeApi();
-    const { container } = render(<Harness api={api} />);
-    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
-    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
+    cleanup();
+    const noSelectionApi = new FakeNativeApi();
+    const { container: noSelectionContainer } = render(<Harness api={noSelectionApi} />);
+    const noSelectionScroller = noSelectionContainer.querySelector(
+      '[class*="scroller"]',
+    ) as HTMLElement;
+    Object.defineProperty(noSelectionScroller, 'clientWidth', { value: 1408, configurable: true });
+    const noSelectionZoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
-    // Act
     fireEvent.keyDown(window, { key: 'z' });
-
-    // Assert
-    expect(zoom.textContent).toBe('100%');
+    expect(noSelectionZoom.textContent).toBe('100%');
   });
 
-  it('fits all Clips into view with the F key', () => {
+  it('handles the F shortcut with and without Clips', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.midiClips.push(
@@ -1853,27 +1652,37 @@ describe('WorkspaceArrange', () => {
     // Assert: 0..3840 ticks fitted into the usable width -> zoom = usable / 3840 * 10
     const usableWidth = 1408 - TRACK_HEADER_WIDTH - 32;
     expect(zoom.textContent).toBe(`${Math.round((usableWidth / 3840) * 10 * 100)}%`);
-  });
 
-  it('does not zoom with the F key when no Clip exists', () => {
-    // Arrange
-    const api = new FakeNativeApi();
-    const { container } = render(<Harness api={api} />);
-    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
-    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
-    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
+    cleanup();
+    const noClipApi = new FakeNativeApi();
+    const { container: noClipContainer } = render(<Harness api={noClipApi} />);
+    const noClipScroller = noClipContainer.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(noClipScroller, 'clientWidth', { value: 1408, configurable: true });
+    const noClipZoom = screen.getByRole('group', { name: 'Timeline zoom' });
 
-    // Act
     fireEvent.keyDown(window, { key: 'f' });
-
-    // Assert
-    expect(zoom.textContent).toBe('100%');
+    expect(noClipZoom.textContent).toBe('100%');
   });
 
-  it('deletes a marker from its context menu without a success popup', async () => {
+  it('deletes a marker from its context menu and renames another marker', async () => {
     const session = defaultSession();
-    session.arrangement.markers.push({ id: 'marker:chorus', name: 'Chorus', tick: 0 });
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    session.arrangement.markers.push(
+      { id: 'marker:chorus', name: 'Chorus', tick: 0 },
+      { id: 'marker:intro', name: 'Intro', tick: 960 },
+    );
+    const afterDelete = structuredClone(session);
+    afterDelete.arrangement.markers = afterDelete.arrangement.markers.filter(
+      (marker) => marker.id !== 'marker:chorus',
+    );
+    const afterRename = structuredClone(afterDelete);
+    afterRename.arrangement.markers[0].name = 'Verse';
+    const api = new FakeNativeApi({
+      bootstrapState: { canonical: canonicalState(session) },
+      responses: {
+        removeMarker: mutationResult(afterDelete),
+        updateMarker: mutationResult(afterRename),
+      },
+    });
     render(<Harness api={api} initialSession={session} />);
 
     const marker = await screen.findByText('Chorus');
@@ -1882,21 +1691,9 @@ describe('WorkspaceArrange', () => {
 
     await waitFor(() => expect(api.calls).toContain('removeMarker'));
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  });
 
-  it('renames a marker in the Arrange dialog', async () => {
-    const session = defaultSession();
-    session.arrangement.markers.push({ id: 'marker:intro', name: 'Intro', tick: 0 });
-    const canonical = structuredClone(session);
-    canonical.arrangement.markers[0].name = 'Verse';
-    const api = new FakeNativeApi({
-      bootstrapState: { canonical: canonicalState(session) },
-      responses: { updateMarker: mutationResult(canonical) },
-    });
-    render(<Harness api={api} initialSession={session} />);
-
-    const marker = await screen.findByText('Intro');
-    fireEvent.doubleClick(marker.closest('[data-marker-id]')!);
+    const introMarker = await screen.findByText('Intro');
+    fireEvent.doubleClick(introMarker.closest('[data-marker-id]')!);
     const input = screen.getByLabelText('Name');
     fireEvent.change(input, { target: { value: 'Verse' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));

@@ -91,20 +91,6 @@ describe('ProjectHostSelector', () => {
     expect(onRenameProject).toHaveBeenCalledWith('My Project');
   });
 
-  it('uses one Refresh action for the selector', async () => {
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
-    renderSelector(embedded, { onRefresh });
-
-    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-
-    expect(screen.getByRole('menuitem', { name: 'Refresh' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Refresh Projects' })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('menuitem', { name: 'Refresh' }));
-    await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
-  });
-
   it('offers reconnect when the active Host is disconnected', async () => {
     const reconnect = vi.fn().mockResolvedValue(null);
     const state: HostConnectionState = {

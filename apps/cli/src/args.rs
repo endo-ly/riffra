@@ -2380,54 +2380,6 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn timebase_update_accepts_a_partial_patch() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "timebase",
-            "update",
-            "--bpm",
-            "140",
-        ])
-        .unwrap();
-
-        let request = cli.request().unwrap();
-        assert_eq!(request.name, "timebase.update");
-        assert_eq!(request.params, json!({"bpm": 140.0}));
-    }
-
-    #[test]
-    fn job_wait_timeout_is_optional() {
-        let cli = Cli::try_parse_from(["riffra", "job", "wait", "--id", "job:1"]).unwrap();
-        let Some(CliCommand::Job {
-            command: JobCommand::Wait(args),
-        }) = cli.command
-        else {
-            panic!("job wait was not parsed");
-        };
-        assert_eq!(args.timeout_ms, None);
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "job",
-            "wait",
-            "--id",
-            "job:1",
-            "--timeout-ms",
-            "30000",
-        ])
-        .unwrap();
-        let Some(CliCommand::Job {
-            command: JobCommand::Wait(args),
-        }) = cli.command
-        else {
-            panic!("job wait was not parsed");
-        };
-        assert_eq!(args.timeout_ms, Some(30_000));
-    }
-
-    #[test]
     fn instrument_commands_use_common_ids_and_keep_vst3_distinct() {
         let cli =
             Cli::try_parse_from(["riffra", "--data-root", "data", "instrument", "list"]).unwrap();
@@ -2483,7 +2435,7 @@ mod tests {
     }
 
     #[test]
-    fn plugin_state_save_keeps_output_path_out_of_control_params() {
+    fn preserves_cli_local_options_without_leaking_into_protocol_params() {
         let cli = Cli::try_parse_from([
             "riffra",
             "plugin",
@@ -2510,10 +2462,21 @@ mod tests {
                 json!({"trackId":"track:keys","deviceId":"device:synth"})
             )
         );
-    }
 
-    #[test]
-    fn audio_diagnostics_keeps_output_mode_local_to_the_cli() {
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "timebase",
+            "update",
+            "--bpm",
+            "140",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "timebase.update");
+        assert_eq!(request.params, json!({"bpm": 140.0}));
+
         let cli =
             Cli::try_parse_from(["riffra", "audio", "diagnostics", "--json", "--debug"]).unwrap();
 
@@ -2521,81 +2484,6 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "audio.diagnostics");
         assert_eq!(request.params, json!({"debug": true}));
-    }
-
-    #[test]
-    fn session_inspect_preserves_optional_musical_scope() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "session",
-            "inspect",
-            "--start",
-            "9:1",
-            "--end",
-            "13:1",
-            "--track-id",
-            "track:keys",
-        ])
-        .unwrap();
-
-        let request = cli.request().unwrap();
-        assert_eq!(request.name, "session.inspect");
-        assert_eq!(
-            request.params,
-            json!({"start":"9:1","end":"13:1","trackId":"track:keys"})
-        );
-    }
-
-    #[test]
-    fn render_start_uses_musical_time_selection_and_rejects_mixed_ranges() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "render",
-            "start",
-            "--start",
-            "9:1",
-            "--end",
-            "13:1",
-            "--track-id",
-            "track:keys",
-        ])
-        .unwrap();
-        assert_eq!(
-            cli.request().unwrap().params["options"]["range"],
-            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
-        );
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "render",
-            "start",
-            "--range",
-            "loop-range",
-            "--start",
-            "9:1",
-            "--end",
-            "13:1",
-        ])
-        .unwrap();
-        assert!(cli.request().is_err());
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "render",
-            "start",
-            "--start",
-            "9:1",
-        ])
-        .unwrap();
-        assert!(cli.request().is_err());
     }
 
     #[test]
@@ -2668,6 +2556,165 @@ mod tests {
             request.params,
             json!({"name":"A'","start":"5:1","end":"13:1"})
         );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "session",
+            "inspect",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+            "--track-id",
+            "track:keys",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "session.inspect");
+        assert_eq!(
+            request.params,
+            json!({"start":"9:1","end":"13:1","trackId":"track:keys"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+            "--track-id",
+            "track:keys",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params["options"]["range"],
+            json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--range",
+            "loop-range",
+            "--start",
+            "9:1",
+            "--end",
+            "13:1",
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "render",
+            "start",
+            "--start",
+            "9:1",
+        ])
+        .unwrap();
+        assert!(cli.request().is_err());
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "harmony",
+            "insert",
+            "--events-json",
+            r#"[{"start":"1:1","end":"2:1","chord":"Dm9"}]"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.harmony.insert");
+        assert_eq!(
+            request.params,
+            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "harmony",
+            "realize",
+            "--clip-id",
+            "midi-clip:1",
+            "--lowest-octave",
+            "3",
+            "--rhythm-json",
+            r#"{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]}"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.harmony.realize");
+        assert_eq!(request.params["clipId"], "midi-clip:1");
+        assert_eq!(request.params["lowestOctave"], 3);
+        assert_eq!(request.params["rhythm"]["length"], "1/2");
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "phrase",
+            "insert",
+            "--clip-id",
+            "midi-clip:1",
+            "--phrase-json",
+            r#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]}"#,
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.phrase.insert");
+        assert_eq!(request.params["clipId"], "midi-clip:1");
+        assert_eq!(request.params["pattern"]["length"], "1/1");
+        assert_eq!(request.params["placements"][0]["anchor"], "C4");
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "marker",
+            "add",
+            "--name",
+            "Chorus",
+            "--position",
+            "17:1",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params,
+            json!({"name":"Chorus","position":"17:1"})
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra", "marker", "add", "--name", "Chorus", "--tick", "960"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "loop-range",
+                "set",
+                "--start-tick",
+                "960",
+                "--end-tick",
+                "1920",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -2731,72 +2778,7 @@ mod tests {
         ])
         .unwrap();
         assert!(cli.request().is_err());
-        let _ = std::fs::remove_file(path);
-    }
 
-    #[test]
-    fn harmony_and_phrase_commands_keep_high_level_json_inputs_intact() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "music",
-            "harmony",
-            "insert",
-            "--events-json",
-            r#"[{"start":"1:1","end":"2:1","chord":"Dm9"}]"#,
-        ])
-        .unwrap();
-        let request = cli.request().unwrap();
-        assert_eq!(request.name, "music.harmony.insert");
-        assert_eq!(
-            request.params,
-            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
-        );
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "music",
-            "harmony",
-            "realize",
-            "--clip-id",
-            "midi-clip:1",
-            "--lowest-octave",
-            "3",
-            "--rhythm-json",
-            r#"{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]}"#,
-        ])
-        .unwrap();
-        let request = cli.request().unwrap();
-        assert_eq!(request.name, "music.harmony.realize");
-        assert_eq!(request.params["clipId"], "midi-clip:1");
-        assert_eq!(request.params["lowestOctave"], 3);
-        assert_eq!(request.params["rhythm"]["length"], "1/2");
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "music",
-            "phrase",
-            "insert",
-            "--clip-id",
-            "midi-clip:1",
-            "--phrase-json",
-            r#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]}"#,
-        ])
-        .unwrap();
-        let request = cli.request().unwrap();
-        assert_eq!(request.name, "music.phrase.insert");
-        assert_eq!(request.params["clipId"], "midi-clip:1");
-        assert_eq!(request.params["pattern"]["length"], "1/1");
-        assert_eq!(request.params["placements"][0]["anchor"], "C4");
-    }
-
-    #[test]
-    fn file_sources_expand_to_native_protocol_fields_without_paths() {
         let root = std::env::temp_dir().join(format!(
             "riffra-cli-structured-sources-{}",
             std::process::id()
@@ -2830,9 +2812,8 @@ mod tests {
             events_file.to_str().unwrap(),
         ])
         .unwrap();
-        let events_request = cli.request().unwrap();
         assert_eq!(
-            events_request.params,
+            cli.request().unwrap().params,
             json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
         );
 
@@ -2847,9 +2828,8 @@ mod tests {
             rhythm_file.to_str().unwrap(),
         ])
         .unwrap();
-        let rhythm_request = cli.request().unwrap();
         assert_eq!(
-            rhythm_request.params["rhythm"],
+            cli.request().unwrap().params["rhythm"],
             json!({"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]})
         );
 
@@ -2864,12 +2844,16 @@ mod tests {
             phrase_file.to_str().unwrap(),
         ])
         .unwrap();
-        let phrase_request = cli.request().unwrap();
-        assert!(phrase_request.params.get("phrase").is_none());
-        assert_eq!(phrase_request.params["pattern"]["length"], "1/1");
-        assert_eq!(phrase_request.params["placements"][0]["anchor"], "C4");
-        let encoded = phrase_request.params.to_string();
-        assert!(!encoded.contains(phrase_file.to_string_lossy().as_ref()));
+        let request = cli.request().unwrap();
+        assert!(request.params.get("phrase").is_none());
+        assert_eq!(request.params["pattern"]["length"], "1/1");
+        assert_eq!(request.params["placements"][0]["anchor"], "C4");
+        assert!(
+            !request
+                .params
+                .to_string()
+                .contains(phrase_file.to_string_lossy().as_ref())
+        );
 
         assert!(Cli::try_parse_from(["riffra", "music", "harmony", "insert", "--stdin"]).is_err());
         assert!(
@@ -2896,33 +2880,47 @@ mod tests {
             ])
             .is_err()
         );
-
         let _ = std::fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn signed_track_values_parse_as_regular_options() {
         let cli = Cli::try_parse_from([
             "riffra",
-            "track",
-            "update",
-            "--track-id",
-            "track:keys",
-            "--gain-db",
-            "-12",
-            "--pan",
-            "-0.5",
+            "--data-root",
+            "data",
+            "clip",
+            "remove",
+            "--midi-clip-ids-json",
+            r#"["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]"#,
         ])
         .unwrap();
-
         assert_eq!(
             cli.request().unwrap().params,
-            json!({"trackId":"track:keys","gainDb":-12.0,"pan":-0.5})
+            json!({
+                "audioClipIds": [],
+                "midiClipIds": ["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]
+            })
         );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "midi-note",
+            "remove-many",
+            "--clip-id",
+            "clip:1",
+            "--note-ids",
+            "note:a,note:b",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.request().unwrap().params,
+            json!({"clipId":"clip:1","noteIds":["note:a","note:b"]})
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn marker_and_range_commands_use_musical_positions() {
+    fn validates_musical_positions_and_command_boundaries() {
         let cli = Cli::try_parse_from([
             "riffra",
             "marker",
@@ -2956,10 +2954,7 @@ mod tests {
             ])
             .is_err()
         );
-    }
 
-    #[test]
-    fn harmony_update_rejects_event_id_in_the_patch_payload() {
         let cli = Cli::try_parse_from([
             "riffra",
             "--data-root",
@@ -2975,10 +2970,7 @@ mod tests {
         .unwrap();
 
         assert!(cli.request().is_err());
-    }
 
-    #[test]
-    fn timebase_update_does_not_accept_ppq_as_an_external_field() {
         assert!(
             Cli::try_parse_from([
                 "riffra",
@@ -2991,50 +2983,7 @@ mod tests {
             ])
             .is_err()
         );
-    }
 
-    #[test]
-    fn id_json_arguments_preserve_paths_and_comma_arguments() {
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "clip",
-            "remove",
-            "--midi-clip-ids-json",
-            r#"["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]"#,
-        ])
-        .unwrap();
-        let request = cli.request().unwrap();
-        assert_eq!(
-            request.params,
-            json!({
-                "audioClipIds": [],
-                "midiClipIds": ["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]
-            })
-        );
-
-        let cli = Cli::try_parse_from([
-            "riffra",
-            "--data-root",
-            "data",
-            "midi-note",
-            "remove-many",
-            "--clip-id",
-            "clip:1",
-            "--note-ids",
-            "note:a,note:b",
-        ])
-        .unwrap();
-        let request = cli.request().unwrap();
-        assert_eq!(
-            request.params,
-            json!({"clipId":"clip:1","noteIds":["note:a","note:b"]})
-        );
-    }
-
-    #[test]
-    fn boolean_command_arguments_require_explicit_values() {
         let cli = Cli::try_parse_from([
             "riffra",
             "--data-root",

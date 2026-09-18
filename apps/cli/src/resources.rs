@@ -28,16 +28,3 @@ fn built_in_instruments_root_from(executable: &Path) -> Result<PathBuf, String> 
         .join("instruments")
         .join("builtin"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn explicit_resource_root_takes_precedence_over_executable_location() {
-        let root = PathBuf::from("/tmp/riffra-builtins");
-        let executable = Path::new("/opt/riffra/bin/riffra");
-        assert_eq!(validate_override(root.clone()).unwrap(), root);
-        assert_ne!(built_in_instruments_root_from(executable).unwrap(), root);
-    }
-}

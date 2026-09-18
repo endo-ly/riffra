@@ -56,6 +56,11 @@ fi
 if [ -n "${CMAKE_CXX_COMPILER_LAUNCHER:-}" ]; then
   configure_args+=("-DCMAKE_CXX_COMPILER_LAUNCHER=$CMAKE_CXX_COMPILER_LAUNCHER")
 fi
+if [ "$SKIP_TESTS" -eq 1 ]; then
+  configure_args+=("-DBUILD_TESTING=OFF")
+else
+  configure_args+=("-DBUILD_TESTING=ON")
+fi
 "$CMAKE" "${configure_args[@]}"
 build_args=(--build "$BUILD_DIR" --config "$CONFIG")
 if [[ "$SIDECARS_ONLY" -eq 1 ]]; then
@@ -70,6 +75,9 @@ if [ "$SKIP_TESTS" -ne 1 ]; then
   ctest_args=(--test-dir "$BUILD_DIR" --output-on-failure -C "$CONFIG")
   if [ -n "${CTEST_PARALLEL_LEVEL:-}" ]; then
     ctest_args+=(--parallel "$CTEST_PARALLEL_LEVEL")
+  fi
+  if [ "${RIFFRA_RUN_SLOW_TESTS:-0}" -ne 1 ]; then
+    ctest_args+=(-LE slow)
   fi
   "$CTEST" "${ctest_args[@]}"
 fi

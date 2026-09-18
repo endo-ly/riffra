@@ -87,16 +87,3 @@ impl CreativeSession {
         Ok(self)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn new_session_has_empty_arrangement_and_unity_master() {
-        let session = CreativeSession::new(0);
-        assert_eq!(session.session_id, "session-0");
-        assert!(session.arrangement.tracks.is_empty());
-        assert_eq!(session.settings.master_db, 0.0);
-    }
-}

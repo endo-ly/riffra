@@ -634,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_command_params_return_invalid_request() {
+    fn invalid_request_cases_return_consistent_errors() {
         let root =
             std::env::temp_dir().join(format!("riffra-cli-protocol-params-{}", std::process::id()));
         let dispatcher = open_test_dispatcher(root.clone());
@@ -647,23 +647,23 @@ mod tests {
             response.error.as_ref().unwrap().code,
             ErrorCode::InvalidRequest
         );
-        let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn malformed_json_reports_the_physical_input_line() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-cli-protocol-input-line-{}",
-            std::process::id()
-        ));
-        let dispatcher = open_test_dispatcher(root.clone());
         let response = super::handle_request_at(&dispatcher, "{\"requestId\":", Some(3));
-
         assert!(!response.ok);
         let error = response.error.unwrap();
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(error.details.unwrap()["inputLine"], 3);
         assert!(error.message.starts_with("input line 3: "));
+
+        let response = handle_request(
+            &dispatcher,
+            r#"{"requestId":"44","command":"unknown.command","params":{}}"#,
+        );
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().unwrap().code,
+            ErrorCode::InvalidRequest
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -756,25 +756,6 @@ mod tests {
         assert_eq!(drums["pan"], -0.5);
         assert_eq!(drums["instrument"]["source"], "internal");
         assert_eq!(drums["instrument"]["presetId"], "drum-kit");
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn unknown_command_returns_invalid_request() {
-        let root = std::env::temp_dir().join(format!(
-            "riffra-cli-protocol-unknown-{}",
-            std::process::id()
-        ));
-        let dispatcher = open_test_dispatcher(root.clone());
-        let response = handle_request(
-            &dispatcher,
-            r#"{"requestId":"44","command":"unknown.command","params":{}}"#,
-        );
-        assert!(!response.ok);
-        assert_eq!(
-            response.error.as_ref().unwrap().code,
-            ErrorCode::InvalidRequest
-        );
         let _ = fs::remove_dir_all(root);
     }
 

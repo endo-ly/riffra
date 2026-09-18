@@ -90,7 +90,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
 }
 
 describe('audio setting reconciliation', () => {
-  it('uses the effective native values and explains rejected preferences', () => {
+  it('reconciles effective settings and preserves valid choice boundaries', () => {
     expect(
       reconcileAudioSettings(
         { driver: 'Windows Audio', sampleRate: 48_000, bufferSize: 64 },
@@ -103,9 +103,7 @@ describe('audio setting reconciliation', () => {
       message:
         'The driver did not accept 64 samples (using 480 samples). Effective settings are selected.',
     });
-  });
 
-  it('does not report a warning when the requested settings are accepted', () => {
     expect(
       reconcileAudioSettings(
         { driver: 'ASIO', sampleRate: 48_000, bufferSize: 128 },
@@ -117,15 +115,13 @@ describe('audio setting reconciliation', () => {
       bufferSize: 128,
       message: null,
     });
-  });
 
-  it('keeps a device-specific effective value in the available choices', () => {
     expect(includeEffectiveOption(480, [64, 128, 256, 512, 1024])).toEqual([
       64, 128, 256, 480, 512, 1024,
     ]);
   });
 
-  it('keeps the same hardware when switching to a paired ASIO device', () => {
+  it('normalizes driver routes, drafts, and unavailable choices', () => {
     expect(
       chooseInitialDriverRoute(
         {
@@ -150,9 +146,7 @@ describe('audio setting reconciliation', () => {
       inputDevice: 'Focusrite USB ASIO',
       outputDevice: 'Focusrite USB ASIO',
     });
-  });
 
-  it('creates a draft from the effective route and preserves non-standard formats', () => {
     const probe = audioProbe();
     const draft = createAudioSettingsDraft(
       audioStatus({
@@ -175,11 +169,8 @@ describe('audio setting reconciliation', () => {
       sampleRate: 48_000,
       bufferSize: 480,
     });
-  });
 
-  it('changes the driver and selects a valid channel from the selected device', () => {
-    const probe = audioProbe();
-    const draft = selectDriverForDraft(
+    const selectedDraft = selectDriverForDraft(
       {
         driver: 'Windows Audio',
         inputDevice: 'Mic',
@@ -191,7 +182,7 @@ describe('audio setting reconciliation', () => {
       probe.drivers[1],
     );
 
-    expect(draft).toEqual({
+    expect(selectedDraft).toEqual({
       driver: 'ASIO',
       inputDevice: 'Focusrite USB ASIO',
       inputChannel: 0,
@@ -199,9 +190,7 @@ describe('audio setting reconciliation', () => {
       sampleRate: 48_000,
       bufferSize: 128,
     });
-  });
 
-  it('normalizes a removed driver, device, and channel', () => {
     const normalized = normalizeAudioSettingsDraft(
       {
         driver: 'Removed Driver',
@@ -218,10 +207,8 @@ describe('audio setting reconciliation', () => {
     expect(normalized.inputChannel).toBe(0);
     expect(normalized.outputDevice).toBe('Speakers');
     expect(isAudioSettingsDraftValid(normalized, audioProbe())).toBe(true);
-  });
 
-  it('fills channel names from a lazy per-device probe into the passive startup probe', () => {
-    const passive: AudioDeviceProbe = {
+    const passiveProbe: AudioDeviceProbe = {
       drivers: [
         {
           name: 'ASIO',
@@ -241,7 +228,7 @@ describe('audio setting reconciliation', () => {
       refreshedAtMs: 1,
       message: 'Audio device list refreshed.',
     };
-    const merged = mergeDeviceChannels(passive, {
+    const lazyMerged = mergeDeviceChannels(passiveProbe, {
       driver: 'ASIO',
       inputDevice: 'Focusrite USB ASIO',
       inputChannels: [
@@ -252,11 +239,11 @@ describe('audio setting reconciliation', () => {
       outputChannels: [{ index: 0, name: 'Monitor 1' }],
     });
 
-    expect(merged.drivers[0].inputs[0].channels).toEqual([
+    expect(lazyMerged.drivers[0].inputs[0].channels).toEqual([
       { index: 0, name: 'Analogue 1' },
       { index: 1, name: 'Analogue 2' },
     ]);
-    expect(merged.drivers[0].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
+    expect(lazyMerged.drivers[0].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
     expect(
       isAudioSettingsDraftValid(
         {
@@ -267,24 +254,22 @@ describe('audio setting reconciliation', () => {
           sampleRate: 48_000,
           bufferSize: 128,
         },
-        merged,
+        lazyMerged,
       ),
     ).toBe(true);
-  });
 
-  it('reuses channel names from the active Audio Runtime', () => {
-    const passive = audioProbe();
-    const passiveWithEmptyChannels: AudioDeviceProbe = {
-      ...passive,
-      drivers: passive.drivers.map((driver) => ({
+    const runtimeProbe = audioProbe();
+    const runtimeProbeWithoutChannels: AudioDeviceProbe = {
+      ...runtimeProbe,
+      drivers: runtimeProbe.drivers.map((driver) => ({
         ...driver,
         inputs: driver.inputs.map((device) => ({ ...device, channels: [] })),
         outputs: driver.outputs.map((device) => ({ ...device, channels: [] })),
       })),
     };
 
-    const merged = mergeAudioStatusChannels(
-      passiveWithEmptyChannels,
+    const runtimeMerged = mergeAudioStatusChannels(
+      runtimeProbeWithoutChannels,
       audioStatus({
         driver: 'ASIO',
         inputDevice: 'Focusrite USB ASIO',
@@ -294,8 +279,8 @@ describe('audio setting reconciliation', () => {
       }),
     );
 
-    expect(merged.drivers[1].inputs[0].channels).toEqual([{ index: 1, name: 'Analogue 2' }]);
-    expect(merged.drivers[1].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
+    expect(runtimeMerged.drivers[1].inputs[0].channels).toEqual([{ index: 1, name: 'Analogue 2' }]);
+    expect(runtimeMerged.drivers[1].outputs[0].channels).toEqual([{ index: 0, name: 'Monitor 1' }]);
   });
 });
 

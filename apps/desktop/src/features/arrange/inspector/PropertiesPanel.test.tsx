@@ -49,14 +49,13 @@ function renderPanel(
 }
 
 describe('PropertiesPanel', () => {
-  it('shows the selected Track title without a close button', () => {
+  it('shows the appropriate header for track and empty Arrange selections', () => {
     renderPanel({ kind: 'track', trackId: 'track:audio' });
 
     expect(screen.getByLabelText('Track name')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Close Properties/ })).not.toBeInTheDocument();
-  });
 
-  it('shows the empty Arrange title without a clip selection', () => {
+    cleanup();
     renderPanel({ kind: 'none' });
 
     expect(screen.getByText('Nothing selected')).toBeInTheDocument();

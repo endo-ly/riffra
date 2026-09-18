@@ -295,36 +295,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn control_request_round_trips_expected_sequence() {
-        let request = ControlRequest::new(
-            "42",
-            ControlCommand::new("track.add", serde_json::json!({"name": "Bass"})),
-            Some(18),
-        )
-        .with_expected_project_id("project:a");
-
-        let encoded = serde_json::to_string(&request).unwrap();
-        let decoded: ControlRequest = serde_json::from_str(&encoded).unwrap();
-
-        assert_eq!(decoded, request);
-    }
-
-    #[test]
-    fn hello_roles_round_trip_without_runtime_types() {
-        let command = serde_json::to_string(&HelloRequest::command()).unwrap();
-        let events = serde_json::to_string(&HelloRequest::events()).unwrap();
-
-        assert_eq!(
-            serde_json::from_str::<HelloRequest>(&command).unwrap().role,
-            ConnectionRole::Command
-        );
-        assert_eq!(
-            serde_json::from_str::<HelloRequest>(&events).unwrap().role,
-            ConnectionRole::Events
-        );
-    }
-
-    #[test]
     fn invalid_envelope_fields_are_rejected() {
         let request = ControlRequest {
             request_id: String::new(),

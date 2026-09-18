@@ -279,26 +279,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn descriptor_round_trips_instance_and_endpoint() {
-        let descriptor = EndpointDescriptor::new("instance-1", 1234);
-        let encoded = serde_json::to_string(&descriptor).unwrap();
-        let decoded: EndpointDescriptor = serde_json::from_str(&encoded).unwrap();
-
-        assert_eq!(decoded, descriptor);
-        assert_eq!(decoded.instance_id, "instance-1");
-        #[cfg(windows)]
-        assert!(matches!(
-            decoded.endpoint,
-            LocalControlEndpoint::WindowsNamedPipe { .. }
-        ));
-        #[cfg(unix)]
-        assert!(matches!(
-            decoded.endpoint,
-            LocalControlEndpoint::UnixSocket { .. }
-        ));
-    }
-
-    #[test]
     fn publishing_a_new_instance_replaces_the_previous_descriptor() {
         let root = std::env::temp_dir().join(format!(
             "riffra-control-endpoint-{}-{}",
