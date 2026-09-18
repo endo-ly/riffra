@@ -87,7 +87,7 @@ fn referenced_asset_ids(session: &CreativeSession) -> Vec<AssetId> {
     ids
 }
 
-/// Exports a session and its referenced Assets into a versioned package.
+/// Exports a session and its referenced Assets into a project package.
 ///
 /// # Errors
 /// Returns an error when the output archive, Asset content, or manifest cannot
