@@ -2,7 +2,7 @@ use crate::asset;
 use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeSet, HashSet},
     fs,
     io::{Read, Write},
     path::{Component, Path},
@@ -10,7 +10,6 @@ use std::{
 use uuid::Uuid;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-const MANIFEST_VERSION: u32 = 3;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Summary of a completed project export.
@@ -48,7 +47,6 @@ struct PackagedInstrumentSnapshot {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectManifest<'a> {
-    manifest_version: u32,
     exported_at_ms: u64,
     session: &'a CreativeSession,
     assets: Vec<PackagedAsset>,
@@ -56,9 +54,8 @@ struct ProjectManifest<'a> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct ProjectManifestOwned {
-    manifest_version: u32,
     exported_at_ms: u64,
     session: CreativeSession,
     assets: Vec<PackagedAsset>,
@@ -156,7 +153,6 @@ pub fn export(
     let instrument_snapshots = referenced_instrument_snapshots(data_root, session)?;
 
     let manifest = ProjectManifest {
-        manifest_version: MANIFEST_VERSION,
         exported_at_ms,
         session,
         assets: assets.clone(),
@@ -279,12 +275,6 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
     }
     let manifest = serde_json::from_slice::<ProjectManifestOwned>(&manifest_payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
-    if manifest.manifest_version != MANIFEST_VERSION {
-        return Err(format!(
-            "Unsupported project manifest version {}.",
-            manifest.manifest_version
-        ));
-    }
     let _exported_at_ms = manifest.exported_at_ms;
     let session = manifest.session.validate_and_normalize()?;
     validate_instrument_snapshot_references(&session, &manifest.instrument_snapshots)?;
@@ -703,47 +693,39 @@ fn install_instrument_snapshots(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SnapshotEntryKind {
-    Directory,
-    File,
-}
-
 fn snapshot_directories_equal(left: &Path, right: &Path) -> Result<bool, String> {
-    let left_entries = snapshot_tree(left)?;
-    let right_entries = snapshot_tree(right)?;
-    if left_entries != right_entries {
+    let left_files = snapshot_file_set(left)?;
+    let right_files = snapshot_file_set(right)?;
+    if left_files != right_files {
         return Ok(false);
     }
-    for (relative, kind) in left_entries {
-        if kind == SnapshotEntryKind::File
-            && !files_equal_with_label(
-                &left.join(&relative),
-                &right.join(&relative),
-                "Project instrument snapshot",
-            )?
-        {
+    for relative in left_files {
+        if !files_equal_with_label(
+            &left.join(&relative),
+            &right.join(&relative),
+            "Project instrument snapshot",
+        )? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn snapshot_tree(root: &Path) -> Result<BTreeMap<std::path::PathBuf, SnapshotEntryKind>, String> {
+fn snapshot_file_set(root: &Path) -> Result<BTreeSet<std::path::PathBuf>, String> {
     let metadata = fs::symlink_metadata(root)
         .map_err(|error| format!("Project instrument snapshot could not be inspected: {error}"))?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
         return Err("Project instrument snapshot is not a regular directory".into());
     }
-    let mut entries = BTreeMap::new();
-    collect_snapshot_tree(root, root, &mut entries)?;
-    Ok(entries)
+    let mut files = BTreeSet::new();
+    collect_snapshot_file_set(root, root, &mut files)?;
+    Ok(files)
 }
 
-fn collect_snapshot_tree(
+fn collect_snapshot_file_set(
     root: &Path,
     current: &Path,
-    entries: &mut BTreeMap<std::path::PathBuf, SnapshotEntryKind>,
+    files: &mut BTreeSet<std::path::PathBuf>,
 ) -> Result<(), String> {
     let mut directory_entries = fs::read_dir(current)
         .map_err(|error| format!("Project instrument snapshot could not be enumerated: {error}"))?
@@ -767,10 +749,9 @@ fn collect_snapshot_tree(
             ));
         }
         if file_type.is_dir() {
-            entries.insert(relative, SnapshotEntryKind::Directory);
-            collect_snapshot_tree(root, &source, entries)?;
+            collect_snapshot_file_set(root, &source, files)?;
         } else if file_type.is_file() {
-            entries.insert(relative, SnapshotEntryKind::File);
+            files.insert(relative);
         } else {
             return Err(format!(
                 "Project instrument snapshot contains a special file: {}",
@@ -965,13 +946,13 @@ mod tests {
     }
 
     #[test]
-    fn exports_versioned_session_manifest_without_path_traversal() {
+    fn exports_session_manifest_without_path_traversal() {
         let root = std::env::temp_dir().join(format!("riffra-project-{}", now_ms()));
         let session = CreativeSession::new(now_ms());
         let output = package_path(&root, "roundtrip.riffra");
         let exported = export(&root, &session, 42, &output).unwrap();
         let manifest = read_manifest(Path::new(&exported.path));
-        assert_eq!(manifest["manifestVersion"], MANIFEST_VERSION);
+        assert_eq!(manifest["exportedAtMs"], 42);
         assert_eq!(exported.asset_count, 0);
         let imported = import(&root, Path::new(&exported.path)).unwrap();
         assert_eq!(imported.session_id, session.session_id);
@@ -985,7 +966,6 @@ mod tests {
         let session = CreativeSession::new(now_ms());
         let manifest_path = package_path(&root, "traversal.riffra");
         let mut manifest = serde_json::json!({
-            "manifestVersion": MANIFEST_VERSION,
             "exportedAtMs": 42,
             "session": session,
             "assets": []
@@ -1006,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn import_requires_the_current_manifest_fields() {
+    fn import_requires_the_required_manifest_fields() {
         let root = std::env::temp_dir().join(format!("riffra-project-manifest-{}", now_ms()));
         fs::create_dir_all(&root).unwrap();
         let session = CreativeSession::new(now_ms());
@@ -1014,25 +994,12 @@ mod tests {
         write_manifest_package(
             &package,
             &serde_json::json!({
-                "manifestVersion": MANIFEST_VERSION,
                 "exportedAtMs": 42,
                 "session": session
             }),
         );
         let error = import(&root, &package).unwrap_err();
         assert!(error.contains("missing field `assets`"));
-
-        let package = package_path(&root, "unknown-field.riffra");
-        let mut manifest = serde_json::json!({
-            "manifestVersion": MANIFEST_VERSION,
-            "exportedAtMs": 42,
-            "session": CreativeSession::new(now_ms()),
-            "assets": []
-        });
-        manifest["unexpected"] = serde_json::json!(true);
-        write_manifest_package(&package, &manifest);
-        let error = import(&root, &package).unwrap_err();
-        assert!(error.contains("unknown field `unexpected`"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1309,6 +1276,12 @@ mod tests {
             b"sample"
         );
 
+        fs::create_dir_all(
+            root.join("project-instruments")
+                .join(&snapshot_id)
+                .join("unused"),
+        )
+        .unwrap();
         let imported_again = import(&root, &package).unwrap();
         assert_eq!(
             imported_again.arrangement.tracks[0]
@@ -1355,7 +1328,6 @@ mod tests {
         write_manifest_package(
             &package,
             &serde_json::json!({
-                "manifestVersion": MANIFEST_VERSION,
                 "exportedAtMs": 42,
                 "session": session,
                 "assets": [],
