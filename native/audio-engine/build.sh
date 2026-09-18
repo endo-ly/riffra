@@ -71,6 +71,9 @@ if [ "$SKIP_TESTS" -ne 1 ]; then
   if [ -n "${CTEST_PARALLEL_LEVEL:-}" ]; then
     ctest_args+=(--parallel "$CTEST_PARALLEL_LEVEL")
   fi
+  if [ "${RIFFRA_RUN_SLOW_TESTS:-0}" -ne 1 ]; then
+    ctest_args+=(-LE slow)
+  fi
   "$CTEST" "${ctest_args[@]}"
 fi
 "$CMAKE" --install "$BUILD_DIR" --prefix "$REPO_ROOT" --component riffra-sidecars --config "$CONFIG"

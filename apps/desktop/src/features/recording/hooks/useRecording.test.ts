@@ -63,65 +63,44 @@ function useRecordingHarness(
 }
 
 describe('useRecording', () => {
-  it('starts a global recording command immediately without retaining a request', async () => {
+  it('covers start success, Inbox failure, pending cleanup, and no automatic retry', async () => {
     const api = new FakeNativeApi({ recordings: [] });
     const startedAudio = fakeAudioStatus();
     startedAudio.recording.active = true;
     api.setResponse('startArrangeRecording', startedAudio);
-    const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(true)));
-
-    await act(async () => {
-      await result.current.toggleRecording();
-    });
-
-    expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(1);
-    expect(result.current.audio.recording.active).toBe(true);
-    expect(result.current.commandError).toBeNull();
-    expect(result.current.recordingCommandPending).toBe(false);
-  });
-
-  it('keeps a successful start separate from a failed Inbox refresh', async () => {
-    const api = new FakeNativeApi({ recordings: [] });
     api.setFailure('listRecordings', new Error('Inbox unavailable'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(true)));
 
     try {
       await act(async () => {
-        await expect(result.current.startRecordingNow()).resolves.toBe(true);
+        await result.current.toggleRecording();
       });
 
       await waitFor(() =>
         expect(errorSpy).toHaveBeenCalledWith('[native] listRecordings failed:', expect.any(Error)),
       );
-      expect(errorSpy).not.toHaveBeenCalledWith(
-        '[native] startRecording failed:',
-        expect.any(Error),
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
+      expect(result.current.audio.recording.active).toBe(true);
+      expect(result.current.commandError).toBeNull();
+      expect(result.current.recordingCommandPending).toBe(false);
 
-  it('does not start again when the session changes after a failed command', async () => {
-    const api = new FakeNativeApi({ recordings: [] });
-    api.setFailure('startArrangeRecording', new Error('track is not armed'));
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(false)));
-
-    try {
+      api.setResponse('startArrangeRecording', undefined);
+      api.setFailure('startArrangeRecording', new Error('audio unavailable'));
+      act(() => {
+        result.current.setAudio(fakeAudioStatus());
+      });
       await act(async () => {
         await result.current.toggleRecording();
       });
 
+      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(2);
+      expect(result.current.recordingCommandPending).toBe(false);
+      expect(result.current.commandError).toBe('audio unavailable');
+
       act(() => {
         result.current.setSession(sessionWithTrack(true));
       });
-
-      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(1);
-      expect(result.current.recordingCommandPending).toBe(false);
-      expect(result.current.commandError).toBe('track is not armed');
-      expect(errorSpy).toHaveBeenCalledOnce();
+      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(2);
     } finally {
       errorSpy.mockRestore();
     }
@@ -177,35 +156,6 @@ describe('useRecording', () => {
     expect(result.current.recordingCommandPending).toBe(false);
   });
 
-  it('handles a failed start without retaining pending state or retrying automatically', async () => {
-    const api = new FakeNativeApi({ recordings: [] });
-    api.setFailure('startArrangeRecording', new Error('audio unavailable'));
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() => useRecordingHarness(api, sessionWithTrack(true)));
-
-    try {
-      await act(async () => {
-        await result.current.toggleRecording();
-      });
-      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(1);
-      expect(result.current.recordingCommandPending).toBe(false);
-      expect(errorSpy).toHaveBeenCalledOnce();
-
-      api.setFailure('startArrangeRecording', null);
-      act(() => {
-        result.current.setAudio(fakeAudioStatus({ state: 'ready' }));
-      });
-      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(1);
-
-      await act(async () => {
-        await result.current.toggleRecording();
-      });
-      expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(2);
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
   it('handles Record Another Take failures inside the recording hook', async () => {
     const api = new FakeNativeApi({ recordings: [] });
     api.setFailure('recordAnotherTake', new Error('recording session unavailable'));
@@ -224,7 +174,7 @@ describe('useRecording', () => {
     }
   });
 
-  it('clears command pending when Stop recording fails', async () => {
+  it('covers stop failure, finalization success, and Inbox refresh failure', async () => {
     const activeAudio = fakeAudioStatus();
     activeAudio.recording.active = true;
     const api = new FakeNativeApi({
@@ -245,8 +195,10 @@ describe('useRecording', () => {
       expect(result.current.recordingCommandPending).toBe(false);
       expect(result.current.audio.recording.active).toBe(true);
       expect(errorSpy).toHaveBeenCalledOnce();
+      errorSpy.mockClear();
 
       api.setFailure('stopArrangeRecording', null);
+      api.setFailure('listRecordings', new Error('Inbox unavailable'));
       api.setResponse('stopArrangeRecording', {
         canonical: canonicalState(defaultSession()),
         audio: fakeAudioStatus(),
@@ -256,36 +208,6 @@ describe('useRecording', () => {
       await act(async () => {
         await result.current.toggleRecording();
       });
-      expect(result.current.audio.recording.active).toBe(false);
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
-  it('keeps a successful stop separate from a failed Inbox refresh', async () => {
-    const activeAudio = fakeAudioStatus();
-    activeAudio.recording.active = true;
-    const api = new FakeNativeApi({
-      recordings: [],
-      audio: activeAudio,
-    });
-    api.setFailure('listRecordings', new Error('Inbox unavailable'));
-    api.setResponse('stopArrangeRecording', {
-      canonical: canonicalState(defaultSession()),
-      audio: fakeAudioStatus(),
-      projection: { state: 'notRequired' },
-      finalization: { state: 'notRequired' },
-    });
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() =>
-      useRecordingHarness(api, sessionWithTrack(true), api.audio),
-    );
-
-    try {
-      await act(async () => {
-        await result.current.toggleRecording();
-      });
-
       expect(result.current.audio.recording.active).toBe(false);
       await waitFor(() =>
         expect(errorSpy).toHaveBeenCalledWith('[native] listRecordings failed:', expect.any(Error)),

@@ -84,6 +84,9 @@ if (-not $SkipTests) {
     if ($env:CTEST_PARALLEL_LEVEL) {
         $ctestArgs += @('--parallel', $env:CTEST_PARALLEL_LEVEL)
     }
+    if ($env:RIFFRA_RUN_SLOW_TESTS -ne '1') {
+        $ctestArgs += @('-LE', 'slow')
+    }
     & $ctest @ctestArgs
     if ($LASTEXITCODE -ne 0) { throw 'Native audio engine tests failed.' }
 }

@@ -231,52 +231,28 @@ TEST(SonalloyInstrumentRuntimeTest, SustainPedalDefersAndThenReleasesNoteOff) {
     EXPECT_EQ(runtime->faultCode(), 0u);
 }
 
-TEST(SonalloyInstrumentRuntimeTest, PitchBendEventsAreAccepted) {
+TEST(SonalloyInstrumentRuntimeTest, ChannelExpressionEventsAreAccepted) {
     juce::String error;
     auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
-    midi.addEvent(juce::MidiMessage::pitchWheel(1, 12'288), 32);
-    processBlock(*runtime, output, &midi);
+    const std::array<juce::MidiMessage, 3> expressions{
+        juce::MidiMessage::pitchWheel(1, 12'288),
+        juce::MidiMessage::controllerEvent(1, 1, 96),
+        juce::MidiMessage::channelPressureChange(1, 72),
+    };
+    for (const auto& expression : expressions) {
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+        midi.addEvent(expression, 32);
+        processBlock(*runtime, output, &midi);
 
-    expectFinite(output);
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_EQ(runtime->faultCode(), 0u);
-}
-
-TEST(SonalloyInstrumentRuntimeTest, ModWheelEventsAreAccepted) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
-
-    juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
-    midi.addEvent(juce::MidiMessage::controllerEvent(1, 1, 96), 32);
-    processBlock(*runtime, output, &midi);
-
-    expectFinite(output);
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_EQ(runtime->faultCode(), 0u);
-}
-
-TEST(SonalloyInstrumentRuntimeTest, ChannelPressureEventsAreAccepted) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
-
-    juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
-    midi.addEvent(juce::MidiMessage::channelPressureChange(1, 72), 32);
-    processBlock(*runtime, output, &midi);
-
-    expectFinite(output);
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    EXPECT_EQ(runtime->faultCode(), 0u);
+        expectFinite(output);
+        EXPECT_GT(maximumMagnitude(output), 0.0f);
+        EXPECT_EQ(runtime->faultCode(), 0u);
+        output.clear();
+    }
 }
 
 TEST(SonalloyInstrumentRuntimeTest, RepeatedNotesReleaseNewestVoiceFirst) {
@@ -418,53 +394,55 @@ TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
     EXPECT_FALSE(error.isEmpty());
 }
 
-TEST(SonalloyInstrumentRuntimeTest, EventCapacityOverflowFailsSafely) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
+TEST(SonalloyInstrumentRuntimeTest, EnforcesRealtimeMidiCapacityContracts) {
+    {
+        juce::String error;
+        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        ASSERT_NE(runtime, nullptr) << error.toStdString();
 
-    juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer midi;
-    for (int index = 0; index < 1'281; ++index)
-        midi.addEvent(juce::MidiMessage::noteOn(1, 60 + (index % 12), 0.5f), 0);
+        juce::AudioBuffer<float> output(2, 256);
+        juce::MidiBuffer midi;
+        for (int index = 0; index < 1'281; ++index)
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60 + (index % 12), 0.5f), 0);
 
-    processBlock(*runtime, output, &midi);
+        processBlock(*runtime, output, &midi);
 
-    expectFinite(output);
-    EXPECT_NE(runtime->faultCode(), 0u);
-    EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
-}
+        expectFinite(output);
+        EXPECT_NE(runtime->faultCode(), 0u);
+        EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
+    }
 
-TEST(SonalloyInstrumentRuntimeTest, TimelineAndLiveMidiSharePreparedCallbackCapacity) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
-    ASSERT_TRUE(runtime->prepareTimelineMidiCapacity(768, error)) << error.toStdString();
-    EXPECT_FALSE(runtime->prepareTimelineMidiCapacity(769, error));
+    {
+        juce::String error;
+        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        ASSERT_NE(runtime, nullptr) << error.toStdString();
+        ASSERT_TRUE(runtime->prepareTimelineMidiCapacity(768, error)) << error.toStdString();
+        EXPECT_FALSE(runtime->prepareTimelineMidiCapacity(769, error));
 
-    for (int index = 0; index < 256; ++index)
-        ASSERT_TRUE(runtime->enqueueMidi(juce::MidiMessage::pitchWheel(1, 8'192 + index)));
+        for (int index = 0; index < 256; ++index)
+            ASSERT_TRUE(runtime->enqueueMidi(juce::MidiMessage::pitchWheel(1, 8'192 + index)));
 
-    juce::AudioBuffer<float> output(2, 256);
-    juce::MidiBuffer timelineMidi;
-    for (int index = 0; index < 768; ++index)
-        ASSERT_TRUE(timelineMidi.addEvent(juce::MidiMessage::pitchWheel(1, 8'192 + index), 0));
+        juce::AudioBuffer<float> output(2, 256);
+        juce::MidiBuffer timelineMidi;
+        for (int index = 0; index < 768; ++index)
+            ASSERT_TRUE(timelineMidi.addEvent(juce::MidiMessage::pitchWheel(1, 8'192 + index), 0));
 
-    processBlock(*runtime, output, &timelineMidi);
+        processBlock(*runtime, output, &timelineMidi);
 
-    expectFinite(output);
-    EXPECT_EQ(runtime->faultCode(), 0u);
-}
+        expectFinite(output);
+        EXPECT_EQ(runtime->faultCode(), 0u);
+    }
 
-TEST(SonalloyInstrumentRuntimeTest, ReportsQueuedMidiOverflowOnce) {
-    juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
-    ASSERT_NE(runtime, nullptr) << error.toStdString();
+    {
+        juce::String error;
+        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        ASSERT_NE(runtime, nullptr) << error.toStdString();
 
-    for (int index = 0; index < 257; ++index)
-        (void)runtime->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.5f));
+        for (int index = 0; index < 257; ++index)
+            (void)runtime->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.5f));
 
-    EXPECT_EQ(runtime->droppedMidiEvents(), 1u);
+        EXPECT_EQ(runtime->droppedMidiEvents(), 1u);
+    }
 }
 
 TEST(SonalloyInstrumentRuntimeTest, IgnoresMaximumSizedSysExWithoutCallbackAllocation) {

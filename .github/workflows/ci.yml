@@ -60,7 +60,6 @@ jobs:
               - 'Cargo.lock'
               - 'crates/**'
               - 'apps/desktop/src-tauri/**'
-              - 'scripts/ci/**'
               - '.github/workflows/ci.yml'
             native:
               - 'Cargo.toml'
@@ -71,7 +70,8 @@ jobs:
               - 'crates/riffra-runtime/src/host/audio.rs'
               - 'crates/riffra-runtime/src/host/lifecycle.rs'
               - 'crates/riffra-runtime/src/startup.rs'
-              - 'scripts/ci/headless-host-process.*'
+              - 'apps/cli/tests/**'
+              - 'scripts/ci/**'
               - 'apps/desktop/src-tauri/tauri.conf.json'
               - 'apps/desktop/src-tauri/binaries/**'
               - 'apps/desktop/src-tauri/resources/**'
@@ -132,18 +132,6 @@ jobs:
       - run: cargo clippy --manifest-path Cargo.toml --workspace --exclude riffra-desktop --all-targets -- -D warnings
       - run: cargo test --manifest-path Cargo.toml --workspace --exclude riffra-desktop
 
-      - name: Stage built-in instrument resources
-        shell: bash
-        run: |
-          build_dir="$RUNNER_TEMP/riffra-resource-stage"
-          cmake -S native/audio-engine -B "$build_dir" -DCMAKE_BUILD_TYPE=Debug -DRIFFRA_BUILTIN_RESOURCE_STAGE_ONLY=ON
-          cmake --build "$build_dir" --target riffra-builtin-resource-stage --parallel
-          echo "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$build_dir/riffra-resources/instruments/builtin" >> "$GITHUB_ENV"
-
-      - name: Exercise headless Host
-        shell: bash
-        run: bash scripts/ci/headless-host-process.sh
-
   rust-tauri:
     name: Rust Tauri
     needs: changes
@@ -181,20 +169,6 @@ jobs:
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":[]}}'
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-
-      - name: Stage built-in instrument resources
-        shell: pwsh
-        run: |
-          $buildDir = Join-Path $env:RUNNER_TEMP 'riffra-resource-stage'
-          cmake -S native/audio-engine -B $buildDir -G 'Visual Studio 17 2022' -A x64 -DRIFFRA_BUILTIN_RESOURCE_STAGE_ONLY=ON
-          cmake --build $buildDir --config Debug --target riffra-builtin-resource-stage --parallel
-          $resourceRoot = Join-Path $buildDir 'riffra-resources'
-          "RIFFRA_BUILTIN_INSTRUMENTS_ROOT=$(Join-Path $resourceRoot 'instruments\builtin')" | Out-File `
-            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Exercise headless Host
-        shell: pwsh
-        run: .\scripts\ci\headless-host-process.ps1
 
   native-linux:
     name: Native audio engine (Linux)
@@ -268,24 +242,22 @@ jobs:
           CTEST_PARALLEL_LEVEL: 4
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          SKIP_TESTS: '1'
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
         run: ./native/audio-engine/build.sh Debug
 
-      - name: Exercise normal headless Host with native sidecars
+      - name: Exercise native Headless Host contract
         shell: bash
         env:
           RIFFRA_HEADLESS_SAFE_MODE: '0'
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
-        run: bash scripts/ci/headless-host-process.sh
+        run: cargo test --manifest-path apps/cli/Cargo.toml --test headless_host_process
 
-      - name: Verify Sonalloy CLI package
+      - name: Verify native sidecar package
         shell: bash
-        run: |
-          test -x target/debug/sonalloy
-          target_triple="$(rustc -vV | sed -n 's/^host: //p')"
-          test -x "apps/desktop/src-tauri/binaries/sonalloy-${target_triple}"
+        run: ./scripts/ci/verify-sidecars.sh Debug
 
   native-windows:
     name: Native audio engine (Windows)
@@ -324,25 +296,22 @@ jobs:
           CTEST_PARALLEL_LEVEL: 4
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
+          RIFFRA_RUN_SLOW_TESTS: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
         run: .\native\audio-engine\build.ps1 -Configuration Debug
 
-      - name: Exercise normal headless Host with native sidecars
+      - name: Exercise native Headless Host contract
         shell: pwsh
         env:
           RIFFRA_HEADLESS_SAFE_MODE: '0'
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
-        run: .\scripts\ci\headless-host-process.ps1
+        run: cargo test --manifest-path apps/cli/Cargo.toml --test headless_host_process
 
-      - name: Verify Sonalloy CLI package
+      - name: Verify native sidecar package
         shell: pwsh
-        run: |
-          $targetTriple = (rustc -vV | Select-String '^host: ').ToString().Split(':', 2)[1].Trim()
-          if (!(Test-Path -LiteralPath 'target/debug/sonalloy.exe' -PathType Leaf)) { throw 'target/debug/sonalloy.exe is missing' }
-          $packaged = "apps/desktop/src-tauri/binaries/sonalloy-$targetTriple.exe"
-          if (!(Test-Path -LiteralPath $packaged -PathType Leaf)) { throw "$packaged is missing" }
+        run: .\scripts\ci\verify-sidecars.ps1 -Configuration Debug
 
   native-macos:
     name: Native audio engine (macOS arm64)
@@ -382,6 +351,7 @@ jobs:
           CMAKE_C_COMPILER_LAUNCHER: sccache
           CMAKE_CXX_COMPILER_LAUNCHER: sccache
           MACOSX_DEPLOYMENT_TARGET: '14.0'
+          SKIP_TESTS: '1'
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
         run: |
@@ -391,40 +361,13 @@ jobs:
             ./native/audio-engine/build.sh Release
           fi
 
-      - name: Verify Debug package resources
-        if: github.event_name == 'pull_request'
+      - name: Verify package resources
         shell: bash
         run: |
-          test -x target/debug/riffra-audio
-          test -x target/debug/riffra-plugin-scan
-          test -x target/debug/riffra-render
-          test -x target/debug/sonalloy
-          test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/sonalloy-aarch64-apple-darwin
-          test -f target/debug/riffra-resources/instruments/builtin/manifest.json
-          test -f target/debug/riffra-resources/THIRD_PARTY_NOTICES.md
-          test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json
-          test -f apps/desktop/src-tauri/resources/THIRD_PARTY_NOTICES.md
-          test -f apps/desktop/src-tauri/resources/LICENSE-MIT
-          test -f apps/desktop/src-tauri/resources/LICENSE-APACHE
-
-      - name: Verify Release package resources
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          test -x target/release/riffra-audio
-          test -x target/release/riffra-plugin-scan
-          test -x target/release/riffra-render
-          test -x target/release/sonalloy
-          test -x apps/desktop/src-tauri/binaries/riffra-audio-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/riffra-plugin-scan-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/riffra-render-aarch64-apple-darwin
-          test -x apps/desktop/src-tauri/binaries/sonalloy-aarch64-apple-darwin
-          test -f target/release/riffra-resources/instruments/builtin/manifest.json
-          test -f target/release/riffra-resources/THIRD_PARTY_NOTICES.md
-          test -f apps/desktop/src-tauri/resources/instruments/builtin/manifest.json
-          test -f apps/desktop/src-tauri/resources/THIRD_PARTY_NOTICES.md
-          test -f apps/desktop/src-tauri/resources/LICENSE-MIT
-          test -f apps/desktop/src-tauri/resources/LICENSE-APACHE
+          if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+            configuration=Debug
+          else
+            configuration=Release
+          fi
+          ./scripts/ci/verify-sidecars.sh "$configuration"
+          ./scripts/ci/verify-resources.sh "$configuration"

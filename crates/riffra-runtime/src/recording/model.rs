@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_to_completing_to_completed_records_completion_time() {
+    fn completion_records_time_and_terminal_states_cannot_reenter() {
         let mut capture = fresh();
         capture
             .transition(RecordingCaptureStatus::Completing, 2_000)
@@ -302,21 +302,18 @@ mod tests {
             .unwrap();
         assert_eq!(capture.status, RecordingCaptureStatus::Completed);
         assert_eq!(capture.completed_at_ms, Some(3_000));
-    }
 
-    #[test]
-    fn terminal_states_cannot_return_to_recording() {
-        let mut capture = fresh();
-        capture
+        let mut failed_capture = fresh();
+        failed_capture
             .transition(RecordingCaptureStatus::Failed, 2_000)
             .unwrap();
-        let error = capture
+        let error = failed_capture
             .transition(RecordingCaptureStatus::Recording, 3_000)
             .unwrap_err();
         assert!(matches!(
             error,
             DomainError::InvalidRecordingTransition { .. }
         ));
-        assert_eq!(capture.status, RecordingCaptureStatus::Failed);
+        assert_eq!(failed_capture.status, RecordingCaptureStatus::Failed);
     }
 }

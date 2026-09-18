@@ -599,19 +599,29 @@ mod tests {
     }
 
     #[test]
-    fn plugin_error_preserves_audio_state() {
-        let status = test_status();
-        handle_native_stdout(
-            &status,
-            br#"{"type":"error","kind":"pluginRejected","operation":"plugin.load","message":"load failed"}"#,
-        );
-        let current = status.lock().unwrap();
-        assert!(matches!(current.state, AudioState::Ready));
-        assert!(current.message.contains("load failed"));
-    }
+    fn classifies_native_errors_and_preserves_runtime_state() {
+        for (payload, faulted, message) in [
+            (
+                br#"{"type":"error","kind":"pluginRejected","operation":"plugin.load","message":"load failed"}"#
+                    .as_slice(),
+                false,
+                "load failed",
+            ),
+            (
+                br#"{"type":"error","kind":"deviceLost","operation":"audioDevice.recover","message":"device missing"}"#
+                    .as_slice(),
+                true,
+                "device missing",
+            ),
+        ] {
+            let status = test_status();
+            let reply = handle_native_stdout(&status, payload).expect("native error reply");
+            let current = status.lock().unwrap();
+            assert!(reply.result.is_err());
+            assert_eq!(matches!(current.state, AudioState::Faulted), faulted);
+            assert!(current.message.contains(message));
+        }
 
-    #[test]
-    fn timeline_busy_preserves_audio_status_without_publishing_native_detail() {
         let status = test_status();
         let reply = handle_native_stdout(
             &status,
@@ -622,10 +632,30 @@ mod tests {
         assert!(reply.result.is_err());
         assert!(matches!(current.state, AudioState::Ready));
         assert_eq!(current.message, "ready");
+
+        let restored = NativeAudioError::structured(
+            "deviceRejected",
+            "requested device was rejected",
+            "audioDevice.activate",
+            Some(serde_json::json!({"restoredPreviousDevice": true})),
+        );
+        let unrecovered = NativeAudioError::structured(
+            "deviceRejected",
+            "previous device could not be restored",
+            "audioDevice.activate",
+            Some(serde_json::json!({"restoredPreviousDevice": false})),
+        );
+        assert!(!native_error_is_device_fault(&restored));
+        assert!(native_error_is_device_fault(&unrecovered));
+
+        let generic =
+            NativeAudioError::structured("pluginRejected", "load failed", "plugin.load", None);
+        assert!(!native_error_is_device_fault(&generic));
+        assert!(generic.to_string().contains("load failed"));
     }
 
     #[test]
-    fn preview_meter_transition_emits_audio_status() {
+    fn tracks_meter_and_status_transitions() {
         let status = test_status();
 
         let started = handle_native_stdout(
@@ -644,12 +674,8 @@ mod tests {
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
         assert!(!status.lock().unwrap().previewing);
         assert!(!status.lock().unwrap().built_in_previewing);
-    }
 
-    #[test]
-    fn built_in_preview_meter_transition_emits_audio_status_without_changing_other_preview_state() {
         let status = test_status();
-
         let started = handle_native_stdout(
             &status,
             br#"{"type":"audioMeters","requestId":3,"previewing":true,"builtInPreviewing":true}"#,
@@ -661,43 +687,78 @@ mod tests {
             assert!(current.previewing);
             assert!(current.built_in_previewing);
         }
-
         let finished = handle_native_stdout(
             &status,
             br#"{"type":"audioMeters","requestId":4,"previewing":true,"builtInPreviewing":false}"#,
         )
         .expect("built-in preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
-        let current = status.lock().unwrap();
-        assert!(current.previewing);
-        assert!(!current.built_in_previewing);
-    }
+        {
+            let current = status.lock().unwrap();
+            assert!(current.previewing);
+            assert!(!current.built_in_previewing);
+        }
 
-    #[test]
-    fn audio_device_error_faults_audio_state() {
-        let status = test_status();
-        handle_native_stdout(
-            &status,
-            br#"{"type":"error","kind":"deviceLost","operation":"audioDevice.recover","message":"device missing"}"#,
-        );
-        let current = status.lock().unwrap();
-        assert!(matches!(current.state, AudioState::Faulted));
-        assert!(current.message.contains("device missing"));
-    }
-
-    #[test]
-    fn midi_status_updates_without_affecting_audio_state() {
         let status = test_status();
         handle_native_stdout(
             &status,
             br#"{"type":"audioStatus","state":"ready","muteReasons":0,"midiInputActive":true,"midiMessages":12,"lastMidiNote":60,"inputPeak":0.2,"outputPeak":0.3}"#,
-        );
-        let current = status.lock().unwrap();
-        assert!(matches!(current.state, AudioState::Ready));
-        assert!(current.midi_input_active);
-        assert_eq!(current.midi_messages, 12);
-        assert_eq!(current.last_midi_note, Some(60));
-        assert_eq!(current.output_peak, 0.3);
+        )
+        .expect("midi status reply");
+        {
+            let current = status.lock().unwrap();
+            assert!(matches!(current.state, AudioState::Ready));
+            assert!(current.midi_input_active);
+            assert_eq!(current.midi_messages, 12);
+            assert_eq!(current.last_midi_note, Some(60));
+            assert_eq!(current.output_peak, 0.3);
+        }
+
+        let status = test_status();
+        let reply = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true}"#,
+        )
+        .expect("feedback meter reply");
+        {
+            let current = status.lock().unwrap();
+            assert_eq!(reply.request_id, Some(12));
+            assert!(matches!(reply.event, NativeEvent::AudioStatus));
+            assert!(matches!(current.state, AudioState::Muted));
+            assert_eq!(current.driver.as_deref(), Some("Test"));
+            assert_eq!(current.input_peak, 0.7);
+            assert_eq!(current.output_peak, 0.4);
+            assert_eq!(current.invalid_samples, 3);
+            assert!(current.feedback_suspected);
+        }
+
+        let status = test_status();
+        handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","muteReasons":16,"feedbackSuspected":true}"#,
+        )
+        .expect("mute meter reply");
+        let reply = handle_native_stdout(
+            &status,
+            br#"{"type":"audioMeters","muteReasons":0,"feedbackSuspected":false}"#,
+        )
+        .expect("release meter reply");
+        {
+            let current = status.lock().unwrap();
+            assert!(matches!(reply.event, NativeEvent::AudioStatus));
+            assert!(matches!(current.state, AudioState::Ready));
+            assert!(!current.feedback_suspected);
+        }
+
+        let native: NativeStatus = serde_json::from_value(serde_json::json!({
+            "state": "ready",
+            "muteReasons": 1,
+        }))
+        .expect("native status");
+        assert!(matches!(
+            native_status_to_audio_status(native).state,
+            AudioState::Muted
+        ));
     }
 
     #[test]
@@ -708,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_request_ids_for_command_acknowledgements() {
+    fn parses_status_and_preserves_request_ids() {
         let status = test_status();
         let success = handle_native_stdout(
             &status,
@@ -725,10 +786,7 @@ mod tests {
         .expect("error reply");
         assert_eq!(failure.request_id, Some(43));
         assert!(failure.result.is_err());
-    }
 
-    #[test]
-    fn parses_status_reply_with_request_id() {
         let parsed = parse_native_line(
             br#"{"type":"audioStatus","requestId":7,"state":"ready","muteReasons":0,"midiInputActive":true}"#,
         )
@@ -750,46 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_audio_device_errors_as_faults() {
-        let error = NativeAudioError::structured(
-            "deviceLost",
-            "device missing",
-            "audioDevice.recover",
-            None,
-        );
-        assert!(native_error_is_device_fault(&error));
-        assert!(error.to_string().contains("device missing"));
-    }
-
-    #[test]
-    fn restored_device_rejection_does_not_fault_the_audio_runtime() {
-        let restored = NativeAudioError::structured(
-            "deviceRejected",
-            "requested device was rejected",
-            "audioDevice.activate",
-            Some(serde_json::json!({"restoredPreviousDevice": true})),
-        );
-        let unrecovered = NativeAudioError::structured(
-            "deviceRejected",
-            "previous device could not be restored",
-            "audioDevice.activate",
-            Some(serde_json::json!({"restoredPreviousDevice": false})),
-        );
-
-        assert!(!native_error_is_device_fault(&restored));
-        assert!(native_error_is_device_fault(&unrecovered));
-    }
-
-    #[test]
-    fn classifies_other_errors_as_command_failures() {
-        let error =
-            NativeAudioError::structured("pluginRejected", "load failed", "plugin.load", None);
-        assert!(!native_error_is_device_fault(&error));
-        assert!(error.to_string().contains("load failed"));
-    }
-
-    #[test]
-    fn structured_error_requires_all_classification_fields() {
+    fn parses_error_and_native_message_boundaries() {
         let parsed = parse_native_line(
             br#"{"type":"error","requestId":9,"kind":"recordingRejected","operation":"recording.start","message":"no input"}"#,
         )
@@ -809,10 +828,7 @@ mod tests {
                 panic!("expected an error line")
             }
         }
-    }
 
-    #[test]
-    fn recognizes_recording_completion_events_without_an_ack_request() {
         let reply = handle_native_stdout(
             &Arc::new(Mutex::new(AudioStatus::default())),
             br#"{"type":"recordingComplete","directory":"C:\\takes\\take-1","success":true}"#,
@@ -820,10 +836,7 @@ mod tests {
         .expect("recording completion line");
         assert!(reply.request_id.is_none());
         assert!(matches!(reply.event, NativeEvent::RecordingCompletion));
-    }
 
-    #[test]
-    fn recognizes_known_plugin_response_types() {
         for message_type in [
             "trackDeviceStatus",
             "trackDeviceParameters",
@@ -840,68 +853,7 @@ mod tests {
                 }
             ));
         }
-    }
-
-    #[test]
-    fn ignores_unknown_response_types_even_with_request_ids() {
         assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
-    }
-
-    #[test]
-    fn feedback_meter_reply_promotes_audio_state_to_muted() {
-        let status = test_status();
-        let reply = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true}"#,
-        )
-        .expect("meter reply");
-        let current = status.lock().unwrap();
-        assert_eq!(reply.request_id, Some(12));
-        assert!(matches!(reply.event, NativeEvent::AudioStatus));
-        assert!(matches!(current.state, AudioState::Muted));
-        assert_eq!(current.driver.as_deref(), Some("Test"));
-        assert_eq!(current.input_peak, 0.7);
-        assert_eq!(current.output_peak, 0.4);
-        assert_eq!(current.invalid_samples, 3);
-        assert!(current.feedback_suspected);
-    }
-
-    #[test]
-    fn releasing_emergency_mute_from_a_meter_restores_ready_state_and_cause() {
-        let status = test_status();
-        handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","muteReasons":16,"feedbackSuspected":true}"#,
-        )
-        .expect("mute meter reply");
-
-        let reply = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","muteReasons":0,"feedbackSuspected":false}"#,
-        )
-        .expect("release meter reply");
-        let current = status.lock().unwrap();
-
-        assert!(matches!(reply.event, NativeEvent::AudioStatus));
-        assert!(matches!(current.state, AudioState::Ready));
-        assert!(!current.feedback_suspected);
-    }
-
-    #[test]
-    fn native_status_mute_reasons_are_authoritative_for_audio_state() {
-        let native: NativeStatus = serde_json::from_value(serde_json::json!({
-            "state": "ready",
-            "muteReasons": 1,
-        }))
-        .expect("native status");
-
-        let status = native_status_to_audio_status(native);
-
-        assert!(matches!(status.state, AudioState::Muted));
-    }
-
-    #[test]
-    fn ignores_non_json_and_unrecognized_lines() {
         assert!(parse_native_line(b"not json").is_none());
         assert!(parse_native_line(br#"{"type":"keepAlive"}"#).is_none());
     }

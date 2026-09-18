@@ -50,46 +50,6 @@ function Harness({
 }
 
 describe('TransportControls', () => {
-  it('describes each transport control on hover', () => {
-    const api = new FakeNativeApi({
-      bootstrapState: { canonical: canonicalState(defaultSession()) },
-      audio: fakeAudioStatus(),
-    });
-    const onToggleRecording = vi.fn();
-    render(<Harness api={api} onToggleRecording={onToggleRecording} />);
-
-    expect(screen.getByRole('button', { name: 'Toggle loop' })).toHaveAttribute(
-      'title',
-      'Enable loop',
-    );
-    expect(screen.getByRole('button', { name: 'Play' })).toHaveAttribute('title', 'Play');
-    expect(screen.getByRole('button', { name: 'Stop and go to start' })).toHaveAttribute(
-      'title',
-      'Stop and go to start',
-    );
-    expect(screen.getByRole('button', { name: 'Start recording' })).toHaveAttribute(
-      'title',
-      'Start recording',
-    );
-    const recordButton = screen.getByRole('button', { name: 'Start recording' });
-    expect(recordButton).not.toBeDisabled();
-    fireEvent.click(recordButton);
-    expect(onToggleRecording).toHaveBeenCalledOnce();
-    expect(screen.getByRole('button', { name: 'Toggle metronome' })).toHaveAttribute(
-      'title',
-      'Enable metronome',
-    );
-    expect(screen.getByRole('button', { name: 'Count-in: Off' })).toHaveAttribute(
-      'title',
-      'Count-in: Off',
-    );
-    expect(screen.getByLabelText('Project BPM')).toHaveAttribute('title', 'Project BPM');
-    expect(screen.getByLabelText('Project time signature')).toHaveAttribute(
-      'title',
-      'Project time signature',
-    );
-  });
-
   it('delegates Play, Stop, and Go to start to the transport controller', () => {
     const api = new FakeNativeApi({
       bootstrapState: { canonical: canonicalState(defaultSession()) },

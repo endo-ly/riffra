@@ -61,25 +61,18 @@ TEST(AudioProtocolTest, ControlOutputDiscardsQueuedTelemetry) {
     EXPECT_FALSE(queue.hasTelemetry());
 }
 
-TEST(AudioDeviceServiceTest, ReportsSafeInitialMeters) {
+TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
+    juce::AudioDeviceManager manager;
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
 
     const auto meters = AudioStatusBuilder::currentMeters(callback);
+    const auto status = AudioStatusBuilder::currentStatus(manager, callback);
 
     ASSERT_TRUE(meters.isObject());
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
     EXPECT_EQ(meters.getProperty("muteReasons", 0).toString().getIntValue(), 0);
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
-}
-
-TEST(AudioDeviceServiceTest, ReportsStableStatusContractWithoutDevice) {
-    juce::AudioDeviceManager manager;
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-
-    const auto status = AudioStatusBuilder::currentStatus(manager, callback);
-
     ASSERT_TRUE(status.isObject());
     EXPECT_EQ(status.getProperty("type", {}).toString(), "audioStatus");
     EXPECT_TRUE(status.hasProperty("state"));

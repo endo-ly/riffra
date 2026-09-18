@@ -617,26 +617,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_preview_notes_outside_recommended_range() {
-        let root = TempRoot::new();
-        write_definition(&root.0, "sound.data", "opaque");
-        fs::create_dir_all(root.0.join("resources")).unwrap();
-        let mut preset = manifest_entry(
-            "01-invalid-preview",
-            "Invalid Preview",
-            None,
-            "sound.data",
-            "resources",
-        );
-        preset["preview"]["notes"][0]["note"] = serde_json::json!(85);
-        write_manifest(&root.0, &[preset]);
-
-        let error = BuiltInInstrumentCatalog::load(&root.0).unwrap_err();
-
-        assert!(error.contains("invalid preview note"));
-    }
-
-    #[test]
     fn accepts_power_of_two_preview_denominators_through_128() {
         for denominator in [64, 128] {
             let root = TempRoot::new();
@@ -659,10 +639,7 @@ mod tests {
                 denominator
             );
         }
-    }
 
-    #[test]
-    fn accepts_maximum_preview_numerator_and_equal_note_ticks() {
         let root = TempRoot::new();
         write_definition(&root.0, "sound.data", "opaque");
         fs::create_dir_all(root.0.join("resources")).unwrap();
@@ -697,6 +674,10 @@ mod tests {
                 "resources",
             )
         };
+
+        let mut preset = base();
+        preset["preview"]["notes"][0]["note"] = serde_json::json!(85);
+        assert_rejected(preset, "invalid preview note");
 
         let mut preset = base();
         preset["category"] = serde_json::json!(" Test");

@@ -8,13 +8,11 @@
 
 namespace riffra {
 
-TEST(ArrangementGraphTest, MidiRouteMatchesDeviceAndChannel) {
+TEST(ArrangementGraphTest, ResolvesMidiAndPhysicalInputRouting) {
     EXPECT_TRUE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-a", 2));
     EXPECT_FALSE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-b", 2));
     EXPECT_FALSE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-a", 3));
-}
 
-TEST(ArrangementGraphTest, SelectsRequestedPhysicalInputChannel) {
     std::array<float, 2> inputOne{0.25f, 0.5f};
     std::array<float, 2> inputTwo{-0.25f, -0.5f};
     const std::array<const float*, 2> physicalInputs{inputOne.data(), inputTwo.data()};

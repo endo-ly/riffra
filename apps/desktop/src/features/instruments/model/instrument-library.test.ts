@@ -48,7 +48,7 @@ const pad: InstrumentLibraryItem = {
 };
 
 describe('instrument library model', () => {
-  it('searches metadata, effective tags, and collection names without author', () => {
+  it('resolves search, filters, and stable catalog options together', () => {
     const collections = [{ id: 1, name: 'Sketches' }];
 
     expect(matchesInstrumentQuery(bass, 'aster', collections)).toBe(false);
@@ -56,9 +56,7 @@ describe('instrument library model', () => {
     expect(matchesInstrumentQuery(bass, 'warm', collections)).toBe(true);
     expect(matchesInstrumentQuery(bass, 'sketches', collections)).toBe(true);
     expect(matchesInstrumentQuery(bass, 'orchestra', collections)).toBe(false);
-  });
 
-  it('returns stable unique filter options and preserves catalog order', () => {
     expect(getInstrumentCategories([bass, pad, { ...pad, id: 'builtin:pad-2' }])).toEqual([
       'Bass',
       'Keys',

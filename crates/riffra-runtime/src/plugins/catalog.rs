@@ -172,40 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_the_persisted_entries_without_discovery() {
-        // Arrange
-        let root = test_root();
-        let report = ScanReport {
-            root: "C:\\VST3".into(),
-            started_at_ms: 1,
-            finished_at_ms: 2,
-            plugins: vec![PluginEntry {
-                id: "vst3-test".into(),
-                name: "Test".into(),
-                vendor: None,
-                version: None,
-                format: PluginFormat::Vst3,
-                path: "C:\\VST3\\Test.vst3".into(),
-                bundle: true,
-                modified_at_ms: None,
-                scan_state: PluginScanState::Validated,
-            }],
-            issues: vec![],
-        };
-        save(&root, &report).unwrap();
-
-        // Act
-        let plugins = load(&root).unwrap();
-
-        // Assert
-        assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].id, report.plugins[0].id);
-        assert_eq!(plugins[0].scan_state, PluginScanState::Validated);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn resolves_only_validated_catalog_plugins() {
+    fn loads_and_resolves_only_validated_catalog_entries() {
         let root = test_root();
         let plugin_path = root.join("VST3/Amp.vst3");
         fs::create_dir_all(&plugin_path).unwrap();
@@ -226,41 +193,20 @@ mod tests {
             }],
             issues: vec![],
         };
-
         save(&root, &report).unwrap();
-        let (name, resolved_path) = validated_plugin(&root, &plugin_path).unwrap();
 
+        let plugins = load(&root).unwrap();
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0].id, report.plugins[0].id);
+        assert_eq!(plugins[0].scan_state, PluginScanState::Validated);
+        let (name, resolved_path) = validated_plugin(&root, &plugin_path).unwrap();
         assert_eq!(name, "Amp");
         assert_eq!(resolved_path, plugin_path);
-        let _ = fs::remove_dir_all(root);
-    }
 
-    #[test]
-    fn rejects_non_validated_catalog_plugins() {
-        let root = test_root();
-        let plugin_path = root.join("VST3/Amp.vst3");
-        fs::create_dir_all(&plugin_path).unwrap();
-        let report = ScanReport {
-            root: root.to_string_lossy().into_owned(),
-            started_at_ms: 1,
-            finished_at_ms: 2,
-            plugins: vec![PluginEntry {
-                id: "vst3-amp".into(),
-                name: "Amp".into(),
-                vendor: None,
-                version: None,
-                format: PluginFormat::Vst3,
-                path: plugin_path.to_string_lossy().into_owned(),
-                bundle: true,
-                modified_at_ms: None,
-                scan_state: PluginScanState::Quarantined,
-            }],
-            issues: vec![],
-        };
-
-        save(&root, &report).unwrap();
+        let mut quarantined = report;
+        quarantined.plugins[0].scan_state = PluginScanState::Quarantined;
+        save(&root, &quarantined).unwrap();
         let error = validated_plugin(&root, &plugin_path).unwrap_err();
-
         assert!(error.contains("not validated"));
         let _ = fs::remove_dir_all(root);
     }

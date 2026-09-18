@@ -36,12 +36,15 @@ describe('instrument drag payload', () => {
     expect(readInstrumentDrag(dataTransferWith(JSON.stringify(payload)))).toEqual(payload);
   });
 
+  it('rejects malformed JSON payloads', () => {
+    expect(readInstrumentDrag(dataTransferWith('{'))).toBeNull();
+  });
+
   it.each([
-    ['invalid JSON', '{'],
     ['version mismatch', JSON.stringify({ ...payload, version: 2 })],
     ['missing instrument ID', JSON.stringify({ ...payload, instrumentId: '' })],
-    ['missing origin', JSON.stringify({ ...payload, origin: 'external' })],
-  ])('rejects %s', (_case, value) => {
+    ['unsupported origin', JSON.stringify({ ...payload, origin: 'external' })],
+  ])('rejects schema-incompatible payloads: %s', (_case, value) => {
     expect(readInstrumentDrag(dataTransferWith(value))).toBeNull();
   });
 });

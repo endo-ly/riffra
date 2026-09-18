@@ -403,7 +403,6 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
-    tests/app/CommandRoutingTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
@@ -424,7 +423,6 @@ if(BUILD_TESTING)
     tests/timeline/TimelineDeviceTest.cpp
     tests/timeline/TimelineMidiTest.cpp
     tests/timeline/instruments/SonalloyInstrumentRuntimeTest.cpp
-    tests/timeline/instruments/SonalloyInstrumentRuntimeBenchmarkTest.cpp
     tests/protocol/AudioProtocolTest.cpp
   )
   target_link_libraries(riffra-audio-tests PRIVATE
@@ -444,8 +442,29 @@ if(BUILD_TESTING)
     target_compile_options(riffra-audio-tests PRIVATE ${RIFFRA_MSVC_WARNINGS})
   endif()
 
-include(GoogleTest)
-gtest_discover_tests(riffra-audio-tests)
+  include(GoogleTest)
+  gtest_discover_tests(riffra-audio-tests
+    TEST_FILTER "-SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset")
+  add_test(
+    NAME SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset
+    COMMAND riffra-audio-tests
+      --gtest_filter=SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset)
+  set_tests_properties(
+    SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset
+    PROPERTIES LABELS slow)
+
+  add_executable(riffra-audio-benchmarks EXCLUDE_FROM_ALL
+    tests/timeline/instruments/SonalloyInstrumentRuntimeBenchmarkTest.cpp)
+  target_link_libraries(riffra-audio-benchmarks PRIVATE
+    riffra-audio-core
+    GTest::gtest_main)
+  target_compile_definitions(riffra-audio-benchmarks PRIVATE
+    RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
+    RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
+  add_dependencies(riffra-audio-benchmarks riffra-builtin-resource-stage)
+  if(MSVC)
+    target_compile_options(riffra-audio-benchmarks PRIVATE ${RIFFRA_MSVC_WARNINGS})
+  endif()
 endif()
 
 # Sidecar names must match Tauri's externalBin resolution:

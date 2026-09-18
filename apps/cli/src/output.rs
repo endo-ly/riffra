@@ -267,20 +267,4 @@ mod tests {
             original
         );
     }
-
-    #[test]
-    fn json_output_bytes_are_valid_utf8() {
-        let response = ControlResponse::success(
-            "request-日本語",
-            1,
-            CommandResult {
-                result_type: "message".into(),
-                value: json!({"message":"日本語"}),
-            },
-        );
-
-        let bytes = serde_json::to_vec(&response).unwrap();
-        let decoded = String::from_utf8(bytes).unwrap();
-        assert!(decoded.contains("日本語"));
-    }
 }

@@ -79,37 +79,29 @@ TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     EXPECT_FLOAT_EQ(outputRight.back(), 0.5f);
 }
 
-TEST(PluginRackTest, ReturnsDrySignalWhenBypassed) {
+TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {
+    const auto expectDrySignal = [](PluginRack& rack) {
+        std::array<float, kBlockSize> input{};
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        input.fill(0.25f);
+        const std::array<const float*, 1> inputs{input.data()};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+        rack.process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
+
+        EXPECT_FLOAT_EQ(outputLeft.front(), 0.25f);
+        EXPECT_FLOAT_EQ(outputRight.back(), 0.25f);
+    };
+
     ProcessorTrace trace;
     juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-    rack->setBypassed(true);
+    auto bypassed = makeRack(trace, error);
+    ASSERT_NE(bypassed, nullptr) << error;
+    bypassed->setBypassed(true);
+    expectDrySignal(*bypassed);
 
-    std::array<float, kBlockSize> input{};
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    input.fill(0.25f);
-    const std::array<const float*, 1> inputs{input.data()};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
-
-    EXPECT_FLOAT_EQ(outputLeft.front(), 0.25f);
-    EXPECT_FLOAT_EQ(outputRight.back(), 0.25f);
-}
-
-TEST(PluginRackTest, ReturnsDrySignalWhenNoProcessorIsLoaded) {
-    PluginRack rack;
-    std::array<float, kBlockSize> input{};
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    input.fill(0.25f);
-    const std::array<const float*, 1> inputs{input.data()};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack.process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
-
-    EXPECT_FLOAT_EQ(outputLeft.front(), 0.25f);
-    EXPECT_FLOAT_EQ(outputRight.back(), 0.25f);
+    PluginRack unloaded;
+    expectDrySignal(unloaded);
 }
 
 TEST(PluginRackTest, ReportsProcessedBlockCount) {
@@ -229,50 +221,6 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 60);
 }
 
-TEST(PluginRackTest, PreservesPreparedTimelineMidiWithoutARealtimeCap) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
-    ASSERT_TRUE(rack->prepareTimelineMidiCapacity(257, error)) << error;
-
-    juce::MidiBuffer timeline;
-    for (int index = 0; index < 257; ++index)
-        ASSERT_TRUE(timeline.addEvent(
-            juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), index % kBlockSize));
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
-
-    EXPECT_EQ(trace.midiMessageCount, 257);
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
-}
-
-TEST(PluginRackTest, RejectsOversizedTimelineMidi) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
-
-    std::array<std::uint8_t, 257> raw{};
-    raw.front() = 0xf0;
-    raw.back() = 0xf7;
-    juce::MidiBuffer timeline;
-    ASSERT_TRUE(timeline.addEvent(juce::MidiMessage(raw.data(), static_cast<int>(raw.size())), 0));
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
-
-    EXPECT_EQ(trace.midiMessageCount, 0);
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
-}
-
 TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock) {
     // Arrange
     InstrumentTrace trace;
@@ -294,42 +242,111 @@ TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock) {
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 64);
 }
 
-TEST(PluginRackTest, ReportsQueuedMidiOverflow) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
+TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
+        ASSERT_TRUE(rack->prepareTimelineMidiCapacity(257, error)) << error;
 
-    for (int index = 0; index < 257; ++index) {
-        const bool accepted =
-            rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
-        EXPECT_EQ(accepted, index < 256);
+        juce::MidiBuffer timeline;
+        for (int index = 0; index < 257; ++index)
+            ASSERT_TRUE(
+                timeline.addEvent(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)),
+                                  index % kBlockSize));
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
+
+        EXPECT_EQ(trace.midiMessageCount, 257);
+        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
     }
 
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
-}
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
 
-TEST(PluginRackTest, DeliversMaximumSizedQueuedMidiPacket) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
+        std::array<std::uint8_t, 257> raw{};
+        raw.front() = 0xf0;
+        raw.back() = 0xf7;
+        juce::MidiBuffer timeline;
+        ASSERT_TRUE(
+            timeline.addEvent(juce::MidiMessage(raw.data(), static_cast<int>(raw.size())), 0));
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
 
-    std::array<std::uint8_t, 256> raw{};
-    raw.front() = 0xf0;
-    raw.back() = 0xf7;
-    for (int index = 0; index < 256; ++index)
-        ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage(raw.data(), static_cast<int>(raw.size()))));
+        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+        EXPECT_EQ(trace.midiMessageCount, 0);
+        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
+    }
 
-    EXPECT_EQ(trace.midiMessageCount, 256);
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
+
+        for (int index = 0; index < 257; ++index) {
+            const bool accepted =
+                rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)));
+            EXPECT_EQ(accepted, index < 256);
+        }
+
+        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
+    }
+
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
+
+        std::array<std::uint8_t, 256> raw{};
+        raw.front() = 0xf0;
+        raw.back() = 0xf7;
+        for (int index = 0; index < 256; ++index)
+            ASSERT_TRUE(
+                rack->enqueueMidi(juce::MidiMessage(raw.data(), static_cast<int>(raw.size()))));
+
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+        EXPECT_EQ(trace.midiMessageCount, 256);
+        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
+    }
+
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+        rack->allNotesOff();
+        ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
+        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+        ASSERT_EQ(trace.midiMessages.size(), 49u);
+        EXPECT_TRUE(trace.midiMessages.front().isController());
+        EXPECT_TRUE(trace.midiMessages.back().isNoteOn());
+        EXPECT_TRUE(trace.noteHeld);
+    }
 }
 
 TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
@@ -366,26 +383,6 @@ TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
         EXPECT_EQ(trace.midiMessages[offset + 2].getControllerNumber(), 64);
         EXPECT_EQ(trace.midiMessages[offset + 2].getControllerValue(), 0);
     }
-}
-
-TEST(PluginRackTest, DeliversQueuedNoteAfterResetControllers) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-
-    rack->allNotesOff();
-    ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
-
-    ASSERT_EQ(trace.midiMessages.size(), 49u);
-    EXPECT_TRUE(trace.midiMessages.front().isController());
-    EXPECT_TRUE(trace.midiMessages.back().isNoteOn());
-    EXPECT_TRUE(trace.noteHeld);
 }
 
 }  // namespace riffra

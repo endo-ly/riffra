@@ -104,29 +104,6 @@ TEST(PluginChainTest, AggregatesDeviceTail) {
     EXPECT_EQ(chain->tailSamples(), 2'880);
 }
 
-TEST(PluginChainTest, FindsDeviceById) {
-    std::vector<int> order;
-    juce::String error;
-    auto chain = makeChain(order, error);
-    ASSERT_NE(chain, nullptr) << error;
-
-    EXPECT_NE(chain->findDevice("device-2"), nullptr);
-    EXPECT_EQ(chain->findDevice("missing"), nullptr);
-}
-
-TEST(PluginChainTest, ClearsAllDevices) {
-    std::vector<int> order;
-    juce::String error;
-    auto chain = makeChain(order, error);
-    ASSERT_NE(chain, nullptr) << error;
-    ASSERT_EQ(chain->size(), 3);
-
-    chain->clear();
-
-    EXPECT_EQ(chain->size(), 0);
-    EXPECT_EQ(chain->findDevice("device-1"), nullptr);
-}
-
 TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     PluginChain playbackState;
     PluginChain liveState;

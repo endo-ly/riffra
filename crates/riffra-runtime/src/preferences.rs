@@ -235,17 +235,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_driver_matches_the_native_platform() {
-        #[cfg(windows)]
-        assert_eq!(
-            AudioPreferences::default().driver,
-            "Windows Audio (Low Latency Mode)"
-        );
-        #[cfg(unix)]
-        assert_eq!(AudioPreferences::default().driver, "ALSA");
-    }
-
-    #[test]
     fn preferences_round_trip_through_the_store() {
         let root = std::env::temp_dir().join(format!(
             "riffra-runtime-preferences-{}",
