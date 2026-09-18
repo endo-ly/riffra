@@ -77,6 +77,7 @@ impl AudioSupervisor {
                 std::path::PathBuf::new(),
                 std::path::PathBuf::new(),
                 std::path::PathBuf::new(),
+                std::path::PathBuf::from("sonalloy"),
             )),
             events,
             audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),

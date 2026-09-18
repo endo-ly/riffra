@@ -2412,6 +2412,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2527,6 +2528,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2579,6 +2581,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2654,6 +2657,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2723,6 +2727,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2767,6 +2772,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2849,6 +2855,7 @@ mod tests {
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
                 data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
             ),
         };
         let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();
@@ -2913,6 +2920,7 @@ mod tests {
                 data_root.join("missing-riffra-audio"),
                 data_root.join("missing-riffra-plugin-scan"),
                 data_root.join("missing-riffra-render"),
+                data_root.join("missing-sonalloy"),
             ),
         };
         let host = DawHost::open(config.clone(), Arc::new(crate::NoopHostEventSink)).unwrap();

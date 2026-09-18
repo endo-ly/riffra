@@ -1474,6 +1474,7 @@ mod tests {
             root.join("riffra-audio"),
             root.join("riffra-plugin-scan"),
             root.join("riffra-render"),
+            root.join("sonalloy"),
         )
     }
 

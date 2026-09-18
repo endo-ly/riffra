@@ -122,6 +122,7 @@ mod tests {
                     data_root.join("riffra-audio"),
                     data_root.join("riffra-plugin-scan"),
                     data_root.join("riffra-render"),
+                    data_root.join("sonalloy"),
                 ),
             },
             Arc::new(crate::NoopHostEventSink),

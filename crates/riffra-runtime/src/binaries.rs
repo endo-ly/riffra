@@ -15,19 +15,13 @@ pub struct RuntimeBinaries {
 
 impl RuntimeBinaries {
     /// Creates explicit binary paths.
-    pub fn new(audio: PathBuf, plugin_scan: PathBuf, render: PathBuf) -> Self {
+    pub fn new(audio: PathBuf, plugin_scan: PathBuf, render: PathBuf, sonalloy: PathBuf) -> Self {
         Self {
             audio,
             plugin_scan,
             render,
-            sonalloy: PathBuf::new(),
+            sonalloy,
         }
-    }
-
-    /// Adds an explicit Sonalloy CLI path to an existing runtime set.
-    pub fn with_sonalloy(mut self, sonalloy: PathBuf) -> Self {
-        self.sonalloy = sonalloy;
-        self
     }
 
     /// Resolves the runtime executables beside a distribution binary.
@@ -42,8 +36,8 @@ impl RuntimeBinaries {
                 std::env::consts::EXE_SUFFIX
             )),
             directory.join(format!("riffra-render{}", std::env::consts::EXE_SUFFIX)),
-        )
-        .with_sonalloy(directory.join(format!("sonalloy{}", std::env::consts::EXE_SUFFIX))))
+            directory.join(format!("sonalloy{}", std::env::consts::EXE_SUFFIX)),
+        ))
     }
 
     /// Resolves native executables beside the current process.
