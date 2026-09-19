@@ -195,6 +195,15 @@ private:
         juce::var effectState;
     };
 
+    struct MetronomeTransportSegment final {
+        std::int64_t rangeStart = 0;
+        int destinationStart = 0;
+        int sampleCount = 0;
+        float gainStart = 0.0f;
+        float gainStep = 0.0f;
+        bool active = false;
+    };
+
     void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
                   int sampleCount) noexcept;
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
@@ -288,7 +297,6 @@ private:
     juce::String liveMidiTargetTrackId;
     std::atomic<State> state{State::stopped};
     std::atomic<std::int64_t> timelineSample{0};
-    std::atomic<std::int64_t> lastMixStartSample{0};
     std::atomic<std::uint64_t> audioClockSample{0};
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
@@ -314,6 +322,8 @@ private:
     float transportGain = 0.0f;
     float transportFadeStep = 0.0f;
     int transportFadeRemaining = 0;
+    std::array<MetronomeTransportSegment, 64> metronomeTransportSegments{};
+    int metronomeTransportSegmentCount = 0;
 };
 
 }  // namespace riffra

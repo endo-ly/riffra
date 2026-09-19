@@ -19,6 +19,7 @@ int fadeFrames(const double sampleRate) noexcept {
 }  // namespace
 
 PreviewEngine::PreviewEngine() {
+    for (auto& count : audioReaderCounts) count.store(0, std::memory_order_relaxed);
     auto initial = std::make_unique<PreviewState>();
     auto* initialState = initial.get();
     previewStates.push_back(std::move(initial));
@@ -44,11 +45,19 @@ PreviewEngine::PreviewControlGuard::~PreviewControlGuard() {
 
 PreviewEngine::PreviewAudioGuard::PreviewAudioGuard(PreviewEngine& ownerIn) noexcept
     : owner(ownerIn) {
-    owner.activeAudioReaders.fetch_add(1, std::memory_order_acq_rel);
+    for (;;) {
+        generation = owner.audioReaderGeneration.load(std::memory_order_acquire);
+        owner.audioReaderCounts[generation].fetch_add(1, std::memory_order_acq_rel);
+        if (owner.audioReaderGeneration.load(std::memory_order_acquire) == generation) {
+            entered = true;
+            return;
+        }
+        owner.audioReaderCounts[generation].fetch_sub(1, std::memory_order_release);
+    }
 }
 
 PreviewEngine::PreviewAudioGuard::~PreviewAudioGuard() {
-    owner.activeAudioReaders.fetch_sub(1, std::memory_order_release);
+    if (entered) owner.audioReaderCounts[generation].fetch_sub(1, std::memory_order_release);
 }
 
 void PreviewEngine::publishState(std::unique_ptr<PreviewState> next) {
@@ -73,7 +82,13 @@ void PreviewEngine::retireFinishedBuiltInState() {
 }
 
 void PreviewEngine::cleanupDeferredState() noexcept {
-    if (activeAudioReaders.load(std::memory_order_acquire) != 0) return;
+    if (!deferredCleanupPending) {
+        deferredCleanupGeneration = audioReaderGeneration.load(std::memory_order_acquire);
+        audioReaderGeneration.store(1U - deferredCleanupGeneration, std::memory_order_release);
+        deferredCleanupPending = true;
+    }
+    if (audioReaderCounts[deferredCleanupGeneration].load(std::memory_order_acquire) != 0) return;
+    deferredCleanupPending = false;
     const auto* pending = pendingPreviewState.load(std::memory_order_acquire);
     const auto* audio = audioPreviewState.load(std::memory_order_acquire);
     const auto* builtIn = audioBuiltInSession.load(std::memory_order_acquire);
@@ -321,7 +336,11 @@ void PreviewEngine::startSynthNote(const int note, const float velocity) noexcep
     }
     if (targetIndex == kSynthVoiceCount) {
         for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
-            if (!synthControl[index].active.load(std::memory_order_acquire)) {
+            const auto active = synthControl[index].active.load(std::memory_order_acquire);
+            const auto finished =
+                synthControl[index].audioFinishedRevision.load(std::memory_order_acquire) ==
+                synthControl[index].revision.load(std::memory_order_acquire);
+            if (!active || finished) {
                 targetIndex = index;
                 break;
             }

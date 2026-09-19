@@ -4,6 +4,39 @@
 
 namespace riffra {
 
+TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(makeInstrumentSnapshot("track:live-fade"), formats, 48'000.0,
+                                    kBlockSamples, error))
+        << error.toStdString();
+    InstrumentTrace trace;
+    auto instrument = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                  48'000.0, kBlockSamples, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live-fade",
+                                                               std::move(instrument)));
+    ASSERT_TRUE(engine.setLiveMidiTarget("track:live-fade", error));
+    ASSERT_TRUE(engine.enqueueTargetedMidi("track:live-fade",
+                                           juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+
+    // Assert: the 5 ms fade splits the callback into two ranges, but the
+    // stateful Instrument Runtime is advanced once for each range.
+    EXPECT_EQ(trace.processBlockCount, 2);
+}
+
 TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     // Arrange
     juce::AudioFormatManager formats;
@@ -302,6 +335,44 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
         engine.mix(outputs.data(), 2, kBlockSamples);
     }
     EXPECT_LT(std::abs(left.back()), 0.001f);
+}
+
+TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
+    // Arrange
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("metronomeEnabled", true);
+    snapshot->setProperty("tracks", juce::Array<juce::var>{});
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, kBlockSamples, error))
+        << error.toStdString();
+    std::array<float, kBlockSamples> output{};
+    const std::array<float*, 1> outputs{output.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 1, kBlockSamples);
+    engine.stop();
+    output.fill(0.0f);
+    engine.mix(outputs.data(), 1, kBlockSamples);
+    engine.mixMetronome(outputs.data(), 1, kBlockSamples);
+
+    // Assert: the click continues through the 240-sample fade and then stays
+    // silent for the remainder of the callback.
+    EXPECT_GT(output.front(), 0.05f);
+    EXPECT_LT(std::abs(output[239]), 0.001f);
+    EXPECT_LT(*std::max_element(output.begin() + 240, output.end()), 0.001f);
 }
 
 TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {

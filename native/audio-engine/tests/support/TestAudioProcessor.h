@@ -73,6 +73,7 @@ struct InstrumentTrace final {
     bool processed = false;
     bool released = false;
     bool noteHeld = false;
+    int processBlockCount = 0;
     juce::MidiMessage lastMidiMessage;
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
@@ -96,6 +97,7 @@ public:
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         trace.processed = trace.prepared;
+        ++trace.processBlockCount;
         for (const auto metadata : midi) {
             trace.lastMidiMessage = metadata.getMessage();
             trace.midiMessages.push_back(trace.lastMidiMessage);

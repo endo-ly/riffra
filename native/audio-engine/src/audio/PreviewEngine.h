@@ -68,10 +68,13 @@ private:
 
     private:
         PreviewEngine& owner;
+        std::uint32_t generation = 0;
+        bool entered = false;
     };
 
     static constexpr int kSineLUTSize = 2048;
     static constexpr double kTwoPi = 6.2831853071795864769;
+    static constexpr std::size_t kAudioReaderGenerationCount = 2;
     static constexpr std::size_t kPreviewVoiceCount = 8;
     static constexpr std::size_t kSynthVoiceCount = 16;
 
@@ -150,7 +153,13 @@ private:
                   double sampleRate) noexcept;
 
     std::atomic_flag previewBusy = ATOMIC_FLAG_INIT;
-    std::atomic<std::uint32_t> activeAudioReaders{0};
+    // A control update switches generations before reclaiming. Readers that
+    // started before the switch drain from the old generation while new
+    // readers continue on the new one.
+    std::array<std::atomic<std::uint32_t>, kAudioReaderGenerationCount> audioReaderCounts{};
+    std::atomic<std::uint32_t> audioReaderGeneration{0};
+    std::uint32_t deferredCleanupGeneration = 0;
+    bool deferredCleanupPending = false;
     std::atomic<PreviewState*> pendingPreviewState{nullptr};
     std::atomic<PreviewState*> audioPreviewState{nullptr};
     std::array<std::atomic<PreviewState*>, kPreviewVoiceCount> audioVoiceStates{};

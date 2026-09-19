@@ -20,14 +20,28 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
     auto* active = activeRead.get();
     if (active == nullptr || !active->metronomeEnabled || active->beatSamples <= 0) return;
     const auto loopLength = active->loopEndSample - active->loopStartSample;
-    const auto start = lastMixStartSample.load(std::memory_order_acquire);
     const auto playbackOffset =
         juce::jlimit(0, sampleCount, lastMixPlaybackOffset.load(std::memory_order_acquire));
     const auto countInRemaining = countInBlockStartRemainingSamples.load(std::memory_order_acquire);
     const auto countingIn =
         recordingPhase.load(std::memory_order_acquire) == RecordingPhase::countingIn;
-    const auto playing = state.load(std::memory_order_acquire) == State::playing;
     constexpr std::int64_t clickSamples = 1'920;
+    const auto segmentIndexAt = [this](const int destinationSample) noexcept {
+        for (int index = 0; index < metronomeTransportSegmentCount; ++index) {
+            const auto& segment = metronomeTransportSegments[static_cast<std::size_t>(index)];
+            if (destinationSample < segment.destinationStart ||
+                destinationSample >= segment.destinationStart + segment.sampleCount)
+                continue;
+            return index;
+        }
+        if (metronomeTransportSegmentCount > 0) {
+            const auto lastIndex = metronomeTransportSegmentCount - 1;
+            const auto& last = metronomeTransportSegments[static_cast<std::size_t>(lastIndex)];
+            if (last.active && destinationSample >= last.destinationStart + last.sampleCount)
+                return lastIndex;
+        }
+        return -1;
+    };
     for (int sample = 0; sample < sampleCount; ++sample) {
         float value = 0.0f;
         if (countInRemaining > 0 && sample < (countingIn ? sampleCount : playbackOffset)) {
@@ -38,8 +52,15 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                 const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
                 value = 0.11f * envelope;
             }
-        } else if (playing && sample >= playbackOffset) {
-            auto position = start + sample - playbackOffset;
+        } else {
+            const auto segmentIndex = segmentIndexAt(sample);
+            if (segmentIndex < 0) continue;
+            const auto& segment =
+                metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)];
+            const auto segmentOffset = std::max(0, sample - segment.destinationStart);
+            const auto metronomeGain =
+                juce::jlimit(0.0f, 1.0f, segment.gainStart + segment.gainStep * segmentOffset);
+            auto position = segment.rangeStart + sample - segment.destinationStart;
             if (active->loopEnabled && loopLength > 0 && position >= active->loopEndSample)
                 position =
                     active->loopStartSample + (position - active->loopEndSample) % loopLength;
@@ -49,7 +70,7 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                 if (offset >= 0 && offset < clickSamples) {
                     const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
                     const auto amplitude = beat % active->beatsPerBar == 0 ? 0.18f : 0.11f;
-                    value = amplitude * envelope;
+                    value = amplitude * envelope * metronomeGain;
                 }
             }
         }
@@ -173,9 +194,6 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
         mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart, destinationStart,
                        sampleCount, transportGainStart, transportGainStep);
     }
-    if (!includeLiveInput)
-        processLiveInstrumentTracks(prepared, outputChannels, channelCount, rangeStart,
-                                    destinationStart, sampleCount);
 }
 
 void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
@@ -510,7 +528,6 @@ void TimelineEngine::applyPendingSeek(PreparedTimeline& prepared) noexcept {
     if (!seekPending.exchange(false, std::memory_order_acq_rel)) return;
     const auto sample = pendingSeekSample.load(std::memory_order_acquire);
     timelineSample.store(sample, std::memory_order_release);
-    lastMixStartSample.store(sample, std::memory_order_release);
     resetPlaybackTrackState(prepared);
     if (recordingPhase.load(std::memory_order_acquire) != RecordingPhase::recording)
         resetRecordingTrackState(prepared);
@@ -555,6 +572,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
     AudioReadScope activeRead(*this);
     auto* active = activeRead.get();
     if (active == nullptr) return;
+    metronomeTransportSegmentCount = 0;
     if (resetPlaybackPending.exchange(false, std::memory_order_acq_rel)) {
         clearPlaybackTrackState(*active);
         resetRecordingTrackState(*active);
@@ -595,15 +613,31 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                                channelCount, rangeStart, destinationStart, rangeSamples, true);
     };
 
+    const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
+                                            const std::int64_t rangeStart, const bool segmentActive,
+                                            const float gainStart, const float gainStep) noexcept {
+        if (rangeSamples <= 0 ||
+            metronomeTransportSegmentCount >= static_cast<int>(metronomeTransportSegments.size()))
+            return;
+        auto& segment =
+            metronomeTransportSegments[static_cast<std::size_t>(metronomeTransportSegmentCount++)];
+        segment.rangeStart = rangeStart;
+        segment.destinationStart = destinationStart;
+        segment.sampleCount = rangeSamples;
+        segment.gainStart = gainStart;
+        segment.gainStep = gainStep;
+        segment.active = segmentActive;
+    };
+
     if (renderTransportState == RenderTransportState::stopped) {
         applyPendingSeek(*active);
         const auto stoppedPosition = timelineSample.load(std::memory_order_acquire);
+        appendMetronomeSegment(0, sampleCount, stoppedPosition, false, 0.0f, 0.0f);
         processStoppedRange(0, sampleCount, stoppedPosition);
         return;
     }
     if (currentState == State::faulted) return;
     auto position = timelineSample.load(std::memory_order_relaxed);
-    lastMixStartSample.store(position, std::memory_order_release);
     if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::stopping) {
         return;
     }
@@ -614,6 +648,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
     while (consumed < sampleCount) {
         auto chunk = sampleCount - consumed;
         if (renderTransportState == RenderTransportState::stopped) {
+            appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
             processStoppedRange(consumed, sampleCount - consumed, position);
             break;
         }
@@ -626,6 +661,11 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         }
         if (active->loopEnabled && position < active->loopEndSample)
             chunk = std::min<int>(chunk, static_cast<int>(active->loopEndSample - position));
+        if (chunk <= 0) break;
+        appendMetronomeSegment(consumed, chunk, position, true, transportGain,
+                               fadingIn    ? transportFadeStep
+                               : fadingOut ? -transportFadeStep
+                                           : 0.0f);
         for (auto& trackPtr : active->tracks) {
             trackPtr->runtime->mixBuffer.clear(0, chunk);
             trackPtr->runtime->postEffectClipBuffer.clear(0, chunk);

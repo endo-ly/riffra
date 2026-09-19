@@ -478,6 +478,28 @@ TEST(AudioRenderPipelineTest, AllNotesOffReleasesSynthVoices) {
     EXPECT_FALSE(preview.isPreviewing());
 }
 
+TEST(AudioRenderPipelineTest, ReusesFinishedSynthVoiceSlots) {
+    PreviewEngine preview;
+    std::array<float, 256> output{};
+    const std::array<float*, 1> outputs{output.data()};
+
+    for (int note = 48; note < 64; ++note) preview.startSynthNote(note, 1.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    preview.allNotesOff();
+    for (int block = 0; block < 8; ++block)
+        ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+    ASSERT_FALSE(preview.isPreviewing());
+
+    for (int note = 48; note < 64; ++note) preview.startSynthNote(note, 1.0f);
+    output.fill(0.0f);
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+
+    const auto peak = *std::max_element(
+        output.begin(), output.end(),
+        [](const float left, const float right) { return std::abs(left) < std::abs(right); });
+    EXPECT_GT(std::abs(peak), 0.25f);
+}
+
 TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
