@@ -424,24 +424,37 @@ TEST(AudioRenderPipelineTest, PreviewControlUpdateKeepsAudioCallbackAvailable) {
     ASSERT_TRUE(preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, 4));
     EXPECT_GT(mixPreviewSamples(preview, 256), 0.4f);
 
-    std::atomic<bool> updating{true};
+    std::atomic<bool> controlStarted{false};
+    std::atomic<bool> stopControl{false};
     std::atomic<bool> controlSucceeded{true};
+    std::atomic<int> updateCount{0};
     std::thread control([&] {
-        for (int update = 0; update < 16; ++update) {
-            if (!preview.startPreview(source, update, source.getNumSamples(), 1.0f, true, error, 4))
+        controlStarted.store(true, std::memory_order_release);
+        int update = 0;
+        while (!stopControl.load(std::memory_order_acquire)) {
+            juce::String controlError;
+            if (!preview.startPreview(source, update % 16, source.getNumSamples(), 1.0f, true,
+                                      controlError, 4))
                 controlSucceeded.store(false, std::memory_order_release);
+            ++update;
+            updateCount.fetch_add(1, std::memory_order_relaxed);
         }
-        updating.store(false, std::memory_order_release);
     });
 
     std::array<float, 64> output{};
     const std::array<float*, 1> outputs{output.data()};
-    while (updating.load(std::memory_order_acquire)) {
+    while (!controlStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    while (updateCount.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+    int audioCallbackCount = 0;
+    for (; audioCallbackCount < 32; ++audioCallbackCount) {
         output.fill(0.0f);
         EXPECT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
         EXPECT_GT(*std::max_element(output.begin(), output.end()), 0.0f);
     }
+    stopControl.store(true, std::memory_order_release);
     control.join();
+    EXPECT_GT(audioCallbackCount, 0);
+    EXPECT_GT(updateCount.load(std::memory_order_acquire), 0);
     EXPECT_TRUE(controlSucceeded.load(std::memory_order_acquire));
 }
 
@@ -462,6 +475,7 @@ TEST(AudioRenderPipelineTest, AllNotesOffReleasesSynthVoices) {
         preview.tryMix(releaseOutputs.data(), 1, static_cast<int>(release.size()), 48'000.0));
     EXPECT_TRUE(std::all_of(release.end() - 256, release.end(),
                             [](const float sample) { return sample == 0.0f; }));
+    EXPECT_FALSE(preview.isPreviewing());
 }
 
 TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {

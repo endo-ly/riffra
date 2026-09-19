@@ -204,7 +204,7 @@ private:
                        float transportGainStep) noexcept;
     void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
                                      int channelCount, std::int64_t rangeStart,
-                                     int sampleCount) noexcept;
+                                     int destinationStart, int sampleCount) noexcept;
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
@@ -313,7 +313,7 @@ private:
     RenderTransportState renderTransportState = RenderTransportState::stopped;
     float transportGain = 0.0f;
     float transportFadeStep = 0.0f;
-    bool transportFadeInAfterSeek = false;
+    int transportFadeRemaining = 0;
 };
 
 }  // namespace riffra

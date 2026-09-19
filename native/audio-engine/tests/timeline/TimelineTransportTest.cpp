@@ -304,4 +304,104 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     EXPECT_LT(std::abs(left.back()), 0.001f);
 }
 
+TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("play-zero-raw.wav");
+    const auto processedFile = directory.get().getChildFile("play-zero-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    std::array<float, 64> left{};
+    std::array<float, 64> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert: a non-zero first source sample still starts at zero gain and
+    // reaches audible level within the short transport fade.
+    EXPECT_NEAR(left.front(), 0.0f, 0.001f);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.005f);
+}
+
+TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("stop-block-raw.wav");
+    const auto processedFile = directory.get().getChildFile("stop-block-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, kBlockSamples, error))
+        << error.toStdString();
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.seekToTick(4);
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto beforeStop = static_cast<std::int64_t>(
+        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+    engine.stop();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto afterStop = static_cast<std::int64_t>(
+        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+
+    // Assert: the playhead advances by the 5 ms fade only, not by the 512
+    // sample callback, and remains stable on subsequent stopped callbacks.
+    EXPECT_EQ(afterStop - beforeStop, 240);
+    EXPECT_GT(left.front(), 0.01f);
+    EXPECT_LT(std::abs(left.back()), 0.001f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_EQ(static_cast<std::int64_t>(
+                  engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1))),
+              afterStop);
+}
+
 }  // namespace riffra

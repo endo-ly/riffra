@@ -116,6 +116,7 @@ private:
         std::atomic<float> frequency{0.0f};
         std::atomic<float> targetLevel{0.0f};
         std::atomic<std::uint64_t> revision{0};
+        std::atomic<std::uint64_t> audioFinishedRevision{0};
         std::atomic<bool> active{false};
         std::atomic<bool> releasing{false};
     };

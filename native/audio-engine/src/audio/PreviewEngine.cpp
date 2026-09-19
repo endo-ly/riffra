@@ -366,7 +366,10 @@ bool PreviewEngine::isPreviewing() const noexcept {
         for (const auto& voice : state->voices)
             if (voice.active) return true;
     for (const auto& control : synthControl)
-        if (control.active.load(std::memory_order_acquire)) return true;
+        if (control.active.load(std::memory_order_acquire) &&
+            control.audioFinishedRevision.load(std::memory_order_acquire) !=
+                control.revision.load(std::memory_order_acquire))
+            return true;
     return false;
 }
 
@@ -615,7 +618,9 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
     syncSynthVoices();
     if (sampleRate <= 0.0 || numOutputChannels <= 0) return;
     constexpr float twoPi = static_cast<float>(kTwoPi);
-    for (auto& voice : synthVoices) {
+    for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
+        auto& voice = synthVoices[index];
+        auto& control = synthControl[index];
         if (!voice.active) continue;
         const auto phaseStep = static_cast<float>(twoPi * voice.frequency / sampleRate);
         for (int sample = 0; sample < numSamples && voice.active; ++sample) {
@@ -623,6 +628,10 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
                 voice.level *= 0.995f;
                 if (voice.level < 0.0001f) {
                     voice.active = false;
+                    const auto releaseRevision = voice.controlRevision;
+                    if (control.revision.load(std::memory_order_acquire) == releaseRevision)
+                        control.audioFinishedRevision.store(releaseRevision,
+                                                            std::memory_order_release);
                     break;
                 }
             } else {
