@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -48,7 +49,9 @@ public:
     void process(float* const* outputChannels, int outputChannelCount, int numSamples,
                  double sampleRate) noexcept;
     void allNotesOff() noexcept;
-    [[nodiscard]] bool isFinished() const noexcept { return !active; }
+    [[nodiscard]] bool isFinished() const noexcept {
+        return !active.load(std::memory_order_acquire);
+    }
     [[nodiscard]] bool hasFault() const noexcept { return faultCode != 0; }
 
 private:
@@ -77,7 +80,7 @@ private:
     int tailFrames = 0;
     int blockSize = 0;
     std::uint32_t faultCode = 0;
-    bool active = true;
+    std::atomic<bool> active{true};
 };
 
 }  // namespace riffra

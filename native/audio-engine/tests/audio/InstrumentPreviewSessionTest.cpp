@@ -149,10 +149,24 @@ TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
     EXPECT_TRUE(engine.isBuiltInPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
 
+    juce::AudioBuffer<float> output(2, 256);
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
+                              output.getNumSamples(), 48'000.0));
+    EXPECT_GT(maximumMagnitude(output), 0.0f);
+
     engine.stopBuiltInPreview();
 
     EXPECT_FALSE(engine.isBuiltInPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
+                              output.getNumSamples(), 48'000.0));
+    EXPECT_GT(maximumMagnitude(output), 0.0f);
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
+                              output.getNumSamples(), 48'000.0));
+    EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
     engine.stopPreview();
     EXPECT_FALSE(engine.isPreviewing());
 }

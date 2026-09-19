@@ -199,7 +199,9 @@ private:
                   int sampleCount) noexcept;
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                        int inputChannelCount, float* const* outputChannels, int channelCount,
-                       std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+                       std::int64_t rangeStart, int destinationStart, int sampleCount,
+                       bool includeLiveInput, float transportGainStart,
+                       float transportGainStep) noexcept;
     void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
                                      int channelCount, std::int64_t rangeStart,
                                      int sampleCount) noexcept;
@@ -214,13 +216,17 @@ private:
     void processLiveInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
                                     std::int64_t rangeStart, bool playing) noexcept;
     void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
-                        std::int64_t rangeStart, int destinationStart, int sampleCount) noexcept;
+                        std::int64_t rangeStart, int destinationStart, int sampleCount,
+                        float transportGainStart = 1.0f, float transportGainStep = 0.0f) noexcept;
     void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
                       int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
     void requestPlaybackReset() noexcept;
+    void beginTransportFade(bool fadeIn, double sampleRate) noexcept;
+    void applyPendingSeek(PreparedTimeline& timeline) noexcept;
+    void finishTransportFade(PreparedTimeline& timeline) noexcept;
     void servicePendingPanic() noexcept;
     void applyPendingPanic(PreparedTimeline& timeline) noexcept;
     bool generateProcessedVariants(double sampleRate, int blockSize,
@@ -269,6 +275,7 @@ private:
     std::atomic<std::uint32_t> activeAudioReaders{0};
     std::atomic<bool> resetPlaybackPending{false};
     std::atomic<bool> seekPending{false};
+    std::atomic<bool> seekRequestedWhileStopped{false};
     std::atomic<std::int64_t> pendingSeekSample{0};
     std::atomic<bool> panicAllPending{false};
     bool pendingMonitorLiveInput = false;
@@ -301,6 +308,12 @@ private:
     std::atomic<int> captureBlockSamples{0};
     std::atomic<int> playbackBlockOffset{0};
     std::atomic<int> lastMixPlaybackOffset{0};
+
+    enum class RenderTransportState { stopped, fadingIn, playing, fadingOut };
+    RenderTransportState renderTransportState = RenderTransportState::stopped;
+    float transportGain = 0.0f;
+    float transportFadeStep = 0.0f;
+    bool transportFadeInAfterSeek = false;
 };
 
 }  // namespace riffra

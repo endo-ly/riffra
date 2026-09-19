@@ -27,8 +27,11 @@ bool TimelineEngine::startRecording(const int countInBeats, juce::String& error)
         recordingPhase.store(RecordingPhase::recording, std::memory_order_release);
         recordingStartAudioSample.store(audioClockSample.load(std::memory_order_acquire),
                                         std::memory_order_release);
-        const auto tick = timeline->timebase.sampleToTick(
-            timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate);
+        const auto requestedSample = seekPending.load(std::memory_order_acquire)
+                                         ? pendingSeekSample.load(std::memory_order_acquire)
+                                         : timelineSample.load(std::memory_order_acquire);
+        const auto tick =
+            timeline->timebase.sampleToTick(requestedSample, timeline->outputSampleRate);
         recordingStartTick.store(tick, std::memory_order_release);
         if (!alreadyPlaying) state.store(State::playing, std::memory_order_release);
     } else {
@@ -325,7 +328,9 @@ bool TimelineEngine::recordingWindow(const int sampleCount, int& sampleOffset,
         return true;
     }
 
-    const auto position = timelineSample.load(std::memory_order_acquire);
+    const auto position = seekPending.load(std::memory_order_acquire)
+                              ? pendingSeekSample.load(std::memory_order_acquire)
+                              : timelineSample.load(std::memory_order_acquire);
     const auto playbackOffset = transitionedFromCountIn ? sampleOffset : 0;
     const auto playbackSamples = sampleCount - playbackOffset;
     const auto blockEnd = position + static_cast<std::int64_t>(playbackSamples);

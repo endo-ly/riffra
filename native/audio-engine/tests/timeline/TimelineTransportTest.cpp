@@ -240,4 +240,68 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
     EXPECT_NEAR(tenTrackPeak, oneTrackPeak, 0.0001f);
 }
 
+TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("transport-raw.wav");
+    const auto processedFile = directory.get().getChildFile("transport-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    constexpr int kBlockSamples = 64;
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act: play from a non-zero seek position and stop while the source is loud.
+    engine.seekToTick(4);
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto playStartPeak = *std::max_element(left.begin(), left.end());
+    EXPECT_LT(left.front(), 0.01f);
+    EXPECT_GT(playStartPeak, 0.015f);
+
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto previous = left.back();
+    engine.stop();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto stopFirst = left.front();
+    const auto stopLast = left.back();
+    const auto stopStep = std::abs(stopFirst - stopLast);
+
+    // Assert: both transitions remain audible for the short de-click and then settle.
+    EXPECT_GT(previous, 0.02f);
+    EXPECT_GT(stopFirst, 0.02f);
+    EXPECT_GT(stopLast, 0.02f);
+    EXPECT_LT(stopStep, 0.02f);
+    for (int block = 0; block < 16; ++block) {
+        std::fill(left.begin(), left.end(), 0.0f);
+        std::fill(right.begin(), right.end(), 0.0f);
+        engine.mix(outputs.data(), 2, kBlockSamples);
+    }
+    EXPECT_LT(std::abs(left.back()), 0.001f);
+}
+
 }  // namespace riffra

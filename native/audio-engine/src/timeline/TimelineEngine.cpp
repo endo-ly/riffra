@@ -208,8 +208,6 @@ void TimelineEngine::play() noexcept {
 
 void TimelineEngine::stop() noexcept {
     state.store(State::stopped, std::memory_order_release);
-    resetPlaybackPending.store(true, std::memory_order_release);
-    requestPlaybackReset();
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -231,10 +229,10 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) return;
     const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
-    timelineSample.store(sample, std::memory_order_release);
     pendingSeekSample.store(sample, std::memory_order_release);
     seekPending.store(true, std::memory_order_release);
-    requestPlaybackReset();
+    seekRequestedWhileStopped.store(state.load(std::memory_order_acquire) != State::playing,
+                                    std::memory_order_release);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -247,8 +245,10 @@ juce::var TimelineEngine::status() const {
                                  : currentState == State::starting ? "starting"
                                  : currentState == State::faulted  ? "faulted"
                                                                    : "stopped");
-    object->setProperty("timelineSample",
-                        static_cast<juce::int64>(timelineSample.load(std::memory_order_acquire)));
+    const auto reportedTimelineSample = seekPending.load(std::memory_order_acquire)
+                                            ? pendingSeekSample.load(std::memory_order_acquire)
+                                            : timelineSample.load(std::memory_order_acquire);
+    object->setProperty("timelineSample", static_cast<juce::int64>(reportedTimelineSample));
     object->setProperty("audioClockSample",
                         static_cast<juce::int64>(audioClockSample.load(std::memory_order_acquire)));
     object->setProperty(
