@@ -4,6 +4,71 @@
 
 namespace riffra {
 
+TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(makeInstrumentSnapshot("track:live-fade"), formats, 48'000.0,
+                                    kBlockSamples, error))
+        << error.toStdString();
+    InstrumentTrace trace;
+    auto instrument = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
+                                                  48'000.0, kBlockSamples, error);
+    ASSERT_NE(instrument, nullptr) << error.toStdString();
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live-fade",
+                                                               std::move(instrument)));
+    ASSERT_TRUE(engine.setLiveMidiTarget("track:live-fade", error));
+    ASSERT_TRUE(engine.enqueueTargetedMidi("track:live-fade",
+                                           juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+
+    // Assert: the 5 ms fade splits the callback into two ranges, but the
+    // stateful Instrument Runtime is advanced once for each range.
+    EXPECT_EQ(trace.processBlockCount, 2);
+}
+
+TEST(TimelineEngineTest, ProcessesAnAudioEffectChainOncePerTransportChunk) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
+                                    kBlockSamples, error))
+        << error.toStdString();
+    ProcessorTrace trace;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
+        engine, "track:live", "effect:live-fade", std::make_unique<TestProcessor>(trace), 48'000.0,
+        kBlockSamples, error))
+        << error.toStdString();
+
+    std::array<float, kBlockSamples> input{};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(inputs.data(), 1, outputs.data(), 2, kBlockSamples);
+
+    // Assert: the live monitor input is merged before the shared effect chain,
+    // so the 5 ms fade still advances that stateful chain once per range.
+    EXPECT_EQ(trace.processBlockCount, 2);
+}
+
 TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     // Arrange
     juce::AudioFormatManager formats;
@@ -238,6 +303,208 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
     EXPECT_GT(oneTrackPeak, 0.02f);
     EXPECT_NEAR(twoTrackPeak, oneTrackPeak, 0.0001f);
     EXPECT_NEAR(tenTrackPeak, oneTrackPeak, 0.0001f);
+}
+
+TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("transport-raw.wav");
+    const auto processedFile = directory.get().getChildFile("transport-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    constexpr int kBlockSamples = 64;
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act: play from a non-zero seek position and stop while the source is loud.
+    engine.seekToTick(4);
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto playStartPeak = *std::max_element(left.begin(), left.end());
+    EXPECT_LT(left.front(), 0.01f);
+    EXPECT_GT(playStartPeak, 0.015f);
+
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto previous = left.back();
+    engine.stop();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto stopFirst = left.front();
+    const auto stopLast = left.back();
+    const auto stopStep = std::abs(stopFirst - stopLast);
+
+    // Assert: both transitions remain audible for the short de-click and then settle.
+    EXPECT_GT(previous, 0.02f);
+    EXPECT_GT(stopFirst, 0.02f);
+    EXPECT_GT(stopLast, 0.02f);
+    EXPECT_LT(stopStep, 0.02f);
+    for (int block = 0; block < 16; ++block) {
+        std::fill(left.begin(), left.end(), 0.0f);
+        std::fill(right.begin(), right.end(), 0.0f);
+        engine.mix(outputs.data(), 2, kBlockSamples);
+    }
+    EXPECT_LT(std::abs(left.back()), 0.001f);
+}
+
+TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
+    // Arrange
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("metronomeEnabled", true);
+    snapshot->setProperty("tracks", juce::Array<juce::var>{});
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, kBlockSamples, error))
+        << error.toStdString();
+    std::array<float, kBlockSamples> output{};
+    const std::array<float*, 1> outputs{output.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 1, kBlockSamples);
+    engine.stop();
+    output.fill(0.0f);
+    engine.mix(outputs.data(), 1, kBlockSamples);
+    engine.mixMetronome(outputs.data(), 1, kBlockSamples);
+
+    // Assert: the click continues through the 240-sample fade and then stays
+    // silent for the remainder of the callback.
+    EXPECT_GT(output.front(), 0.05f);
+    EXPECT_LT(std::abs(output[239]), 0.001f);
+    EXPECT_LT(*std::max_element(output.begin() + 240, output.end()), 0.001f);
+}
+
+TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("play-zero-raw.wav");
+    const auto processedFile = directory.get().getChildFile("play-zero-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    std::array<float, 64> left{};
+    std::array<float, 64> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert: a non-zero first source sample still starts at zero gain and
+    // reaches audible level within the short transport fade.
+    EXPECT_NEAR(left.front(), 0.0f, 0.001f);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.005f);
+}
+
+TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto rawFile = directory.get().getChildFile("stop-block-raw.wav");
+    const auto processedFile = directory.get().getChildFile("stop-block-processed.wav");
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", 1024);
+        clip->setProperty("durationFrames", 1024);
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, kBlockSamples, error))
+        << error.toStdString();
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.seekToTick(4);
+    engine.play();
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto beforeStop = static_cast<std::int64_t>(
+        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+    engine.stop();
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto afterStop = static_cast<std::int64_t>(
+        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+
+    // Assert: the playhead advances by the 5 ms fade only, not by the 512
+    // sample callback, and remains stable on subsequent stopped callbacks.
+    EXPECT_EQ(afterStop - beforeStop, 240);
+    EXPECT_GT(left.front(), 0.01f);
+    EXPECT_LT(std::abs(left.back()), 0.001f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_EQ(static_cast<std::int64_t>(
+                  engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1))),
+              afterStop);
 }
 
 }  // namespace riffra

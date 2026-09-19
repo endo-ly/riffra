@@ -96,7 +96,7 @@ public:
     void writeAudioTrack(const juce::String& trackId, const float* raw,
                          const int rawSampleCount) noexcept override {
         receivedTrack = trackId;
-        receivedSamples = rawSampleCount;
+        receivedSamples += rawSampleCount;
         currentRawSamples += std::max(0, rawSampleCount);
         totalRawSamples += std::max(0, rawSampleCount);
         if (raw != nullptr && rawSampleCount > 0)
@@ -1981,6 +1981,10 @@ public:
                     std::array<float, 24000> silent{};
                     std::array<float*, 1> silentChannels{silent.data()};
                     engine.mix(silentChannels.data(), 1, static_cast<int>(silent.size()));
+                    std::array<float, 240> loopBoundary{};
+                    std::array<float*, 1> loopBoundaryChannels{loopBoundary.data()};
+                    engine.mix(loopBoundaryChannels.data(), 1,
+                               static_cast<int>(loopBoundary.size()));
                     looped = static_cast<juce::int64>(
                                  engine.status().getProperty("timelineSample", -1)) == 0;
                     std::array<float, 512> clicks{};

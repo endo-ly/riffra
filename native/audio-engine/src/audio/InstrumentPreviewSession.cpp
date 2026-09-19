@@ -117,8 +117,8 @@ std::uint64_t InstrumentPreviewSession::tickToFrame(const std::uint64_t tick,
 
 void InstrumentPreviewSession::process(float* const* outputChannels, const int outputChannelCount,
                                        const int numSamples, const double sampleRate) noexcept {
-    if (!active || runtime == nullptr || numSamples <= 0 || numSamples > blockSize ||
-        sampleRate <= 0.0) {
+    if (!active.load(std::memory_order_acquire) || runtime == nullptr || numSamples <= 0 ||
+        numSamples > blockSize || sampleRate <= 0.0) {
         return;
     }
 
@@ -158,7 +158,7 @@ void InstrumentPreviewSession::process(float* const* outputChannels, const int o
     runtime->process(renderChannels.data(), 2, numSamples, &midi, context);
     if (runtime->faultCode() != 0) {
         faultCode = runtime->faultCode();
-        active = false;
+        active.store(false, std::memory_order_release);
         return;
     }
 
@@ -173,7 +173,7 @@ void InstrumentPreviewSession::process(float* const* outputChannels, const int o
     renderedFrames = blockEnd;
     if (renderedFrames >= lengthFrames && nextEvent >= events.size()) {
         if (tailFrames <= 0)
-            active = false;
+            active.store(false, std::memory_order_release);
         else
             tailFrames = std::max(0, tailFrames - numSamples);
     }

@@ -17,6 +17,7 @@ struct ProcessorTrace final {
     bool processed = false;
     bool released = false;
     bool failProgramChange = false;
+    int processBlockCount = 0;
     int currentProgram = 0;
     double sampleRate = 0.0;
     int blockSize = 0;
@@ -42,6 +43,7 @@ public:
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
         trace.processed = trace.prepared;
+        ++trace.processBlockCount;
         buffer.applyGain(2.0f);
     }
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
@@ -73,6 +75,7 @@ struct InstrumentTrace final {
     bool processed = false;
     bool released = false;
     bool noteHeld = false;
+    int processBlockCount = 0;
     juce::MidiMessage lastMidiMessage;
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
@@ -96,6 +99,7 @@ public:
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         trace.processed = trace.prepared;
+        ++trace.processBlockCount;
         for (const auto metadata : midi) {
             trace.lastMidiMessage = metadata.getMessage();
             trace.midiMessages.push_back(trace.lastMidiMessage);
