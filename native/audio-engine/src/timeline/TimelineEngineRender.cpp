@@ -169,20 +169,18 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                                    const int physicalInputChannelCount,
                                    float* const* outputChannels, const int channelCount,
                                    const std::int64_t rangeStart, const int destinationStart,
-                                   const int sampleCount, const bool includeLiveInput,
-                                   const float transportGainStart,
+                                   const int sampleCount, const float transportGainStart,
                                    const float transportGainStep) noexcept {
     const auto hasSolo = prepared.hasSolo;
     processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount,
                            outputChannels, channelCount, rangeStart, destinationStart, sampleCount,
-                           !includeLiveInput);
+                           false);
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
         auto& runtime = *track.runtime;
         const auto audible = !runtime.muted && (!hasSolo || runtime.solo);
         runtime.processedBuffer.clear(0, sampleCount);
-        if (!runtime.instrumentTrack && includeLiveInput)
-            mergeTimelineAndLiveInput(track, sampleCount);
+        if (!runtime.instrumentTrack) mergeTimelineAndLiveInput(track, sampleCount);
         const float* inputChannels[2] = {runtime.mixBuffer.getWritePointer(0),
                                          runtime.mixBuffer.getWritePointer(1)};
         float* processedChannels[2] = {runtime.processedBuffer.getWritePointer(0),
@@ -687,7 +685,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                     static_cast<std::uint64_t>(localOffset + captureWriteEnd - captureWriteStart));
         }
         processTracks(*active, inputChannels, inputChannelCount, outputChannels, channelCount,
-                      position, consumed, chunk, !(fadingIn || fadingOut), transportGain,
+                      position, consumed, chunk, transportGain,
                       fadingIn    ? transportFadeStep
                       : fadingOut ? -transportFadeStep
                                   : 0.0f);

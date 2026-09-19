@@ -89,6 +89,18 @@ void PreviewEngine::cleanupDeferredState() noexcept {
     }
     if (audioReaderCounts[deferredCleanupGeneration].load(std::memory_order_acquire) != 0) return;
     deferredCleanupPending = false;
+    const auto activeGeneration = 1U - deferredCleanupGeneration;
+    const auto shouldReclaim = [activeGeneration, this](auto& retired, const auto* candidate,
+                                                        const bool needed) {
+        if (needed) {
+            retired.erase(candidate);
+            return false;
+        }
+        const auto [it, inserted] = retired.emplace(candidate, activeGeneration);
+        if (inserted || it->second != deferredCleanupGeneration) return false;
+        retired.erase(it);
+        return true;
+    };
     const auto* pending = pendingPreviewState.load(std::memory_order_acquire);
     const auto* audio = audioPreviewState.load(std::memory_order_acquire);
     const auto* builtIn = audioBuiltInSession.load(std::memory_order_acquire);
@@ -104,10 +116,11 @@ void PreviewEngine::cleanupDeferredState() noexcept {
         return false;
     };
     previewStates.erase(
-        std::remove_if(previewStates.begin(), previewStates.end(),
-                       [&stateIsNeeded](const std::unique_ptr<PreviewState>& state) {
-                           return !stateIsNeeded(state.get());
-                       }),
+        std::remove_if(
+            previewStates.begin(), previewStates.end(),
+            [this, &stateIsNeeded, &shouldReclaim](const std::unique_ptr<PreviewState>& state) {
+                return shouldReclaim(retiredPreviewStates, state.get(), stateIsNeeded(state.get()));
+            }),
         previewStates.end());
 
     const auto bufferIsNeeded = [this](const juce::AudioBuffer<float>* candidate) {
@@ -118,8 +131,10 @@ void PreviewEngine::cleanupDeferredState() noexcept {
     };
     previewBuffers.erase(
         std::remove_if(previewBuffers.begin(), previewBuffers.end(),
-                       [&bufferIsNeeded](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
-                           return !bufferIsNeeded(buffer.get());
+                       [this, &bufferIsNeeded,
+                        &shouldReclaim](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
+                           return shouldReclaim(retiredPreviewBuffers, buffer.get(),
+                                                bufferIsNeeded(buffer.get()));
                        }),
         previewBuffers.end());
 
@@ -131,11 +146,12 @@ void PreviewEngine::cleanupDeferredState() noexcept {
         return false;
     };
     builtInSessions.erase(
-        std::remove_if(
-            builtInSessions.begin(), builtInSessions.end(),
-            [&sessionIsNeeded](const std::unique_ptr<InstrumentPreviewSession>& session) {
-                return !sessionIsNeeded(session.get());
-            }),
+        std::remove_if(builtInSessions.begin(), builtInSessions.end(),
+                       [this, &sessionIsNeeded,
+                        &shouldReclaim](const std::unique_ptr<InstrumentPreviewSession>& session) {
+                           return shouldReclaim(retiredBuiltInSessions, session.get(),
+                                                sessionIsNeeded(session.get()));
+                       }),
         builtInSessions.end());
 
     const auto builtInBufferIsNeeded =
@@ -146,11 +162,12 @@ void PreviewEngine::cleanupDeferredState() noexcept {
             return false;
         };
     builtInBuffers.erase(
-        std::remove_if(
-            builtInBuffers.begin(), builtInBuffers.end(),
-            [&builtInBufferIsNeeded](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
-                return !builtInBufferIsNeeded(buffer.get());
-            }),
+        std::remove_if(builtInBuffers.begin(), builtInBuffers.end(),
+                       [this, &builtInBufferIsNeeded,
+                        &shouldReclaim](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
+                           return shouldReclaim(retiredBuiltInBuffers, buffer.get(),
+                                                builtInBufferIsNeeded(buffer.get()));
+                       }),
         builtInBuffers.end());
 }
 

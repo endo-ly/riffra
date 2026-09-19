@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace riffra {
@@ -169,6 +170,12 @@ private:
     std::vector<std::unique_ptr<juce::AudioBuffer<float>>> previewBuffers;
     std::vector<std::unique_ptr<InstrumentPreviewSession>> builtInSessions;
     std::vector<std::unique_ptr<juce::AudioBuffer<float>>> builtInBuffers;
+    // A pointer is first marked with the active reader generation and can only
+    // be destroyed after that generation becomes the drained generation.
+    std::unordered_map<const PreviewState*, std::uint32_t> retiredPreviewStates;
+    std::unordered_map<const juce::AudioBuffer<float>*, std::uint32_t> retiredPreviewBuffers;
+    std::unordered_map<const InstrumentPreviewSession*, std::uint32_t> retiredBuiltInSessions;
+    std::unordered_map<const juce::AudioBuffer<float>*, std::uint32_t> retiredBuiltInBuffers;
 
     std::array<PreviewVoiceRuntime, kPreviewVoiceCount> previewVoices;
     std::uint64_t previewSequence = 0;

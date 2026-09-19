@@ -209,8 +209,7 @@ private:
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                        int inputChannelCount, float* const* outputChannels, int channelCount,
                        std::int64_t rangeStart, int destinationStart, int sampleCount,
-                       bool includeLiveInput, float transportGainStart,
-                       float transportGainStep) noexcept;
+                       float transportGainStart, float transportGainStep) noexcept;
     void processLiveInstrumentTracks(PreparedTimeline& timeline, float* const* outputChannels,
                                      int channelCount, std::int64_t rangeStart,
                                      int destinationStart, int sampleCount) noexcept;

@@ -37,6 +37,38 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     EXPECT_EQ(trace.processBlockCount, 2);
 }
 
+TEST(TimelineEngineTest, ProcessesAnAudioEffectChainOncePerTransportChunk) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine(true);
+    juce::String error;
+    constexpr int kBlockSamples = 512;
+    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
+                                    kBlockSamples, error))
+        << error.toStdString();
+    ProcessorTrace trace;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
+        engine, "track:live", "effect:live-fade", std::make_unique<TestProcessor>(trace), 48'000.0,
+        kBlockSamples, error))
+        << error.toStdString();
+
+    std::array<float, kBlockSamples> input{};
+    input.fill(0.05f);
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.play();
+    engine.mix(inputs.data(), 1, outputs.data(), 2, kBlockSamples);
+
+    // Assert: the live monitor input is merged before the shared effect chain,
+    // so the 5 ms fade still advances that stateful chain once per range.
+    EXPECT_EQ(trace.processBlockCount, 2);
+}
+
 TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     // Arrange
     juce::AudioFormatManager formats;

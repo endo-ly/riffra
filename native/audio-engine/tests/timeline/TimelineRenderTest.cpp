@@ -98,8 +98,9 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     test::TemporaryDirectory directory;
     const auto rawFile = directory.get().getChildFile("raw-monitor.wav");
     const auto processedFile = directory.get().getChildFile("processed-monitor.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 32, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 32, 3'277));
+    constexpr int kSourceFrames = 512;
+    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, kSourceFrames, 1'638));
+    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, kSourceFrames, 3'277));
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -110,6 +111,14 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
     auto* track = tracks[0].getDynamicObject();
     ASSERT_NE(track, nullptr);
+    auto clips = track->getProperty("audioClips");
+    ASSERT_TRUE(clips.isArray());
+    for (auto& clipValue : *clips.getArray()) {
+        auto* clip = clipValue.getDynamicObject();
+        ASSERT_NE(clip, nullptr);
+        clip->setProperty("sourceEndFrame", kSourceFrames);
+        clip->setProperty("durationFrames", kSourceFrames);
+    }
     track->setProperty("monitoring", "on");
     auto* input = new juce::DynamicObject();
     input->setProperty("channelIndex", 0);
@@ -129,7 +138,11 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
 
     // Act
     engine.play();
-    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
+    for (int block = 0; block < 8; ++block) {
+        std::fill(left.begin(), left.end(), 0.0f);
+        std::fill(right.begin(), right.end(), 0.0f);
+        engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(left.size()));
+    }
 
     // Assert
     // Audio monitoring bypasses only inter-track compensation delay.
