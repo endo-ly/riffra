@@ -1,10 +1,18 @@
 import { useMemo } from 'react';
-import { useAudioMeters, type TrackAudioMeter } from '@/shared/audio/audio-meters';
+import { useAudioMeters } from '@/shared/audio/audio-meters';
 import styles from './Mixer.module.css';
 
 interface MixerMeterProps {
   trackId?: string;
   master?: boolean;
+  mode?: 'peak' | 'peak-rms';
+}
+
+interface MeterValues {
+  peakLeft: number;
+  peakRight: number;
+  rmsLeft?: number;
+  rmsRight?: number;
 }
 
 function dbfs(value: number): number {
@@ -34,20 +42,17 @@ function meterValues(
   meters: ReturnType<typeof useAudioMeters>,
   trackId?: string,
   master?: boolean,
-): TrackAudioMeter | null {
+): MeterValues | null {
   if (master) {
     return {
-      trackId: 'master',
       peakLeft: meters.outputPeakLeft,
       peakRight: meters.outputPeakRight,
-      rmsLeft: meters.outputPeakLeft,
-      rmsRight: meters.outputPeakRight,
     };
   }
   return meters.trackMeters.find((meter) => meter.trackId === trackId) ?? null;
 }
 
-export function MixerMeter(props: MixerMeterProps) {
+export function MixerMeter({ mode = 'peak-rms', ...props }: MixerMeterProps) {
   const meters = useAudioMeters();
   const meter = useMemo(
     () => meterValues(meters, props.trackId, props.master),
@@ -62,7 +67,9 @@ export function MixerMeter(props: MixerMeterProps) {
         return (
           <div className={styles.meterColumn} key={channel}>
             <div className={`${styles.meterTrack} ${meterTone(peak)}`}>
-              <i className={styles.meterRms} style={{ height: `${levelPercent(rms)}%` }} />
+              {mode === 'peak-rms' ? (
+                <i className={styles.meterRms} style={{ height: `${levelPercent(rms)}%` }} />
+              ) : null}
               <b className={styles.meterPeak} style={{ bottom: `${levelPercent(peak)}%` }} />
             </div>
             <span>{channel.toUpperCase()}</span>

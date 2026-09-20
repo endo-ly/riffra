@@ -450,8 +450,6 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
             auto contributionRight = audible && channelCount > 1 && outputChannels[1] != nullptr
                                          ? right * rightGain * sampleGain
                                          : 0.0f;
-            if (!std::isfinite(contributionLeft)) contributionLeft = 0.0f;
-            if (!std::isfinite(contributionRight)) contributionRight = 0.0f;
             if (channelCount > 0 && outputChannels[0] != nullptr)
                 outputChannels[0][destinationStart + processed] += contributionLeft;
             if (channelCount > 1 && outputChannels[1] != nullptr)

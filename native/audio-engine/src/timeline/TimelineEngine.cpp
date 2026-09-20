@@ -94,18 +94,32 @@ bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
 }
 
 juce::Array<juce::var> TimelineEngine::meterSnapshot() {
+    struct MeterEntry final {
+        juce::String trackId;
+        TrackMeterSnapshot snapshot;
+    };
+
+    std::vector<MeterEntry> entries;
+    {
+        AudioReadScope read(*this);
+        const auto* active = read.get();
+        if (active == nullptr) return {};
+        entries.reserve(active->tracks.size());
+        for (const auto& track : active->tracks) {
+            if (track == nullptr || track->runtime == nullptr) continue;
+            entries.push_back({track->id, track->runtime->meter.consume()});
+        }
+    }
+
     juce::Array<juce::var> meters;
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
-    if (timeline == nullptr) return meters;
-    for (const auto& track : timeline->tracks) {
-        if (track == nullptr || track->runtime == nullptr) continue;
-        const auto snapshot = track->runtime->meter.consume();
+    meters.ensureStorageAllocated(static_cast<int>(entries.size()));
+    for (const auto& entry : entries) {
         auto* value = new juce::DynamicObject();
-        value->setProperty("trackId", track->id);
-        value->setProperty("peakLeft", snapshot.peakLeft);
-        value->setProperty("peakRight", snapshot.peakRight);
-        value->setProperty("rmsLeft", snapshot.rmsLeft);
-        value->setProperty("rmsRight", snapshot.rmsRight);
+        value->setProperty("trackId", entry.trackId);
+        value->setProperty("peakLeft", entry.snapshot.peakLeft);
+        value->setProperty("peakRight", entry.snapshot.peakRight);
+        value->setProperty("rmsLeft", entry.snapshot.rmsLeft);
+        value->setProperty("rmsRight", entry.snapshot.rmsRight);
         meters.add(juce::var(value));
     }
     return meters;

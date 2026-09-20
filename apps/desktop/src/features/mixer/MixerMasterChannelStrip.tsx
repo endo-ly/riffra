@@ -56,42 +56,44 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         <small>STEREO OUTPUT</small>
       </div>
 
-      <MixerMeter master />
+      <div className={styles.masterMixControl}>
+        <MixerMeter master mode="peak" />
 
-      <label className={styles.masterFader}>
-        <span>MASTER GAIN</span>
-        <input
-          type="range"
-          min="-90"
-          max="0"
-          step="0.5"
-          value={master.draftDb}
-          disabled={props.disabled}
-          aria-label="Master mixer gain"
-          onPointerDown={master.beginEditing}
-          onKeyDown={(event) => {
-            if (
-              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-            )
-              master.beginEditing();
-          }}
-          onChange={(event) => {
-            const value = Number(event.currentTarget.value);
-            master.setDraftDb(value);
-            master.preview(value);
-          }}
-          onPointerUp={(event) => commit(Number(event.currentTarget.value))}
-          onBlur={(event) => commit(Number(event.currentTarget.value))}
-          onKeyUp={(event) => {
-            if (
-              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
-            ) {
-              commit(Number(event.currentTarget.value));
-            }
-          }}
-        />
-        <output>{formatDb(master.draftDb)}</output>
-      </label>
+        <label className={styles.masterFader}>
+          <span>MASTER GAIN</span>
+          <input
+            type="range"
+            min="-90"
+            max="0"
+            step="0.5"
+            value={master.draftDb}
+            disabled={props.disabled}
+            aria-label="Master mixer gain"
+            onPointerDown={master.beginEditing}
+            onKeyDown={(event) => {
+              if (
+                ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+              )
+                master.beginEditing();
+            }}
+            onChange={(event) => {
+              const value = Number(event.currentTarget.value);
+              master.setDraftDb(value);
+              master.preview(value);
+            }}
+            onPointerUp={(event) => commit(Number(event.currentTarget.value))}
+            onBlur={(event) => commit(Number(event.currentTarget.value))}
+            onKeyUp={(event) => {
+              if (
+                ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+              ) {
+                commit(Number(event.currentTarget.value));
+              }
+            }}
+          />
+          <output>{formatDb(master.draftDb)}</output>
+        </label>
+      </div>
 
       <section className={`${styles.safety} ${safetyWarning ? styles.safetyWarning : ''}`}>
         <span className={styles.safetyTitle}>
@@ -108,7 +110,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
           </div>
           <div>
             <dt>CLIP</dt>
-            <dd>{clipLatched ? 'CLIP' : meters.hardClipSamples}</dd>
+            <dd>{clipLatched ? 'CLIP' : '—'}</dd>
           </div>
           <div>
             <dt>FEEDBACK</dt>

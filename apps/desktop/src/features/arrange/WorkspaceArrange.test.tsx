@@ -2048,6 +2048,12 @@ describe('WorkspaceArrange', () => {
     fireEvent.blur(gain, { target: { value: '-6' } });
     await waitFor(() => expect(api.calls).toContain('updateTrack'));
     expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(1);
+
+    const pan = within(trackChannel).getByRole('slider', { name: 'Mix Track pan' });
+    fireEvent.keyDown(pan, { key: 'ArrowRight' });
+    fireEvent.change(pan, { target: { value: '0.01' } });
+    fireEvent.keyUp(pan, { key: 'ArrowRight' });
+    await waitFor(() => expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(2));
   });
 
   it('opens an empty Mixer and keeps the Master channel available', () => {

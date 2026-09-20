@@ -144,9 +144,9 @@ export function useMasterGainControl({
           getProjectEpoch() !== projectEpochAtRequest
         )
           return;
+        if (!applyCanonicalState(result.canonical)) return;
         lastCommittedDb.current = result.canonical.session.settings.masterDb;
         canonicalDb.current = result.canonical.session.settings.masterDb;
-        applyCanonicalState(result.canonical);
         setAudio(result.audio);
         setDraftDb(result.canonical.session.settings.masterDb);
       } catch {

@@ -7,6 +7,7 @@ import styles from './Mixer.module.css';
 interface MixerPanelProps {
   session: CreativeSession;
   selectedTrackId: string | null;
+  missingDeviceIds: readonly string[];
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   setAudio: (audio: AudioStatus) => void;
@@ -43,6 +44,7 @@ export function MixerPanel(props: MixerPanelProps) {
                   (lane) => lane.trackId === track.id && lane.parameter === 'pan',
                 )}
                 selected={props.selectedTrackId === track.id}
+                missingDeviceIds={props.missingDeviceIds}
                 api={props.api}
                 applyCanonicalState={props.applyCanonicalState}
                 onSelect={() => props.onSelectTrack(track.id)}

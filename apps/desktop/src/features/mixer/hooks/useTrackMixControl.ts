@@ -163,7 +163,7 @@ export function useTrackMixControl({
           getProjectEpoch() !== projectEpochAtRequest
         )
           return;
-        applyCanonicalState(result.canonical);
+        if (!applyCanonicalState(result.canonical)) return;
         const committed = result.canonical.session.arrangement.tracks.find(
           (candidate) => candidate.id === track.id,
         );

@@ -3,7 +3,7 @@
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 116px;
+  grid-template-columns: minmax(0, 1fr) 152px;
   grid-template-rows: auto minmax(0, 1fr);
   color: var(--color-text-primary);
   background: var(--color-bg-surface);
@@ -50,25 +50,27 @@
   min-width: 0;
   min-height: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
 .trackRail {
+  box-sizing: border-box;
   min-width: max-content;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   align-items: stretch;
   gap: 8px;
-  padding: 12px;
+  padding: 4px;
 }
 
 .channel,
 .masterChannel {
   position: relative;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--color-border-default);
   background: color-mix(in srgb, var(--color-bg-panel) 82%, var(--color-bg-surface));
 }
@@ -76,9 +78,9 @@
 .channel {
   flex: 0 0 108px;
   display: grid;
-  grid-template-rows: auto auto minmax(96px, 1fr) auto auto;
-  gap: 6px;
-  padding: 7px;
+  grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
+  gap: 2px;
+  padding: 3px;
   border-top: 3px solid var(--track-color, var(--color-border-strong));
   transition:
     border-color var(--duration-fast) ease,
@@ -132,7 +134,7 @@
 .trackColor {
   grid-row: 1 / 3;
   width: 8px;
-  height: 30px;
+  height: 26px;
   border-radius: 2px;
   background: var(--track-color, var(--color-accent-primary));
 }
@@ -141,7 +143,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 0;
+  padding: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
@@ -169,8 +171,14 @@
 .panControl,
 .faderControl,
 .masterFader {
+  min-height: 0;
   display: grid;
   gap: 5px;
+}
+
+.panControl,
+.faderControl {
+  gap: 2px;
 }
 
 .panControl > span,
@@ -216,11 +224,26 @@
   direction: rtl;
   justify-self: center;
   width: 24px;
-  height: 118px;
+  height: 100%;
+  min-height: 0;
 }
 
 .faderControl {
+  grid-template-rows: auto minmax(0, 1fr) auto;
   justify-items: center;
+}
+
+.mixControl,
+.masterMixControl {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 5px;
+}
+
+.mixControl {
+  min-height: 64px;
 }
 
 .faderLabel {
@@ -228,12 +251,13 @@
 }
 
 .meterGroup {
-  min-height: 96px;
+  min-height: 0;
+  height: 100%;
   display: flex;
   align-items: end;
   justify-content: center;
   gap: 7px;
-  padding: 6px 4px 0;
+  padding: 2px 2px 0;
 }
 
 .meterColumn {
@@ -255,7 +279,7 @@
 .meterTrack {
   position: relative;
   width: 9px;
-  min-height: 72px;
+  min-height: 48px;
   overflow: hidden;
   background: repeating-linear-gradient(
     to top,
@@ -307,7 +331,7 @@
 }
 
 .switches button {
-  min-height: 26px;
+  min-height: 22px;
   padding: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
@@ -340,9 +364,9 @@
   grid-column: 2;
   grid-row: 2;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 8px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 6px;
   border-top: 3px solid var(--color-accent-primary);
   border-right: 0;
   border-bottom: 0;
@@ -373,15 +397,12 @@
   border-radius: 4px;
 }
 
-.masterChannel .meterGroup {
-  min-height: 140px;
-}
-
 .masterChannel .meterTrack {
-  min-height: 116px;
+  min-height: 48px;
 }
 
 .masterFader {
+  grid-template-rows: auto minmax(0, 1fr) auto;
   align-items: center;
   justify-items: center;
 }
@@ -392,14 +413,13 @@
 }
 
 .masterFader input {
-  height: 150px;
   accent-color: var(--color-accent-primary);
 }
 
 .safety {
   display: grid;
-  gap: 8px;
-  padding: 8px;
+  gap: 4px;
+  padding: 5px;
   color: var(--color-text-secondary);
   background: color-mix(in srgb, var(--color-bg-control) 70%, transparent);
   border: 1px solid var(--color-border-default);
@@ -423,7 +443,8 @@
 .diagnostics {
   margin: 0;
   display: grid;
-  gap: 5px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 5px;
 }
 
 .diagnostics div {
@@ -465,7 +486,7 @@
 
 @media (max-width: 860px) {
   .panel {
-    grid-template-columns: minmax(0, 1fr) 116px;
+    grid-template-columns: minmax(0, 1fr) 136px;
   }
 
   .masterChannel {

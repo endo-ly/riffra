@@ -778,6 +778,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <MixerPanel
             session={props.session}
             selectedTrackId={selectedTrackId}
+            missingDeviceIds={[
+              ...(props.missingDeviceIds ?? []),
+              ...(transport?.missingDeviceIds ?? []),
+            ]}
             api={props.api}
             applyCanonicalState={props.applyCanonicalState}
             setAudio={props.setAudio}

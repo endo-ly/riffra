@@ -17,6 +17,7 @@ interface MixerTrackChannelStripProps {
   volumeAutomation: AutomationLane | undefined;
   panAutomation: AutomationLane | undefined;
   selected: boolean;
+  missingDeviceIds: readonly string[];
   api: MixerTrackApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelect: () => void;
@@ -37,7 +38,9 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
   });
   const color = resolveTrackColor(track, props.trackIndex);
   const fxCount = track.rack.devices.length;
-  const hasMissingFx = track.rack.devices.some((device) => device.disabledPlaceholder);
+  const hasMissingFx = track.rack.devices.some(
+    (device) => device.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+  );
   const commitSwitch = async (field: 'muted' | 'solo' | 'armed') => {
     if (props.disabled || pendingSwitch !== null) return;
     props.onSelect();
@@ -51,7 +54,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
         getProjectEpoch() !== projectEpochAtRequest
       )
         return;
-      props.applyCanonicalState(result.canonical);
+      if (!props.applyCanonicalState(result.canonical)) return;
       if (result.projection.state === 'failed') props.onError?.(result.projection.message);
     } catch (error) {
       if (
@@ -122,6 +125,11 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
           onPointerCancel={mix.cancel}
           onKeyDown={(event) => {
             if (event.key === 'Escape') mix.cancel();
+            else if (isMixAdjustmentKey(event.key)) mix.beginInteraction();
+          }}
+          onKeyUp={(event) => {
+            if (isMixAdjustmentKey(event.key))
+              commitValue('pan', Number(event.currentTarget.value));
           }}
           onDoubleClick={() => {
             mix.setPan(0);
@@ -132,41 +140,48 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
         />
       </label>
 
-      <MixerMeter trackId={track.id} />
+      <div className={styles.mixControl}>
+        <MixerMeter trackId={track.id} />
 
-      <label className={styles.faderControl}>
-        <span className={styles.faderLabel}>
-          <span>GAIN</span>
-          {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
-        </span>
-        <input
-          type="range"
-          min="-90"
-          max="24"
-          step="0.1"
-          value={mix.gainDb}
-          disabled={props.disabled}
-          aria-label={`${track.name} gain`}
-          onPointerDown={mix.beginInteraction}
-          onChange={(event) => {
-            const value = Number(event.currentTarget.value);
-            mix.setGainDb(value);
-            mix.schedulePreview('gainDb', value);
-          }}
-          onPointerUp={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
-          onPointerCancel={mix.cancel}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') mix.cancel();
-          }}
-          onDoubleClick={() => {
-            mix.setGainDb(0);
-            mix.schedulePreview('gainDb', 0);
-            commitValue('gainDb', 0);
-          }}
-          onBlur={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
-        />
-        <output>{formatDb(mix.gainDb)}</output>
-      </label>
+        <label className={styles.faderControl}>
+          <span className={styles.faderLabel}>
+            <span>GAIN</span>
+            {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
+          </span>
+          <input
+            type="range"
+            min="-90"
+            max="24"
+            step="0.1"
+            value={mix.gainDb}
+            disabled={props.disabled}
+            aria-label={`${track.name} gain`}
+            onPointerDown={mix.beginInteraction}
+            onChange={(event) => {
+              const value = Number(event.currentTarget.value);
+              mix.setGainDb(value);
+              mix.schedulePreview('gainDb', value);
+            }}
+            onPointerUp={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
+            onPointerCancel={mix.cancel}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') mix.cancel();
+              else if (isMixAdjustmentKey(event.key)) mix.beginInteraction();
+            }}
+            onKeyUp={(event) => {
+              if (isMixAdjustmentKey(event.key))
+                commitValue('gainDb', Number(event.currentTarget.value));
+            }}
+            onDoubleClick={() => {
+              mix.setGainDb(0);
+              mix.schedulePreview('gainDb', 0);
+              commitValue('gainDb', 0);
+            }}
+            onBlur={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
+          />
+          <output>{formatDb(mix.gainDb)}</output>
+        </label>
+      </div>
 
       <div className={styles.switches} role="group" aria-label={`${track.name} mix switches`}>
         {(
@@ -197,6 +212,10 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       </div>
     </article>
   );
+}
+
+function isMixAdjustmentKey(key: string): boolean {
+  return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
 }
 
 function formatPan(pan: number): string {
