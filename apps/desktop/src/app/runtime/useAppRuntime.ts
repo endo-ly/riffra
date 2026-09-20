@@ -189,14 +189,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       unlistenProjectActivated();
       unlistenMeters();
     };
-  }, [
-    activeProjectId,
-    api,
-    applyCanonicalState,
-    applyProjectActivation,
-    hostGeneration,
-    mergeBootstrapState,
-  ]);
+  }, [api, applyCanonicalState, applyProjectActivation, hostGeneration, mergeBootstrapState]);
 
   return {
     ...sessionHook,
