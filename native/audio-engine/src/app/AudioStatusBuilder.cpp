@@ -32,8 +32,8 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
             "Audio device disconnected; output is muted and any captured take is preserved.");
     status->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
     status->setProperty("masterGainDb", pipeline.getMasterGainDb());
-    status->setProperty("inputPeak", pipeline.getInputPeak());
-    status->setProperty("outputPeak", pipeline.getOutputPeak());
+    status->setProperty("inputPeak", pipeline.peekInputPeak());
+    status->setProperty("outputPeak", pipeline.peekOutputPeak());
     status->setProperty("invalidSamples",
                         static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
     status->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
@@ -54,8 +54,8 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
                              static_cast<juce::int64>(pipeline.getMaximumCallbackDurationUs()));
     diagnostics->setProperty("callbackOverruns",
                              static_cast<juce::int64>(pipeline.getCallbackOverruns()));
-    diagnostics->setProperty("preLimiterPeak", pipeline.getPreLimiterPeak());
-    diagnostics->setProperty("limiterGainReductionDb", pipeline.getLimiterGainReductionDb());
+    diagnostics->setProperty("preLimiterPeak", pipeline.peekPreLimiterPeak());
+    diagnostics->setProperty("limiterGainReductionDb", pipeline.peekLimiterGainReductionDb());
     diagnostics->setProperty("hardClipSamples",
                              static_cast<juce::int64>(pipeline.getHardClipSamples()));
     if (timeline != nullptr) {

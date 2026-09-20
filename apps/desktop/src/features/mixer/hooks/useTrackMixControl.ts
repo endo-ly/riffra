@@ -5,6 +5,8 @@ import type { ArrangeApi, AudioApi } from '@/native/native-api';
 
 type TrackMixApi = Pick<ArrangeApi, 'updateTrack'> & Pick<AudioApi, 'previewTrackMix'>;
 type MixParameter = 'gainDb' | 'pan';
+const mixParameters: readonly MixParameter[] = ['gainDb', 'pan'];
+
 interface PendingCommit {
   interactionId: number;
   value: number;
@@ -31,98 +33,161 @@ export function useTrackMixControl({
   const [gainDb, setGainDb] = useState(track.gainDb);
   const [pan, setPan] = useState(track.pan);
   const canonical = useRef({ gainDb: track.gainDb, pan: track.pan });
-  const previewTimer = useRef<number | null>(null);
+  const previewTimers = useRef<Partial<Record<MixParameter, number>>>({});
+  const previewVersions = useRef<Record<MixParameter, number>>({ gainDb: 0, pan: 0 });
   const previewChain = useRef<Promise<void>>(Promise.resolve());
   const pendingCommit = useRef<Partial<Record<MixParameter, PendingCommit>>>({});
+  const editing = useRef<Partial<Record<MixParameter, boolean>>>({});
   const interactionId = useRef(0);
   const disposed = useRef(false);
-  const cancelled = useRef(false);
+  const cancelled = useRef<Partial<Record<MixParameter, boolean>>>({});
   const activeSessionId = useRef(sessionId);
+  const activeTrackId = useRef(track.id);
+
+  const clearPreviewTimer = useCallback((parameter: MixParameter) => {
+    const timer = previewTimers.current[parameter];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete previewTimers.current[parameter];
+    }
+  }, []);
+
+  const invalidatePreview = useCallback((parameter: MixParameter) => {
+    previewVersions.current[parameter] += 1;
+    return previewVersions.current[parameter];
+  }, []);
+
+  const queuePreview = useCallback(
+    (
+      parameter: MixParameter,
+      value: number,
+      generation: number,
+      projectEpoch: number,
+      previewVersion: number,
+    ) => {
+      previewChain.current = previewChain.current
+        .catch(() => undefined)
+        .then(() => {
+          if (
+            disposed.current ||
+            previewVersions.current[parameter] !== previewVersion ||
+            getHostGeneration() !== generation ||
+            getProjectEpoch() !== projectEpoch
+          )
+            return;
+          return api.previewTrackMix(track.id, { [parameter]: value });
+        })
+        .catch(() => undefined);
+    },
+    [api, track.id],
+  );
+
+  const setDraft = useCallback((parameter: MixParameter, value: number) => {
+    if (parameter === 'gainDb') setGainDb(value);
+    else setPan(value);
+  }, []);
+
+  const restoreCanonicalRuntime = useCallback(
+    (parameter: MixParameter) => {
+      const value = canonical.current[parameter];
+      setDraft(parameter, value);
+      clearPreviewTimer(parameter);
+      const generation = getHostGeneration();
+      const projectEpoch = getProjectEpoch();
+      const previewVersion = invalidatePreview(parameter);
+      queuePreview(parameter, value, generation, projectEpoch, previewVersion);
+    },
+    [clearPreviewTimer, invalidatePreview, queuePreview, setDraft],
+  );
 
   useEffect(() => {
-    if (activeSessionId.current !== sessionId) {
+    const sessionChanged = activeSessionId.current !== sessionId;
+    const trackChanged = activeTrackId.current !== track.id;
+    if (sessionChanged || trackChanged) {
       activeSessionId.current = sessionId;
-      cancelled.current = false;
+      activeTrackId.current = track.id;
+      cancelled.current = {};
+      editing.current = {};
       interactionId.current += 1;
-      if (previewTimer.current !== null) {
-        window.clearTimeout(previewTimer.current);
-        previewTimer.current = null;
-      }
+      mixParameters.forEach(clearPreviewTimer);
+      mixParameters.forEach(invalidatePreview);
       previewChain.current = Promise.resolve();
       pendingCommit.current = {};
     }
-    canonical.current = { gainDb: track.gainDb, pan: track.pan };
-    setGainDb(track.gainDb);
-    setPan(track.pan);
-  }, [sessionId, track.id, track.gainDb, track.pan]);
 
-  useEffect(
-    () => () => {
+    const nextValues = { gainDb: track.gainDb, pan: track.pan };
+    mixParameters.forEach((parameter) => {
+      const previousValue = canonical.current[parameter];
+      const nextValue = nextValues[parameter];
+      canonical.current[parameter] = nextValue;
+      if (editing.current[parameter]) return;
+
+      setDraft(parameter, nextValue);
+      if (!sessionChanged && !trackChanged && previousValue !== nextValue) {
+        clearPreviewTimer(parameter);
+        const generation = getHostGeneration();
+        const projectEpoch = getProjectEpoch();
+        const previewVersion = invalidatePreview(parameter);
+        queuePreview(parameter, nextValue, generation, projectEpoch, previewVersion);
+      }
+    });
+  }, [
+    clearPreviewTimer,
+    invalidatePreview,
+    queuePreview,
+    sessionId,
+    setDraft,
+    track.gainDb,
+    track.id,
+    track.pan,
+  ]);
+
+  useEffect(() => {
+    disposed.current = false;
+    return () => {
       disposed.current = true;
-      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    },
-    [],
-  );
+      mixParameters.forEach(clearPreviewTimer);
+    };
+  }, [clearPreviewTimer]);
 
   const schedulePreview = useCallback(
     (parameter: MixParameter, value: number) => {
       if (disabled || !Number.isFinite(value)) return;
       const generationAtSchedule = getHostGeneration();
       const projectEpochAtSchedule = getProjectEpoch();
-      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-      previewTimer.current = window.setTimeout(() => {
-        previewTimer.current = null;
+      clearPreviewTimer(parameter);
+      const previewVersion = invalidatePreview(parameter);
+      previewTimers.current[parameter] = window.setTimeout(() => {
+        delete previewTimers.current[parameter];
         if (
           disposed.current ||
+          previewVersions.current[parameter] !== previewVersion ||
           getHostGeneration() !== generationAtSchedule ||
           getProjectEpoch() !== projectEpochAtSchedule
         )
           return;
-        previewChain.current = previewChain.current
-          .catch(() => undefined)
-          .then(() => {
-            if (
-              disposed.current ||
-              getHostGeneration() !== generationAtSchedule ||
-              getProjectEpoch() !== projectEpochAtSchedule
-            )
-              return;
-            return api.previewTrackMix(track.id, { [parameter]: value });
-          })
-          .catch(() => undefined);
+        queuePreview(
+          parameter,
+          value,
+          generationAtSchedule,
+          projectEpochAtSchedule,
+          previewVersion,
+        );
       }, 40);
     },
-    [api, disabled, track.id],
+    [clearPreviewTimer, disabled, invalidatePreview, queuePreview],
   );
-
-  const restoreCanonicalRuntime = useCallback(() => {
-    const generation = getHostGeneration();
-    const projectEpoch = getProjectEpoch();
-    const values = canonical.current;
-    setGainDb(values.gainDb);
-    setPan(values.pan);
-    previewChain.current = previewChain.current
-      .catch(() => undefined)
-      .then(() => {
-        if (
-          disposed.current ||
-          getHostGeneration() !== generation ||
-          getProjectEpoch() !== projectEpoch
-        )
-          return;
-        return api.previewTrackMix(track.id, values);
-      })
-      .catch(() => undefined);
-  }, [api, track.id]);
 
   const commit = useCallback(
     async (parameter: MixParameter, value: number) => {
-      if (cancelled.current) {
-        cancelled.current = false;
+      if (cancelled.current[parameter]) {
+        delete cancelled.current[parameter];
+        editing.current[parameter] = false;
         return;
       }
+      editing.current[parameter] = false;
       if (disabled || !Number.isFinite(value)) {
-        restoreCanonicalRuntime();
+        restoreCanonicalRuntime(parameter);
         return;
       }
       const generationAtRequest = getHostGeneration();
@@ -132,22 +197,9 @@ export function useTrackMixControl({
       pendingCommit.current[parameter] = { interactionId: currentInteractionId, value };
       const patch = { [parameter]: value } as { gainDb?: number; pan?: number };
       try {
-        if (previewTimer.current !== null) {
-          window.clearTimeout(previewTimer.current);
-          previewTimer.current = null;
-          previewChain.current = previewChain.current
-            .catch(() => undefined)
-            .then(() => {
-              if (
-                disposed.current ||
-                getHostGeneration() !== generationAtRequest ||
-                getProjectEpoch() !== projectEpochAtRequest
-              )
-                return;
-              return api.previewTrackMix(track.id, patch);
-            })
-            .catch(() => undefined);
-        }
+        clearPreviewTimer(parameter);
+        const previewVersion = invalidatePreview(parameter);
+        queuePreview(parameter, value, generationAtRequest, projectEpochAtRequest, previewVersion);
         await previewChain.current.catch(() => undefined);
         if (
           disposed.current ||
@@ -169,11 +221,11 @@ export function useTrackMixControl({
         );
         if (committed) {
           canonical.current = { gainDb: committed.gainDb, pan: committed.pan };
-          setGainDb(committed.gainDb);
-          setPan(committed.pan);
+          if (!editing.current.gainDb) setGainDb(committed.gainDb);
+          if (!editing.current.pan) setPan(committed.pan);
         }
         if (result.projection.state === 'failed') {
-          restoreCanonicalRuntime();
+          restoreCanonicalRuntime(parameter);
           onError?.(result.projection.message);
         }
       } catch (error) {
@@ -183,7 +235,7 @@ export function useTrackMixControl({
           getProjectEpoch() !== projectEpochAtRequest
         )
           return;
-        restoreCanonicalRuntime();
+        restoreCanonicalRuntime(parameter);
         onError?.(error instanceof Error ? error.message : String(error));
       } finally {
         const pending = pendingCommit.current[parameter];
@@ -191,23 +243,39 @@ export function useTrackMixControl({
           delete pendingCommit.current[parameter];
       }
     },
-    [api, applyCanonicalState, disabled, onError, restoreCanonicalRuntime, track.id],
+    [
+      api,
+      applyCanonicalState,
+      clearPreviewTimer,
+      disabled,
+      invalidatePreview,
+      onError,
+      queuePreview,
+      restoreCanonicalRuntime,
+      track.id,
+    ],
   );
 
-  const cancel = useCallback(() => {
-    cancelled.current = true;
-    interactionId.current += 1;
-    if (previewTimer.current !== null) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
-    restoreCanonicalRuntime();
-  }, [restoreCanonicalRuntime]);
+  const cancel = useCallback(
+    (parameter: MixParameter) => {
+      cancelled.current[parameter] = true;
+      editing.current[parameter] = false;
+      interactionId.current += 1;
+      clearPreviewTimer(parameter);
+      restoreCanonicalRuntime(parameter);
+    },
+    [clearPreviewTimer, restoreCanonicalRuntime],
+  );
 
-  const beginInteraction = useCallback(() => {
-    interactionId.current += 1;
-    cancelled.current = false;
-  }, []);
+  const beginInteraction = useCallback(
+    (parameter: MixParameter) => {
+      interactionId.current += 1;
+      cancelled.current[parameter] = false;
+      editing.current[parameter] = true;
+      invalidatePreview(parameter);
+    },
+    [invalidatePreview],
+  );
 
   return {
     gainDb,

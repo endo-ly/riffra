@@ -42,14 +42,14 @@ Arrange の Main Canvas は Timeline である。Browser と Properties は Left
 │                    │ │ Timeline · Tracks / Clips / Automation              │ │
 │                    │ ├─────────────────────────────────────────────────────┤ │
 │                    │ │ LOWER AREA                                          │ │
-│ PROPERTIES         │ │ MIDI Editor / Mixer / Devices                       │ │
+│ PROPERTIES         │ │ MIDI Editor / Mixer                                 │ │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads / Octave / Velocity         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Lower Area は内部編集とミックス確認、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Lower Area の Devices や Mixer で音を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。
+制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Lower Area は内部編集とミックス確認、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Lower Area の Mixer で音を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。Devices は将来、同じLower Areaへ追加する。
 
 ### 2.2 選択・編集対象・演奏先
 
@@ -326,17 +326,17 @@ Arrange の Left Column は Browser と Properties を上下に常時表示す�
 
 ### 4.1 Browser
 
-Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または Track の Devices へ投入する。
+Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または将来の Track 編集面へ投入する。
 
 ```text
 Browser
 ├─ Audio / MIDI Assets ─────→ Timeline
 ├─ Recordings / Inbox ──────→ Timeline / Take workflow
-├─ Instruments ─────────────→ Track / Devices
-└─ Effects ─────────────────→ Devices
+├─ Instruments ─────────────→ Track / 将来のDevices編集面
+└─ Effects ─────────────────→ 将来のDevices編集面
 ```
 
-Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、Instrument または Effect として Track の Devices へ追加する。
+Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、将来のDevices編集面でInstrumentまたはEffectとしてTrackへ追加できる構造とする。
 
 Instrument や Effect の追加ボタンから開く Add Browser は、現在の追加先を引き継いで候補を絞る。
 
@@ -367,7 +367,7 @@ Track 自体の属性を扱う。
 | Status     | Input source、recording、missing dependency など Track に関係する状態                      |
 | Instrument | Built-in音源またはVST3音源の名前、Bypass、Change、Clear。EditとMissing操作はVST3だけに表示 |
 
-Track Properties は Track 属性を編集する。Instrument と Effect Chain は Devices の編集面で扱う。
+Track Properties は Track 属性を編集する。Instrument と Effect Chain は、現在のArrangeでは既存のTrack操作から扱い、将来はDevicesの編集面へ集約する。
 
 #### Audio Clip Properties
 
@@ -436,7 +436,7 @@ Raw / Processed の両方を持つ Audio Take は同じ位置から切り替え�
 
 ## 5. Lower Area
 
-Lower Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集・確認する。Arrange では MIDI Editor、Mixer、Devices のいずれか一つを表示する。
+Lower Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集・確認する。現在のArrangeでは MIDI Editor または Mixer のいずれか一つを表示する。Devicesの編集面は将来追加する。
 
 Lower Area は、Timeline Toolbar または対象を開く操作から明示された編集面を表示する。MIDI Editor と Mixer は同じ領域を共有し、表示面を切り替えても Canonical state、Arrange Selection、Active MIDI Clip はそれぞれの責務を保つ。外側に対象名を繰り返す文言ヘッダーは置かず、各編集面自身の Toolbar と編集対象を保ったまま作業を続けられる。
 
@@ -546,9 +546,9 @@ Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節�
 
 Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
-### 5.3 Devices
+### 5.3 将来のDevices編集面
 
-Devices は Track Context の Instrument と Effect Chain を扱う。Properties の子ではなく Lower Area の編集面として、Track の選択状態と同じ文脈で編集する。Lower Area に機能選択タブは置かず、対象を開く操作から編集面を表示する。
+Devices編集面は現在提供していない。将来追加する場合は、Track Context の Instrument と Effect Chain をPropertiesの子ではなくLower Areaの編集面として、Trackの選択状態と同じ文脈で扱う。Lower Areaに機能選択タブは置かず、対象を開く操作から編集面を表示する。
 
 ```text
 Track: Synth Lead
@@ -626,7 +626,7 @@ Focused Instrument Track ────────→ Play Surface / Computer MID
 
 ### 6.2 Lower Area との連携
 
-Play Surface と Lower Area は同時に利用できる。特に Devices や Mixer との組み合わせを、Instrument の音作りと出力確認における基本導線とする。
+Play Surface と Lower Area は同時に利用できる。現在は Mixer との組み合わせをInstrumentの出力確認に用い、将来はDevicesとの組み合わせを音作りの導線へ加える。
 
 ```text
 Devices
@@ -704,13 +704,13 @@ Hover、Selected、Focused、Active Tool、Pending、Recording、Warning など�
 
 Missing source、Missing Plugin、Audio device fault、runtime out-of-sync など制作継続へ影響する問題は、作用範囲に応じて表示先を決める。
 
-| 問題                   | 主な表示先                     |
-| ---------------------- | ------------------------------ |
-| Audio runtime / device | Global Control Bar + 全体通知  |
-| Missing Plugin         | Devices / Track status         |
-| Missing Audio source   | Clip / Properties              |
-| Runtime sync           | Timeline status + retry action |
-| 一時的な編集結果       | Toast                          |
+| 問題                   | 主な表示先                                     |
+| ---------------------- | ---------------------------------------------- |
+| Audio runtime / device | Global Control Bar + 全体通知                  |
+| Missing Plugin         | Track status（Devices追加後はDevicesにも表示） |
+| Missing Audio source   | Clip / Properties                              |
+| Runtime sync           | Timeline status + retry action                 |
+| 一時的な編集結果       | Toast                                          |
 
 Audio device、Runtime projection、Transport は別の状態として表示する。デバイスが利用可能でも
 投影が準備中なら Transport は `Starting` になり、投影が失敗した場合は Audio device の復旧と
@@ -794,7 +794,7 @@ Play from Global Transport
 Edit while listening
 ```
 
-Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Track の音色調整は Lower Area の Devices または Mixer で行い、Clip 編集と Track 属性の意味を分ける。
+Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Trackの音色調整は現在のTrack操作またはMixerで行い、将来はDevices編集面へ拡張する。Clip 編集と Track 属性の意味は分ける。
 
 ### 9.2 Audio 素材からの構成
 
@@ -816,7 +816,9 @@ Play and review
 
 素材探索、Timeline への投入、直接編集、属性調整が Browser、Properties、Main Canvas の間で連続する。
 
-### 9.3 Instrument と Effect の音作り
+### 9.3 将来のInstrumentとEffectの音作り
+
+Devices編集面を提供した後は、InstrumentとEffectの音作りを次の導線で行う。
 
 ```text
 Select / Focus Instrument Track

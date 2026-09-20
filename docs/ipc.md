@@ -234,6 +234,7 @@ MIDI 系の意味づけは次の通り。
 {"type": "audioMeters", "requestId": N, ...}
 {"type": "timelineIdleAck", "requestId": N}
 {"type": "trackMixAck", "requestId": N}
+{"type": "midiAck", "requestId": N}
 // 失敗: 構造化エラー
 {"type": "error", "requestId": N, "kind": "...", "message": "...", "operation": "...", "details": {...}}
 ```

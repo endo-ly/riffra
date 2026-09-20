@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -68,7 +69,7 @@ describe('useTrackMixControl', () => {
     );
 
     act(() => {
-      result.current.beginInteraction();
+      result.current.beginInteraction('gainDb');
       result.current.setGainDb(-6);
     });
     let commitPromise!: Promise<void>;
@@ -87,5 +88,75 @@ describe('useTrackMixControl', () => {
 
     expect(applyCanonicalState).toHaveBeenCalledWith(staleCanonical);
     expect(result.current.gainDb).toBe(-3);
+  });
+
+  it('keeps preview and commit alive under StrictMode', async () => {
+    const initialSession = sessionWithTrack();
+    const committedSession = structuredClone(initialSession);
+    committedSession.arrangement.tracks[0]!.gainDb = -3;
+    const committedCanonical = canonicalState(committedSession);
+    const api = {
+      previewTrackMix: vi.fn().mockResolvedValue(undefined),
+      updateTrack: vi.fn().mockResolvedValue(mutationResult(committedCanonical)),
+    };
+
+    const { result } = renderHook(
+      () =>
+        useTrackMixControl({
+          sessionId: initialSession.sessionId,
+          track: initialSession.arrangement.tracks[0]!,
+          api,
+          applyCanonicalState: () => true,
+        }),
+      { wrapper: StrictMode },
+    );
+
+    act(() => {
+      result.current.beginInteraction('gainDb');
+      result.current.setGainDb(-3);
+    });
+    await act(async () => {
+      await result.current.commit('gainDb', -3);
+    });
+
+    expect(api.updateTrack).toHaveBeenCalledWith('track:mixer-test', { gainDb: -3 });
+  });
+
+  it('keeps a draft alive when an external canonical update arrives during the drag', async () => {
+    const initialSession = sessionWithTrack();
+    const externalSession = structuredClone(initialSession);
+    externalSession.arrangement.tracks[0]!.gainDb = -3;
+    const externalTrack = externalSession.arrangement.tracks[0]!;
+    const committedSession = structuredClone(externalSession);
+    committedSession.arrangement.tracks[0]!.gainDb = -6;
+    const api = {
+      previewTrackMix: vi.fn().mockResolvedValue(undefined),
+      updateTrack: vi.fn().mockResolvedValue(mutationResult(canonicalState(committedSession))),
+    };
+
+    const { result, rerender } = renderHook(
+      ({ track }) =>
+        useTrackMixControl({
+          sessionId: initialSession.sessionId,
+          track,
+          api,
+          applyCanonicalState: () => true,
+        }),
+      { initialProps: { track: initialSession.arrangement.tracks[0]! } },
+    );
+
+    act(() => {
+      result.current.beginInteraction('gainDb');
+      result.current.setGainDb(-6);
+      result.current.schedulePreview('gainDb', -6);
+    });
+    rerender({ track: externalTrack });
+
+    expect(result.current.gainDb).toBe(-6);
+    await act(async () => {
+      await result.current.commit('gainDb', result.current.gainDb);
+    });
+
+    expect(api.updateTrack).toHaveBeenCalledWith('track:mixer-test', { gainDb: -6 });
   });
 });

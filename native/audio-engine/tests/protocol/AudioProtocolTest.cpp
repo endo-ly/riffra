@@ -93,6 +93,27 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     EXPECT_TRUE(status.hasProperty("midiOutputs"));
 }
 
+TEST(AudioDeviceServiceTest, StatusPeeksAtTransientPeaksForMeterTelemetry) {
+    juce::AudioDeviceManager manager;
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.metrics().recordBlock(0.1f, 0.2f, 0.3f, 0.25f, 0.35f, 2.5f, 0, 0);
+
+    const auto status = AudioStatusBuilder::currentStatus(manager, callback);
+    const auto* diagnostics = status.getProperty("diagnostics", {}).getDynamicObject();
+    ASSERT_NE(diagnostics, nullptr);
+    EXPECT_FLOAT_EQ(static_cast<float>(status.getProperty("inputPeak", 0.0)), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(status.getProperty("outputPeak", 0.0)), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(diagnostics->getProperty("preLimiterPeak")), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(diagnostics->getProperty("limiterGainReductionDb")), 2.5f);
+
+    const auto meters = AudioStatusBuilder::currentMeters(callback);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("inputPeak", 0.0)), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeak", 0.0)), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("preLimiterPeak", 0.0)), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("limiterGainReductionDb", 0.0)), 2.5f);
+}
+
 TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
     const auto probe = AudioDeviceService::discover();
 

@@ -431,7 +431,7 @@ fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
             }
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
-        Some("transportStatus" | "timelineAck" | "timelineIdleAck" | "trackMixAck") => {
+        Some("transportStatus" | "timelineAck" | "timelineIdleAck" | "trackMixAck" | "midiAck") => {
             Some(ParsedNativeLine::Acknowledgement { request_id })
         }
         Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
@@ -893,6 +893,12 @@ mod tests {
             parse_native_line(br#"{"type":"trackMixAck","requestId":11}"#),
             Some(ParsedNativeLine::Acknowledgement {
                 request_id: Some(11)
+            })
+        ));
+        assert!(matches!(
+            parse_native_line(br#"{"type":"midiAck","requestId":12}"#),
+            Some(ParsedNativeLine::Acknowledgement {
+                request_id: Some(12)
             })
         ));
         assert!(

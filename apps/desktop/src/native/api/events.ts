@@ -6,7 +6,7 @@ import type {
   ProjectState,
   RuntimeProjectionStatus,
 } from '@/model/domain';
-import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import type { NativeEventApi, RecordingFinalizedEvent } from '../native-api';
 import { isNativeRuntime } from '../invoke';
 import type { TransportStatus } from '../contracts';
@@ -29,7 +29,7 @@ function subscribe<T>(eventName: string, callback: (payload: T) => void): () => 
 
 export const eventApi: NativeEventApi = {
   onAudioStatus: (callback) => subscribe<AudioStatus>('audio-status', callback),
-  onAudioMeters: (callback) => subscribe<AudioMeters>('audio-meters', callback),
+  onAudioMeters: (callback) => subscribe<AudioMeterFrame>('audio-meters', callback),
   onCanonicalStateChanged: (callback) =>
     subscribe<CanonicalState>('canonical-state-changed', callback),
   onProjectStateChanged: (callback) => subscribe<ProjectState>('project-state-changed', callback),

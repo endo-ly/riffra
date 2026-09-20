@@ -8,8 +8,9 @@ import type {
   ProjectState,
 } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
-import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import {
+  markAudioMetersUnavailable,
   publishAudioMeterSummary,
   publishAudioMeters,
   resetAudioMeters,
@@ -130,6 +131,9 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = api.onAudioStatus((status) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
+      if (status.state === 'faulted' || status.state === 'offline' || status.state === 'starting') {
+        markAudioMetersUnavailable();
+      }
       publishAudioMeterSummary({
         inputPeak: status.inputPeak,
         outputPeak: status.outputPeak,
@@ -153,7 +157,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         setAudio(next);
       }, 100);
     });
-    const unlistenMeters = api.onAudioMeters((meters: AudioMeters) => {
+    const unlistenMeters = api.onAudioMeters((meters: AudioMeterFrame) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
       publishAudioMeters(meters);
     });

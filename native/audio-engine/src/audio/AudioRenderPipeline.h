@@ -53,6 +53,8 @@ public:
     [[nodiscard]] float getOutputPeakRight() const noexcept {
         return audioMetrics.outputPeakRight();
     }
+    [[nodiscard]] float peekInputPeak() const noexcept { return audioMetrics.peekInputPeak(); }
+    [[nodiscard]] float peekOutputPeak() const noexcept { return audioMetrics.peekOutputPeak(); }
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept {
         return audioMetrics.invalidSampleCount();
     }
@@ -71,6 +73,12 @@ public:
     [[nodiscard]] float getPreLimiterPeak() const noexcept { return audioMetrics.preLimiterPeak(); }
     [[nodiscard]] float getLimiterGainReductionDb() const noexcept {
         return audioMetrics.limiterGainReductionDb();
+    }
+    [[nodiscard]] float peekPreLimiterPeak() const noexcept {
+        return audioMetrics.peekPreLimiterPeak();
+    }
+    [[nodiscard]] float peekLimiterGainReductionDb() const noexcept {
+        return audioMetrics.peekLimiterGainReductionDb();
     }
     [[nodiscard]] std::uint64_t getHardClipSamples() const noexcept {
         return audioMetrics.hardClipSamples();

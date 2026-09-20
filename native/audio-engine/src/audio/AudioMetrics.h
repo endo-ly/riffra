@@ -18,6 +18,8 @@ public:
     [[nodiscard]] float outputPeak() const noexcept;
     [[nodiscard]] float outputPeakLeft() const noexcept;
     [[nodiscard]] float outputPeakRight() const noexcept;
+    [[nodiscard]] float peekInputPeak() const noexcept;
+    [[nodiscard]] float peekOutputPeak() const noexcept;
     [[nodiscard]] std::uint64_t invalidSampleCount() const noexcept;
     [[nodiscard]] std::uint64_t callbackCount() const noexcept;
     [[nodiscard]] std::uint64_t averageCallbackDurationUs() const noexcept;
@@ -25,6 +27,8 @@ public:
     [[nodiscard]] std::uint64_t callbackOverruns() const noexcept;
     [[nodiscard]] float preLimiterPeak() const noexcept;
     [[nodiscard]] float limiterGainReductionDb() const noexcept;
+    [[nodiscard]] float peekPreLimiterPeak() const noexcept;
+    [[nodiscard]] float peekLimiterGainReductionDb() const noexcept;
     [[nodiscard]] std::uint64_t hardClipSamples() const noexcept;
 
     // Audio thread only, except for resetForDevice which is called by the

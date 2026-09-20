@@ -122,7 +122,7 @@ native/audio-engine/
 | テイク比較            | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                        |
 | MIDI                  | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                                  |
 
-成功応答は `audioStatus` か `audioMeters` を返し、失敗応答は `type: "error"` に `kind`、`message`、`operation`、オブジェクト値の `details` を持つ。状態変化の通知（`transportStatus`、`recordingComplete`、`trackPluginStateChanged` など）は応答とは別に流れる。コマンド名・応答型・エラー形式・状態項目・メーター項目・ミュート理由の所有則は互換性として保つ。
+成功応答は状態（`audioStatus`）、メーター（`audioMeters`）、または操作固有のACK（`timelineIdleAck`、`trackMixAck`、`midiAck`）を返し、失敗応答は `type: "error"` に `kind`、`message`、`operation`、オブジェクト値の `details` を持つ。状態変化の通知（`transportStatus`、`recordingComplete`、`trackPluginStateChanged` など）は応答とは別に流れる。コマンド名・応答型・エラー形式・状態項目・メーター項目・ミュート理由の所有則は互換性として保つ。
 
 ## スレッドとリアルタイム制約
 

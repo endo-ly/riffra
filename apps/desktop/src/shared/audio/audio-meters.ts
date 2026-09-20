@@ -8,7 +8,7 @@ export interface TrackAudioMeter {
   rmsRight: number;
 }
 
-export interface AudioMeters {
+export interface AudioMeterFrame {
   inputPeak: number;
   outputPeak: number;
   outputPeakLeft: number;
@@ -21,7 +21,12 @@ export interface AudioMeters {
   trackMeters: readonly TrackAudioMeter[];
 }
 
+export interface AudioMeters extends AudioMeterFrame {
+  available: boolean;
+}
+
 const initialMeters: AudioMeters = {
+  available: false,
   inputPeak: 0,
   outputPeak: 0,
   outputPeakLeft: 0,
@@ -43,6 +48,7 @@ let meterNotificationTimer: ReturnType<typeof setTimeout> | null = null;
 function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
   if (
     left.inputPeak === right.inputPeak &&
+    left.available === right.available &&
     left.outputPeak === right.outputPeak &&
     left.outputPeakLeft === right.outputPeakLeft &&
     left.outputPeakRight === right.outputPeakRight &&
@@ -68,8 +74,7 @@ function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
   return false;
 }
 
-/** Publishes high-rate meter data without invalidating the whole App tree. */
-export function publishAudioMeters(next: AudioMeters): void {
+function publishAudioMeterSnapshot(next: AudioMeters): void {
   if (sameMeters(currentMeters, next)) return;
   const feedbackChanged = currentFeedbackSuspected !== next.feedbackSuspected;
   currentMeters = next;
@@ -85,16 +90,26 @@ export function publishAudioMeters(next: AudioMeters): void {
   }
 }
 
+/** Publishes a native meter frame and marks the source as available. */
+export function publishAudioMeters(next: AudioMeterFrame): void {
+  publishAudioMeterSnapshot({ ...next, available: true });
+}
+
 /** Updates only the low-frequency summary carried by semantic AudioStatus events. */
 export function publishAudioMeterSummary(
   next: Pick<AudioMeters, 'inputPeak' | 'outputPeak' | 'invalidSamples' | 'feedbackSuspected'>,
 ): void {
-  publishAudioMeters({ ...currentMeters, ...next });
+  publishAudioMeterSnapshot({ ...currentMeters, ...next });
 }
 
 /** Clears host-owned meter state when the active Host connection changes. */
 export function resetAudioMeters(): void {
-  publishAudioMeters(initialMeters);
+  publishAudioMeterSnapshot(initialMeters);
+}
+
+/** Hides the last frame while the audio runtime cannot produce new meter data. */
+export function markAudioMetersUnavailable(): void {
+  publishAudioMeterSnapshot(initialMeters);
 }
 
 function subscribe(listener: () => void): () => void {

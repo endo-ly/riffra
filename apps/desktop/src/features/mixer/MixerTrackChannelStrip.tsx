@@ -115,17 +115,17 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
           value={mix.pan}
           disabled={props.disabled}
           aria-label={`${track.name} pan`}
-          onPointerDown={mix.beginInteraction}
+          onPointerDown={() => mix.beginInteraction('pan')}
           onChange={(event) => {
             const value = Number(event.currentTarget.value);
             mix.setPan(value);
             mix.schedulePreview('pan', value);
           }}
           onPointerUp={(event) => commitValue('pan', Number(event.currentTarget.value))}
-          onPointerCancel={mix.cancel}
+          onPointerCancel={() => mix.cancel('pan')}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') mix.cancel();
-            else if (isMixAdjustmentKey(event.key)) mix.beginInteraction();
+            if (event.key === 'Escape') mix.cancel('pan');
+            else if (isMixAdjustmentKey(event.key)) mix.beginInteraction('pan');
           }}
           onKeyUp={(event) => {
             if (isMixAdjustmentKey(event.key))
@@ -156,17 +156,17 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
             value={mix.gainDb}
             disabled={props.disabled}
             aria-label={`${track.name} gain`}
-            onPointerDown={mix.beginInteraction}
+            onPointerDown={() => mix.beginInteraction('gainDb')}
             onChange={(event) => {
               const value = Number(event.currentTarget.value);
               mix.setGainDb(value);
               mix.schedulePreview('gainDb', value);
             }}
             onPointerUp={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
-            onPointerCancel={mix.cancel}
+            onPointerCancel={() => mix.cancel('gainDb')}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') mix.cancel();
-              else if (isMixAdjustmentKey(event.key)) mix.beginInteraction();
+              if (event.key === 'Escape') mix.cancel('gainDb');
+              else if (isMixAdjustmentKey(event.key)) mix.beginInteraction('gainDb');
             }}
             onKeyUp={(event) => {
               if (isMixAdjustmentKey(event.key))

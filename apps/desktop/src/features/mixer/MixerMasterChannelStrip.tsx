@@ -17,9 +17,18 @@ interface MixerMasterChannelStripProps {
 
 export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
   const meters = useAudioMeters();
-  const previousClipCount = useRef(meters.hardClipSamples);
+  const previousClipCount = useRef<number | null>(null);
   const [clipLatched, setClipLatched] = useState(false);
   useEffect(() => {
+    if (!meters.available) {
+      previousClipCount.current = null;
+      setClipLatched(false);
+      return undefined;
+    }
+    if (previousClipCount.current === null) {
+      previousClipCount.current = meters.hardClipSamples;
+      return undefined;
+    }
     if (meters.hardClipSamples > previousClipCount.current) {
       setClipLatched(true);
       const timer = window.setTimeout(() => setClipLatched(false), 1_500);
@@ -29,7 +38,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
     if (meters.hardClipSamples < previousClipCount.current) setClipLatched(false);
     previousClipCount.current = meters.hardClipSamples;
     return undefined;
-  }, [meters.hardClipSamples]);
+  }, [meters.available, meters.hardClipSamples]);
   const master = useMasterGainControl({
     session: props.session,
     applyCanonicalState: props.applyCanonicalState,
@@ -44,7 +53,8 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
     [master],
   );
   const safetyWarning =
-    meters.feedbackSuspected || clipLatched || meters.limiterGainReductionDb > 0;
+    meters.available &&
+    (meters.feedbackSuspected || clipLatched || meters.limiterGainReductionDb > 0);
 
   return (
     <aside className={styles.masterChannel} aria-label="Master mixer channel">
@@ -102,11 +112,11 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         <dl className={styles.diagnostics}>
           <div>
             <dt>PRE</dt>
-            <dd>{formatMeterDb(meters.preLimiterPeak)} dB</dd>
+            <dd>{meters.available ? `${formatMeterDb(meters.preLimiterPeak)} dB` : '—'}</dd>
           </div>
           <div>
             <dt>LIMITER</dt>
-            <dd>{meters.limiterGainReductionDb.toFixed(1)} dB</dd>
+            <dd>{meters.available ? `${meters.limiterGainReductionDb.toFixed(1)} dB` : '—'}</dd>
           </div>
           <div>
             <dt>CLIP</dt>
@@ -114,7 +124,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
           </div>
           <div>
             <dt>FEEDBACK</dt>
-            <dd>{meters.feedbackSuspected ? 'CHECK' : 'CLEAR'}</dd>
+            <dd>{meters.available ? (meters.feedbackSuspected ? 'CHECK' : 'CLEAR') : '—'}</dd>
           </div>
         </dl>
       </section>

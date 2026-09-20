@@ -20,6 +20,14 @@ float AudioMetrics::outputPeakRight() const noexcept {
     return outputPeakRightValue.exchange(0.0f, std::memory_order_acq_rel);
 }
 
+float AudioMetrics::peekInputPeak() const noexcept {
+    return inputPeakValue.load(std::memory_order_acquire);
+}
+
+float AudioMetrics::peekOutputPeak() const noexcept {
+    return outputPeakValue.load(std::memory_order_acquire);
+}
+
 std::uint64_t AudioMetrics::invalidSampleCount() const noexcept {
     return invalidSamples.load(std::memory_order_acquire);
 }
@@ -47,6 +55,14 @@ float AudioMetrics::preLimiterPeak() const noexcept {
 
 float AudioMetrics::limiterGainReductionDb() const noexcept {
     return limiterGainReductionDbValue.exchange(0.0f, std::memory_order_acq_rel);
+}
+
+float AudioMetrics::peekPreLimiterPeak() const noexcept {
+    return preLimiterPeakValue.load(std::memory_order_acquire);
+}
+
+float AudioMetrics::peekLimiterGainReductionDb() const noexcept {
+    return limiterGainReductionDbValue.load(std::memory_order_acquire);
 }
 
 std::uint64_t AudioMetrics::hardClipSamples() const noexcept {

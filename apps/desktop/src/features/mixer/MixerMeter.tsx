@@ -43,6 +43,7 @@ function meterValues(
   trackId?: string,
   master?: boolean,
 ): MeterValues | null {
+  if (!meters.available) return null;
   if (master) {
     return {
       peakLeft: meters.outputPeakLeft,

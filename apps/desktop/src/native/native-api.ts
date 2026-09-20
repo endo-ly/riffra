@@ -39,7 +39,7 @@ import type {
   HostTarget,
   LocalHostInfo,
 } from '@/model/domain';
-import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import type { AssetPreviewOptions, ScanJobStatus, TransportStatus } from './contracts';
 
 export interface MidiNoteInput {
@@ -450,7 +450,7 @@ export interface NativeEventApi {
    * unlisten is a no-op.
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
-  onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
+  onAudioMeters(callback: (meters: AudioMeterFrame) => void): () => void;
   onCanonicalStateChanged(callback: (state: CanonicalState) => void): () => void;
   onProjectStateChanged(callback: (state: ProjectState) => void): () => void;
   onProjectActivated(callback: (result: ProjectActivationResult) => void): () => void;

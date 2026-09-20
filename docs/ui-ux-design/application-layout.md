@@ -14,7 +14,7 @@ Riffra の制作画面は、音を探す場所、選択対象を調整する場�
 ├────────────────────┤                                                         │
 │ PROPERTIES         ├─────────────────────────────────────────────────────────┤
 │ Track / Clip /     │ LOWER AREA                                              │
-│ Take properties    │ MIDI Editor / Mixer / Devices                           │
+│ Take properties    │ MIDI Editor / Mixer                                     │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads                             │
@@ -54,7 +54,7 @@ Main Canvas は現在の制作領域を表示する。Arrange では Timeline �
 
 ## Lower Area
 
-Lower Area は Main Canvas の下側に置く共有編集領域である。Arrange では MIDI Editor、Mixer、Instrument と Effect Chain を扱う Devices の編集面を表示する。表示面は同時に一つとし、Resize、Collapse / Restore、Expand / Restore、Close を共通で提供する。Properties の子には置かず、表示する編集面を選ぶ操作は各機能の入口が担う。
+Lower Area は Main Canvas の下側に置く共有編集領域である。現在のArrangeでは MIDI Editor または Mixer を表示する。表示面は同時に一つとし、Resize、Collapse / Restore、Expand / Restore、Close を共通で提供する。将来は同じ領域へ Track のInstrumentとEffect Chainを扱うDevices編集面を追加できる。Properties の子には置かず、表示する編集面を選ぶ操作は各機能の入口が担う。
 
 ## Play Surface
 
