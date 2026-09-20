@@ -40,7 +40,7 @@ use crate::model::{
 use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot_for_project;
+use crate::runtime_snapshot::runtime_timeline_snapshot;
 use crate::session::commit::{self, CanonicalMutationEffect};
 use riffra_core::AppCore;
 use riffra_core::{
@@ -126,7 +126,7 @@ fn start_recording_in_session(
         .project_id()
         .map_err(|error| error.to_string())?;
     context.runtime.apply_and_wait(
-        runtime_timeline_snapshot_for_project(
+        runtime_timeline_snapshot(
             &context.data_root,
             context.built_in_instruments.as_ref(),
             &project_id,

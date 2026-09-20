@@ -31,14 +31,17 @@ public:
     [[nodiscard]] float peekLimiterGainReductionDb() const noexcept;
     [[nodiscard]] std::uint64_t hardClipSamples() const noexcept;
 
-    // Audio thread only, except for resetForDevice which is called by the
-    // device lifecycle thread before callbacks resume.
+    // Audio thread only, except for the transient/device resets called by the
+    // graph and device lifecycle threads while the audio boundary is controlled.
     void recordSilencedBlock(float inputPeak) noexcept;
     void recordBlock(float inputPeak, float preLimiterPeak, float outputPeak, float outputPeakLeft,
                      float outputPeakRight, float limiterGainReductionDb,
                      std::uint64_t hardClipSamples, std::uint64_t invalidSamples) noexcept;
     void recordCallbackDuration(std::chrono::steady_clock::time_point started, int numSamples,
                                 double sampleRate) noexcept;
+    // Clears only values belonging to the current transient meter window.
+    // Cumulative diagnostics remain available across graph boundaries.
+    void resetTransientMeters() noexcept;
     void resetForDevice() noexcept;
 
 private:

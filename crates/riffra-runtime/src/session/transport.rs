@@ -9,9 +9,7 @@ use riffra_core::{
 use std::path::Path;
 use std::time::Duration;
 
-pub use crate::runtime_snapshot::{
-    runtime_timeline_snapshot, runtime_timeline_snapshot_for_project,
-};
+pub use crate::runtime_snapshot::{offline_runtime_timeline_snapshot, runtime_timeline_snapshot};
 
 const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -28,7 +26,7 @@ impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
             sequence: request.sequence(),
             session_revision: request.session().arrangement.revision,
         };
-        let snapshot = runtime_timeline_snapshot_for_project(
+        let snapshot = runtime_timeline_snapshot(
             self.data_root,
             self.built_in_instruments,
             &self.project_id,
@@ -84,7 +82,7 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
     context
         .runtime
         .apply_candidate_and_wait(
-            runtime_timeline_snapshot_for_project(
+            runtime_timeline_snapshot(
                 context.data_root,
                 context.built_in_instruments,
                 &project_id,
@@ -166,7 +164,7 @@ mod tests {
         )
         .unwrap();
         let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resource_root).unwrap();
-        let snapshot = runtime_timeline_snapshot(&resource_root, &catalog, &session);
+        let snapshot = offline_runtime_timeline_snapshot(&resource_root, &catalog, &session);
 
         assert_eq!(
             snapshot["missingDeviceIds"],

@@ -134,6 +134,8 @@ private:
     friend class AudioRenderPipeline;
     friend class TimelineSnapshotBuilder;
 
+    void setGraphPublishedCallback(std::function<void()> callback);
+
     enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
 
@@ -310,6 +312,7 @@ private:
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
     std::atomic<std::uint64_t> graphPublishCount{0};
+    std::function<void()> graphPublishedCallback;
     std::atomic<std::uint64_t> clockGeneration{0};
     std::atomic<std::uint64_t> discontinuity{1};
     std::atomic<bool> monitorLiveInput{false};

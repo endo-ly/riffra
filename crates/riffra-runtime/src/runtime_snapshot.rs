@@ -3,23 +3,23 @@ use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_core::{CreativeSession, InternalInstrumentResource, TrackInstrumentSource};
 use std::path::{Path, PathBuf};
 
-/// Builds the device-independent projection consumed by the native graph.
+/// Builds the live runtime projection tagged with its owning Project.
 pub fn runtime_timeline_snapshot(
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
-) -> serde_json::Value {
-    runtime_timeline_snapshot_inner(data_root, built_in_instruments, None, session)
-}
-
-/// Builds a live runtime projection tagged with its owning Project.
-pub fn runtime_timeline_snapshot_for_project(
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
     project_id: &str,
     session: &CreativeSession,
 ) -> serde_json::Value {
     runtime_timeline_snapshot_inner(data_root, built_in_instruments, Some(project_id), session)
+}
+
+/// Builds the device-independent projection used by offline rendering.
+pub fn offline_runtime_timeline_snapshot(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    session: &CreativeSession,
+) -> serde_json::Value {
+    runtime_timeline_snapshot_inner(data_root, built_in_instruments, None, session)
 }
 
 fn runtime_timeline_snapshot_inner(
@@ -246,7 +246,7 @@ mod tests {
             session.arrangement.audio_clips.push(clip);
         }
 
-        let snapshot = runtime_timeline_snapshot(
+        let snapshot = offline_runtime_timeline_snapshot(
             &root,
             crate::test_support::empty_built_in_catalog(),
             &session,
@@ -282,7 +282,7 @@ mod tests {
         );
         session.arrangement.tracks.push(track);
 
-        let snapshot = runtime_timeline_snapshot(
+        let snapshot = offline_runtime_timeline_snapshot(
             &root,
             crate::test_support::empty_built_in_catalog(),
             &session,

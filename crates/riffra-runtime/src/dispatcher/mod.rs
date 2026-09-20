@@ -826,6 +826,7 @@ mod tests {
         for command in [
             "session.get",
             "audio.master-gain.preview",
+            "track.mix.preview",
             "track.add",
             "project.export",
             "transport.play",

@@ -121,13 +121,17 @@ void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_
         callbackOverrunsValue.fetch_add(1, std::memory_order_relaxed);
 }
 
-void AudioMetrics::resetForDevice() noexcept {
+void AudioMetrics::resetTransientMeters() noexcept {
     inputPeakValue.store(0.0f, std::memory_order_release);
     outputPeakValue.store(0.0f, std::memory_order_release);
     outputPeakLeftValue.store(0.0f, std::memory_order_release);
     outputPeakRightValue.store(0.0f, std::memory_order_release);
     preLimiterPeakValue.store(0.0f, std::memory_order_release);
     limiterGainReductionDbValue.store(0.0f, std::memory_order_release);
+}
+
+void AudioMetrics::resetForDevice() noexcept {
+    resetTransientMeters();
     hardClipSamplesValue.store(0, std::memory_order_release);
 }
 

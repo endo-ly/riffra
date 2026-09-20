@@ -142,6 +142,8 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
                                             TimelineEngine* timeline) {
     auto* meters = new juce::DynamicObject();
     meters->setProperty("type", "audioMeters");
+    const auto projectId = timeline != nullptr ? timeline->activeProjectId() : juce::String{};
+    meters->setProperty("projectId", projectId);
     meters->setProperty("inputPeak", pipeline.getInputPeak());
     meters->setProperty("outputPeak", pipeline.getOutputPeak());
     meters->setProperty("outputPeakLeft", pipeline.getOutputPeakLeft());
@@ -155,8 +157,6 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
     meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
     meters->setProperty("previewing", pipeline.isPreviewing());
     meters->setProperty("builtInPreviewing", pipeline.isBuiltInPreviewing());
-    meters->setProperty("projectId",
-                        timeline != nullptr ? timeline->activeProjectId() : juce::String{});
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));

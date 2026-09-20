@@ -26,7 +26,7 @@ enum class MuteReason : std::uint32_t {
 /// Owns the ordered realtime render and safety processing path.
 class AudioRenderPipeline final {
 public:
-    explicit AudioRenderPipeline(TimelineEngine& timeline) noexcept;
+    explicit AudioRenderPipeline(TimelineEngine& timeline);
     ~AudioRenderPipeline();
 
     AudioRenderPipeline(const AudioRenderPipeline&) = delete;

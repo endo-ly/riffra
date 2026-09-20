@@ -10,10 +10,12 @@
 
 namespace riffra {
 
-AudioRenderPipeline::AudioRenderPipeline(TimelineEngine& timelineIn) noexcept
-    : timelineEngine(timelineIn), recordingController(timelineIn) {}
+AudioRenderPipeline::AudioRenderPipeline(TimelineEngine& timelineIn)
+    : timelineEngine(timelineIn), recordingController(timelineIn) {
+    timelineEngine.setGraphPublishedCallback([this] { audioMetrics.resetTransientMeters(); });
+}
 
-AudioRenderPipeline::~AudioRenderPipeline() = default;
+AudioRenderPipeline::~AudioRenderPipeline() { timelineEngine.setGraphPublishedCallback({}); }
 
 void AudioRenderPipeline::setMuteReason(const MuteReason reason, const bool active) noexcept {
     const auto bit = muteReasonBit(reason);
@@ -113,6 +115,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                        const int numOutputChannels, const int numSamples,
                                        const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
+    TimelineEngine::AudioReadScope timelineRead(timelineEngine);
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
         audioMetrics.recordCallbackDuration(callbackStarted, numSamples,

@@ -9,7 +9,7 @@ use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot_for_project;
+use crate::runtime_snapshot::runtime_timeline_snapshot;
 use riffra_core::{AppCore, CanonicalSnapshot};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -357,12 +357,7 @@ fn restore_startup_runtime(
     })?;
     runtime
         .apply_and_wait(
-            runtime_timeline_snapshot_for_project(
-                data_root,
-                built_in_instruments,
-                project_id,
-                &target.session,
-            ),
+            runtime_timeline_snapshot(data_root, built_in_instruments, project_id, &target.session),
             riffra_core::ProjectionKey {
                 sequence: target.sequence,
                 session_revision: target.session.arrangement.revision,

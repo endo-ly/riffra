@@ -58,7 +58,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     }
 
     let status = runtime.submit_nonblocking(
-        crate::runtime_snapshot::runtime_timeline_snapshot_for_project(
+        crate::runtime_snapshot::runtime_timeline_snapshot(
             data_root,
             built_in_instruments,
             project_id,

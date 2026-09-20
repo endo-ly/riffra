@@ -165,7 +165,7 @@ impl HostState {
             .map_err(|error| error.to_string())?;
         self.runtime
             .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot_for_project(
+                crate::runtime_snapshot::runtime_timeline_snapshot(
                     &self.data_root,
                     self.built_in_instruments.as_ref(),
                     &project_id,
