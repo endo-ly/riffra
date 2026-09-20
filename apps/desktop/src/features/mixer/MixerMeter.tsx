@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import styles from './Mixer.module.css';
 
@@ -55,10 +54,7 @@ function meterValues(
 
 export function MixerMeter({ mode = 'peak-rms', ...props }: MixerMeterProps) {
   const meters = useAudioMeters();
-  const meter = useMemo(
-    () => meterValues(meters, props.trackId, props.master),
-    [meters, props.master, props.trackId],
-  );
+  const meter = meterValues(meters, props.trackId, props.master);
   const label = props.master ? 'Master stereo meter' : `${props.trackId ?? 'Track'} stereo meter`;
   return (
     <div className={styles.meterGroup} aria-label={label} data-unavailable={meter === null}>

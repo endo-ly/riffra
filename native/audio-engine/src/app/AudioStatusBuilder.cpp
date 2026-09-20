@@ -155,6 +155,8 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
     meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
     meters->setProperty("previewing", pipeline.isPreviewing());
     meters->setProperty("builtInPreviewing", pipeline.isBuiltInPreviewing());
+    meters->setProperty("projectId",
+                        timeline != nullptr ? timeline->activeProjectId() : juce::String{});
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));

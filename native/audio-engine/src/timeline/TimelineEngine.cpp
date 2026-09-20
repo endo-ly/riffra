@@ -125,6 +125,11 @@ juce::Array<juce::var> TimelineEngine::meterSnapshot() {
     return meters;
 }
 
+juce::String TimelineEngine::activeProjectId() const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    return timeline != nullptr ? timeline->projectId : juce::String{};
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();

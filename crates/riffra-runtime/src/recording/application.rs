@@ -40,7 +40,7 @@ use crate::model::{
 use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
+use crate::runtime_snapshot::runtime_timeline_snapshot_for_project;
 use crate::session::commit::{self, CanonicalMutationEffect};
 use riffra_core::AppCore;
 use riffra_core::{
@@ -121,10 +121,15 @@ fn start_recording_in_session(
             "Recording Session is not registered: {recording_session_id}"
         ));
     }
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| error.to_string())?;
     context.runtime.apply_and_wait(
-        runtime_timeline_snapshot(
+        runtime_timeline_snapshot_for_project(
             &context.data_root,
             context.built_in_instruments.as_ref(),
+            &project_id,
             &session,
         ),
         riffra_core::ProjectionKey {
@@ -1171,11 +1176,16 @@ fn finalize_arrange_recording(
         .core
         .canonical_state()
         .map_err(|error| error.to_string())?;
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| error.to_string())?;
     commit::finalize_arrangement_mutation(
         canonical,
         context.runtime.as_ref(),
         &context.data_root,
         context.built_in_instruments.as_ref(),
+        &project_id,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )
@@ -1633,11 +1643,16 @@ fn place_recording_on_timeline(
         .core
         .canonical_state()
         .map_err(|error| error.to_string())?;
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| error.to_string())?;
     Ok(Some(commit::finalize_arrangement_mutation(
         canonical,
         context.runtime.as_ref(),
         &context.data_root,
         context.built_in_instruments.as_ref(),
+        &project_id,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )?))

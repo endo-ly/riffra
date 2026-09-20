@@ -175,7 +175,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | --------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `runtime-startup-finished`  | `{ succeeded }`                     | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                          |
 | `audio-status`              | `AudioStatus`                       | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                                   |
-| `audio-meters`              | `AudioMeters`                       | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                                  |
+| `audio-meters`              | `AudioMeters`                       | Project ID、入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                      |
 | `transport-status`          | `TransportStatus`                   | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                                        |
 | `runtime-projection-status` | `RuntimeProjectionStatus`           | 非同期のランタイム投影状態、エラーコード、世代・音声環境 revision（queued / preparing / active / failed） |
 | `runtime-restarted`         | `{ generation }`                    | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                |
@@ -184,7 +184,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                               |
 | `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                    |
 
-`audio-meters` は `outputPeakLeft` / `outputPeakRight` と `trackMeters`（Track ID、左右Peak/RMS）を含む。既存の低頻度 `audio-status` が届いても、Desktop は高頻度メーターの Track データを消去しない。
+`audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`（Track ID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
 
 購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
 
@@ -273,17 +273,17 @@ stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing:
 
 ### 5.7 サイドカー → Rust イベント
 
-| type                                                      | 内容                                                                                                                       |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
-| `audioMeters`                                             | ピーク・リミッター診断・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知       |
-| `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                        |
-| `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                              |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                   |
-| `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
-| `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
+| type                                                      | 内容                                                                                                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）                       |
+| `audioMeters`                                             | Runtime 投影の `projectId`、ピーク・リミッター診断・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知 |
+| `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                                              |
+| `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                                                    |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                                         |
+| `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                                           |
+| `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                                                   |
 
-`audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native のMeter threadが約50 msごとに発行し、Rustは値を正規化したうえで同じ `audio-meters` Host eventへ転送する。
+`audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native のMeter threadが約50 msごとに発行し、Rustは `projectId` と値を検証・正規化したうえで同じ `audio-meters` Host eventへ転送する。
 
 `feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
 

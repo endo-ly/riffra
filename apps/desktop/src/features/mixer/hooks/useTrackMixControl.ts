@@ -38,7 +38,7 @@ export function useTrackMixControl({
   const previewChain = useRef<Promise<void>>(Promise.resolve());
   const pendingCommit = useRef<Partial<Record<MixParameter, PendingCommit>>>({});
   const editing = useRef<Partial<Record<MixParameter, boolean>>>({});
-  const interactionId = useRef(0);
+  const interactionIds = useRef<Record<MixParameter, number>>({ gainDb: 0, pan: 0 });
   const disposed = useRef(false);
   const cancelled = useRef<Partial<Record<MixParameter, boolean>>>({});
   const activeSessionId = useRef(sessionId);
@@ -108,7 +108,9 @@ export function useTrackMixControl({
       activeTrackId.current = track.id;
       cancelled.current = {};
       editing.current = {};
-      interactionId.current += 1;
+      mixParameters.forEach((parameter) => {
+        interactionIds.current[parameter] += 1;
+      });
       mixParameters.forEach(clearPreviewTimer);
       mixParameters.forEach(invalidatePreview);
       previewChain.current = Promise.resolve();
@@ -192,7 +194,7 @@ export function useTrackMixControl({
       }
       const generationAtRequest = getHostGeneration();
       const projectEpochAtRequest = getProjectEpoch();
-      const currentInteractionId = interactionId.current;
+      const currentInteractionId = interactionIds.current[parameter];
       if (pendingCommit.current[parameter]?.interactionId === currentInteractionId) return;
       pendingCommit.current[parameter] = { interactionId: currentInteractionId, value };
       const patch = { [parameter]: value } as { gainDb?: number; pan?: number };
@@ -260,7 +262,7 @@ export function useTrackMixControl({
     (parameter: MixParameter) => {
       cancelled.current[parameter] = true;
       editing.current[parameter] = false;
-      interactionId.current += 1;
+      interactionIds.current[parameter] += 1;
       clearPreviewTimer(parameter);
       restoreCanonicalRuntime(parameter);
     },
@@ -269,7 +271,7 @@ export function useTrackMixControl({
 
   const beginInteraction = useCallback(
     (parameter: MixParameter) => {
-      interactionId.current += 1;
+      interactionIds.current[parameter] += 1;
       cancelled.current[parameter] = false;
       editing.current[parameter] = true;
       invalidatePreview(parameter);

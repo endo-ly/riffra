@@ -43,6 +43,7 @@ describe('useArrangeLowerAreaController', () => {
 
     act(() => result.current.toggleMixer());
     expect(result.current.view).toBe('midiEditor');
+    expect(result.current.maximized).toBe(true);
 
     act(() => result.current.close());
     act(() => result.current.toggleMixer());

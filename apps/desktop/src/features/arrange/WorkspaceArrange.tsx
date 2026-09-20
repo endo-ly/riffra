@@ -462,7 +462,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onTogglePlaySurface={() =>
           setPlaySurfaceMode(playSurfaceMode === 'closed' ? 'expanded' : 'closed')
         }
-        mixerAvailable
         mixerOpen={lower.view === 'mixer'}
         onToggleMixer={lower.toggleMixer}
       />

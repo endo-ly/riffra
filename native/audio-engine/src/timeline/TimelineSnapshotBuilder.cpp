@@ -74,6 +74,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         return false;
     }
     prepared = std::make_unique<PreparedTimeline>();
+    prepared->projectId = snapshot.getProperty("projectId", {}).toString();
     prepared->revision =
         static_cast<std::uint64_t>(static_cast<juce::int64>(snapshot.getProperty("revision", -1)));
     const auto unavailableClipIds = snapshot.getProperty("unavailableClipIds", {});

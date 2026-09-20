@@ -14,6 +14,7 @@ import {
   publishAudioMeterSummary,
   publishAudioMeters,
   resetAudioMeters,
+  isAudioMeterFrameForProject,
 } from '@/shared/audio/audio-meters';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type {
@@ -50,6 +51,9 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const previousSessionId = useRef<string | null>(null);
   const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
   const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
+  const activeProjectId = sessionHook.projectState?.activeProjectId ?? null;
+  const activeProjectIdRef = useRef<string | null>(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
   sessionRef.current = sessionHook.session;
 
   useEffect(() => {
@@ -80,12 +84,20 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     );
     const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
+      if (activeProjectIdRef.current !== projectState.activeProjectId) {
+        activeProjectIdRef.current = projectState.activeProjectId;
+        resetAudioMeters();
+      }
       setBoot((current) => (current ? { ...current, projectState } : current));
     });
     const unlistenProjectActivated = api.onProjectActivated(
       (activation: ProjectActivationResult) => {
         if (disposed || getHostGeneration() !== effectGeneration) return;
-        applyProjectActivation(activation);
+        if (!applyProjectActivation(activation)) return;
+        if (activeProjectIdRef.current !== activation.projectState.activeProjectId) {
+          activeProjectIdRef.current = activation.projectState.activeProjectId;
+          resetAudioMeters();
+        }
       },
     );
     const runtimeStartupListener = api
@@ -116,6 +128,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         .then((state) => {
           if (disposed || getHostGeneration() !== effectGeneration) return;
           const mergedState = mergeBootstrapState(state);
+          activeProjectIdRef.current = state.projectState.activeProjectId;
           setBoot(mergedState);
           applyCanonicalState(mergedState.canonical);
           if (!runtimeStartupEventReceived.current) {
@@ -158,7 +171,12 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       }, 100);
     });
     const unlistenMeters = api.onAudioMeters((meters: AudioMeterFrame) => {
-      if (disposed || getHostGeneration() !== effectGeneration) return;
+      if (
+        disposed ||
+        getHostGeneration() !== effectGeneration ||
+        !isAudioMeterFrameForProject(meters, activeProjectIdRef.current)
+      )
+        return;
       publishAudioMeters(meters);
     });
     return () => {
@@ -171,7 +189,14 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       unlistenProjectActivated();
       unlistenMeters();
     };
-  }, [api, applyCanonicalState, applyProjectActivation, hostGeneration, mergeBootstrapState]);
+  }, [
+    activeProjectId,
+    api,
+    applyCanonicalState,
+    applyProjectActivation,
+    hostGeneration,
+    mergeBootstrapState,
+  ]);
 
   return {
     ...sessionHook,

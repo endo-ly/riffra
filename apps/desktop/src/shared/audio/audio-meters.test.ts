@@ -6,11 +6,13 @@ import {
   markAudioMetersUnavailable,
   publishAudioMeters,
   resetAudioMeters,
+  isAudioMeterFrameForProject,
   useAudioMeters,
   type AudioMeterFrame,
 } from './audio-meters';
 
 const frame: AudioMeterFrame = {
+  projectId: 'project:meter-test',
   inputPeak: 0.1,
   outputPeak: 0.2,
   outputPeakLeft: 0.15,
@@ -42,5 +44,11 @@ describe('audio meter availability', () => {
     await waitFor(() => expect(result.current.available).toBe(false));
     expect(result.current.hardClipSamples).toBe(0);
     expect(result.current.trackMeters).toHaveLength(0);
+  });
+
+  it('accepts meter frames only from the active Project', () => {
+    expect(isAudioMeterFrameForProject(frame, 'project:meter-test')).toBe(true);
+    expect(isAudioMeterFrameForProject(frame, 'project:other')).toBe(false);
+    expect(isAudioMeterFrameForProject(frame, null)).toBe(false);
   });
 });

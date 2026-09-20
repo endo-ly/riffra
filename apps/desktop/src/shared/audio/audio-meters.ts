@@ -9,6 +9,7 @@ export interface TrackAudioMeter {
 }
 
 export interface AudioMeterFrame {
+  projectId: string;
   inputPeak: number;
   outputPeak: number;
   outputPeakLeft: number;
@@ -27,6 +28,7 @@ export interface AudioMeters extends AudioMeterFrame {
 
 const initialMeters: AudioMeters = {
   available: false,
+  projectId: '',
   inputPeak: 0,
   outputPeak: 0,
   outputPeakLeft: 0,
@@ -47,6 +49,7 @@ let meterNotificationTimer: ReturnType<typeof setTimeout> | null = null;
 
 function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
   if (
+    left.projectId === right.projectId &&
     left.inputPeak === right.inputPeak &&
     left.available === right.available &&
     left.outputPeak === right.outputPeak &&
@@ -93,6 +96,14 @@ function publishAudioMeterSnapshot(next: AudioMeters): void {
 /** Publishes a native meter frame and marks the source as available. */
 export function publishAudioMeters(next: AudioMeterFrame): void {
   publishAudioMeterSnapshot({ ...next, available: true });
+}
+
+/** Returns whether a meter frame belongs to the currently active Project. */
+export function isAudioMeterFrameForProject(
+  frame: AudioMeterFrame,
+  activeProjectId: string | null,
+): boolean {
+  return activeProjectId !== null && frame.projectId === activeProjectId;
 }
 
 /** Updates only the low-frequency summary carried by semantic AudioStatus events. */

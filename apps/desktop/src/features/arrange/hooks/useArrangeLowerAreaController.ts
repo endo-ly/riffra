@@ -49,7 +49,6 @@ export function useArrangeLowerAreaController({
         returnViewAfterMixer === 'midiEditor' && activeMidiClip ? 'midiEditor' : 'closed';
       setReturnViewAfterMixer(null);
       setCollapsedState(false);
-      setMaximizedState(false);
       setView(nextView);
       return;
     }

@@ -159,11 +159,16 @@ impl HostState {
         self.core.audio().advance_audio_environment();
         self.runtime.advance_audio_environment();
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
+        let project_id = self
+            .project_store
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         self.runtime
             .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
+                crate::runtime_snapshot::runtime_timeline_snapshot_for_project(
                     &self.data_root,
                     self.built_in_instruments.as_ref(),
+                    &project_id,
                     &snapshot.session,
                 ),
                 riffra_core::ProjectionKey {
@@ -271,6 +276,10 @@ impl HostState {
             &self.runtime,
             &self.data_root,
             self.built_in_instruments.as_ref(),
+            &self
+                .project_store
+                .active_project_id()
+                .map_err(|error| HostError::State(error.to_string()))?,
             &self.shutting_down,
         );
         let succeeded = initialized

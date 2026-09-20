@@ -9,7 +9,7 @@ use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
+use crate::runtime_snapshot::runtime_timeline_snapshot_for_project;
 use riffra_core::{AppCore, CanonicalSnapshot};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -147,6 +147,7 @@ pub(crate) fn initialize_runtime(
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
+    project_id: &str,
     shutting_down: &AtomicBool,
 ) -> Result<StartupInitialization, String> {
     'generation: for _ in 0..STARTUP_RUNTIME_GENERATION_RETRY_LIMIT {
@@ -184,6 +185,7 @@ pub(crate) fn initialize_runtime(
                 runtime,
                 data_root,
                 built_in_instruments,
+                project_id,
                 generation,
             ) {
                 Ok(()) => {
@@ -341,6 +343,7 @@ fn restore_startup_runtime(
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
+    project_id: &str,
     generation: u64,
 ) -> Result<(), StartupRuntimeError> {
     if sidecar_transitioned(core.audio(), generation) {
@@ -354,7 +357,12 @@ fn restore_startup_runtime(
     })?;
     runtime
         .apply_and_wait(
-            runtime_timeline_snapshot(data_root, built_in_instruments, &target.session),
+            runtime_timeline_snapshot_for_project(
+                data_root,
+                built_in_instruments,
+                project_id,
+                &target.session,
+            ),
             riffra_core::ProjectionKey {
                 sequence: target.sequence,
                 session_revision: target.session.arrangement.revision,

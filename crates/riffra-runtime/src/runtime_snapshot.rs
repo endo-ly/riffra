@@ -9,6 +9,25 @@ pub fn runtime_timeline_snapshot(
     built_in_instruments: &BuiltInInstrumentCatalog,
     session: &CreativeSession,
 ) -> serde_json::Value {
+    runtime_timeline_snapshot_inner(data_root, built_in_instruments, None, session)
+}
+
+/// Builds a live runtime projection tagged with its owning Project.
+pub fn runtime_timeline_snapshot_for_project(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    project_id: &str,
+    session: &CreativeSession,
+) -> serde_json::Value {
+    runtime_timeline_snapshot_inner(data_root, built_in_instruments, Some(project_id), session)
+}
+
+fn runtime_timeline_snapshot_inner(
+    data_root: &Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    project_id: Option<&str>,
+    session: &CreativeSession,
+) -> serde_json::Value {
     let arrangement = &session.arrangement;
     let mut unavailable_clip_ids = Vec::new();
     let mut missing_device_ids = Vec::new();
@@ -162,7 +181,7 @@ pub fn runtime_timeline_snapshot(
             })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({
+    let mut snapshot = serde_json::json!({
         "revision": arrangement.revision,
         "timebase": arrangement.timebase,
         "loopRange": arrangement.loop_range,
@@ -171,7 +190,11 @@ pub fn runtime_timeline_snapshot(
         "tracks": tracks,
         "unavailableClipIds": unavailable_clip_ids,
         "missingDeviceIds": missing_device_ids,
-    })
+    });
+    if let Some(project_id) = project_id {
+        snapshot["projectId"] = serde_json::Value::String(project_id.to_owned());
+    }
+    snapshot
 }
 
 #[cfg(test)]

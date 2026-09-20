@@ -73,6 +73,7 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
     EXPECT_EQ(meters.getProperty("muteReasons", 0).toString().getIntValue(), 0);
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
+    EXPECT_TRUE(meters.hasProperty("projectId"));
     EXPECT_TRUE(meters.hasProperty("outputPeakLeft"));
     EXPECT_TRUE(meters.hasProperty("outputPeakRight"));
     EXPECT_TRUE(meters.hasProperty("trackMeters"));
@@ -110,6 +111,8 @@ TEST(AudioDeviceServiceTest, StatusPeeksAtTransientPeaksForMeterTelemetry) {
     const auto meters = AudioStatusBuilder::currentMeters(callback);
     EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("inputPeak", 0.0)), 0.1f);
     EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeak", 0.0)), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeakLeft", 0.0)), 0.25f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeakRight", 0.0)), 0.35f);
     EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("preLimiterPeak", 0.0)), 0.2f);
     EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("limiterGainReductionDb", 0.0)), 2.5f);
 }

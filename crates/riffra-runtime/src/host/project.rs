@@ -155,6 +155,7 @@ fn activate_project(
         state.runtime.as_ref(),
         &state.data_root,
         state.built_in_instruments.as_ref(),
+        project_id,
         state.core.safe_mode(),
         CanonicalMutationEffect::ProjectArrangement,
     ) {

@@ -1,7 +1,7 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
+use crate::runtime_snapshot::runtime_timeline_snapshot_for_project;
 use std::time::Duration;
 
 impl HostState {
@@ -716,11 +716,16 @@ impl HostState {
                 let target = self
                     .canonical()
                     .map_err(|error| command_error(error.to_string()))?;
+                let project_id = self
+                    .project_store
+                    .active_project_id()
+                    .map_err(|error| command_error(error.to_string()))?;
                 self.runtime
                     .apply_and_wait(
-                        runtime_timeline_snapshot(
+                        runtime_timeline_snapshot_for_project(
                             &self.data_root,
                             self.built_in_instruments.as_ref(),
+                            &project_id,
                             &target.session,
                         ),
                         riffra_core::ProjectionKey {
@@ -1670,6 +1675,9 @@ impl HostState {
             .project_store
             .active_session_store()
             .map_err(|error| command_error(error.to_string()))?;
+        let project_id = storage
+            .project_id()
+            .map_err(|error| command_error(error.to_string()))?;
         library::index::refresh(&self.data_root, &storage, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
@@ -1678,6 +1686,7 @@ impl HostState {
             self.runtime.as_ref(),
             &self.data_root,
             self.built_in_instruments.as_ref(),
+            &project_id,
             self.core.safe_mode(),
             effect,
         )

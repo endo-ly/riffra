@@ -2039,34 +2039,6 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Automation' })).toBeEnabled());
     expect(trackChannel).toHaveAttribute('data-selected', 'true');
     expect(screen.getByRole('button', { name: 'Play Surface' })).toBeEnabled();
-
-    const gain = within(trackChannel).getByRole('slider', { name: 'Mix Track gain' });
-    fireEvent.change(gain, { target: { value: '-6' } });
-    await waitFor(() => expect(api.calls).toContain('previewTrackMix'));
-
-    fireEvent.pointerUp(gain, { target: { value: '-6' } });
-    fireEvent.blur(gain, { target: { value: '-6' } });
-    await waitFor(() => expect(api.calls).toContain('updateTrack'));
-    expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(1);
-
-    const pan = within(trackChannel).getByRole('slider', { name: 'Mix Track pan' });
-    fireEvent.keyDown(pan, { key: 'ArrowRight' });
-    fireEvent.change(pan, { target: { value: '0.01' } });
-    fireEvent.keyUp(pan, { key: 'ArrowRight' });
-    await waitFor(() => expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(2));
-  });
-
-  it('opens an empty Mixer and keeps the Master channel available', () => {
-    const api = new FakeNativeApi();
-    render(<Harness api={api} />);
-
-    const mixerToggle = screen.getByRole('button', { name: 'Mixer' });
-    expect(mixerToggle).toBeEnabled();
-    fireEvent.click(mixerToggle);
-
-    expect(screen.getByText('No tracks')).toBeInTheDocument();
-    expect(screen.getByText('Add tracks from the Timeline to start mixing.')).toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Master mixer channel' })).toBeInTheDocument();
   });
 
   it('keeps the Play Surface independent from the MIDI lower area', async () => {

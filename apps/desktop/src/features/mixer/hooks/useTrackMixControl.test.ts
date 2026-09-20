@@ -159,4 +159,48 @@ describe('useTrackMixControl', () => {
 
     expect(api.updateTrack).toHaveBeenCalledWith('track:mixer-test', { gainDb: -6 });
   });
+
+  it('does not recommit a pending gain when a pan interaction starts before gain blur', async () => {
+    const initialSession = sessionWithTrack();
+    const committedSession = structuredClone(initialSession);
+    committedSession.arrangement.tracks[0]!.gainDb = -3;
+    let resolveUpdate!: (result: ArrangementMutationResult) => void;
+    const api = {
+      previewTrackMix: vi.fn().mockResolvedValue(undefined),
+      updateTrack: vi.fn(
+        () => new Promise<ArrangementMutationResult>((resolve) => (resolveUpdate = resolve)),
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useTrackMixControl({
+        sessionId: initialSession.sessionId,
+        track: initialSession.arrangement.tracks[0]!,
+        api,
+        applyCanonicalState: () => true,
+      }),
+    );
+
+    act(() => {
+      result.current.beginInteraction('gainDb');
+      result.current.setGainDb(-3);
+    });
+    let gainCommit!: Promise<void>;
+    act(() => {
+      gainCommit = result.current.commit('gainDb', -3);
+    });
+    await waitFor(() => expect(api.updateTrack).toHaveBeenCalledOnce());
+
+    act(() => result.current.beginInteraction('pan'));
+    await act(async () => {
+      await result.current.commit('gainDb', -3);
+    });
+
+    resolveUpdate(mutationResult(canonicalState(committedSession)));
+    await act(async () => {
+      await gainCommit;
+    });
+
+    expect(api.updateTrack).toHaveBeenCalledOnce();
+  });
 });

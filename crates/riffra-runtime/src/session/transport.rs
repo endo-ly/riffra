@@ -9,7 +9,9 @@ use riffra_core::{
 use std::path::Path;
 use std::time::Duration;
 
-pub use crate::runtime_snapshot::runtime_timeline_snapshot;
+pub use crate::runtime_snapshot::{
+    runtime_timeline_snapshot, runtime_timeline_snapshot_for_project,
+};
 
 const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -17,6 +19,7 @@ struct RuntimeProjectionAdapter<'a, D: RuntimeDriver> {
     data_root: &'a Path,
     built_in_instruments: &'a crate::instrument::BuiltInInstrumentCatalog,
     runtime: &'a RuntimeReconciler<D>,
+    project_id: String,
 }
 
 impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
@@ -25,8 +28,12 @@ impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
             sequence: request.sequence(),
             session_revision: request.session().arrangement.revision,
         };
-        let snapshot =
-            runtime_timeline_snapshot(self.data_root, self.built_in_instruments, request.session());
+        let snapshot = runtime_timeline_snapshot_for_project(
+            self.data_root,
+            self.built_in_instruments,
+            &self.project_id,
+            request.session(),
+        );
         self.runtime
             .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
             .map(|_| ())
@@ -37,10 +44,15 @@ impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<crate::RuntimeProjectionStatus, String> {
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| error.to_string())?;
     let projection = RuntimeProjectionAdapter {
         data_root: context.data_root,
         built_in_instruments: context.built_in_instruments,
         runtime: context.runtime,
+        project_id,
     };
     context
         .core
@@ -65,10 +77,19 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
             current_sequence: current.sequence,
         });
     }
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::command(error.to_string()))?;
     context
         .runtime
         .apply_candidate_and_wait(
-            runtime_timeline_snapshot(context.data_root, context.built_in_instruments, candidate),
+            runtime_timeline_snapshot_for_project(
+                context.data_root,
+                context.built_in_instruments,
+                &project_id,
+                candidate,
+            ),
             riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,

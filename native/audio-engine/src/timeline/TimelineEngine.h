@@ -80,6 +80,8 @@ public:
                             std::optional<float> pan, juce::String& error) noexcept;
     /// Consumes the latest post-fader stereo meter snapshot for each active track.
     [[nodiscard]] juce::Array<juce::var> meterSnapshot();
+    /// Returns the Project that owns the active realtime graph.
+    [[nodiscard]] juce::String activeProjectId() const;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.
@@ -176,6 +178,7 @@ private:
     };
 
     struct PreparedTimeline final {
+        juce::String projectId;
         std::uint64_t revision = 0;
         TimelineTimebase timebase;
         double outputSampleRate = 0.0;

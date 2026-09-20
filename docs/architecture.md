@@ -270,12 +270,12 @@ Native TrackRuntime atomics ── Audio block ── Track出力
    │                                      │
    │                                      └─ Peak/RMS accumulator
    ▼
-audioMeters（約50 ms） ── HostEventHub ── Desktop meter store
+audioMeters（約50 ms、Project ID付き） ── HostEventHub ── Desktop meter store
 ```
 
 Track Meter は Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に測る。Audio callback は固定された atomics の peak hold とブロック内のRMS集計だけを行い、ロック、ヒープ確保、IPCを行わない。Master の左右Peakは Safety limiter と最終ハードクリップ後の出力から測り、Limiter gain reduction、Hard clip、Feedback protection は同じ `audioMeters` frame の診断値として転送する。
 
-Meter frame は最新値で十分な通知として既存の coalescing event 経路を使う。Host または Project の世代が変わったときは古い preview と meter frame を破棄し、現行 Canonical state の投影だけを有効にする。
+Meter frame は最新値で十分な通知として既存の coalescing event 経路を使う。各 frame は Runtime 投影の `projectId` を持ち、Host または Project の世代が変わったときは古い preview と meter frame を破棄する。Desktop は Active Project と一致する `projectId` の frame だけを表示状態へ反映する。
 
 ---
 
