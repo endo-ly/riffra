@@ -107,7 +107,7 @@ impl HostState {
         Ok(status)
     }
 
-    fn run_audio_transition<T>(
+    pub(super) fn run_audio_transition<T>(
         &self,
         operation: impl FnOnce(&Self) -> Result<T, ProtocolError>,
     ) -> Result<T, ProtocolError> {
@@ -128,7 +128,7 @@ impl HostState {
         }
     }
 
-    fn begin_audio_transition(&self) -> Result<(), String> {
+    pub(super) fn begin_audio_transition(&self) -> Result<(), String> {
         self.core
             .audio()
             .set_engine_transition_mute(true)
@@ -147,7 +147,7 @@ impl HostState {
         Ok(())
     }
 
-    fn end_audio_transition(&self) -> Result<(), String> {
+    pub(super) fn end_audio_transition(&self) -> Result<(), String> {
         self.core
             .audio()
             .set_engine_transition_mute(false)
@@ -341,7 +341,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
     }
 }
 
-fn graph_failed(error: String) -> ProtocolError {
+pub(super) fn graph_failed(error: String) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, "audio graph restoration failed").with_details(
         serde_json::json!({
             "domain": "audioRuntime",

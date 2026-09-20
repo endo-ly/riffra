@@ -1,8 +1,6 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
-use std::time::Duration;
 
 impl HostState {
     fn response(
@@ -720,21 +718,14 @@ impl HostState {
                     .project_store
                     .active_project_id()
                     .map_err(|error| command_error(error.to_string()))?;
-                self.runtime
-                    .apply_and_wait(
-                        runtime_timeline_snapshot(
-                            &self.data_root,
-                            self.built_in_instruments.as_ref(),
-                            &project_id,
-                            &target.session,
-                        ),
-                        riffra_core::ProjectionKey {
-                            sequence: target.sequence,
-                            session_revision: target.session.arrangement.revision,
-                        },
-                        Duration::from_secs(60),
-                    )
-                    .map_err(runtime_error)?;
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps runtime projection offline",
+                    ));
+                }
+                self.run_audio_transition(|state| {
+                    project::apply_project_runtime_transition(state, &target, &project_id)
+                })?;
                 Ok((
                     "runtimeProjection",
                     serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
@@ -2047,7 +2038,9 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
 }
 
 fn requires_command_gate(command: &str) -> bool {
-    crate::dispatcher::command_requires_project_id(command) && !is_long_project_operation(command)
+    command == "runtime.projection.retry"
+        || crate::dispatcher::command_requires_project_id(command)
+            && !is_long_project_operation(command)
 }
 
 fn is_long_project_operation(command: &str) -> bool {
@@ -2420,7 +2413,12 @@ mod tests {
 
     #[test]
     fn project_bound_runtime_commands_take_the_command_gate() {
-        for command in ["transport.play", "record.start", "render.start"] {
+        for command in [
+            "transport.play",
+            "record.start",
+            "render.start",
+            "runtime.projection.retry",
+        ] {
             assert!(super::requires_command_gate(command), "{command}");
         }
         for command in [
