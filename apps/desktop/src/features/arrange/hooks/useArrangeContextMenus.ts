@@ -16,7 +16,7 @@ import {
   type SnapGrid,
 } from '../model/arrange-timeline';
 import { useState } from 'react';
-import type { useArrangeDetailController } from './useArrangeDetailController';
+import type { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 import type { useArrangeEditor } from './useArrangeEditor';
 import type { useArrangeRulerController } from './useArrangeRulerController';
 
@@ -38,7 +38,7 @@ interface UseArrangeContextMenusOptions {
   >;
   editor: ReturnType<typeof useArrangeEditor>;
   ruler: ReturnType<typeof useArrangeRulerController>;
-  detail: ReturnType<typeof useArrangeDetailController>;
+  lower: ReturnType<typeof useArrangeLowerAreaController>;
   snap: SnapGrid;
   timebase: ProjectTimebase;
   displayTick: number;
@@ -54,7 +54,7 @@ export function useArrangeContextMenus({
   api,
   editor,
   ruler,
-  detail,
+  lower,
   snap,
   timebase,
   displayTick,
@@ -228,7 +228,7 @@ export function useArrangeContextMenus({
           label: 'Open MIDI Editor',
           onClick: () => {
             closeContextMenu();
-            detail.openMidiEditor(clip);
+            lower.openMidiEditor(clip);
           },
         },
         {

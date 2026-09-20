@@ -12,7 +12,14 @@ import type {
 export type ArrangeWorkspaceApi = ArrangeApi &
   Pick<
     AudioApi,
-    'getAudioStatus' | 'sendMidiToTrack' | 'setLiveMidiTarget' | 'panicMidiTrack' | 'previewAsset'
+    | 'getAudioStatus'
+    | 'sendMidiToTrack'
+    | 'setLiveMidiTarget'
+    | 'panicMidiTrack'
+    | 'previewAsset'
+    | 'previewTrackMix'
+    | 'previewMasterGainDb'
+    | 'setMasterGainDb'
   > &
   Pick<AnalysisApi, 'analyzeAsset'> &
   Pick<JobApi, 'scanVst3Folder'> &

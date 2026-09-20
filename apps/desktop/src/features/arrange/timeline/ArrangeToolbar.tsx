@@ -30,6 +30,9 @@ interface ArrangeToolbarProps {
   playSurfaceAvailable: boolean;
   playSurfaceOpen: boolean;
   onTogglePlaySurface: () => void;
+  mixerAvailable: boolean;
+  mixerOpen: boolean;
+  onToggleMixer: () => void;
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
@@ -96,6 +99,14 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
             : 'Focus an Instrument Track to use the Play Surface'
         }
         onClick={props.onTogglePlaySurface}
+      />
+      <ToolbarToggle
+        active={props.mixerOpen}
+        icon="mixer"
+        ariaLabel="Mixer"
+        disabled={!props.mixerAvailable}
+        title={props.mixerAvailable ? 'Show or hide the Mixer' : 'Add a Track to use the Mixer'}
+        onClick={props.onToggleMixer}
       />
     </Toolbar>
   );

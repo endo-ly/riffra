@@ -15,7 +15,7 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
-import { ArrangeDetailArea } from './ArrangeDetailArea';
+import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
@@ -40,7 +40,7 @@ import { HostConnectionChangedError, getHostGeneration } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
-import { useArrangeDetailController } from '@/features/arrange/hooks/useArrangeDetailController';
+import { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
@@ -50,6 +50,7 @@ import {
 } from '@/features/arrange/hooks/useArrangeContextMenus';
 import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
+import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
@@ -60,6 +61,7 @@ interface WorkspaceArrangeProps {
   setSelection: (selection: ArrangeSelection) => void;
   api: ArrangeWorkspaceApi;
   audio: AudioStatus;
+  setAudio: (audio: AudioStatus) => void;
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;
   onToggleTransport: () => void;
@@ -206,11 +208,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     seekLocally,
     setMessage: editor.setMessage,
   });
-  const detail = useArrangeDetailController({
+  const lower = useArrangeLowerAreaController({
     midiClips: arrangement.midiClips,
     selectClip: editor.selectClip,
   });
-  const { activeMidiClip } = detail;
+  const { activeMidiClip } = lower;
   const { handleKeyboard: handleRulerKeyboard, timeSelection: rulerTimeSelection } = ruler;
   const activeMidiTrack = activeMidiClip
     ? (arrangement.tracks.find((track) => track.id === activeMidiClip.trackId) ?? null)
@@ -256,25 +258,25 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     !activeInstrumentUnavailable,
   );
 
-  const detailControls = (
+  const lowerControls = (
     <>
       <ToolbarButton
-        icon={detail.collapsed ? 'expand' : 'collapse'}
-        ariaLabel={detail.collapsed ? 'Restore detail area' : 'Collapse detail area'}
-        title={detail.collapsed ? 'Restore detail area' : 'Collapse detail area'}
-        onClick={() => detail.setCollapsed(!detail.collapsed)}
+        icon={lower.collapsed ? 'expand' : 'collapse'}
+        ariaLabel={lower.collapsed ? 'Restore lower area' : 'Collapse lower area'}
+        title={lower.collapsed ? 'Restore lower area' : 'Collapse lower area'}
+        onClick={() => lower.setCollapsed(!lower.collapsed)}
       />
       <ToolbarButton
-        icon={detail.maximized ? 'restore' : 'maximize'}
-        ariaLabel={detail.maximized ? 'Restore detail area size' : 'Maximize detail area'}
-        title={detail.maximized ? 'Restore detail area size' : 'Maximize detail area'}
-        onClick={() => detail.setMaximized(!detail.maximized)}
+        icon={lower.maximized ? 'restore' : 'maximize'}
+        ariaLabel={lower.maximized ? 'Restore lower area size' : 'Maximize lower area'}
+        title={lower.maximized ? 'Restore lower area size' : 'Maximize lower area'}
+        onClick={() => lower.setMaximized(!lower.maximized)}
       />
       <ToolbarButton
         icon="close"
-        ariaLabel="Close detail area"
-        title="Close detail area"
-        onClick={detail.close}
+        ariaLabel="Close lower area"
+        title="Close lower area"
+        onClick={lower.close}
       />
     </>
   );
@@ -348,7 +350,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const created = next.arrangement.midiClips.find((clip) => !beforeIds.has(clip.id));
     if (!created) return;
     ruler.clearTimeSelection();
-    detail.openMidiEditor(created);
+    lower.openMidiEditor(created);
   };
 
   const seekMidiEditor = (tick: number) => {
@@ -403,12 +405,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   };
 
   const deleteTrack = (trackId: string, name: string, clipCount: number) => {
-    const detail = clipCount
+    const clipDetail = clipCount
       ? ` This also removes ${clipCount} Clip${clipCount === 1 ? '' : 's'} from the Timeline.`
       : '';
     setConfirmRequest({
       title: `Delete ${name}`,
-      message: `${detail}\n\nSource assets will be kept.`,
+      message: `${clipDetail}\n\nSource assets will be kept.`,
       confirmLabel: 'Delete Track',
       danger: true,
       onConfirm: () => {
@@ -423,7 +425,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     api,
     editor,
     ruler,
-    detail,
+    lower,
     snap,
     timebase,
     displayTick,
@@ -460,6 +462,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onTogglePlaySurface={() =>
           setPlaySurfaceMode(playSurfaceMode === 'closed' ? 'expanded' : 'closed')
         }
+        mixerAvailable
+        mixerOpen={lower.view === 'mixer'}
+        onToggleMixer={lower.toggleMixer}
       />
 
       <ArrangeOverlays
@@ -661,13 +666,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     const selectedMidiClip = arrangement.midiClips.find(
                       (clip) => clip.id === clipId,
                     );
-                    if (selectedMidiClip && !append && detail.view === 'midiEditor')
-                      detail.keepSelectedMidiClipVisible(clipId);
+                    if (selectedMidiClip && !append && lower.view === 'midiEditor')
+                      lower.keepSelectedMidiClipVisible(clipId);
                   }}
                   onTrim={editor.beginTrim}
                   onFade={editor.beginFade}
                   onOpenMidiEditor={(clip) => {
-                    detail.openMidiEditor(clip);
+                    lower.openMidiEditor(clip);
                   }}
                   onAudioClipContextMenu={menus.openAudioClipContextMenu}
                   onMidiClipContextMenu={menus.openMidiClipContextMenu}
@@ -744,14 +749,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         </div>
       </div>
 
-      <ArrangeDetailArea
-        view={detail.view}
-        height={detail.height}
-        collapsed={detail.collapsed}
-        maximized={detail.maximized}
-        onCollapsedChange={detail.setCollapsed}
-        onHeightChange={detail.setHeight}
-        collapsedControls={detailControls}
+      <ArrangeLowerArea
+        view={lower.view}
+        height={lower.height}
+        minimumHeight={lower.view === 'mixer' ? 240 : 180}
+        collapsed={lower.collapsed}
+        maximized={lower.maximized}
+        onCollapsedChange={lower.setCollapsed}
+        onHeightChange={lower.setHeight}
+        controls={lowerControls}
         midiEditor={
           <ArrangeMidiEditor
             clip={activeMidiClip}
@@ -764,9 +770,22 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             previewAvailable={midiPreviewAvailable}
             onSendMidi={sendMidiPreview}
             onPanicMidi={panicMidiPreview}
-            toolbarTrailing={detail.collapsed ? null : detailControls}
             api={props.api}
             commit={commit}
+          />
+        }
+        mixer={
+          <MixerPanel
+            session={props.session}
+            selectedTrackId={selectedTrackId}
+            api={props.api}
+            applyCanonicalState={props.applyCanonicalState}
+            setAudio={props.setAudio}
+            onSelectTrack={(trackId) => {
+              ruler.clearSelectedRange();
+              props.setSelection({ kind: 'track', trackId });
+            }}
+            onError={setMessage}
           />
         }
       />
