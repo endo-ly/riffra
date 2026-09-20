@@ -54,9 +54,9 @@ void TimelineEngine::reclaimRetiredTimelines() noexcept {
 
 void TimelineEngine::serviceDeferredCleanup() noexcept { reclaimRetiredTimelines(); }
 
-void TimelineEngine::setGraphPublishedCallback(std::function<void()> callback) {
+void TimelineEngine::setProjectBoundaryCallback(std::function<void(std::uint64_t)> callback) {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
-    graphPublishedCallback = std::move(callback);
+    projectBoundaryCallback = std::move(callback);
 }
 
 bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
@@ -135,6 +135,12 @@ juce::String TimelineEngine::activeProjectId() const {
     return timeline != nullptr ? timeline->projectId : juce::String{};
 }
 
+TimelineEngine::ActiveProjectMeterIdentity TimelineEngine::activeProjectMeterIdentity() const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) return {};
+    return {timeline->projectId, timeline->meterEpoch};
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
@@ -198,14 +204,6 @@ bool TimelineEngine::loadSnapshot(const juce::var& snapshot, juce::AudioFormatMa
 }
 
 bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
-    // Keep the old graph and its meter writes together. The Project boundary
-    // must not be published while an audio callback can still append metrics
-    // from the old graph after the transient meter window is cleared.
-    if (graphPublishedCallback != nullptr && !waitForAudioReaders(std::chrono::seconds(3))) {
-        error = "Audio callbacks did not leave the current Timeline graph.";
-        return false;
-    }
-
     std::unique_ptr<PreparedTimeline> candidate;
     {
         const juce::SpinLock::ScopedLockType lock(timelineLock);
@@ -218,6 +216,9 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         candidate = std::move(pendingTimeline);
         const auto crossesProjectBoundary =
             timeline == nullptr || timeline->projectId != candidate->projectId;
+        candidate->meterEpoch = crossesProjectBoundary
+                                    ? projectMeterEpoch.fetch_add(1, std::memory_order_relaxed) + 1
+                                    : timeline->meterEpoch;
         if (timeline != nullptr) {
             // Validate every reusable runtime before moving ownership. The
             // prepared graph was built against the active graph, but a direct
@@ -278,7 +279,8 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         discontinuity.fetch_add(1, std::memory_order_relaxed);
         graphPublishCount.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);
-        if (crossesProjectBoundary && graphPublishedCallback != nullptr) graphPublishedCallback();
+        if (crossesProjectBoundary && projectBoundaryCallback != nullptr)
+            projectBoundaryCallback(timeline->meterEpoch);
     }
     reclaimRetiredTimelines();
     return true;

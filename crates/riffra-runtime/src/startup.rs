@@ -98,6 +98,13 @@ pub(crate) struct StartupInitialization {
     pub(crate) runtime_error: Option<String>,
 }
 
+/// Canonical Project identity captured as one startup target.
+#[derive(Clone, Debug)]
+pub(crate) struct StartupTarget {
+    pub(crate) project_id: String,
+    pub(crate) canonical: CanonicalSnapshot,
+}
+
 trait StartupAudioPort {
     fn current_generation(&self) -> u64;
     fn sidecar_terminated(&self, generation: u64) -> bool;
@@ -142,14 +149,17 @@ impl StartupAudioPort for AudioSupervisor {
 }
 
 /// Runs the complete startup transaction for a normal live Host.
-pub(crate) fn initialize_runtime(
+pub(crate) fn initialize_runtime<F>(
     core: &AppCore<AudioSupervisor>,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
-    project_id: &str,
+    capture_target: F,
     shutting_down: &AtomicBool,
-) -> Result<StartupInitialization, String> {
+) -> Result<StartupInitialization, String>
+where
+    F: Fn() -> Result<StartupTarget, String>,
+{
     'generation: for _ in 0..STARTUP_RUNTIME_GENERATION_RETRY_LIMIT {
         if shutting_down.load(Ordering::Acquire) {
             core.audio().mark_startup_failed();
@@ -180,12 +190,20 @@ pub(crate) fn initialize_runtime(
                 core.audio().mark_startup_failed();
                 return Err(NativeAudioError::ShuttingDown.to_string());
             }
+            let target = match capture_target() {
+                Ok(target) => target,
+                Err(error) => {
+                    core.audio().mark_startup_failed();
+                    return Err(error);
+                }
+            };
             match restore_startup_runtime(
                 core,
                 runtime,
                 data_root,
                 built_in_instruments,
-                project_id,
+                &target,
+                &capture_target,
                 generation,
             ) {
                 Ok(()) => {
@@ -338,29 +356,35 @@ fn initialize_safety_generation<A: StartupAudioPort>(
     Ok(status)
 }
 
-fn restore_startup_runtime(
+fn restore_startup_runtime<F>(
     core: &AppCore<AudioSupervisor>,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
-    project_id: &str,
+    target: &StartupTarget,
+    capture_target: &F,
     generation: u64,
-) -> Result<(), StartupRuntimeError> {
+) -> Result<(), StartupRuntimeError>
+where
+    F: Fn() -> Result<StartupTarget, String>,
+{
     if sidecar_transitioned(core.audio(), generation) {
         return Err(StartupRuntimeError::GenerationChanged(
             generation_changed_message(core.audio(), generation),
         ));
     }
 
-    let target = core.snapshot().map_err(|error| {
-        StartupRuntimeError::Feature(format!("canonical session could not be captured: {error}"))
-    })?;
     runtime
         .apply_and_wait(
-            runtime_timeline_snapshot(data_root, built_in_instruments, project_id, &target.session),
+            runtime_timeline_snapshot(
+                data_root,
+                built_in_instruments,
+                &target.project_id,
+                &target.canonical.session,
+            ),
             riffra_core::ProjectionKey {
-                sequence: target.sequence,
-                session_revision: target.session.arrangement.revision,
+                sequence: target.canonical.sequence,
+                session_revision: target.canonical.session.arrangement.revision,
             },
             STARTUP_RUNTIME_TIMEOUT,
         )
@@ -373,7 +397,8 @@ fn restore_startup_runtime(
             generation_changed_message(core.audio(), generation),
         ));
     }
-    if !startup_target_is_current(core, &target) {
+    let current_target = capture_target().map_err(StartupRuntimeError::Feature)?;
+    if !startup_targets_match(&current_target, target) {
         tracing::info!("startup runtime target changed during graph restoration");
         return Err(StartupRuntimeError::TargetChanged);
     }
@@ -415,10 +440,11 @@ fn sidecar_transitioned(audio: &AudioSupervisor, generation: u64) -> bool {
     audio.sidecar_generation() != generation || audio.sidecar_terminated(generation)
 }
 
-fn startup_target_is_current(core: &AppCore<AudioSupervisor>, target: &CanonicalSnapshot) -> bool {
-    core.snapshot()
-        .map(|current| current.sequence == target.sequence)
-        .unwrap_or(false)
+fn startup_targets_match(current: &StartupTarget, target: &StartupTarget) -> bool {
+    current.project_id == target.project_id
+        && current.canonical.sequence == target.canonical.sequence
+        && current.canonical.session.arrangement.revision
+            == target.canonical.session.arrangement.revision
 }
 
 fn generation_changed_message(audio: &AudioSupervisor, expected: u64) -> String {
@@ -572,5 +598,23 @@ mod tests {
 
         assert_eq!(status.state, AudioState::Muted);
         assert!(safe_for_startup_restore(&status));
+    }
+
+    #[test]
+    fn startup_target_identity_rejects_a_different_project_with_the_same_sequence() {
+        let canonical = CanonicalSnapshot {
+            session: riffra_core::CreativeSession::new(0),
+            sequence: 7,
+        };
+        let target = StartupTarget {
+            project_id: "project:a".into(),
+            canonical: canonical.clone(),
+        };
+        let current = StartupTarget {
+            project_id: "project:b".into(),
+            canonical,
+        };
+
+        assert!(!startup_targets_match(&current, &target));
     }
 }

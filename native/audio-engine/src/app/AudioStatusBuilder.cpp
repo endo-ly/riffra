@@ -32,8 +32,12 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
             "Audio device disconnected; output is muted and any captured take is preserved.");
     status->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
     status->setProperty("masterGainDb", pipeline.getMasterGainDb());
-    status->setProperty("inputPeak", pipeline.peekInputPeak());
-    status->setProperty("outputPeak", pipeline.peekOutputPeak());
+    const auto projectIdentity = timeline != nullptr ? timeline->activeProjectMeterIdentity()
+                                                     : TimelineEngine::ActiveProjectMeterIdentity{
+                                                           {}, pipeline.projectMeterEpoch()};
+    const auto transientMeters = pipeline.peekTransientMeters(projectIdentity.meterEpoch);
+    status->setProperty("inputPeak", transientMeters.inputPeak);
+    status->setProperty("outputPeak", transientMeters.outputPeak);
     status->setProperty("invalidSamples",
                         static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
     status->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
@@ -54,8 +58,8 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
                              static_cast<juce::int64>(pipeline.getMaximumCallbackDurationUs()));
     diagnostics->setProperty("callbackOverruns",
                              static_cast<juce::int64>(pipeline.getCallbackOverruns()));
-    diagnostics->setProperty("preLimiterPeak", pipeline.peekPreLimiterPeak());
-    diagnostics->setProperty("limiterGainReductionDb", pipeline.peekLimiterGainReductionDb());
+    diagnostics->setProperty("preLimiterPeak", transientMeters.preLimiterPeak);
+    diagnostics->setProperty("limiterGainReductionDb", transientMeters.limiterGainReductionDb);
     diagnostics->setProperty("hardClipSamples",
                              static_cast<juce::int64>(pipeline.getHardClipSamples()));
     if (timeline != nullptr) {
@@ -75,6 +79,15 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
         diagnostics->setProperty(
             "instrumentFaults",
             timelineStatus.getProperty("instrumentFaults", juce::Array<juce::var>{}));
+    }
+    const auto projectIdentityAfter =
+        timeline != nullptr ? timeline->activeProjectMeterIdentity() : projectIdentity;
+    if (projectIdentity.meterEpoch != projectIdentityAfter.meterEpoch ||
+        projectIdentity.projectId != projectIdentityAfter.projectId) {
+        status->setProperty("inputPeak", 0.0f);
+        status->setProperty("outputPeak", 0.0f);
+        diagnostics->setProperty("preLimiterPeak", 0.0f);
+        diagnostics->setProperty("limiterGainReductionDb", 0.0f);
     }
     status->setProperty("diagnostics", juce::var(diagnostics));
     if (message.isNotEmpty()) status->setProperty("message", message);
@@ -142,16 +155,27 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
                                             TimelineEngine* timeline) {
     auto* meters = new juce::DynamicObject();
     meters->setProperty("type", "audioMeters");
-    const auto projectId = timeline != nullptr ? timeline->activeProjectId() : juce::String{};
-    meters->setProperty("projectId", projectId);
-    meters->setProperty("inputPeak", pipeline.getInputPeak());
-    meters->setProperty("outputPeak", pipeline.getOutputPeak());
-    meters->setProperty("outputPeakLeft", pipeline.getOutputPeakLeft());
-    meters->setProperty("outputPeakRight", pipeline.getOutputPeakRight());
+    const auto identityBefore = timeline != nullptr ? timeline->activeProjectMeterIdentity()
+                                                    : TimelineEngine::ActiveProjectMeterIdentity{
+                                                          {}, pipeline.projectMeterEpoch()};
+    const auto transientMeters = pipeline.consumeTransientMeters(identityBefore.meterEpoch);
+    const auto trackMeters =
+        timeline != nullptr ? timeline->meterSnapshot() : juce::Array<juce::var>{};
+    const auto identityAfter =
+        timeline != nullptr ? timeline->activeProjectMeterIdentity() : identityBefore;
+    const auto identityStable = identityBefore.projectId == identityAfter.projectId &&
+                                identityBefore.meterEpoch == identityAfter.meterEpoch;
+    const auto stableTransientMeters =
+        identityStable ? transientMeters : AudioMetrics::TransientMeterSnapshot{};
+    meters->setProperty("projectId", identityAfter.projectId);
+    meters->setProperty("inputPeak", stableTransientMeters.inputPeak);
+    meters->setProperty("outputPeak", stableTransientMeters.outputPeak);
+    meters->setProperty("outputPeakLeft", stableTransientMeters.outputPeakLeft);
+    meters->setProperty("outputPeakRight", stableTransientMeters.outputPeakRight);
     meters->setProperty("invalidSamples",
                         static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
-    meters->setProperty("preLimiterPeak", pipeline.getPreLimiterPeak());
-    meters->setProperty("limiterGainReductionDb", pipeline.getLimiterGainReductionDb());
+    meters->setProperty("preLimiterPeak", stableTransientMeters.preLimiterPeak);
+    meters->setProperty("limiterGainReductionDb", stableTransientMeters.limiterGainReductionDb);
     meters->setProperty("hardClipSamples", static_cast<juce::int64>(pipeline.getHardClipSamples()));
     meters->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
     meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
@@ -160,8 +184,8 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));
-    meters->setProperty("trackMeters", timeline != nullptr ? juce::var(timeline->meterSnapshot())
-                                                           : juce::var(juce::Array<juce::var>{}));
+    meters->setProperty("trackMeters", identityStable ? juce::var(trackMeters)
+                                                      : juce::var(juce::Array<juce::var>{}));
     return juce::var(meters);
 }
 

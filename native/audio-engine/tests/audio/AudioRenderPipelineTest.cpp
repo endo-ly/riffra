@@ -88,7 +88,9 @@ TEST(AudioRenderPipelineTest, HoldsInputTransientUntilStatusCollection) {
     callback.processBlock(signalInput.data(), 1, outputs.data(), 1, kBlockSize, context);
     callback.processBlock(silentInput.data(), 1, outputs.data(), 1, kBlockSize, context);
 
-    EXPECT_GE(callback.getInputPeak(), 0.5f);
+    EXPECT_GE(
+        callback.peekTransientMeters(timeline.activeProjectMeterIdentity().meterEpoch).inputPeak,
+        0.5f);
 }
 
 TEST(AudioRenderPipelineTest, SilencesOutputWhenEmergencyMuted) {

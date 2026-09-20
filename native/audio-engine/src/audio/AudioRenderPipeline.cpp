@@ -12,10 +12,13 @@ namespace riffra {
 
 AudioRenderPipeline::AudioRenderPipeline(TimelineEngine& timelineIn)
     : timelineEngine(timelineIn), recordingController(timelineIn) {
-    timelineEngine.setGraphPublishedCallback([this] { audioMetrics.resetTransientMeters(); });
+    timelineEngine.setProjectBoundaryCallback([this](const std::uint64_t projectEpoch) {
+        audioMetrics.requestProjectEpoch(projectEpoch);
+    });
+    audioMetrics.requestProjectEpoch(timelineEngine.activeProjectMeterIdentity().meterEpoch);
 }
 
-AudioRenderPipeline::~AudioRenderPipeline() { timelineEngine.setGraphPublishedCallback({}); }
+AudioRenderPipeline::~AudioRenderPipeline() { timelineEngine.setProjectBoundaryCallback({}); }
 
 void AudioRenderPipeline::setMuteReason(const MuteReason reason, const bool active) noexcept {
     const auto bit = muteReasonBit(reason);
@@ -103,11 +106,12 @@ bool AudioRenderPipeline::startBuiltInPreview(const juce::String& definitionJson
 
 void AudioRenderPipeline::silenceAndCommit(float* const* outputChannelData,
                                            const int numOutputChannels, const int numSamples,
-                                           const float rawInputPeak) noexcept {
+                                           const float rawInputPeak,
+                                           const std::uint64_t projectEpoch) noexcept {
     for (int channel = 0; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-    audioMetrics.recordSilencedBlock(rawInputPeak);
+    audioMetrics.recordSilencedBlock(projectEpoch, rawInputPeak);
 }
 
 void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
@@ -116,6 +120,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                        const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
     TimelineEngine::AudioReadScope timelineRead(timelineEngine);
+    const auto projectEpoch = timelineRead.get() != nullptr ? timelineRead.get()->meterEpoch : 0;
+    audioMetrics.beginProjectBlock(projectEpoch);
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
         audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
@@ -161,7 +167,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         }
     }
     if (invalidInputSamples > 0)
-        audioMetrics.recordBlock(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, invalidInputSamples);
+        audioMetrics.recordBlock(projectEpoch, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0,
+                                 invalidInputSamples);
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
@@ -173,7 +180,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         if (graphMayRunWhileMuted)
             timelineEngine.mix(inputChannelData, numInputChannels, outputChannelData,
                                numOutputChannels, numSamples);
-        silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak);
+        silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak,
+                         projectEpoch);
         recordDuration();
         return;
     }
@@ -184,7 +192,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
-        silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak);
+        silenceAndCommit(outputChannelData, numOutputChannels, numSamples, rawInputPeak,
+                         projectEpoch);
         recordDuration();
         return;
     }
@@ -271,7 +280,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         reductionDb = juce::jmax(0.0f, juce::Decibels::gainToDecibels(juce::jmax(
                                            0.000001f, blockPreLimiterPeak / blockOutputPeak)));
     }
-    audioMetrics.recordBlock(rawInputPeak, blockPreLimiterPeak, blockOutputPeak,
+    audioMetrics.recordBlock(projectEpoch, rawInputPeak, blockPreLimiterPeak, blockOutputPeak,
                              blockOutputPeakLeft, blockOutputPeakRight, reductionDb,
                              blockHardClipSamples, blockInvalidSamples);
     recordDuration();

@@ -276,10 +276,7 @@ impl HostState {
             &self.runtime,
             &self.data_root,
             self.built_in_instruments.as_ref(),
-            &self
-                .project_store
-                .active_project_id()
-                .map_err(|error| HostError::State(error.to_string()))?,
+            || self.capture_startup_target(),
             &self.shutting_down,
         );
         let succeeded = initialized

@@ -98,14 +98,6 @@ export function publishAudioMeters(next: AudioMeterFrame): void {
   publishAudioMeterSnapshot({ ...next, available: true });
 }
 
-/** Returns whether a meter frame belongs to the currently active Project. */
-export function isAudioMeterFrameForProject(
-  frame: AudioMeterFrame,
-  activeProjectId: string | null,
-): boolean {
-  return activeProjectId !== null && frame.projectId === activeProjectId;
-}
-
 /** Updates only the low-frequency summary carried by semantic AudioStatus events. */
 export function publishAudioMeterSummary(
   next: Pick<AudioMeters, 'inputPeak' | 'outputPeak' | 'invalidSamples' | 'feedbackSuspected'>,

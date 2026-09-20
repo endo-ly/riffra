@@ -203,10 +203,7 @@ fn queue_runtime_startup(
                 &state.runtime,
                 &state.data_root,
                 &state.built_in_instruments,
-                &state
-                    .project_store
-                    .active_project_id()
-                    .expect("Active Project should be available during startup"),
+                || state.capture_startup_target(),
                 &state.shutting_down,
             );
             let succeeded = initialized

@@ -14,7 +14,6 @@ import {
   publishAudioMeterSummary,
   publishAudioMeters,
   resetAudioMeters,
-  isAudioMeterFrameForProject,
 } from '@/shared/audio/audio-meters';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type {
@@ -162,7 +161,8 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       if (
         disposed ||
         getHostGeneration() !== effectGeneration ||
-        !isAudioMeterFrameForProject(meters, activeProjectIdRef.current)
+        activeProjectIdRef.current === null ||
+        meters.projectId !== activeProjectIdRef.current
       )
         return;
       publishAudioMeters(meters);

@@ -72,6 +72,22 @@ impl HostState {
             .map_err(|error| HostError::State(error.to_string()))
     }
 
+    pub(super) fn capture_startup_target(&self) -> Result<crate::startup::StartupTarget, String> {
+        let _command_gate = self
+            ._command_gate
+            .lock()
+            .map_err(|_| "Host command gate was poisoned".to_owned())?;
+        let project_id = self
+            .project_store
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
+        let canonical = self.core.snapshot().map_err(|error| error.to_string())?;
+        Ok(crate::startup::StartupTarget {
+            project_id,
+            canonical,
+        })
+    }
+
     pub(super) fn bootstrap(&self) -> Result<HostBootstrap, HostError> {
         let recovered_from_generation = self.core.recovered_from_generation();
         let storage = self

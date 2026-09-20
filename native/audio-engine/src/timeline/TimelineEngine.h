@@ -37,6 +37,11 @@ class TimelineEngine final {
 public:
     using ProcessingProgressCallback = std::function<void()>;
 
+    struct ActiveProjectMeterIdentity final {
+        juce::String projectId;
+        std::uint64_t meterEpoch = 0;
+    };
+
     explicit TimelineEngine(bool offline = false);
     ~TimelineEngine();
 
@@ -82,6 +87,8 @@ public:
     [[nodiscard]] juce::Array<juce::var> meterSnapshot();
     /// Returns the Project that owns the active realtime graph.
     [[nodiscard]] juce::String activeProjectId() const;
+    /// Returns the Project identity and meter epoch from one graph boundary.
+    [[nodiscard]] ActiveProjectMeterIdentity activeProjectMeterIdentity() const;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.
@@ -134,7 +141,7 @@ private:
     friend class AudioRenderPipeline;
     friend class TimelineSnapshotBuilder;
 
-    void setGraphPublishedCallback(std::function<void()> callback);
+    void setProjectBoundaryCallback(std::function<void(std::uint64_t)> callback);
 
     enum class State { stopped, starting, playing, faulted };
     enum class RecordingPhase { idle, countingIn, recording, stopping };
@@ -181,6 +188,7 @@ private:
 
     struct PreparedTimeline final {
         juce::String projectId;
+        std::uint64_t meterEpoch = 0;
         std::uint64_t revision = 0;
         TimelineTimebase timebase;
         double outputSampleRate = 0.0;
@@ -312,7 +320,8 @@ private:
     std::atomic<std::uint64_t> callbackAudioStartSample{0};
     mutable std::atomic<std::uint64_t> sequence{0};
     std::atomic<std::uint64_t> graphPublishCount{0};
-    std::function<void()> graphPublishedCallback;
+    std::atomic<std::uint64_t> projectMeterEpoch{0};
+    std::function<void(std::uint64_t)> projectBoundaryCallback;
     std::atomic<std::uint64_t> clockGeneration{0};
     std::atomic<std::uint64_t> discontinuity{1};
     std::atomic<bool> monitorLiveInput{false};
