@@ -69,6 +69,12 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
           disabled={props.disabled}
           aria-label="Master mixer gain"
           onPointerDown={master.beginEditing}
+          onKeyDown={(event) => {
+            if (
+              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+            )
+              master.beginEditing();
+          }}
           onChange={(event) => {
             const value = Number(event.currentTarget.value);
             master.setDraftDb(value);

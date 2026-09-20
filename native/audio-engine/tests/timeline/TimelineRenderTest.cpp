@@ -128,9 +128,18 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
                 0.01f);
     EXPECT_NEAR(static_cast<float>(baselineMeters[0].getProperty("peakRight", 0.0)), baselineRight,
                 0.01f);
+    EXPECT_GT(static_cast<float>(baselineMeters[0].getProperty("rmsLeft", 0.0)), 0.0f);
+    EXPECT_GT(static_cast<float>(baselineMeters[0].getProperty("rmsRight", 0.0)), 0.0f);
+
+    const auto beforePreviewStatus = engine.status();
+    const auto beforePreviewRevision = beforePreviewStatus.getProperty("graphRevision", 0);
+    const auto beforePreviewPublishCount = beforePreviewStatus.getProperty("graphPublishCount", 0);
 
     ASSERT_TRUE(engine.setTrackMixControl("track:live", -6.0f, -1.0f, error))
         << error.toStdString();
+    const auto afterPreviewStatus = engine.status();
+    EXPECT_EQ(afterPreviewStatus.getProperty("graphRevision", 0), beforePreviewRevision);
+    EXPECT_EQ(afterPreviewStatus.getProperty("graphPublishCount", 0), beforePreviewPublishCount);
     mixLiveInput();
     const auto previewMeters = engine.meterSnapshot();
 

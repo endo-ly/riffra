@@ -43,12 +43,6 @@ export function useArrangeLowerAreaController({
     setMaximizedState(next);
   }, []);
 
-  const openMixer = useCallback(() => {
-    setReturnViewAfterMixer(view === 'midiEditor' ? 'midiEditor' : null);
-    setView('mixer');
-    setCollapsedState(false);
-  }, [view]);
-
   const toggleMixer = useCallback(() => {
     if (view === 'mixer') {
       const nextView =
@@ -103,7 +97,6 @@ export function useArrangeLowerAreaController({
     height,
     openMidiEditor,
     keepSelectedMidiClipVisible,
-    openMixer,
     toggleMixer,
     close,
     setCollapsed,

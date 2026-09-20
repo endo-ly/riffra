@@ -58,6 +58,12 @@ export function AudioMonitor(props: AudioMonitorProps) {
           step="0.5"
           value={masterDraftDb}
           onPointerDown={beginEditing}
+          onKeyDown={(event) => {
+            if (
+              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+            )
+              beginEditing();
+          }}
           onPointerUp={(event) => void commit(Number(event.currentTarget.value))}
           onBlur={(event) => void commit(Number(event.currentTarget.value))}
           onKeyUp={(event) => {

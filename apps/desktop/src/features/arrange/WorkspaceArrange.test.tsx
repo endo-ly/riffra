@@ -31,6 +31,7 @@ function Harness({
   runtimeProjectionFailure,
   runtimeProjectionRetrying,
   onRetryRuntimeProjection,
+  initialFocusedTrackId,
 }: {
   api: FakeNativeApi;
   initialSession?: CreativeSession;
@@ -39,11 +40,14 @@ function Harness({
   runtimeProjectionFailure?: string | null;
   runtimeProjectionRetrying?: boolean;
   onRetryRuntimeProjection?: () => Promise<void>;
+  initialFocusedTrackId?: string | null;
 }) {
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
-  const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
+  const [focusedTrackId, setFocusedTrackId] = useState<string | null>(
+    initialFocusedTrackId ?? null,
+  );
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   return (
     <>
@@ -1993,8 +1997,8 @@ describe('WorkspaceArrange', () => {
   it('opens the Mixer in the shared lower area with track and master channels', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
-      id: 'track:mixer',
-      name: 'Mix Track',
+      id: 'track:focused',
+      name: 'Focused Instrument',
       kind: 'instrument',
       gainDb: 0,
       pan: 0,
@@ -2005,8 +2009,21 @@ describe('WorkspaceArrange', () => {
       midiInput: {},
       rack: { devices: [], macros: [] },
     });
+    session.arrangement.tracks.push({
+      id: 'track:mixer',
+      name: 'Mix Track',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} />);
+    render(<Harness api={api} initialSession={session} initialFocusedTrackId="track:focused" />);
 
     const mixerToggle = screen.getByRole('button', { name: 'Mixer' });
     expect(mixerToggle).toBeEnabled();
@@ -2020,14 +2037,17 @@ describe('WorkspaceArrange', () => {
 
     fireEvent.click(within(trackChannel).getByTitle('Mix Track'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Automation' })).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'Play Surface' })).toBeDisabled();
+    expect(trackChannel).toHaveAttribute('data-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Play Surface' })).toBeEnabled();
 
     const gain = within(trackChannel).getByRole('slider', { name: 'Mix Track gain' });
     fireEvent.change(gain, { target: { value: '-6' } });
     await waitFor(() => expect(api.calls).toContain('previewTrackMix'));
 
     fireEvent.pointerUp(gain, { target: { value: '-6' } });
+    fireEvent.blur(gain, { target: { value: '-6' } });
     await waitFor(() => expect(api.calls).toContain('updateTrack'));
+    expect(api.calls.filter((call) => call === 'updateTrack')).toHaveLength(1);
   });
 
   it('opens an empty Mixer and keeps the Master channel available', () => {

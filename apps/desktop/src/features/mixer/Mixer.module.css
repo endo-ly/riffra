@@ -266,13 +266,25 @@
   border-radius: 2px;
 }
 
+.meterNormal {
+  --meter-color: var(--color-accent-primary);
+}
+
+.meterWarning {
+  --meter-color: var(--color-status-warning);
+}
+
+.meterDanger {
+  --meter-color: var(--color-status-danger);
+}
+
 .meterRms {
   position: absolute;
   right: 1px;
   bottom: 1px;
   left: 1px;
   display: block;
-  background: linear-gradient(to top, var(--color-accent-primary), var(--color-status-warning));
+  background: var(--meter-color, var(--color-accent-primary));
 }
 
 .meterPeak {

@@ -765,6 +765,7 @@ mod tests {
             assert!(current.feedback_suspected);
         }
         assert_eq!(reply.value["outputPeakLeft"], 0.35);
+        assert_eq!(reply.value["outputPeakRight"], 0.4);
         assert_eq!(reply.value["trackMeters"][0]["trackId"], "track:one");
 
         let status = test_status();

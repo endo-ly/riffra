@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
+import { getHostGeneration, getProjectEpoch } from '@/native/invoke';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor } from '@/features/arrange/inspector/track-colors';
@@ -41,11 +42,23 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     if (props.disabled || pendingSwitch !== null) return;
     props.onSelect();
     setPendingSwitch(field);
+    const generationAtRequest = getHostGeneration();
+    const projectEpochAtRequest = getProjectEpoch();
     try {
       const result = await props.api.updateTrack(track.id, { [field]: !track[field] });
+      if (
+        getHostGeneration() !== generationAtRequest ||
+        getProjectEpoch() !== projectEpochAtRequest
+      )
+        return;
       props.applyCanonicalState(result.canonical);
       if (result.projection.state === 'failed') props.onError?.(result.projection.message);
     } catch (error) {
+      if (
+        getHostGeneration() !== generationAtRequest ||
+        getProjectEpoch() !== projectEpochAtRequest
+      )
+        return;
       props.onError?.(error instanceof Error ? error.message : String(error));
     } finally {
       setPendingSwitch(null);

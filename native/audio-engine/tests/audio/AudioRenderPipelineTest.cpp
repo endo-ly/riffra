@@ -91,6 +91,20 @@ TEST(AudioRenderPipelineTest, HoldsInputTransientUntilStatusCollection) {
     EXPECT_GE(callback.getInputPeak(), 0.5f);
 }
 
+TEST(AudioRenderPipelineTest, ReportsIndependentMasterStereoPeaks) {
+    // Arrange
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    callback.metrics().recordBlock(0.0f, 0.0f, 0.75f, 0.25f, 0.75f, 0.0f, 0, 0);
+
+    // Act / Assert
+    EXPECT_FLOAT_EQ(callback.getOutputPeak(), 0.75f);
+    EXPECT_FLOAT_EQ(callback.getOutputPeakLeft(), 0.25f);
+    EXPECT_FLOAT_EQ(callback.getOutputPeakRight(), 0.75f);
+    EXPECT_FLOAT_EQ(callback.getOutputPeakLeft(), 0.0f);
+    EXPECT_FLOAT_EQ(callback.getOutputPeakRight(), 0.0f);
+}
+
 TEST(AudioRenderPipelineTest, SilencesOutputWhenEmergencyMuted) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);

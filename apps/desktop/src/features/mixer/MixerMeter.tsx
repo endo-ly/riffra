@@ -17,6 +17,13 @@ function levelPercent(value: number): number {
   return Math.max(0, Math.min(100, ((db + 60) / 66) * 100));
 }
 
+function meterTone(value: number): string {
+  const db = dbfs(value);
+  if (db >= 0) return styles.meterDanger;
+  if (db >= -6) return styles.meterWarning;
+  return styles.meterNormal;
+}
+
 function formatDb(value: number): string {
   const db = dbfs(value);
   if (!Number.isFinite(db) || db <= -60) return '−∞';
@@ -54,7 +61,7 @@ export function MixerMeter(props: MixerMeterProps) {
         const rms = channel === 'left' ? (meter?.rmsLeft ?? 0) : (meter?.rmsRight ?? 0);
         return (
           <div className={styles.meterColumn} key={channel}>
-            <div className={styles.meterTrack}>
+            <div className={`${styles.meterTrack} ${meterTone(peak)}`}>
               <i className={styles.meterRms} style={{ height: `${levelPercent(rms)}%` }} />
               <b className={styles.meterPeak} style={{ bottom: `${levelPercent(peak)}%` }} />
             </div>

@@ -46,9 +46,18 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<BootstrapState> | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
+  const previousSessionId = useRef<string | null>(null);
   const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
   const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
   sessionRef.current = sessionHook.session;
+
+  useEffect(() => {
+    const nextSessionId = sessionHook.session?.sessionId ?? null;
+    if (previousSessionId.current !== nextSessionId) {
+      previousSessionId.current = nextSessionId;
+      resetAudioMeters();
+    }
+  }, [sessionHook.session?.sessionId]);
 
   useEffect(() => {
     let disposed = false;
