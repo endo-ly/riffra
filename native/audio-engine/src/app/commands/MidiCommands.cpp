@@ -67,7 +67,7 @@ CommandResult AudioCommandDispatcher::dispatchMidi(const juce::var& command) {
             writeJson(makeError("targetedMidi", timelineError));
             return {};
         }
-        writeJson(AudioStatusBuilder::currentMeters(context.pipeline));
+        writeJson(AudioStatusBuilder::currentMeters(context.pipeline, &context.timelineEngine));
         return {};
     }
     return {};

@@ -154,6 +154,7 @@ target_sources(riffra-audio PRIVATE
   src/app/commands/RecordingCommands.cpp
   src/app/commands/PreviewCommands.cpp
   src/app/commands/MidiCommands.cpp
+  src/app/commands/TrackMixCommands.cpp
 )
 
 target_sources(riffra-plugin-scan PRIVATE

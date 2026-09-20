@@ -158,7 +158,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         }
     }
     if (invalidInputSamples > 0)
-        audioMetrics.recordBlock(0.0f, 0.0f, 0.0f, 0.0f, 0, invalidInputSamples);
+        audioMetrics.recordBlock(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, invalidInputSamples);
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
@@ -191,6 +191,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         currentGainLinear = 0.0f;
     float blockPreLimiterPeak = 0.0f;
     float blockOutputPeak = 0.0f;
+    float blockOutputPeakLeft = 0.0f;
+    float blockOutputPeakRight = 0.0f;
     std::uint64_t blockInvalidSamples = 0;
 
     for (int channel = 0; channel < numOutputChannels; ++channel)
@@ -254,6 +256,10 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
             value = juce::jlimit(-kLimiterCeiling, kLimiterCeiling, value);
             output[sample] = value;
             blockOutputPeak = std::max(blockOutputPeak, std::abs(value));
+            if (channel == 0)
+                blockOutputPeakLeft = std::max(blockOutputPeakLeft, std::abs(value));
+            else if (channel == 1)
+                blockOutputPeakRight = std::max(blockOutputPeakRight, std::abs(value));
         }
     }
 
@@ -262,7 +268,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         reductionDb = juce::jmax(0.0f, juce::Decibels::gainToDecibels(juce::jmax(
                                            0.000001f, blockPreLimiterPeak / blockOutputPeak)));
     }
-    audioMetrics.recordBlock(rawInputPeak, blockPreLimiterPeak, blockOutputPeak, reductionDb,
+    audioMetrics.recordBlock(rawInputPeak, blockPreLimiterPeak, blockOutputPeak,
+                             blockOutputPeakLeft, blockOutputPeakRight, reductionDb,
                              blockHardClipSamples, blockInvalidSamples);
     recordDuration();
 }

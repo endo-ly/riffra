@@ -253,6 +253,30 @@ Audio Status の診断値は、コールバック計測（回数・平均/最大
 
 フィードバック保護の検知中は `FeedbackProtection` ミュートを保持する。解除は安全確認後の明示リセット操作で行い、他の所有者のミュートは維持する。
 
+### 5.5 Track mix preview とメーター
+
+Track の Gain、Pan、Mute、Solo、Record Arm は `CreativeSession.arrangement.tracks` が正本であり、Master Gain は `CreativeSession.settings.masterDb` が正本である。Mixer は既存の Canonical state を編集するためのUIであり、Mixer専用の Track、Master、Bus、Effect Chain の正準モデルを持たない。
+
+Gain と Pan の連続操作は、確定前の値を `setTrackMix` として Native の現行 `TrackRuntime` へ一時適用する。Native は次の Audio block の先頭で atomics を読み込み、プレビュー値を保存、履歴、Undo/Redo、Recovery state、Runtime 投影の入力へ戻さない。操作の確定時にのみ Host の `updateTrack` が Canonical state を変更し、次の投影で実行状態を再構築する。
+
+```text
+Desktop Mixer
+   │  previewTrackMix（Host generation付き）
+   ▼
+Rust Host / AudioSupervisor
+   │  setTrackMix（ack）
+   ▼
+Native TrackRuntime atomics ── Audio block ── Track出力
+   │                                      │
+   │                                      └─ Peak/RMS accumulator
+   ▼
+audioMeters（約50 ms） ── HostEventHub ── Desktop meter store
+```
+
+Track Meter は Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に測る。Audio callback は固定された atomics の peak hold とブロック内のRMS集計だけを行い、ロック、ヒープ確保、IPCを行わない。Master の左右Peakは Safety limiter と最終ハードクリップ後の出力から測り、Limiter gain reduction、Hard clip、Feedback protection は同じ `audioMeters` frame の診断値として転送する。
+
+Meter frame は最新値で十分な通知として既存の coalescing event 経路を使う。Host または Project の世代が変わったときは古い preview と meter frame を破棄し、現行 Canonical state の投影だけを有効にする。
+
 ---
 
 ## 6. 永続化と回復

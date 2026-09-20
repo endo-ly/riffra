@@ -93,6 +93,145 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[20], expected, 0.002f);
 }
 
+TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0, 32, error))
+        << error.toStdString();
+
+    constexpr int kBlockSamples = 32;
+    std::array<float, kBlockSamples> input{};
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    const auto mixLiveInput = [&] {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(inputs.data(), 1, outputs.data(), 2, kBlockSamples);
+    };
+
+    // Act: measure the canonical center-panned output, then apply a transient
+    // gain/pan change without publishing a new snapshot.
+    mixLiveInput();
+    const auto baselineLeft = juce::FloatVectorOperations::findMaximum(left.data(), kBlockSamples);
+    const auto baselineRight =
+        juce::FloatVectorOperations::findMaximum(right.data(), kBlockSamples);
+    const auto baselineMeters = engine.meterSnapshot();
+    ASSERT_EQ(baselineMeters.size(), 1);
+    EXPECT_NEAR(static_cast<float>(baselineMeters[0].getProperty("peakLeft", 0.0)), baselineLeft,
+                0.01f);
+    EXPECT_NEAR(static_cast<float>(baselineMeters[0].getProperty("peakRight", 0.0)), baselineRight,
+                0.01f);
+
+    ASSERT_TRUE(engine.setTrackMixControl("track:live", -6.0f, -1.0f, error))
+        << error.toStdString();
+    mixLiveInput();
+    const auto previewMeters = engine.meterSnapshot();
+
+    // Assert: preview is audible immediately, follows the final pan, and the
+    // meter observes the same post-fader/post-pan contribution.
+    ASSERT_EQ(previewMeters.size(), 1);
+    EXPECT_GT(left[0], right[0]);
+    EXPECT_LT(right[0], 0.001f);
+    EXPECT_GT(static_cast<float>(previewMeters[0].getProperty("peakLeft", 0.0)), 0.0f);
+    EXPECT_LT(static_cast<float>(previewMeters[0].getProperty("peakRight", 0.0)), 0.001f);
+
+    // Act: publish a fresh canonical snapshot and render again.
+    ASSERT_TRUE(
+        engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    mixLiveInput();
+
+    // Assert: a graph publication starts from the canonical center-panned
+    // value instead of carrying the transient preview forward.
+    EXPECT_NEAR(left[0], right[0], 0.01f);
+}
+
+TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, true, false);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
+    auto* track = tracks[0].getDynamicObject();
+    ASSERT_NE(track, nullptr);
+    auto* point = new juce::DynamicObject();
+    point->setProperty("tick", 0);
+    point->setProperty("value", -12.0);
+    auto* lane = new juce::DynamicObject();
+    lane->setProperty("parameter", "volume");
+    lane->setProperty("points", juce::Array<juce::var>{juce::var(point)});
+    track->setProperty("automation", juce::Array<juce::var>{juce::var(lane)});
+
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    std::array<float, 32> input{};
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act: render the automation value, then preview a different static gain.
+    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
+    const auto automatedPeak =
+        juce::FloatVectorOperations::findMaximum(left.data(), static_cast<int>(left.size()));
+    ASSERT_TRUE(engine.setTrackMixControl("track:live", -24.0f, std::nullopt, error))
+        << error.toStdString();
+    left.fill(0.0f);
+    right.fill(0.0f);
+    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
+
+    // Assert: the absolute automation value remains authoritative.
+    EXPECT_NEAR(
+        juce::FloatVectorOperations::findMaximum(left.data(), static_cast<int>(left.size())),
+        automatedPeak, 0.01f);
+}
+
+TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(2, true, false);
+    auto* snapshotObject = snapshot.getDynamicObject();
+    ASSERT_NE(snapshotObject, nullptr);
+    auto tracks = snapshotObject->getProperty("tracks");
+    ASSERT_TRUE(tracks.isArray() && tracks.size() == 2);
+    auto* secondTrack = tracks[1].getDynamicObject();
+    ASSERT_NE(secondTrack, nullptr);
+    secondTrack->setProperty("monitoring", "on");
+    secondTrack->setProperty("solo", true);
+
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    std::array<float, 32> input{};
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
+    const auto meters = engine.meterSnapshot();
+
+    // Assert
+    ASSERT_EQ(meters.size(), 2);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters[0].getProperty("peakLeft", 1.0)), 0.0f);
+    EXPECT_GT(static_cast<float>(meters[1].getProperty("peakLeft", 0.0)), 0.0f);
+}
+
 TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     // Arrange
     test::TemporaryDirectory directory;

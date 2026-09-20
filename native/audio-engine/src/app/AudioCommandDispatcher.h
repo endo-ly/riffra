@@ -55,6 +55,7 @@ private:
     [[nodiscard]] CommandResult dispatchRecording(const juce::var& command);
     [[nodiscard]] CommandResult dispatchPreview(const juce::var& command);
     [[nodiscard]] CommandResult dispatchMidi(const juce::var& command);
+    [[nodiscard]] CommandResult dispatchTrackMix(const juce::var& command);
     [[nodiscard]] CommandResult dispatchDevice(const juce::var& command);
 
     Context context;

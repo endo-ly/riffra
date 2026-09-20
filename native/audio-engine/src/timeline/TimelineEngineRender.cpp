@@ -350,20 +350,26 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
     auto panCursor = runtime.panAutomation.cursorAt(rangeStart);
     const auto volumeAutomated = !runtime.volumeAutomation.empty();
     const auto panAutomated = !runtime.panAutomation.empty();
-    const auto fixedPanAngle = (runtime.pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-    const auto fixedGain = juce::Decibels::decibelsToGain(runtime.gainDb);
+    const auto staticGainDb = runtime.gainDb.load(std::memory_order_acquire);
+    const auto staticPan = runtime.pan.load(std::memory_order_acquire);
+    const auto fixedPanAngle = (staticPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+    const auto fixedGain = juce::Decibels::decibelsToGain(staticGainDb);
     const auto fixedLeftGain = fixedGain * std::cos(fixedPanAngle);
     const auto fixedRightGain = fixedGain * std::sin(fixedPanAngle);
     const auto blockEnd = rangeStart + sampleCount;
+    float peakLeft = 0.0f;
+    float peakRight = 0.0f;
+    double sumSquaresLeft = 0.0;
+    double sumSquaresRight = 0.0;
     int processed = 0;
     while (processed < sampleCount) {
         const auto absoluteSample = rangeStart + processed;
         const auto volumeSegment =
-            volumeAutomated ? volumeCursor.segmentAt(absoluteSample, blockEnd, runtime.gainDb)
-                            : AutomationRuntime::Segment{blockEnd, runtime.gainDb, runtime.gainDb};
-        const auto panSegment =
-            panAutomated ? panCursor.segmentAt(absoluteSample, blockEnd, runtime.pan)
-                         : AutomationRuntime::Segment{blockEnd, runtime.pan, runtime.pan};
+            volumeAutomated ? volumeCursor.segmentAt(absoluteSample, blockEnd, staticGainDb)
+                            : AutomationRuntime::Segment{blockEnd, staticGainDb, staticGainDb};
+        const auto panSegment = panAutomated
+                                    ? panCursor.segmentAt(absoluteSample, blockEnd, staticPan)
+                                    : AutomationRuntime::Segment{blockEnd, staticPan, staticPan};
         const auto segmentEnd = std::min({blockEnd, volumeSegment.endSample, panSegment.endSample});
         const auto segmentSamples =
             static_cast<int>(std::max<std::int64_t>(1, segmentEnd - absoluteSample));
@@ -438,10 +444,22 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
             right += postEffectRight;
             const auto sampleGain =
                 juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
-            if (audible && channelCount > 0 && outputChannels[0] != nullptr)
-                outputChannels[0][destinationStart + processed] += left * leftGain * sampleGain;
-            if (audible && channelCount > 1 && outputChannels[1] != nullptr)
-                outputChannels[1][destinationStart + processed] += right * rightGain * sampleGain;
+            auto contributionLeft = audible && channelCount > 0 && outputChannels[0] != nullptr
+                                        ? left * leftGain * sampleGain
+                                        : 0.0f;
+            auto contributionRight = audible && channelCount > 1 && outputChannels[1] != nullptr
+                                         ? right * rightGain * sampleGain
+                                         : 0.0f;
+            if (!std::isfinite(contributionLeft)) contributionLeft = 0.0f;
+            if (!std::isfinite(contributionRight)) contributionRight = 0.0f;
+            if (channelCount > 0 && outputChannels[0] != nullptr)
+                outputChannels[0][destinationStart + processed] += contributionLeft;
+            if (channelCount > 1 && outputChannels[1] != nullptr)
+                outputChannels[1][destinationStart + processed] += contributionRight;
+            peakLeft = std::max(peakLeft, std::abs(contributionLeft));
+            peakRight = std::max(peakRight, std::abs(contributionRight));
+            sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;
+            sumSquaresRight += static_cast<double>(contributionRight) * contributionRight;
             if (volumeAutomated) currentGain *= gainRatio;
             if (panAutomated) {
                 const auto nextCos = currentCos * deltaCos - currentSin * deltaSin;
@@ -449,6 +467,12 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
                 currentCos = nextCos;
             }
         }
+    }
+    if (sampleCount > 0) {
+        runtime.meter.recordBlock(
+            peakLeft, peakRight,
+            static_cast<float>(std::sqrt(sumSquaresLeft / static_cast<double>(sampleCount))),
+            static_cast<float>(std::sqrt(sumSquaresRight / static_cast<double>(sampleCount))));
     }
 }
 

@@ -135,6 +135,7 @@ pub fn run() {
             probe_device_channels,
             get_audio_status,
             preview_master_gain_db,
+            preview_track_mix,
             set_emergency_mute,
             reset_feedback_protection,
             recover_audio_device,

@@ -55,6 +55,8 @@ CommandResult AudioCommandDispatcher::dispatch(const juce::var& command) {
             return dispatchTransport(command);
         case CommandFamily::midi:
             return dispatchMidi(command);
+        case CommandFamily::trackMix:
+            return dispatchTrackMix(command);
         case CommandFamily::preview:
             return dispatchPreview(command);
         case CommandFamily::device:
@@ -68,7 +70,7 @@ CommandResult AudioCommandDispatcher::dispatch(const juce::var& command) {
                     &context.midiInputs.monitor(), {}, &context.timelineEngine));
                 return {};
             }
-            writeJson(AudioStatusBuilder::currentMeters(context.pipeline));
+            writeJson(AudioStatusBuilder::currentMeters(context.pipeline, &context.timelineEngine));
             return {};
         case CommandFamily::unsupported:
             break;

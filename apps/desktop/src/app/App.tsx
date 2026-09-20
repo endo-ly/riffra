@@ -528,6 +528,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               setSelection={arrange.setSelection}
               api={nativeApi}
               audio={audio}
+              setAudio={setAudio}
               onToggleTransport={() =>
                 void (transportPlaying || transportStarting ? stopTransport() : playTransport())
               }

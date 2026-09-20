@@ -62,6 +62,8 @@ struct NativeStatus {
 struct NativeMeters {
     input_peak: Option<f64>,
     output_peak: Option<f64>,
+    output_peak_left: Option<f64>,
+    output_peak_right: Option<f64>,
     invalid_samples: Option<u64>,
     mute_reasons: Option<u32>,
     feedback_suspected: Option<bool>,
@@ -70,6 +72,34 @@ struct NativeMeters {
     pre_limiter_peak: Option<f64>,
     limiter_gain_reduction_db: Option<f64>,
     hard_clip_samples: Option<u64>,
+    #[serde(default)]
+    track_meters: Vec<NativeTrackMeter>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTrackMeter {
+    track_id: String,
+    peak_left: Option<f64>,
+    peak_right: Option<f64>,
+    rms_left: Option<f64>,
+    rms_right: Option<f64>,
+}
+
+impl NativeMeters {
+    fn has_valid_track_meters(&self) -> bool {
+        let valid_value =
+            |value: Option<f64>| value.is_none_or(|value| value.is_finite() && value >= 0.0);
+        self.output_peak_left.is_none_or(|value| value.is_finite())
+            && self.output_peak_right.is_none_or(|value| value.is_finite())
+            && self.track_meters.iter().all(|meter| {
+                !meter.track_id.trim().is_empty()
+                    && valid_value(meter.peak_left)
+                    && valid_value(meter.peak_right)
+                    && valid_value(meter.rms_left)
+                    && valid_value(meter.rms_right)
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,9 +426,12 @@ fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
         }
         Some("audioMeters") => {
             let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
+            if !meters.has_valid_track_meters() {
+                return None;
+            }
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
-        Some("transportStatus" | "timelineAck" | "timelineIdleAck") => {
+        Some("transportStatus" | "timelineAck" | "timelineIdleAck" | "trackMixAck") => {
             Some(ParsedNativeLine::Acknowledgement { request_id })
         }
         Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
@@ -717,7 +750,7 @@ mod tests {
         let status = test_status();
         let reply = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true}"#,
+            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"outputPeakLeft":0.35,"outputPeakRight":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true,"trackMeters":[{"trackId":"track:one","peakLeft":0.3,"peakRight":0.4,"rmsLeft":0.1,"rmsRight":0.2}]}"#,
         )
         .expect("feedback meter reply");
         {
@@ -731,6 +764,8 @@ mod tests {
             assert_eq!(current.invalid_samples, 3);
             assert!(current.feedback_suspected);
         }
+        assert_eq!(reply.value["outputPeakLeft"], 0.35);
+        assert_eq!(reply.value["trackMeters"][0]["trackId"], "track:one");
 
         let status = test_status();
         handle_native_stdout(
@@ -853,6 +888,18 @@ mod tests {
                 }
             ));
         }
+        assert!(matches!(
+            parse_native_line(br#"{"type":"trackMixAck","requestId":11}"#),
+            Some(ParsedNativeLine::Acknowledgement {
+                request_id: Some(11)
+            })
+        ));
+        assert!(
+            parse_native_line(
+                br#"{"type":"audioMeters","trackMeters":[{"trackId":"","peakLeft":0.1}]}"#
+            )
+            .is_none()
+        );
         assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
         assert!(parse_native_line(b"not json").is_none());
         assert!(parse_native_line(br#"{"type":"keepAlive"}"#).is_none());

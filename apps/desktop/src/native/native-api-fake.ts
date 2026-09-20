@@ -389,6 +389,9 @@ export class FakeNativeApi implements NativeApi {
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
   }
+  previewTrackMix(...args: Parameters<NativeApi['previewTrackMix']>) {
+    return this.command('previewTrackMix', args);
+  }
   setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
     return this.command('setEmergencyMute', args);
   }
@@ -1137,6 +1140,7 @@ const audioMethodNames = new Set<keyof NativeApi>([
 const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
   'previewMasterGainDb',
+  'previewTrackMix',
   'openTrackPluginEditor',
   'playTimeline',
   'stopTimeline',

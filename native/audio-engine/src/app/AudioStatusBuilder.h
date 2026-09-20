@@ -18,7 +18,8 @@ public:
                                                  const MidiMonitor* midi = nullptr,
                                                  const juce::String& message = {},
                                                  TimelineEngine* timeline = nullptr);
-    [[nodiscard]] static juce::var currentMeters(const AudioRenderPipeline& pipeline);
+    [[nodiscard]] static juce::var currentMeters(const AudioRenderPipeline& pipeline,
+                                                 TimelineEngine* timeline = nullptr);
 };
 
 }  // namespace riffra

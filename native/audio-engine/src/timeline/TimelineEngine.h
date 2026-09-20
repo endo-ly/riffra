@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "ArrangementGraph.h"
@@ -73,6 +74,12 @@ public:
                                            const juce::MidiMessage& message,
                                            juce::String& error) noexcept;
     [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
+    /// Applies a transient gain/pan change to the active graph without changing
+    /// the canonical session or rebuilding the graph.
+    bool setTrackMixControl(const juce::String& trackId, std::optional<float> gainDb,
+                            std::optional<float> pan, juce::String& error) noexcept;
+    /// Consumes the latest post-fader stereo meter snapshot for each active track.
+    [[nodiscard]] juce::Array<juce::var> meterSnapshot();
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.

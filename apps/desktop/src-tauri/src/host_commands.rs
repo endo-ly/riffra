@@ -119,6 +119,41 @@ pub(crate) async fn preview_master_gain_db(
 }
 
 #[tauri::command]
+pub(crate) async fn preview_track_mix(
+    track_id: String,
+    gain_db: Option<f64>,
+    pan: Option<f64>,
+    app: AppHandle,
+) -> Result<(), NativeCommandError> {
+    if track_id.trim().is_empty() {
+        return Err(NativeCommandError::invalid_request("Track id is required."));
+    }
+    if gain_db.is_none() && pan.is_none() {
+        return Err(NativeCommandError::invalid_request(
+            "At least one Track mix value is required.",
+        ));
+    }
+    if gain_db.is_some_and(|value| !value.is_finite())
+        || pan.is_some_and(|value| !value.is_finite())
+    {
+        return Err(NativeCommandError::invalid_request(
+            "Track mix values must be finite.",
+        ));
+    }
+    run_blocking(app, move |state| {
+        state.host_connection.dispatch(
+            "track.mix.preview",
+            serde_json::json!({
+                "trackId": track_id,
+                "gainDb": gain_db,
+                "pan": pan,
+            }),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn set_emergency_mute(
     muted: bool,
     app: AppHandle,

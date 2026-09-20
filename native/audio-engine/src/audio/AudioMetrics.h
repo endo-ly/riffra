@@ -16,6 +16,8 @@ public:
     // control or telemetry thread.
     [[nodiscard]] float inputPeak() const noexcept;
     [[nodiscard]] float outputPeak() const noexcept;
+    [[nodiscard]] float outputPeakLeft() const noexcept;
+    [[nodiscard]] float outputPeakRight() const noexcept;
     [[nodiscard]] std::uint64_t invalidSampleCount() const noexcept;
     [[nodiscard]] std::uint64_t callbackCount() const noexcept;
     [[nodiscard]] std::uint64_t averageCallbackDurationUs() const noexcept;
@@ -28,9 +30,9 @@ public:
     // Audio thread only, except for resetForDevice which is called by the
     // device lifecycle thread before callbacks resume.
     void recordSilencedBlock(float inputPeak) noexcept;
-    void recordBlock(float inputPeak, float preLimiterPeak, float outputPeak,
-                     float limiterGainReductionDb, std::uint64_t hardClipSamples,
-                     std::uint64_t invalidSamples) noexcept;
+    void recordBlock(float inputPeak, float preLimiterPeak, float outputPeak, float outputPeakLeft,
+                     float outputPeakRight, float limiterGainReductionDb,
+                     std::uint64_t hardClipSamples, std::uint64_t invalidSamples) noexcept;
     void recordCallbackDuration(std::chrono::steady_clock::time_point started, int numSamples,
                                 double sampleRate) noexcept;
     void resetForDevice() noexcept;
@@ -40,6 +42,8 @@ private:
 
     mutable std::atomic<float> inputPeakValue{0.0f};
     mutable std::atomic<float> outputPeakValue{0.0f};
+    mutable std::atomic<float> outputPeakLeftValue{0.0f};
+    mutable std::atomic<float> outputPeakRightValue{0.0f};
     std::atomic<std::uint64_t> invalidSamples{0};
     std::atomic<std::uint64_t> callbackCountValue{0};
     std::atomic<std::uint64_t> callbackDurationUs{0};

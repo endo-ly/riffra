@@ -106,6 +106,17 @@ export async function previewMasterGainDb(gainDb: number): Promise<void> {
   await invokeHost<void>('preview_master_gain_db', { gainDb });
 }
 
+export async function previewTrackMix(
+  trackId: string,
+  patch: { gainDb?: number; pan?: number },
+): Promise<void> {
+  await invokeHost<void>('preview_track_mix', {
+    trackId,
+    gainDb: patch.gainDb,
+    pan: patch.pan,
+  });
+}
+
 export async function recoverAudioDevice(): Promise<AudioStatus> {
   try {
     return await invokeHost<AudioStatus>('recover_audio_device');

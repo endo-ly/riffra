@@ -8,6 +8,7 @@ use super::sidecar_process::{ChildProcess, SidecarProcess};
 use crate::model::{AudioState, AudioStatus, RecordingStatus};
 use crate::preferences::AudioPreferences;
 use crate::{HostEvent, RuntimeBinaries, SharedHostEventSink};
+use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, atomic::Ordering};
@@ -342,16 +343,15 @@ impl AudioSupervisor {
                                     event_events
                                         .emit(HostEvent::AudioStatus(Box::new(status.clone())));
                                 }
+                                if response.value.get("type").and_then(Value::as_str)
+                                    == Some("audioMeters")
+                                {
+                                    event_events
+                                        .emit(HostEvent::AudioMeters(response.value.clone()));
+                                }
                             }
                             NativeEvent::AudioMeters => {
-                                if let Ok(status) = event_status.lock() {
-                                    event_events.emit(HostEvent::AudioMeters(serde_json::json!({
-                                        "inputPeak": status.input_peak,
-                                        "outputPeak": status.output_peak,
-                                        "invalidSamples": status.invalid_samples,
-                                        "feedbackSuspected": status.feedback_suspected,
-                                    })));
-                                }
+                                event_events.emit(HostEvent::AudioMeters(response.value.clone()));
                             }
                             NativeEvent::RecordingCompletion => {
                                 if let Err(error) =

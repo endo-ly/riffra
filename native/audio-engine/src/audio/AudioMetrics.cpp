@@ -12,6 +12,14 @@ float AudioMetrics::outputPeak() const noexcept {
     return outputPeakValue.exchange(0.0f, std::memory_order_acq_rel);
 }
 
+float AudioMetrics::outputPeakLeft() const noexcept {
+    return outputPeakLeftValue.exchange(0.0f, std::memory_order_acq_rel);
+}
+
+float AudioMetrics::outputPeakRight() const noexcept {
+    return outputPeakRightValue.exchange(0.0f, std::memory_order_acq_rel);
+}
+
 std::uint64_t AudioMetrics::invalidSampleCount() const noexcept {
     return invalidSamples.load(std::memory_order_acquire);
 }
@@ -55,15 +63,21 @@ void AudioMetrics::holdPeak(std::atomic<float>& peak, const float value) noexcep
 void AudioMetrics::recordSilencedBlock(const float peak) noexcept {
     holdPeak(inputPeakValue, peak);
     outputPeakValue.store(0.0f, std::memory_order_release);
+    outputPeakLeftValue.store(0.0f, std::memory_order_release);
+    outputPeakRightValue.store(0.0f, std::memory_order_release);
 }
 
 void AudioMetrics::recordBlock(const float blockInputPeak, const float blockPreLimiterPeak,
-                               const float blockOutputPeak, const float blockLimiterGainReductionDb,
+                               const float blockOutputPeak, const float blockOutputPeakLeft,
+                               const float blockOutputPeakRight,
+                               const float blockLimiterGainReductionDb,
                                const std::uint64_t blockHardClipSamples,
                                const std::uint64_t blockInvalidSamples) noexcept {
     holdPeak(inputPeakValue, blockInputPeak);
     holdPeak(preLimiterPeakValue, blockPreLimiterPeak);
     holdPeak(outputPeakValue, blockOutputPeak);
+    holdPeak(outputPeakLeftValue, blockOutputPeakLeft);
+    holdPeak(outputPeakRightValue, blockOutputPeakRight);
     if (blockLimiterGainReductionDb > 0.0f)
         holdPeak(limiterGainReductionDbValue, blockLimiterGainReductionDb);
     if (blockHardClipSamples > 0)
@@ -94,6 +108,8 @@ void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_
 void AudioMetrics::resetForDevice() noexcept {
     inputPeakValue.store(0.0f, std::memory_order_release);
     outputPeakValue.store(0.0f, std::memory_order_release);
+    outputPeakLeftValue.store(0.0f, std::memory_order_release);
+    outputPeakRightValue.store(0.0f, std::memory_order_release);
     preLimiterPeakValue.store(0.0f, std::memory_order_release);
     limiterGainReductionDbValue.store(0.0f, std::memory_order_release);
     hardClipSamplesValue.store(0, std::memory_order_release);

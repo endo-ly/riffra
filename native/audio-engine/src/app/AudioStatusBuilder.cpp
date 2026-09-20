@@ -138,11 +138,14 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
     return juce::var(status);
 }
 
-juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline) {
+juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
+                                            TimelineEngine* timeline) {
     auto* meters = new juce::DynamicObject();
     meters->setProperty("type", "audioMeters");
     meters->setProperty("inputPeak", pipeline.getInputPeak());
     meters->setProperty("outputPeak", pipeline.getOutputPeak());
+    meters->setProperty("outputPeakLeft", pipeline.getOutputPeakLeft());
+    meters->setProperty("outputPeakRight", pipeline.getOutputPeakRight());
     meters->setProperty("invalidSamples",
                         static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
     meters->setProperty("preLimiterPeak", pipeline.getPreLimiterPeak());
@@ -155,6 +158,8 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline)
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));
+    meters->setProperty("trackMeters", timeline != nullptr ? juce::var(timeline->meterSnapshot())
+                                                           : juce::var(juce::Array<juce::var>{}));
     return juce::var(meters);
 }
 

@@ -581,6 +581,34 @@ impl HostState {
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
+            "track.mix.preview" => {
+                let params: TrackMixParams = decode(params)?;
+                if params.track_id.trim().is_empty() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "track id is required",
+                    ));
+                }
+                if params.gain_db.is_none() && params.pan.is_none() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "at least one of gainDb or pan is required",
+                    ));
+                }
+                if params.gain_db.is_some_and(|value| !value.is_finite())
+                    || params.pan.is_some_and(|value| !value.is_finite())
+                {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "track mix values must be finite",
+                    ));
+                }
+                self.core
+                    .audio()
+                    .preview_track_mix(&params.track_id, params.gain_db, params.pan)
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
             "audio.emergency-mute" => {
                 let params: MuteParams = decode(params)?;
                 Ok((
@@ -2028,6 +2056,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "host.bootstrap"
             | "host.shutdown"
             | "audio.master-gain.preview"
+            | "track.mix.preview"
             | "audio.emergency-mute"
             | "audio.feedback-protection.reset"
             | "midi.listening.enable"
@@ -2120,6 +2149,14 @@ struct SeekParams {
 #[serde(rename_all = "camelCase")]
 struct MasterGainParams {
     gain_db: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrackMixParams {
+    track_id: String,
+    gain_db: Option<f64>,
+    pan: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]

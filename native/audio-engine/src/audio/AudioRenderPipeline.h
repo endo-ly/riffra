@@ -49,6 +49,10 @@ public:
     [[nodiscard]] float getMasterGainDb() const noexcept;
     [[nodiscard]] float getInputPeak() const noexcept { return audioMetrics.inputPeak(); }
     [[nodiscard]] float getOutputPeak() const noexcept { return audioMetrics.outputPeak(); }
+    [[nodiscard]] float getOutputPeakLeft() const noexcept { return audioMetrics.outputPeakLeft(); }
+    [[nodiscard]] float getOutputPeakRight() const noexcept {
+        return audioMetrics.outputPeakRight();
+    }
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept {
         return audioMetrics.invalidSampleCount();
     }

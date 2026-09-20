@@ -73,6 +73,9 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
     EXPECT_EQ(meters.getProperty("muteReasons", 0).toString().getIntValue(), 0);
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
+    EXPECT_TRUE(meters.hasProperty("outputPeakLeft"));
+    EXPECT_TRUE(meters.hasProperty("outputPeakRight"));
+    EXPECT_TRUE(meters.hasProperty("trackMeters"));
     ASSERT_TRUE(status.isObject());
     EXPECT_EQ(status.getProperty("type", {}).toString(), "audioStatus");
     EXPECT_TRUE(status.hasProperty("state"));

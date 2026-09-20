@@ -202,6 +202,8 @@ export interface AudioApi {
   getAudioStatus(): Promise<AudioStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
+  /** Applies a transient Track gain/pan change without persisting a session edit. */
+  previewTrackMix(trackId: string, patch: { gainDb?: number; pan?: number }): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   /** Explicitly releases the Native feedback-protection latch. */

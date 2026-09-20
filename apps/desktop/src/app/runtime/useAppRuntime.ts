@@ -9,7 +9,11 @@ import type {
 } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
 import type { AudioMeters } from '@/shared/audio/audio-meters';
-import { publishAudioMeters, resetAudioMeters } from '@/shared/audio/audio-meters';
+import {
+  publishAudioMeterSummary,
+  publishAudioMeters,
+  resetAudioMeters,
+} from '@/shared/audio/audio-meters';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type {
   AudioApi,
@@ -117,7 +121,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = api.onAudioStatus((status) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
-      publishAudioMeters({
+      publishAudioMeterSummary({
         inputPeak: status.inputPeak,
         outputPeak: status.outputPeak,
         invalidSamples: status.invalidSamples,

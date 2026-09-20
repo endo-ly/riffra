@@ -54,6 +54,63 @@ void TimelineEngine::reclaimRetiredTimelines() noexcept {
 
 void TimelineEngine::serviceDeferredCleanup() noexcept { reclaimRetiredTimelines(); }
 
+bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
+                                        const std::optional<float> gainDb,
+                                        const std::optional<float> pan,
+                                        juce::String& error) noexcept {
+    if (trackId.isEmpty()) {
+        error = "A track id is required.";
+        return false;
+    }
+    if (!gainDb.has_value() && !pan.has_value()) {
+        error = "At least one of gainDb or pan is required.";
+        return false;
+    }
+    if ((gainDb.has_value() && !std::isfinite(*gainDb)) ||
+        (pan.has_value() && !std::isfinite(*pan))) {
+        error = "Track mix values must be finite.";
+        return false;
+    }
+
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "The active Timeline graph is unavailable.";
+        return false;
+    }
+    const auto match = std::find_if(
+        timeline->tracks.begin(), timeline->tracks.end(),
+        [&trackId](const auto& track) { return track != nullptr && track->id == trackId; });
+    if (match == timeline->tracks.end() || *match == nullptr) {
+        error = "The requested Track is not present in the active Timeline graph.";
+        return false;
+    }
+
+    auto& runtime = *(*match)->runtime;
+    if (gainDb.has_value())
+        runtime.gainDb.store(juce::jlimit(-90.0f, 24.0f, *gainDb), std::memory_order_release);
+    if (pan.has_value())
+        runtime.pan.store(juce::jlimit(-1.0f, 1.0f, *pan), std::memory_order_release);
+    return true;
+}
+
+juce::Array<juce::var> TimelineEngine::meterSnapshot() {
+    juce::Array<juce::var> meters;
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) return meters;
+    for (const auto& track : timeline->tracks) {
+        if (track == nullptr || track->runtime == nullptr) continue;
+        const auto snapshot = track->runtime->meter.consume();
+        auto* value = new juce::DynamicObject();
+        value->setProperty("trackId", track->id);
+        value->setProperty("peakLeft", snapshot.peakLeft);
+        value->setProperty("peakRight", snapshot.peakRight);
+        value->setProperty("rmsLeft", snapshot.rmsLeft);
+        value->setProperty("rmsRight", snapshot.rmsRight);
+        meters.add(juce::var(value));
+    }
+    return meters;
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
