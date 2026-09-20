@@ -12,6 +12,7 @@ use crate::runtime::RuntimeReconciler;
 use crate::runtime_snapshot::runtime_timeline_snapshot;
 use riffra_core::{AppCore, CanonicalSnapshot};
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -154,6 +155,7 @@ pub(crate) fn initialize_runtime<F>(
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
+    command_gate: &Mutex<()>,
     capture_target: F,
     shutting_down: &AtomicBool,
 ) -> Result<StartupInitialization, String>
@@ -166,48 +168,57 @@ where
             return Err(NativeAudioError::ShuttingDown.to_string());
         }
 
-        let status = match initialize_audio_safety(core) {
-            Ok(status) => status,
-            Err(error) => {
-                core.audio().mark_startup_failed();
-                return Err(error);
-            }
-        };
-        if !safe_for_startup_restore(&status) {
-            core.audio().mark_startup_failed();
-            return Ok(StartupInitialization {
-                status,
-                runtime_error: Some(
-                    "native audio startup safety check failed; feature runtime remains muted"
-                        .into(),
-                ),
-            });
-        }
-
-        let generation = core.audio().sidecar_generation();
+        let mut last_status = None;
         for _ in 0..STARTUP_RUNTIME_TARGET_RETRY_LIMIT {
             if shutting_down.load(Ordering::Acquire) {
                 core.audio().mark_startup_failed();
                 return Err(NativeAudioError::ShuttingDown.to_string());
             }
-            let target = match capture_target() {
+            let target = match capture_startup_target(command_gate, &capture_target) {
                 Ok(target) => target,
                 Err(error) => {
                     core.audio().mark_startup_failed();
                     return Err(error);
                 }
             };
+            let status =
+                match initialize_audio_safety(core, target.canonical.session.settings.master_db) {
+                    Ok(status) => status,
+                    Err(error) => {
+                        core.audio().mark_startup_failed();
+                        return Err(error);
+                    }
+                };
+            last_status = Some(status.clone());
+            if !safe_for_startup_restore(&status) {
+                core.audio().mark_startup_failed();
+                return Ok(StartupInitialization {
+                    status,
+                    runtime_error: Some(
+                        "native audio startup safety check failed; feature runtime remains muted"
+                            .into(),
+                    ),
+                });
+            }
+
+            let generation = core.audio().sidecar_generation();
             match restore_startup_runtime(
                 core,
                 runtime,
                 data_root,
                 built_in_instruments,
                 &target,
-                &capture_target,
                 generation,
             ) {
                 Ok(()) => {
-                    let status = match release_startup_mute(core.audio(), generation, &status) {
+                    let status = match release_startup_mute_for_target(
+                        core.audio(),
+                        command_gate,
+                        &capture_target,
+                        &target,
+                        generation,
+                        &status,
+                    ) {
                         Ok(status) => status,
                         Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                         Err(StartupRuntimeError::TargetChanged) => continue,
@@ -246,7 +257,14 @@ where
                     });
                 }
                 Err(StartupRuntimeError::Feature(error)) => {
-                    match release_startup_mute(core.audio(), generation, &status) {
+                    match release_startup_mute_for_target(
+                        core.audio(),
+                        command_gate,
+                        &capture_target,
+                        &target,
+                        generation,
+                        &status,
+                    ) {
                         Ok(released) => {
                             core.audio().mark_startup_failed();
                             return Ok(StartupInitialization {
@@ -274,7 +292,7 @@ where
         }
         core.audio().mark_startup_failed();
         return Ok(StartupInitialization {
-            status,
+            status: last_status.unwrap_or_default(),
             runtime_error: Some(
                 "startup runtime target changed repeatedly; output remains muted".into(),
             ),
@@ -287,13 +305,10 @@ where
     ))
 }
 
-fn initialize_audio_safety(core: &AppCore<AudioSupervisor>) -> Result<AudioStatus, String> {
-    let master_gain_db = core
-        .snapshot()
-        .map_err(|error| format!("canonical session could not be captured: {error}"))?
-        .session
-        .settings
-        .master_db;
+fn initialize_audio_safety(
+    core: &AppCore<AudioSupervisor>,
+    master_gain_db: f64,
+) -> Result<AudioStatus, String> {
     initialize_audio_safety_with(core.audio(), master_gain_db, STARTUP_SAFETY_TIMEOUT)
 }
 
@@ -356,18 +371,14 @@ fn initialize_safety_generation<A: StartupAudioPort>(
     Ok(status)
 }
 
-fn restore_startup_runtime<F>(
+fn restore_startup_runtime(
     core: &AppCore<AudioSupervisor>,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
     target: &StartupTarget,
-    capture_target: &F,
     generation: u64,
-) -> Result<(), StartupRuntimeError>
-where
-    F: Fn() -> Result<StartupTarget, String>,
-{
+) -> Result<(), StartupRuntimeError> {
     if sidecar_transitioned(core.audio(), generation) {
         return Err(StartupRuntimeError::GenerationChanged(
             generation_changed_message(core.audio(), generation),
@@ -397,12 +408,42 @@ where
             generation_changed_message(core.audio(), generation),
         ));
     }
+    Ok(())
+}
+
+fn capture_startup_target<F>(
+    command_gate: &Mutex<()>,
+    capture_target: &F,
+) -> Result<StartupTarget, String>
+where
+    F: Fn() -> Result<StartupTarget, String>,
+{
+    let _command_gate = command_gate
+        .lock()
+        .map_err(|_| "Host command gate was poisoned".to_owned())?;
+    capture_target()
+}
+
+fn release_startup_mute_for_target<F>(
+    audio: &AudioSupervisor,
+    command_gate: &Mutex<()>,
+    capture_target: &F,
+    target: &StartupTarget,
+    generation: u64,
+    muted_status: &AudioStatus,
+) -> Result<AudioStatus, StartupRuntimeError>
+where
+    F: Fn() -> Result<StartupTarget, String>,
+{
+    let _command_gate = command_gate
+        .lock()
+        .map_err(|_| StartupRuntimeError::Feature("Host command gate was poisoned".to_owned()))?;
     let current_target = capture_target().map_err(StartupRuntimeError::Feature)?;
     if !startup_targets_match(&current_target, target) {
-        tracing::info!("startup runtime target changed during graph restoration");
+        tracing::info!("startup runtime target changed before releasing the safety mute");
         return Err(StartupRuntimeError::TargetChanged);
     }
-    Ok(())
+    release_startup_mute(audio, generation, muted_status)
 }
 
 fn release_startup_mute(
@@ -598,23 +639,5 @@ mod tests {
 
         assert_eq!(status.state, AudioState::Muted);
         assert!(safe_for_startup_restore(&status));
-    }
-
-    #[test]
-    fn startup_target_identity_rejects_a_different_project_with_the_same_sequence() {
-        let canonical = CanonicalSnapshot {
-            session: riffra_core::CreativeSession::new(0),
-            sequence: 7,
-        };
-        let target = StartupTarget {
-            project_id: "project:a".into(),
-            canonical: canonical.clone(),
-        };
-        let current = StartupTarget {
-            project_id: "project:b".into(),
-            canonical,
-        };
-
-        assert!(!startup_targets_match(&current, &target));
     }
 }

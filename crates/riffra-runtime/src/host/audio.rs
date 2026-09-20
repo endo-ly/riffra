@@ -179,6 +179,13 @@ impl HostState {
             )
             .map(|_| ())
             .map_err(|error| error.to_string())
+            .and_then(|()| {
+                self.core
+                    .audio()
+                    .set_master_gain_db(snapshot.session.settings.master_db)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
     }
 
     pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {
@@ -276,7 +283,8 @@ impl HostState {
             &self.runtime,
             &self.data_root,
             self.built_in_instruments.as_ref(),
-            || self.capture_startup_target(),
+            &self._command_gate,
+            || self.capture_startup_target_under_command_gate(),
             &self.shutting_down,
         );
         let succeeded = initialized

@@ -72,11 +72,9 @@ impl HostState {
             .map_err(|error| HostError::State(error.to_string()))
     }
 
-    pub(super) fn capture_startup_target(&self) -> Result<crate::startup::StartupTarget, String> {
-        let _command_gate = self
-            ._command_gate
-            .lock()
-            .map_err(|_| "Host command gate was poisoned".to_owned())?;
+    pub(super) fn capture_startup_target_under_command_gate(
+        &self,
+    ) -> Result<crate::startup::StartupTarget, String> {
         let project_id = self
             .project_store
             .active_project_id()

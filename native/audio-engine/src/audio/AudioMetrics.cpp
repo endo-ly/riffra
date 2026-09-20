@@ -96,6 +96,10 @@ void AudioMetrics::recordBlock(const std::uint64_t projectEpoch, const float blo
                                const float blockLimiterGainReductionDb,
                                const std::uint64_t blockHardClipSamples,
                                const std::uint64_t blockInvalidSamples) noexcept {
+    if (blockHardClipSamples > 0)
+        hardClipSamplesValue.fetch_add(blockHardClipSamples, std::memory_order_relaxed);
+    if (blockInvalidSamples > 0)
+        invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
     if (!projectEpochIsCurrent(projectEpoch)) return;
     holdPeak(inputPeakValue, blockInputPeak);
     holdPeak(preLimiterPeakValue, blockPreLimiterPeak);
@@ -104,10 +108,6 @@ void AudioMetrics::recordBlock(const std::uint64_t projectEpoch, const float blo
     holdPeak(outputPeakRightValue, blockOutputPeakRight);
     if (blockLimiterGainReductionDb > 0.0f)
         holdPeak(limiterGainReductionDbValue, blockLimiterGainReductionDb);
-    if (blockHardClipSamples > 0)
-        hardClipSamplesValue.fetch_add(blockHardClipSamples, std::memory_order_relaxed);
-    if (blockInvalidSamples > 0)
-        invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
 }
 
 void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_point started,

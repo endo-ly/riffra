@@ -1,5 +1,5 @@
 use super::HostState;
-use crate::model::ProjectState;
+use crate::model::{ArrangementProjectionOutcome, AudioState, ProjectState};
 use crate::projects;
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ErrorCode, ProtocolError};
@@ -127,6 +127,11 @@ fn activate_project(
         .project_store
         .active_project_id()
         .map_err(|error| command_error(error.to_string()))?;
+    let previous_canonical = state
+        .core
+        .canonical_state()
+        .map_err(|error| command_error(error.to_string()))?;
+    let previous_recovered_from_generation = state.core.recovered_from_generation();
     let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
     crate::library::index::refresh(
         &state.data_root,
@@ -150,17 +155,16 @@ fn activate_project(
     state
         .event_hub
         .set_plugin_project_id(Some(project_id.to_owned()));
-    if let Err(error) = crate::session::commit::finalize_arrangement_mutation(
-        activated.canonical.clone(),
-        state.runtime.as_ref(),
-        &state.data_root,
-        state.built_in_instruments.as_ref(),
-        project_id,
-        state.core.safe_mode(),
-        CanonicalMutationEffect::ProjectArrangement,
-    ) {
-        tracing::warn!(error, "Project runtime projection could not be queued");
+    if let Err(error) = apply_project_runtime_transition(state, &activated.canonical, project_id) {
+        return Err(rollback_project_activation(
+            state,
+            &previous,
+            &previous_canonical,
+            previous_recovered_from_generation,
+            error,
+        ));
     }
+
     let activation = projects::result(activated);
     state
         .events
@@ -171,6 +175,100 @@ fn activate_project(
         serde_json::to_value(activation).map_err(serialize_error)?,
         sequence,
     ))
+}
+
+fn rollback_project_activation(
+    state: &HostState,
+    previous_project_id: &str,
+    previous_canonical: &CanonicalState,
+    previous_recovered_from_generation: bool,
+    failure: ProtocolError,
+) -> ProtocolError {
+    let mut rollback_errors = Vec::new();
+    let rollback_canonical = match state
+        .core
+        .activate_session(previous_canonical.session.clone())
+    {
+        Ok(canonical) => Some(canonical),
+        Err(error) => {
+            rollback_errors.push(format!("canonical state: {error}"));
+            None
+        }
+    };
+    let project_restored = match state.project_store.set_active(previous_project_id) {
+        Ok(_) => true,
+        Err(error) => {
+            rollback_errors.push(format!("active Project: {error}"));
+            false
+        }
+    };
+
+    if let Some(canonical) = rollback_canonical.as_ref() {
+        state
+            .core
+            .set_recovered_from_generation(previous_recovered_from_generation);
+        if project_restored {
+            state
+                .event_hub
+                .set_plugin_project_id(Some(previous_project_id.to_owned()));
+            state.keep_plugin_persistence_project(previous_project_id);
+            if let Ok(storage) = state.project_store.session_store(previous_project_id) {
+                crate::library::index::refresh(&state.data_root, &storage, &canonical.session);
+            }
+        }
+        if !state.core.safe_mode()
+            && let Err(error) =
+                apply_project_runtime_transition(state, canonical, previous_project_id)
+        {
+            rollback_errors.push(format!("runtime: {}", error.message));
+        }
+    }
+
+    if rollback_errors.is_empty() {
+        failure
+    } else {
+        command_error(format!(
+            "{}; Project activation rollback failed: {}",
+            failure.message,
+            rollback_errors.join("; ")
+        ))
+    }
+}
+
+fn apply_project_runtime_transition(
+    state: &HostState,
+    canonical: &CanonicalState,
+    project_id: &str,
+) -> Result<(), ProtocolError> {
+    if state.core.safe_mode() {
+        return Ok(());
+    }
+
+    let projection = crate::session::commit::finalize_arrangement_mutation(
+        canonical.clone(),
+        state.runtime.as_ref(),
+        &state.data_root,
+        state.built_in_instruments.as_ref(),
+        project_id,
+        false,
+        CanonicalMutationEffect::ProjectArrangement,
+    )
+    .map_err(|error| command_error(format!("Project runtime projection failed: {error}")))?;
+    if let ArrangementProjectionOutcome::Failed { message } = projection.projection {
+        return Err(command_error(format!(
+            "Project runtime projection failed: {message}"
+        )));
+    }
+
+    let status = state.core.audio().status().map_err(audio_error)?;
+    if matches!(status.state, AudioState::Ready | AudioState::Muted) {
+        state
+            .core
+            .audio()
+            .set_master_gain_db(canonical.session.settings.master_db)
+            .map_err(audio_error)?;
+    }
+    Ok(())
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError> {

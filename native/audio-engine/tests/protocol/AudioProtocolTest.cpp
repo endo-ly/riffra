@@ -150,8 +150,8 @@ TEST(AudioDeviceServiceTest, KeepsProjectMeterEpochAndCumulativeDiagnosticsConsi
     EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("preLimiterPeak", 0.0)), 0.0f);
     EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("limiterGainReductionDb", 0.0)),
                     0.0f);
-    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("invalidSamples", 0)), 4);
-    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("hardClipSamples", 0)), 3);
+    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("invalidSamples", 0)), 8);
+    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("hardClipSamples", 0)), 6);
 
     callback.metrics().beginProjectBlock(newProjectEpoch);
     callback.metrics().recordBlock(newProjectEpoch, 0.1f, 0.2f, 0.3f, 0.25f, 0.35f, 2.5f, 0, 0);
