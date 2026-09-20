@@ -462,7 +462,7 @@ Gain と Pan のドラッグ中は Native Runtime の一時プレビューへ値
 
 各 Track の Meter は Effect Chain、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に表示する。Master Meter は Safety limiter と最終ハードクリップ後の左右出力を表示し、Limiter gain reduction、Hard clip、Feedback protection の状態を診断欄に示す。Meter が未接続の間は値を補間せず、利用不可として表示する。
 
-### 5.2 MIDI Editor
+### 5.3 MIDI Editor
 
 #### 画面構造
 
@@ -546,7 +546,7 @@ Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節�
 
 Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
-### 5.3 将来のDevices編集面
+### 5.4 将来のDevices編集面
 
 Devices編集面は現在提供していない。将来追加する場合は、Track Context の Instrument と Effect Chain をPropertiesの子ではなくLower Areaの編集面として、Trackの選択状態と同じ文脈で扱う。Lower Areaに機能選択タブは置かず、対象を開く操作から編集面を表示する。
 

@@ -270,7 +270,7 @@ where
                             return Ok(StartupInitialization {
                                 status: released,
                                 runtime_error: Some(format!(
-                                    "{error}; Arrangement Runtime remains muted"
+                                    "{error}; Arrangement Runtime restoration failed"
                                 )),
                             });
                         }
