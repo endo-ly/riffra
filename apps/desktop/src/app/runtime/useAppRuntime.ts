@@ -8,8 +8,13 @@ import type {
   ProjectState,
 } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
-import type { AudioMeters } from '@/shared/audio/audio-meters';
-import { publishAudioMeters, resetAudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
+import {
+  markAudioMetersUnavailable,
+  publishAudioMeterSummary,
+  publishAudioMeters,
+  resetAudioMeters,
+} from '@/shared/audio/audio-meters';
 import { getHostGeneration, logNativeError } from '@/native/invoke';
 import type {
   AudioApi,
@@ -44,7 +49,14 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const sessionRef = useRef<CreativeSession | null>(null);
   const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
   const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
+  const activeProjectId = sessionHook.projectState?.activeProjectId ?? null;
+  const activeProjectIdRef = useRef<string | null>(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
   sessionRef.current = sessionHook.session;
+
+  useEffect(() => {
+    resetAudioMeters();
+  }, [activeProjectId, hostGeneration, sessionHook.session?.sessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -53,7 +65,6 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     runtimeStartupEventReceived.current = false;
     setBoot(null);
     setAudio(startingAudioStatus());
-    resetAudioMeters();
     setRuntimeStarted(false);
     setRuntimeStartupFinished(false);
     let unlistenRuntimeStartupFinished: (() => void) | null = null;
@@ -66,12 +77,14 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     );
     const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
+      activeProjectIdRef.current = projectState.activeProjectId;
       setBoot((current) => (current ? { ...current, projectState } : current));
     });
     const unlistenProjectActivated = api.onProjectActivated(
       (activation: ProjectActivationResult) => {
         if (disposed || getHostGeneration() !== effectGeneration) return;
-        applyProjectActivation(activation);
+        if (!applyProjectActivation(activation)) return;
+        activeProjectIdRef.current = activation.projectState.activeProjectId;
       },
     );
     const runtimeStartupListener = api
@@ -102,6 +115,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         .then((state) => {
           if (disposed || getHostGeneration() !== effectGeneration) return;
           const mergedState = mergeBootstrapState(state);
+          activeProjectIdRef.current = state.projectState.activeProjectId;
           setBoot(mergedState);
           applyCanonicalState(mergedState.canonical);
           if (!runtimeStartupEventReceived.current) {
@@ -117,7 +131,10 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = api.onAudioStatus((status) => {
       if (disposed || getHostGeneration() !== effectGeneration) return;
-      publishAudioMeters({
+      if (status.state === 'faulted' || status.state === 'offline' || status.state === 'starting') {
+        markAudioMetersUnavailable();
+      }
+      publishAudioMeterSummary({
         inputPeak: status.inputPeak,
         outputPeak: status.outputPeak,
         invalidSamples: status.invalidSamples,
@@ -140,8 +157,14 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         setAudio(next);
       }, 100);
     });
-    const unlistenMeters = api.onAudioMeters((meters: AudioMeters) => {
-      if (disposed || getHostGeneration() !== effectGeneration) return;
+    const unlistenMeters = api.onAudioMeters((meters: AudioMeterFrame) => {
+      if (
+        disposed ||
+        getHostGeneration() !== effectGeneration ||
+        activeProjectIdRef.current === null ||
+        meters.projectId !== activeProjectIdRef.current
+      )
+        return;
       publishAudioMeters(meters);
     });
     return () => {

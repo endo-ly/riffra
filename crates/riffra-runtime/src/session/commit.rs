@@ -32,6 +32,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     runtime: &RuntimeReconciler<D>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
+    project_id: &str,
     safe_mode: bool,
     effect: CanonicalMutationEffect,
 ) -> Result<ArrangementMutationResult, String> {
@@ -60,6 +61,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         crate::runtime_snapshot::runtime_timeline_snapshot(
             data_root,
             built_in_instruments,
+            project_id,
             &canonical.session,
         ),
         key,
@@ -140,11 +142,16 @@ pub fn arrangement_mutation_result<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
     let canonical = context.core.canonical_state()?;
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::command(error.to_string()))?;
     finalize_arrangement_mutation(
         canonical,
         context.runtime,
         context.data_root,
         context.built_in_instruments,
+        &project_id,
         context.safe_mode,
         CanonicalMutationEffect::ProjectArrangement,
     )
@@ -155,11 +162,16 @@ pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<ArrangementMutationResult, AdapterError> {
     let canonical = context.core.canonical_state()?;
+    let project_id = context
+        .storage
+        .project_id()
+        .map_err(|error| AdapterError::command(error.to_string()))?;
     finalize_arrangement_mutation(
         canonical,
         context.runtime,
         context.data_root,
         context.built_in_instruments,
+        &project_id,
         context.safe_mode,
         CanonicalMutationEffect::CanonicalOnly,
     )

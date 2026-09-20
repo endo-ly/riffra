@@ -1,39 +1,41 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
-import styles from './ArrangeDetailArea.module.css';
+import styles from './ArrangeLowerArea.module.css';
+import type { ArrangeLowerView } from './hooks/useArrangeLowerAreaController';
 
-export type ArrangeDetailView = 'closed' | 'midiEditor';
-
-const MIN_HEIGHT = 180;
 const COLLAPSED_HEIGHT = 48;
 
-interface ArrangeDetailAreaProps {
-  view: ArrangeDetailView;
+interface ArrangeLowerAreaProps {
+  view: ArrangeLowerView;
   height: number;
+  minimumHeight: number;
   collapsed: boolean;
   maximized: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   onHeightChange: (height: number) => void;
-  collapsedControls: ReactNode;
+  controls: ReactNode;
   midiEditor: ReactNode;
+  mixer: ReactNode;
 }
 
-export function ArrangeDetailArea({
+export function ArrangeLowerArea({
   view,
   height,
+  minimumHeight,
   collapsed,
   maximized,
   onCollapsedChange,
   onHeightChange,
-  collapsedControls,
+  controls,
   midiEditor,
-}: ArrangeDetailAreaProps) {
+  mixer,
+}: ArrangeLowerAreaProps) {
   if (view === 'closed') return null;
 
-  const applyDetailHeight = (workspace: HTMLElement | null, nextHeight: number) => {
-    const maxHeight = Math.max(MIN_HEIGHT, (workspace?.clientHeight ?? 900) - 42);
+  const applyHeight = (workspace: HTMLElement | null, nextHeight: number) => {
+    const maxHeight = Math.max(minimumHeight, (workspace?.clientHeight ?? 900) - 42);
     const clamped = Math.min(maxHeight, nextHeight);
-    if (clamped < MIN_HEIGHT) {
+    if (clamped < minimumHeight) {
       onCollapsedChange(true);
       return;
     }
@@ -41,13 +43,13 @@ export function ArrangeDetailArea({
     onHeightChange(clamped);
   };
 
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = collapsed ? COLLAPSED_HEIGHT : height;
     const workspace = event.currentTarget.closest<HTMLElement>('[data-arrange-workspace]');
     const move = (pointer: PointerEvent) => {
-      applyDetailHeight(workspace, startHeight - pointer.clientY + startY);
+      applyHeight(workspace, startHeight - pointer.clientY + startY);
     };
     const finish = () => {
       window.removeEventListener('pointermove', move);
@@ -64,32 +66,31 @@ export function ArrangeDetailArea({
     event.preventDefault();
     const delta = (event.key === 'ArrowUp' ? 1 : -1) * (event.shiftKey ? 24 : 8);
     const workspace = document.querySelector<HTMLElement>('[data-arrange-workspace]');
-    applyDetailHeight(workspace, (collapsed ? COLLAPSED_HEIGHT : height) + delta);
+    applyHeight(workspace, (collapsed ? COLLAPSED_HEIGHT : height) + delta);
   };
 
   return (
     <section
       className={`${styles.area}${collapsed ? ` ${styles.collapsed}` : ''}${maximized ? ` ${styles.maximized}` : ''}`}
-      style={{ '--detail-height': `${height}px` } as CSSProperties}
-      aria-label="Arrange detail area"
-      data-detail-area
+      style={{ '--lower-height': `${height}px` } as CSSProperties}
+      aria-label="Arrange lower area"
+      data-arrange-lower-area
+      data-view={view}
     >
       <ResizeHandle
         orientation="horizontal"
-        ariaLabel="Resize detail area"
+        ariaLabel="Resize Arrange lower area"
         ariaValueMin={COLLAPSED_HEIGHT}
         ariaValueNow={collapsed ? COLLAPSED_HEIGHT : height}
         onPointerDown={startResize}
         onKeyDown={onKeyDown}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%' }}
       />
-      {collapsed ? (
-        <div className={styles.actions} aria-label="Detail area controls">
-          {collapsedControls}
-        </div>
-      ) : null}
+      <div className={styles.actions} aria-label="Arrange lower area controls">
+        {controls}
+      </div>
       <div className={styles.content} hidden={collapsed}>
-        {view === 'midiEditor' ? midiEditor : null}
+        {view === 'midiEditor' ? midiEditor : mixer}
       </div>
     </section>
   );

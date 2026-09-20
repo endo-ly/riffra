@@ -67,7 +67,9 @@ CommandResult AudioCommandDispatcher::dispatchMidi(const juce::var& command) {
             writeJson(makeError("targetedMidi", timelineError));
             return {};
         }
-        writeJson(AudioStatusBuilder::currentMeters(context.pipeline));
+        auto* acknowledgement = new juce::DynamicObject();
+        acknowledgement->setProperty("type", "midiAck");
+        writeJson(juce::var(acknowledgement));
         return {};
     }
     return {};

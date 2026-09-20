@@ -31,6 +31,7 @@ function Harness({
   runtimeProjectionFailure,
   runtimeProjectionRetrying,
   onRetryRuntimeProjection,
+  initialFocusedTrackId,
 }: {
   api: FakeNativeApi;
   initialSession?: CreativeSession;
@@ -39,11 +40,14 @@ function Harness({
   runtimeProjectionFailure?: string | null;
   runtimeProjectionRetrying?: boolean;
   onRetryRuntimeProjection?: () => Promise<void>;
+  initialFocusedTrackId?: string | null;
 }) {
   const initial = initialSession ?? defaultSession();
   const [session, setSession] = useState<CreativeSession>(initial);
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
-  const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
+  const [focusedTrackId, setFocusedTrackId] = useState<string | null>(
+    initialFocusedTrackId ?? null,
+  );
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   return (
     <>
@@ -57,6 +61,7 @@ function Harness({
         setSelection={setSelection}
         api={api}
         audio={api.audio}
+        setAudio={() => undefined}
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
@@ -1880,7 +1885,7 @@ describe('WorkspaceArrange', () => {
     expect(api.calls.filter((call) => call === 'sendMidiToTrack')).toHaveLength(2);
   });
 
-  it('seeks from the MIDI ruler and supports detail area resize, collapse, maximize, and close', async () => {
+  it('seeks from the MIDI ruler and supports lower area resize, collapse, maximize, and close', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
       id: 'track:navigation',
@@ -1922,28 +1927,28 @@ describe('WorkspaceArrange', () => {
       configurable: true,
       value: 600,
     });
-    const resizeHandle = screen.getByRole('separator', { name: 'Resize detail area' });
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize Arrange lower area' });
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: -200 });
     fireEvent.pointerUp(window, { clientY: -200 });
-    expect(screen.getByRole('region', { name: 'Arrange detail area' })).toHaveStyle(
-      '--detail-height: 558px',
+    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveStyle(
+      '--lower-height: 558px',
     );
 
-    const detailArea = screen.getByRole('region', { name: 'Arrange detail area' });
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse detail area' }));
-    expect(screen.getByRole('button', { name: 'Restore detail area' })).toBeInTheDocument();
-    expect(detailArea.querySelector('[hidden]')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Restore detail area' }));
-    expect(detailArea.querySelector('[hidden]')).not.toBeInTheDocument();
+    const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse lower area' }));
+    expect(screen.getByRole('button', { name: 'Restore lower area' })).toBeInTheDocument();
+    expect(lowerArea.querySelector('[hidden]')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore lower area' }));
+    expect(lowerArea.querySelector('[hidden]')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Maximize detail area' }));
-    expect(screen.getByRole('button', { name: 'Restore detail area size' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close detail area' }));
-    expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Maximize lower area' }));
+    expect(screen.getByRole('button', { name: 'Restore lower area size' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close lower area' }));
+    expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument();
   });
 
-  it('collapses the detail area when the resize handle is dragged below its minimum height', async () => {
+  it('collapses the lower area when the resize handle is dragged below its minimum height', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
       id: 'track:drag-collapse',
@@ -1980,16 +1985,63 @@ describe('WorkspaceArrange', () => {
       configurable: true,
       value: 600,
     });
-    // Default detail height is 380: dragging 210px further down lands below the
+    // Default lower area height is 380: dragging 210px further down lands below the
     // 180px minimum and collapses instead of shrinking.
-    const resizeHandle = screen.getByRole('separator', { name: 'Resize detail area' });
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize Arrange lower area' });
     fireEvent.pointerDown(resizeHandle, { clientY: 500 });
     fireEvent.pointerMove(window, { clientY: 710 });
-    expect(screen.getByRole('button', { name: 'Restore detail area' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore lower area' })).toBeInTheDocument();
     fireEvent.pointerUp(window, { clientY: 710 });
   });
 
-  it('keeps the Play Surface independent from the MIDI detail area', async () => {
+  it('opens the Mixer in the shared lower area with track and master channels', async () => {
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      id: 'track:focused',
+      name: 'Focused Instrument',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    session.arrangement.tracks.push({
+      id: 'track:mixer',
+      name: 'Mix Track',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      rack: { devices: [], macros: [] },
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    render(<Harness api={api} initialSession={session} initialFocusedTrackId="track:focused" />);
+
+    const mixerToggle = screen.getByRole('button', { name: 'Mixer' });
+    expect(mixerToggle).toBeEnabled();
+    fireEvent.click(mixerToggle);
+
+    const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
+    expect(lowerArea.querySelector('[data-mixer-panel]')).toBeInTheDocument();
+    const trackChannel = screen.getByRole('article', { name: 'Mix Track mixer channel' });
+    expect(trackChannel).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Master mixer channel' })).toBeInTheDocument();
+
+    fireEvent.click(within(trackChannel).getByTitle('Mix Track'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Automation' })).toBeEnabled());
+    expect(trackChannel).toHaveAttribute('data-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Play Surface' })).toBeEnabled();
+  });
+
+  it('keeps the Play Surface independent from the MIDI lower area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
       id: 'track:play-surface',
@@ -2028,14 +2080,14 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand Play Surface' }));
 
     fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:play-surface"]')!);
-    expect(screen.getByRole('region', { name: 'Arrange detail area' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
     expect(
       screen.queryByText('Play Surface Instrument · Play Surface Clip'),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close detail area' }));
-    expect(screen.queryByRole('region', { name: 'Arrange detail area' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close lower area' }));
+    expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close Play Surface' }));
     expect(screen.queryByRole('region', { name: 'Play Surface' })).not.toBeInTheDocument();

@@ -607,7 +607,6 @@ fn is_host_scoped_command(command: &str) -> bool {
             | "instrument.list"
             | "instrument.save"
             | "instrument.export"
-            | "audio.master-gain.preview"
             | "audio.emergency-mute"
             | "midi.listening.enable"
             | "midi.listening.disable"
@@ -826,6 +825,8 @@ mod tests {
 
         for command in [
             "session.get",
+            "audio.master-gain.preview",
+            "track.mix.preview",
             "track.add",
             "project.export",
             "transport.play",

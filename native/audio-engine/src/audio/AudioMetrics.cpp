@@ -4,12 +4,34 @@
 
 namespace riffra {
 
-float AudioMetrics::inputPeak() const noexcept {
-    return inputPeakValue.exchange(0.0f, std::memory_order_acq_rel);
+AudioMetrics::TransientMeterSnapshot AudioMetrics::consumeTransientMeters(
+    const std::uint64_t expectedProjectEpoch) const noexcept {
+    if (!projectEpochIsCurrent(expectedProjectEpoch)) return {};
+    return {
+        inputPeakValue.exchange(0.0f, std::memory_order_acq_rel),
+        outputPeakValue.exchange(0.0f, std::memory_order_acq_rel),
+        outputPeakLeftValue.exchange(0.0f, std::memory_order_acq_rel),
+        outputPeakRightValue.exchange(0.0f, std::memory_order_acq_rel),
+        preLimiterPeakValue.exchange(0.0f, std::memory_order_acq_rel),
+        limiterGainReductionDbValue.exchange(0.0f, std::memory_order_acq_rel),
+    };
 }
 
-float AudioMetrics::outputPeak() const noexcept {
-    return outputPeakValue.exchange(0.0f, std::memory_order_acq_rel);
+AudioMetrics::TransientMeterSnapshot AudioMetrics::peekTransientMeters(
+    const std::uint64_t expectedProjectEpoch) const noexcept {
+    if (!projectEpochIsCurrent(expectedProjectEpoch)) return {};
+    return {
+        inputPeakValue.load(std::memory_order_acquire),
+        outputPeakValue.load(std::memory_order_acquire),
+        outputPeakLeftValue.load(std::memory_order_acquire),
+        outputPeakRightValue.load(std::memory_order_acquire),
+        preLimiterPeakValue.load(std::memory_order_acquire),
+        limiterGainReductionDbValue.load(std::memory_order_acquire),
+    };
+}
+
+std::uint64_t AudioMetrics::requestedProjectEpoch() const noexcept {
+    return requestedProjectEpochValue.load(std::memory_order_acquire);
 }
 
 std::uint64_t AudioMetrics::invalidSampleCount() const noexcept {
@@ -33,16 +55,13 @@ std::uint64_t AudioMetrics::callbackOverruns() const noexcept {
     return callbackOverrunsValue.load(std::memory_order_acquire);
 }
 
-float AudioMetrics::preLimiterPeak() const noexcept {
-    return preLimiterPeakValue.exchange(0.0f, std::memory_order_acq_rel);
-}
-
-float AudioMetrics::limiterGainReductionDb() const noexcept {
-    return limiterGainReductionDbValue.exchange(0.0f, std::memory_order_acq_rel);
-}
-
 std::uint64_t AudioMetrics::hardClipSamples() const noexcept {
     return hardClipSamplesValue.load(std::memory_order_acquire);
+}
+
+bool AudioMetrics::projectEpochIsCurrent(const std::uint64_t projectEpoch) const noexcept {
+    return requestedProjectEpochValue.load(std::memory_order_acquire) == projectEpoch &&
+           activeProjectEpochValue.load(std::memory_order_acquire) == projectEpoch;
 }
 
 void AudioMetrics::holdPeak(std::atomic<float>& peak, const float value) noexcept {
@@ -52,24 +71,43 @@ void AudioMetrics::holdPeak(std::atomic<float>& peak, const float value) noexcep
     }
 }
 
-void AudioMetrics::recordSilencedBlock(const float peak) noexcept {
-    holdPeak(inputPeakValue, peak);
-    outputPeakValue.store(0.0f, std::memory_order_release);
+void AudioMetrics::requestProjectEpoch(const std::uint64_t projectEpoch) noexcept {
+    requestedProjectEpochValue.store(projectEpoch, std::memory_order_release);
 }
 
-void AudioMetrics::recordBlock(const float blockInputPeak, const float blockPreLimiterPeak,
-                               const float blockOutputPeak, const float blockLimiterGainReductionDb,
+void AudioMetrics::beginProjectBlock(const std::uint64_t projectEpoch) noexcept {
+    if (activeProjectEpochValue.load(std::memory_order_acquire) == projectEpoch) return;
+    resetTransientMeters();
+    activeProjectEpochValue.store(projectEpoch, std::memory_order_release);
+}
+
+void AudioMetrics::recordSilencedBlock(const std::uint64_t projectEpoch,
+                                       const float peak) noexcept {
+    if (!projectEpochIsCurrent(projectEpoch)) return;
+    holdPeak(inputPeakValue, peak);
+    outputPeakValue.store(0.0f, std::memory_order_release);
+    outputPeakLeftValue.store(0.0f, std::memory_order_release);
+    outputPeakRightValue.store(0.0f, std::memory_order_release);
+}
+
+void AudioMetrics::recordBlock(const std::uint64_t projectEpoch, const float blockInputPeak,
+                               const float blockPreLimiterPeak, const float blockOutputPeak,
+                               const float blockOutputPeakLeft, const float blockOutputPeakRight,
+                               const float blockLimiterGainReductionDb,
                                const std::uint64_t blockHardClipSamples,
                                const std::uint64_t blockInvalidSamples) noexcept {
-    holdPeak(inputPeakValue, blockInputPeak);
-    holdPeak(preLimiterPeakValue, blockPreLimiterPeak);
-    holdPeak(outputPeakValue, blockOutputPeak);
-    if (blockLimiterGainReductionDb > 0.0f)
-        holdPeak(limiterGainReductionDbValue, blockLimiterGainReductionDb);
     if (blockHardClipSamples > 0)
         hardClipSamplesValue.fetch_add(blockHardClipSamples, std::memory_order_relaxed);
     if (blockInvalidSamples > 0)
         invalidSamples.fetch_add(blockInvalidSamples, std::memory_order_relaxed);
+    if (!projectEpochIsCurrent(projectEpoch)) return;
+    holdPeak(inputPeakValue, blockInputPeak);
+    holdPeak(preLimiterPeakValue, blockPreLimiterPeak);
+    holdPeak(outputPeakValue, blockOutputPeak);
+    holdPeak(outputPeakLeftValue, blockOutputPeakLeft);
+    holdPeak(outputPeakRightValue, blockOutputPeakRight);
+    if (blockLimiterGainReductionDb > 0.0f)
+        holdPeak(limiterGainReductionDbValue, blockLimiterGainReductionDb);
 }
 
 void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_point started,
@@ -91,11 +129,17 @@ void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_
         callbackOverrunsValue.fetch_add(1, std::memory_order_relaxed);
 }
 
-void AudioMetrics::resetForDevice() noexcept {
+void AudioMetrics::resetTransientMeters() noexcept {
     inputPeakValue.store(0.0f, std::memory_order_release);
     outputPeakValue.store(0.0f, std::memory_order_release);
+    outputPeakLeftValue.store(0.0f, std::memory_order_release);
+    outputPeakRightValue.store(0.0f, std::memory_order_release);
     preLimiterPeakValue.store(0.0f, std::memory_order_release);
     limiterGainReductionDbValue.store(0.0f, std::memory_order_release);
+}
+
+void AudioMetrics::resetForDevice() noexcept {
+    resetTransientMeters();
     hardClipSamplesValue.store(0, std::memory_order_release);
 }
 

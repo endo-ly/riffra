@@ -60,8 +60,11 @@ struct NativeStatus {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeMeters {
+    project_id: String,
     input_peak: Option<f64>,
     output_peak: Option<f64>,
+    output_peak_left: Option<f64>,
+    output_peak_right: Option<f64>,
     invalid_samples: Option<u64>,
     mute_reasons: Option<u32>,
     feedback_suspected: Option<bool>,
@@ -70,6 +73,35 @@ struct NativeMeters {
     pre_limiter_peak: Option<f64>,
     limiter_gain_reduction_db: Option<f64>,
     hard_clip_samples: Option<u64>,
+    #[serde(default)]
+    track_meters: Vec<NativeTrackMeter>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTrackMeter {
+    track_id: String,
+    peak_left: Option<f64>,
+    peak_right: Option<f64>,
+    rms_left: Option<f64>,
+    rms_right: Option<f64>,
+}
+
+impl NativeMeters {
+    fn has_valid_track_meters(&self) -> bool {
+        let valid_value =
+            |value: Option<f64>| value.is_none_or(|value| value.is_finite() && value >= 0.0);
+        !self.project_id.trim().is_empty()
+            && self.output_peak_left.is_none_or(|value| value.is_finite())
+            && self.output_peak_right.is_none_or(|value| value.is_finite())
+            && self.track_meters.iter().all(|meter| {
+                !meter.track_id.trim().is_empty()
+                    && valid_value(meter.peak_left)
+                    && valid_value(meter.peak_right)
+                    && valid_value(meter.rms_left)
+                    && valid_value(meter.rms_right)
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,9 +428,12 @@ fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
         }
         Some("audioMeters") => {
             let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
+            if !meters.has_valid_track_meters() {
+                return None;
+            }
             Some(ParsedNativeLine::Meters { request_id, meters })
         }
-        Some("transportStatus" | "timelineAck" | "timelineIdleAck") => {
+        Some("transportStatus" | "timelineAck" | "timelineIdleAck" | "trackMixAck" | "midiAck") => {
             Some(ParsedNativeLine::Acknowledgement { request_id })
         }
         Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
@@ -660,7 +695,7 @@ mod tests {
 
         let started = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":1,"previewing":true}"#,
+            br#"{"type":"audioMeters","requestId":1,"projectId":"project:test","previewing":true}"#,
         )
         .expect("preview start meter reply");
         assert!(matches!(started.event, NativeEvent::AudioStatus));
@@ -668,7 +703,7 @@ mod tests {
 
         let finished = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":2,"previewing":false,"builtInPreviewing":false}"#,
+            br#"{"type":"audioMeters","requestId":2,"projectId":"project:test","previewing":false,"builtInPreviewing":false}"#,
         )
         .expect("preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
@@ -678,7 +713,7 @@ mod tests {
         let status = test_status();
         let started = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":3,"previewing":true,"builtInPreviewing":true}"#,
+            br#"{"type":"audioMeters","requestId":3,"projectId":"project:test","previewing":true,"builtInPreviewing":true}"#,
         )
         .expect("built-in preview start meter reply");
         assert!(matches!(started.event, NativeEvent::AudioStatus));
@@ -689,7 +724,7 @@ mod tests {
         }
         let finished = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":4,"previewing":true,"builtInPreviewing":false}"#,
+            br#"{"type":"audioMeters","requestId":4,"projectId":"project:test","previewing":true,"builtInPreviewing":false}"#,
         )
         .expect("built-in preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
@@ -717,7 +752,7 @@ mod tests {
         let status = test_status();
         let reply = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":12,"inputPeak":0.7,"outputPeak":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true}"#,
+            br#"{"type":"audioMeters","requestId":12,"projectId":"project:test","inputPeak":0.7,"outputPeak":0.4,"outputPeakLeft":0.35,"outputPeakRight":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true,"trackMeters":[{"trackId":"track:one","peakLeft":0.3,"peakRight":0.4,"rmsLeft":0.1,"rmsRight":0.2}]}"#,
         )
         .expect("feedback meter reply");
         {
@@ -731,16 +766,19 @@ mod tests {
             assert_eq!(current.invalid_samples, 3);
             assert!(current.feedback_suspected);
         }
+        assert_eq!(reply.value["outputPeakLeft"], 0.35);
+        assert_eq!(reply.value["outputPeakRight"], 0.4);
+        assert_eq!(reply.value["trackMeters"][0]["trackId"], "track:one");
 
         let status = test_status();
         handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","muteReasons":16,"feedbackSuspected":true}"#,
+            br#"{"type":"audioMeters","projectId":"project:test","muteReasons":16,"feedbackSuspected":true}"#,
         )
         .expect("mute meter reply");
         let reply = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","muteReasons":0,"feedbackSuspected":false}"#,
+            br#"{"type":"audioMeters","projectId":"project:test","muteReasons":0,"feedbackSuspected":false}"#,
         )
         .expect("release meter reply");
         {
@@ -853,6 +891,24 @@ mod tests {
                 }
             ));
         }
+        assert!(matches!(
+            parse_native_line(br#"{"type":"trackMixAck","requestId":11}"#),
+            Some(ParsedNativeLine::Acknowledgement {
+                request_id: Some(11)
+            })
+        ));
+        assert!(matches!(
+            parse_native_line(br#"{"type":"midiAck","requestId":12}"#),
+            Some(ParsedNativeLine::Acknowledgement {
+                request_id: Some(12)
+            })
+        ));
+        assert!(
+            parse_native_line(
+                br#"{"type":"audioMeters","projectId":"project:test","trackMeters":[{"trackId":"","peakLeft":0.1}]}"#
+            )
+            .is_none()
+        );
         assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
         assert!(parse_native_line(b"not json").is_none());
         assert!(parse_native_line(br#"{"type":"keepAlive"}"#).is_none());

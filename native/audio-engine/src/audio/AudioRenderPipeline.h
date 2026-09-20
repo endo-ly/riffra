@@ -26,7 +26,7 @@ enum class MuteReason : std::uint32_t {
 /// Owns the ordered realtime render and safety processing path.
 class AudioRenderPipeline final {
 public:
-    explicit AudioRenderPipeline(TimelineEngine& timeline) noexcept;
+    explicit AudioRenderPipeline(TimelineEngine& timeline);
     ~AudioRenderPipeline();
 
     AudioRenderPipeline(const AudioRenderPipeline&) = delete;
@@ -47,8 +47,17 @@ public:
     void setInputChannel(int channel) noexcept;
     [[nodiscard]] int getInputChannel() const noexcept;
     [[nodiscard]] float getMasterGainDb() const noexcept;
-    [[nodiscard]] float getInputPeak() const noexcept { return audioMetrics.inputPeak(); }
-    [[nodiscard]] float getOutputPeak() const noexcept { return audioMetrics.outputPeak(); }
+    [[nodiscard]] AudioMetrics::TransientMeterSnapshot consumeTransientMeters(
+        std::uint64_t projectEpoch) const noexcept {
+        return audioMetrics.consumeTransientMeters(projectEpoch);
+    }
+    [[nodiscard]] AudioMetrics::TransientMeterSnapshot peekTransientMeters(
+        std::uint64_t projectEpoch) const noexcept {
+        return audioMetrics.peekTransientMeters(projectEpoch);
+    }
+    [[nodiscard]] std::uint64_t projectMeterEpoch() const noexcept {
+        return audioMetrics.requestedProjectEpoch();
+    }
     [[nodiscard]] std::uint64_t getInvalidSampleCount() const noexcept {
         return audioMetrics.invalidSampleCount();
     }
@@ -63,10 +72,6 @@ public:
     }
     [[nodiscard]] std::uint64_t getCallbackOverruns() const noexcept {
         return audioMetrics.callbackOverruns();
-    }
-    [[nodiscard]] float getPreLimiterPeak() const noexcept { return audioMetrics.preLimiterPeak(); }
-    [[nodiscard]] float getLimiterGainReductionDb() const noexcept {
-        return audioMetrics.limiterGainReductionDb();
     }
     [[nodiscard]] std::uint64_t getHardClipSamples() const noexcept {
         return audioMetrics.hardClipSamples();
@@ -152,7 +157,7 @@ private:
     static std::uint32_t muteReasonBit(MuteReason reason) noexcept;
     void setMuteReason(MuteReason reason, bool active) noexcept;
     void silenceAndCommit(float* const* outputChannelData, int numOutputChannels, int numSamples,
-                          float rawInputPeak) noexcept;
+                          float rawInputPeak, std::uint64_t projectEpoch) noexcept;
 
     TimelineEngine& timelineEngine;
     AudioMetrics audioMetrics;

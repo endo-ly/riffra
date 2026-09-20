@@ -11,6 +11,7 @@ enum class CommandFamily {
     trackDevice,
     transport,
     midi,
+    trackMix,
     preview,
     device,
     recording,

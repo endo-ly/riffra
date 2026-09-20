@@ -203,6 +203,8 @@ fn queue_runtime_startup(
                 &state.runtime,
                 &state.data_root,
                 &state.built_in_instruments,
+                &state._command_gate,
+                || state.capture_startup_target_under_command_gate(),
                 &state.shutting_down,
             );
             let succeeded = initialized

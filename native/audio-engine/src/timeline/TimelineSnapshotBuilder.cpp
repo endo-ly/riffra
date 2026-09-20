@@ -74,6 +74,7 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
         return false;
     }
     prepared = std::make_unique<PreparedTimeline>();
+    prepared->projectId = snapshot.getProperty("projectId", {}).toString();
     prepared->revision =
         static_cast<std::uint64_t>(static_cast<juce::int64>(snapshot.getProperty("revision", -1)));
     const auto unavailableClipIds = snapshot.getProperty("unavailableClipIds", {});
@@ -174,10 +175,12 @@ bool TimelineSnapshotBuilder::build(const juce::var& snapshot, juce::AudioFormat
             error = "Timeline track requires an id.";
             return false;
         }
-        track->runtime->gainDb =
-            juce::jlimit(-90.0f, 24.0f, static_cast<float>(trackValue.getProperty("gainDb", 0.0)));
-        track->runtime->pan =
-            juce::jlimit(-1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0)));
+        track->runtime->gainDb.store(
+            juce::jlimit(-90.0f, 24.0f, static_cast<float>(trackValue.getProperty("gainDb", 0.0))),
+            std::memory_order_release);
+        track->runtime->pan.store(
+            juce::jlimit(-1.0f, 1.0f, static_cast<float>(trackValue.getProperty("pan", 0.0))),
+            std::memory_order_release);
         track->runtime->muted = static_cast<bool>(trackValue.getProperty("muted", false));
         track->runtime->solo = static_cast<bool>(trackValue.getProperty("solo", false));
         prepared->hasSolo = prepared->hasSolo || track->runtime->solo;

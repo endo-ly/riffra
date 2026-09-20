@@ -360,7 +360,7 @@ fn build_render_plan(
             "Offline Render source asset is not registered: {missing_id}"
         ));
     }
-    let snapshot = crate::runtime_snapshot::runtime_timeline_snapshot(
+    let snapshot = crate::runtime_snapshot::offline_runtime_timeline_snapshot(
         data_root,
         built_in_instruments,
         &render_session,

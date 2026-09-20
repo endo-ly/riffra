@@ -2,9 +2,9 @@
 
 ## 1. 位置付け
 
-本書は、Riffra の Arrange ワークスペースに固有の画面構造と操作仕様の正本である。Browser、Properties、Timeline、Detail Area、Play Surface の Arrange 上の配置と共通挙動を定義する。共通の画面骨格は [共通画面構造](application-layout.md) を参照する。
+本書は、Riffra の Arrange ワークスペースに固有の画面構造と操作仕様の正本である。Browser、Properties、Timeline、Lower Area、Play Surface の Arrange 上の配置と共通挙動を定義する。共通の画面骨格は [共通画面構造](application-layout.md) を参照する。
 
-Arrange は Riffra の主制作画面であり、演奏、監視、録音、音色調整、Audio / MIDI Clip の配置、MIDI 編集、再生確認を一つの Arrangement 上でつなぐ。Timeline を中心に曲を組み立て、Browser と Properties が素材探索・属性調整を支え、Detail Area が Clip や Track の内部編集、Play Surface が演奏入力を担当する。
+Arrange は Riffra の主制作画面であり、演奏、監視、録音、音色調整、Audio / MIDI Clip の配置、MIDI 編集、再生確認を一つの Arrangement 上でつなぐ。Timeline を中心に曲を組み立て、Browser と Properties が素材探索・属性調整を支え、Lower Area が Clip や Track の内部編集とミックス確認、Play Surface が演奏入力を担当する。
 
 制作データは `../data-model.md`、アプリケーション内部の責務分担は `../architecture.md`、通信契約は `../ipc.md` を参照する。
 
@@ -14,7 +14,7 @@ Arrange は Riffra の主制作画面であり、演奏、監視、録音、音�
 - [2. Arrange の作業構造](#2-arrange-の作業構造)
 - [3. Timeline](#3-timeline)
 - [4. Left Column](#4-left-column)
-- [5. Detail Area](#5-detail-area)
+- [5. Lower Area](#5-lower-area)
 - [6. Play Surface](#6-play-surface)
 - [7. 再生・録音とフィードバック](#7-再生録音とフィードバック)
 - [8. 操作文脈とショートカット](#8-操作文脈とショートカット)
@@ -26,7 +26,7 @@ Arrange は Riffra の主制作画面であり、演奏、監視、録音、音�
 
 ### 2.1 画面構成
 
-Arrange の Main Canvas は Timeline である。Browser と Properties は Left Column に常時表示し、MIDI Editor は Timeline の下側に Detail Area として開く。Play Surface は演奏入力が必要な場面で独立して展開する。
+Arrange の Main Canvas は Timeline である。Browser と Properties は Left Column に常時表示し、MIDI Editor または Mixer は Timeline の下側に Lower Area として開く。Play Surface は演奏入力が必要な場面で独立して展開する。
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -41,15 +41,15 @@ Arrange の Main Canvas は Timeline である。Browser と Properties は Left
 │                    │ ├─────────────────────────────────────────────────────┤ │
 │                    │ │ Timeline · Tracks / Clips / Automation              │ │
 │                    │ ├─────────────────────────────────────────────────────┤ │
-│                    │ │ DETAIL AREA                                         │ │
-│ PROPERTIES         │ │ MIDI Editor / Devices                              │ │
+│                    │ │ LOWER AREA                                          │ │
+│ PROPERTIES         │ │ MIDI Editor / Mixer                                 │ │
 ├────────────────────┴─────────────────────────────────────────────────────────┤
 │ PLAY SURFACE · optional                                                      │
 │ Focused Instrument Track / Keyboard / Drum Pads / Octave / Velocity         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Detail Area は内部編集、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Detail Area の Devices で Instrument を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。
+制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Lower Area は内部編集とミックス確認、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Lower Area の Mixer で音を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。Devices は将来、同じLower Areaへ追加する。
 
 ### 2.2 選択・編集対象・演奏先
 
@@ -90,7 +90,7 @@ Properties が扱う Track を表す。Track を選択した場合はその Trac
 
 #### Active MIDI Clip
 
-MIDI Editor が編集している MIDI Clip を表す。MIDI Clip のダブルクリックや明示的な Edit 操作で Active MIDI Clip を設定し、Detail Area に MIDI Editor を開く。
+MIDI Editor が編集している MIDI Clip を表す。MIDI Clip のダブルクリックや明示的な Edit 操作で Active MIDI Clip を設定し、Lower Area に MIDI Editor を開く。
 
 MIDI Editor が表示中で、単一の別 MIDI Clip を通常選択した場合は編集対象もその Clip へ追従する。複数選択では Active MIDI Clip を維持し、どの Clip の Note を編集しているかは MIDI Editor の編集対象として保持する。
 
@@ -119,7 +119,7 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [Select|Split]  Snap [1/16 ▾]  [Automation]                         │
+│ [Select|Split]  Snap [1/16 ▾]  [Automation] [Mixer]                 │
 │                                       Bars/Time   Zoom [−][＋] 100% │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -132,6 +132,7 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 | Split         | 指定位置で Clip を分割                          |
 | Snap          | Timeline の時間編集に使う Grid                  |
 | Automation    | 選択 Track の Automation Lane を開閉            |
+| Mixer         | Timeline 下側の Mixer Lower Area を開閉         |
 | Play Surface  | Focused Instrument Track の Play Surface を開閉 |
 | Bars / Time   | Ruler の表示形式を切替                          |
 | Timeline Zoom | 時間方向の拡大・縮小                            |
@@ -236,11 +237,11 @@ Audio Clip は波形を中心に表示し、素材の使用範囲と音の位置
 
 左右端は Trim、Fade Handle は Fade In / Fade Out を担当する。Start、Length、Gain、Pan、Fade、Loop など数値確認を伴う属性は Properties からも調整できる。
 
-将来 Audio Editor を導入する場合は、Clip の内部波形や高度な音声処理を Detail Area で扱い、Timeline 上の構成編集との責務を分ける。
+将来 Audio Editor を導入する場合は、Clip の内部波形や高度な音声処理を Lower Area で扱い、Timeline 上の構成編集との責務を分ける。
 
 ### 3.6 MIDI Clip
 
-MIDI Clip は内部 Note の配置を簡易表示する。Clip のダブルクリックで Active MIDI Clip を設定し、Detail Area に MIDI Editor を開く。
+MIDI Clip は内部 Note の配置を簡易表示する。Clip のダブルクリックで Active MIDI Clip を設定し、Lower Area に MIDI Editor を開く。
 
 Timeline 上の Trim は Clip が Arrangement 上で占める範囲を扱い、Note の開始・長さ・Velocity など演奏内容は MIDI Editor で扱う。
 
@@ -259,7 +260,7 @@ Instrument Track の空白
           New MIDI Clip
                 │
                 ▼
-       Detail Area / MIDI Editor
+       Lower Area / MIDI Editor
 ```
 
 作成位置は Timeline Snap に従う。Time Selection がある場合はその範囲を初期長として使い、通常時はクリック位置から一小節を初期長とする。作成後はその Clip を Active MIDI Clip として開き、すぐ Note 入力へ移れる状態にする。
@@ -325,17 +326,17 @@ Arrange の Left Column は Browser と Properties を上下に常時表示す�
 
 ### 4.1 Browser
 
-Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または Track の Devices へ投入する。
+Browser は Audio / MIDI Asset、Recording、Inbox、Instrument、Effect などを探し、Timeline または将来の Track 編集面へ投入する。
 
 ```text
 Browser
 ├─ Audio / MIDI Assets ─────→ Timeline
 ├─ Recordings / Inbox ──────→ Timeline / Take workflow
-├─ Instruments ─────────────→ Track / Devices
-└─ Effects ─────────────────→ Devices
+├─ Instruments ─────────────→ Track / 将来のDevices編集面
+└─ Effects ─────────────────→ 将来のDevices編集面
 ```
 
-Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、Instrument または Effect として Track の Devices へ追加する。
+Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、将来のDevices編集面でInstrumentまたはEffectとしてTrackへ追加できる構造とする。
 
 Instrument や Effect の追加ボタンから開く Add Browser は、現在の追加先を引き継いで候補を絞る。
 
@@ -366,7 +367,7 @@ Track 自体の属性を扱う。
 | Status     | Input source、recording、missing dependency など Track に関係する状態                      |
 | Instrument | Built-in音源またはVST3音源の名前、Bypass、Change、Clear。EditとMissing操作はVST3だけに表示 |
 
-Track Properties は Track 属性を編集する。Instrument と Effect Chain は Devices の編集面で扱う。
+Track Properties は Track 属性を編集する。Instrument と Effect Chain は、現在のArrangeでは既存のTrack操作から扱い、将来はDevicesの編集面へ集約する。
 
 #### Audio Clip Properties
 
@@ -433,11 +434,11 @@ Raw / Processed の両方を持つ Audio Take は同じ位置から切り替え�
 
 ---
 
-## 5. Detail Area
+## 5. Lower Area
 
-Detail Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集する。Arrange では MIDI Editor を表示し、Instrument と Effect Chain は Devices としてこの領域に配置する。
+Lower Area は Timeline で扱う対象へ一段深く入り、演奏内容や信号経路を編集・確認する。現在のArrangeでは MIDI Editor または Mixer のいずれか一つを表示する。Devicesの編集面は将来追加する。
 
-Detail Area は、Timeline から明示的に開いた編集面を表示する。Arrange では MIDI Editor を表示し、Devices も同じ領域の責務として扱う。外側に対象名を繰り返す文言ヘッダーは置かず、各編集面自身の Toolbar と編集対象を保ったまま作業を続けられる。
+Lower Area は、Timeline Toolbar または対象を開く操作から明示された編集面を表示する。MIDI Editor と Mixer は同じ領域を共有し、表示面を切り替えても Canonical state、Arrange Selection、Active MIDI Clip はそれぞれの責務を保つ。外側に対象名を繰り返す文言ヘッダーは置かず、各編集面自身の Toolbar と編集対象を保ったまま作業を続けられる。
 
 ### 5.1 共通操作
 
@@ -451,9 +452,17 @@ Detail Area は、Timeline から明示的に開いた編集面を表示する�
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Detail Area は、Resize、Collapse / Restore、Expand / Restore、Close を提供する。対象の切替は Timeline の MIDI Clip 選択から行い、Detail Area を閉じても Arrange Selection と Active MIDI Clip は維持する。Play Surface は Detail Area と独立して開閉できる。
+Lower Area は、Resize、Collapse / Restore、Expand / Restore、Close を提供する。対象の切替は Timeline の MIDI Clip 操作または Arrange Toolbar の Mixer 操作から行い、Lower Area を閉じても Arrange Selection と Active MIDI Clip は維持する。Play Surface は Lower Area と独立して開閉できる。
 
-### 5.2 MIDI Editor
+### 5.2 Mixer
+
+Mixer は Track ごとの音量・Pan・Meter・M/S/R と、固定された Master 出力を横並びで確認する。Track 列は横スクロールし、Master 列は右側に固定する。Track を選択しても Focused Instrument Track は変更しない。
+
+Gain と Pan のドラッグ中は Native Runtime の一時プレビューへ値を集約して送り、操作の確定時に一度だけ `updateTrack` を実行する。プレビュー値は Canonical state、Undo/Redo、保存、Runtime 再起動の復元対象にしない。M/S/R は Track の Canonical state を更新する。
+
+各 Track の Meter は Effect Chain、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に表示する。Master Meter は Safety limiter と最終ハードクリップ後の左右出力を表示し、Limiter gain reduction、Hard clip、Feedback protection の状態を診断欄に示す。Meter が未接続の間は値を補間せず、利用不可として表示する。
+
+### 5.3 MIDI Editor
 
 #### 画面構造
 
@@ -537,9 +546,9 @@ Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節�
 
 Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
-### 5.3 Devices
+### 5.4 将来のDevices編集面
 
-Devices は Track Context の Instrument と Effect Chain を扱う。Properties の子ではなく Detail Area の編集面として、Track の選択状態と同じ文脈で編集する。Detail Area に機能選択タブは置かず、対象を開く操作から編集面を表示する。
+Devices編集面は現在提供していない。将来追加する場合は、Track Context の Instrument と Effect Chain をPropertiesの子ではなくLower Areaの編集面として、Trackの選択状態と同じ文脈で扱う。Lower Areaに機能選択タブは置かず、対象を開く操作から編集面を表示する。
 
 ```text
 Track: Synth Lead
@@ -615,9 +624,9 @@ Focused Instrument Track ────────→ Play Surface / Computer MID
 
 別の Instrument Track を Focus すると、Play Surface の Track 名、Instrument、入力状態も同じ文脈へ更新する。
 
-### 6.2 Detail Area との連携
+### 6.2 Lower Area との連携
 
-Play Surface と Detail Area は同時に利用できる。特に Devices との組み合わせを、Instrument の音作りにおける基本導線とする。
+Play Surface と Lower Area は同時に利用できる。現在は Mixer との組み合わせをInstrumentの出力確認に用い、将来はDevicesとの組み合わせを音作りの導線へ加える。
 
 ```text
 Devices
@@ -660,7 +669,7 @@ Loop / Metronome / Count-in / Tempo / Signature
    Timeline  MIDI Editor  Play Surface
 ```
 
-Timeline、Detail Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
+Timeline、Lower Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
 
 Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。準備中の Play は UI をブロックせず、Stop は保留中の Play より優先される。Stop 後に準備が終わっても自動再生せず、投影失敗時は Play 意図を解除して失敗を通知する。
 
@@ -695,13 +704,13 @@ Hover、Selected、Focused、Active Tool、Pending、Recording、Warning など�
 
 Missing source、Missing Plugin、Audio device fault、runtime out-of-sync など制作継続へ影響する問題は、作用範囲に応じて表示先を決める。
 
-| 問題                   | 主な表示先                     |
-| ---------------------- | ------------------------------ |
-| Audio runtime / device | Global Control Bar + 全体通知  |
-| Missing Plugin         | Devices / Track status         |
-| Missing Audio source   | Clip / Properties              |
-| Runtime sync           | Timeline status + retry action |
-| 一時的な編集結果       | Toast                          |
+| 問題                   | 主な表示先                                     |
+| ---------------------- | ---------------------------------------------- |
+| Audio runtime / device | Global Control Bar + 全体通知                  |
+| Missing Plugin         | Track status（Devices追加後はDevicesにも表示） |
+| Missing Audio source   | Clip / Properties                              |
+| Runtime sync           | Timeline status + retry action                 |
+| 一時的な編集結果       | Toast                                          |
 
 Audio device、Runtime projection、Transport は別の状態として表示する。デバイスが利用可能でも
 投影が準備中なら Transport は `Starting` になり、投影が失敗した場合は Audio device の復旧と
@@ -772,7 +781,7 @@ Double Click empty lane
         ↓
 MIDI Clip created
         ↓
-Detail Area / MIDI Editor
+Lower Area / MIDI Editor
         ↓
 Draw / Double Click notes
         ↓
@@ -785,7 +794,7 @@ Play from Global Transport
 Edit while listening
 ```
 
-Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Track の音色調整は Detail Area の Devices で行い、Clip 編集と Track 属性の意味を分ける。
+Timeline から MIDI Editor へ自然に深く入り、Global Transport で Arrangement を再生しながら Note 編集を続ける。Trackの音色調整は現在のTrack操作またはMixerで行い、将来はDevices編集面へ拡張する。Clip 編集と Track 属性の意味は分ける。
 
 ### 9.2 Audio 素材からの構成
 
@@ -807,7 +816,9 @@ Play and review
 
 素材探索、Timeline への投入、直接編集、属性調整が Browser、Properties、Main Canvas の間で連続する。
 
-### 9.3 Instrument と Effect の音作り
+### 9.3 将来のInstrumentとEffectの音作り
+
+Devices編集面を提供した後は、InstrumentとEffectの音作りを次の導線で行う。
 
 ```text
 Select / Focus Instrument Track

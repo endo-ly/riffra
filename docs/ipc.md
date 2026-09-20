@@ -95,6 +95,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | `recover_audio_device` / `retry_startup_runtime`                                                     | デバイス回復・スタートアップ再試行                                                                |
 | `restore_recovery_generation`                                                                        | 世代からの回復                                                                                    |
 
+`preview_track_mix` は Host の現行 Track Runtime に Gain / Pan を一時適用する。Canonical state、履歴、保存を変更しないため、確定時は `update_track` を使う。
+
 **セッション・アレンジ（session/commands/）**
 
 | 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -173,7 +175,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | --------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `runtime-startup-finished`  | `{ succeeded }`                     | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                          |
 | `audio-status`              | `AudioStatus`                       | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                                   |
-| `audio-meters`              | `AudioMeters`                       | 入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                                  |
+| `audio-meters`              | `AudioMeters`                       | Project ID、入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                      |
 | `transport-status`          | `TransportStatus`                   | トランスポート状態（`stopped` / `starting` / `playing`、再生位置）                                        |
 | `runtime-projection-status` | `RuntimeProjectionStatus`           | 非同期のランタイム投影状態、エラーコード、世代・音声環境 revision（queued / preparing / active / failed） |
 | `runtime-restarted`         | `{ generation }`                    | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                |
@@ -182,7 +184,10 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | `project-state-changed`     | `ProjectState`                      | Projectの作成・改名・Importによる一覧の変更                                                               |
 | `project-activated`         | `ProjectActivationResult`           | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                    |
 
-- 購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
+`audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`（Track ID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
+
+購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
+
 - エディタ由来の state / parameter 変更は Host 内の正準保存で完結する
 
 ---
@@ -211,6 +216,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | MIDI                | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`、`sendTrackMidi`、`panicTrackMidi`                             |
 | トランスポート準備  | `setTransportStarting`                                                                                                            |
 
+`setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。ACKの `trackMixAck` は値のCanonical commitを意味しない。
+
 MIDI 系の意味づけは次の通り。
 
 | コマンド                           | 意味                                                                                                                             |
@@ -226,6 +233,8 @@ MIDI 系の意味づけは次の通り。
 {"type": "audioStatus", "requestId": N, ...}
 {"type": "audioMeters", "requestId": N, ...}
 {"type": "timelineIdleAck", "requestId": N}
+{"type": "trackMixAck", "requestId": N}
+{"type": "midiAck", "requestId": N}
 // 失敗: 構造化エラー
 {"type": "error", "requestId": N, "kind": "...", "message": "...", "operation": "...", "details": {...}}
 ```
@@ -264,17 +273,20 @@ stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing:
 
 ### 5.7 サイドカー → Rust イベント
 
-| type                                                      | 内容                                                                                                                       |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送） |
-| `audioMeters`                                             | ピーク・リミッター診断・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知       |
-| `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                        |
-| `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                              |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                   |
-| `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                     |
-| `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                             |
+| type                                                      | 内容                                                                                                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audioStatus`                                             | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断の要約（Rust は `AudioStatus` へ正規化して境界Bへ転送）                       |
+| `audioMeters`                                             | Runtime 投影の `projectId`、ピーク・リミッター診断・無効サンプル・ミュート理由・フィードバック検知。Preview状態の変化は `audioStatus` として通知 |
+| `transportStatus`                                         | `stopped` / `starting` / `playing` と再生位置の変化                                                                                              |
+| `recordingComplete`                                       | NativeのRaw / Processed / MIDI出力の確定結果。`directory`、`success`、失敗時の`message`を持つ                                                    |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | エディタ操作等によるプラグイン状態の変化                                                                                                         |
+| `keepAlive`                                               | 生存確認（Rustは無視）                                                                                                                           |
+| `error`                                                   | `kind`、`message`、`operation`、`details` を持つ構造化失敗通知                                                                                   |
 
-- `feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
+`audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native のMeter threadが約50 msごとに発行し、Rustは `projectId` と値を検証・正規化したうえで同じ `audio-meters` Host eventへ転送する。
+
+`feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
+
 - ミュート理由は Native の bitmask を正本とし、所有者（ユーザー・遷移・障害・保護）ごとに解除する。Rust が保持するのはユーザー緊急ミュートの意図のみとする
 
 ---
@@ -414,6 +426,8 @@ riffra --attach --interactive
 
 - `undo` / `redo` の履歴は Standalone が自プロセス、serve / Attached が接続先 Host のものを共有する
 
+`track.mix.preview` は Host Runtime command であり、Track ID と任意の `gainDb` / `pan` を受け取る。Host の現行 sequence を応答へ含めるが、Canonical sequence、履歴、保存、Project の世代を進めない。
+
 ### 8.3 制作操作
 
 CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
@@ -472,6 +486,7 @@ Desktop の Tauri command 境界と Live Host の Control Server の機能分担
 - Host 所有の method は `invokeHost` を使う。開始時と応答時の connection generation が一致した応答のみ成功とする。bootstrap・Host 切替・Reconnect は現在 generation を更新する
 - Window・dialog・Host selector など Desktop shell 所有の method は通常の `invoke` を使う。再同期範囲は Host 所有の method に限る
 - 制作状態を変更する method は `CanonicalState` を含む結果を返す。起動時は履歴可否を Core の HistoryState で判定する
+- `previewTrackMix` と `previewMasterGainDb` は Runtime-only の一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` と `setMasterGainDb` を使う
 - 音声系 method は `AudioStatus` を返し、状態遷移と再試行は Audio 設定 Feature に集約する
 - 失敗は `NativeCommandError` の `code` と `details` で分岐する。Native の `kind` / `operation` は `details` 内の `nativeAudio` 情報から参照する
 - テストでは `native-api-fake.ts` を注入し、呼び出し記録・設定済み応答と失敗・イベント発火だけを扱う。制作規則・履歴・validation は Core のテストが担う

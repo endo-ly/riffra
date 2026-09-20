@@ -1,0 +1,513 @@
+.panel {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 152px;
+  grid-template-rows: auto minmax(0, 1fr);
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+}
+
+.panelHeader {
+  grid-column: 1 / -1;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-panel);
+}
+
+.panelHeader div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.panelHeader strong,
+.masterHeader strong {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.16em;
+}
+
+.panelHeader span,
+.panelHeader small,
+.masterHeader small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+}
+
+.panelHeader small {
+  flex: 0 0 auto;
+}
+
+.trackViewport {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+}
+
+.trackRail {
+  box-sizing: border-box;
+  min-width: max-content;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 4px;
+}
+
+.channel,
+.masterChannel {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-panel) 82%, var(--color-bg-surface));
+}
+
+.channel {
+  flex: 0 0 108px;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
+  gap: 2px;
+  padding: 3px;
+  border-top: 3px solid var(--track-color, var(--color-border-strong));
+  transition:
+    border-color var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+
+.selected {
+  border-color: var(--track-color, var(--color-accent-primary));
+  background: color-mix(
+    in srgb,
+    var(--track-color, var(--color-accent-primary)) 8%,
+    var(--color-bg-panel)
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--track-color, var(--color-accent-primary)) 34%, transparent);
+}
+
+.channelIdentity {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 7px;
+  align-items: center;
+  padding: 0;
+  color: var(--color-text-primary);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.channelIdentity:hover {
+  color: var(--track-color, var(--color-accent-primary));
+}
+
+.channelIdentity strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channelIdentity small {
+  grid-column: 2;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+}
+
+.trackColor {
+  grid-row: 1 / 3;
+  width: 8px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--track-color, var(--color-accent-primary));
+}
+
+.fxSummary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.fxSummary:hover {
+  color: var(--color-text-primary);
+}
+
+.fxSummary svg,
+.masterBadge svg,
+.safetyTitle svg {
+  width: 14px;
+  height: 14px;
+  fill: currentcolor;
+}
+
+.warning {
+  color: var(--color-status-warning);
+}
+
+.panControl,
+.faderControl,
+.masterFader {
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.panControl,
+.faderControl {
+  gap: 2px;
+}
+
+.panControl > span,
+.faderLabel,
+.masterFader > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.08em;
+}
+
+.panControl output,
+.faderControl output,
+.masterFader output {
+  color: var(--color-text-secondary);
+  font-family: 'DM Mono', Consolas, monospace;
+  font-size: var(--font-size-micro);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.panControl b,
+.faderLabel b {
+  margin-left: auto;
+  color: var(--color-status-warning);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.panControl input,
+.faderControl input,
+.masterFader input {
+  width: 100%;
+  accent-color: var(--track-color, var(--color-accent-primary));
+}
+
+.faderControl input,
+.masterFader input {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  justify-self: center;
+  width: 24px;
+  height: 100%;
+  min-height: 0;
+}
+
+.faderControl {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+}
+
+.mixControl,
+.masterMixControl {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 5px;
+}
+
+.mixControl > *,
+.masterMixControl > * {
+  min-width: 0;
+}
+
+.mixControl {
+  min-height: 64px;
+}
+
+.faderLabel {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.faderLabel > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meterGroup {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 0 0;
+}
+
+.meterColumn {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  justify-items: center;
+  gap: 3px;
+}
+
+.meterColumn > span,
+.meterColumn > small {
+  color: var(--color-text-disabled);
+  font-family: 'DM Mono', Consolas, monospace;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.meterTrack {
+  position: relative;
+  width: 8px;
+  min-height: 48px;
+  overflow: hidden;
+  background: repeating-linear-gradient(
+    to top,
+    color-mix(in srgb, var(--color-border-default) 50%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+  border: 1px solid var(--color-border-default);
+  border-radius: 2px;
+}
+
+.meterNormal {
+  --meter-color: var(--color-accent-primary);
+}
+
+.meterWarning {
+  --meter-color: var(--color-status-warning);
+}
+
+.meterDanger {
+  --meter-color: var(--color-status-danger);
+}
+
+.meterRms {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: block;
+  background: var(--meter-color, var(--color-accent-primary));
+}
+
+.meterPeak {
+  position: absolute;
+  left: -2px;
+  width: 11px;
+  height: 2px;
+  display: block;
+  background: var(--color-text-primary);
+}
+
+.meterGroup[data-unavailable='true'] .meterTrack {
+  opacity: 0.38;
+}
+
+.switches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.switches button {
+  min-height: 22px;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  background: var(--color-bg-control);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+}
+
+.switches button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.switchActive {
+  color: var(--color-status-warning) !important;
+  background: color-mix(
+    in srgb,
+    var(--color-status-warning) 14%,
+    var(--color-bg-control)
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--color-status-warning) 60%,
+    var(--color-border-default)
+  ) !important;
+}
+
+.masterChannel {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 6px;
+  border-top: 3px solid var(--color-accent-primary);
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 6px 0 0 0;
+  background: color-mix(in srgb, var(--color-bg-panel) 92%, var(--color-accent-primary));
+}
+
+.masterHeader {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  column-gap: 7px;
+}
+
+.masterHeader small {
+  grid-column: 2;
+}
+
+.masterBadge {
+  grid-row: 1 / 3;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 48%, var(--color-border-default));
+  border-radius: 4px;
+}
+
+.masterChannel .meterTrack {
+  min-height: 48px;
+}
+
+.masterFader {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-items: center;
+}
+
+.masterFader > span,
+.masterFader output {
+  width: 100%;
+}
+
+.masterFader input {
+  accent-color: var(--color-accent-primary);
+}
+
+.safety {
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-control) 70%, transparent);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+}
+
+.safetyWarning {
+  color: var(--color-status-warning);
+  border-color: color-mix(in srgb, var(--color-status-warning) 55%, var(--color-border-default));
+}
+
+.safetyTitle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.diagnostics {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 5px;
+}
+
+.diagnostics div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.diagnostics dt,
+.diagnostics dd {
+  margin: 0;
+  font-family: 'DM Mono', Consolas, monospace;
+  font-size: 9px;
+}
+
+.diagnostics dt {
+  color: var(--color-text-muted);
+}
+
+.diagnostics dd {
+  color: currentcolor;
+  text-align: right;
+}
+
+.empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 24px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
+}
+
+.empty strong {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 860px) {
+  .panel {
+    grid-template-columns: minmax(0, 1fr) 136px;
+  }
+
+  .masterChannel {
+    padding: 9px;
+  }
+}

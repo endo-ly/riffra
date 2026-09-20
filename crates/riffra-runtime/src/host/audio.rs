@@ -107,7 +107,7 @@ impl HostState {
         Ok(status)
     }
 
-    fn run_audio_transition<T>(
+    pub(super) fn run_audio_transition<T>(
         &self,
         operation: impl FnOnce(&Self) -> Result<T, ProtocolError>,
     ) -> Result<T, ProtocolError> {
@@ -128,7 +128,7 @@ impl HostState {
         }
     }
 
-    fn begin_audio_transition(&self) -> Result<(), String> {
+    pub(super) fn begin_audio_transition(&self) -> Result<(), String> {
         self.core
             .audio()
             .set_engine_transition_mute(true)
@@ -147,7 +147,7 @@ impl HostState {
         Ok(())
     }
 
-    fn end_audio_transition(&self) -> Result<(), String> {
+    pub(super) fn end_audio_transition(&self) -> Result<(), String> {
         self.core
             .audio()
             .set_engine_transition_mute(false)
@@ -159,11 +159,16 @@ impl HostState {
         self.core.audio().advance_audio_environment();
         self.runtime.advance_audio_environment();
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
+        let project_id = self
+            .project_store
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         self.runtime
             .apply_and_wait(
                 crate::runtime_snapshot::runtime_timeline_snapshot(
                     &self.data_root,
                     self.built_in_instruments.as_ref(),
+                    &project_id,
                     &snapshot.session,
                 ),
                 riffra_core::ProjectionKey {
@@ -174,6 +179,13 @@ impl HostState {
             )
             .map(|_| ())
             .map_err(|error| error.to_string())
+            .and_then(|()| {
+                self.core
+                    .audio()
+                    .set_master_gain_db(snapshot.session.settings.master_db)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
     }
 
     pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {
@@ -271,6 +283,8 @@ impl HostState {
             &self.runtime,
             &self.data_root,
             self.built_in_instruments.as_ref(),
+            &self._command_gate,
+            || self.capture_startup_target_under_command_gate(),
             &self.shutting_down,
         );
         let succeeded = initialized
@@ -327,7 +341,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
     }
 }
 
-fn graph_failed(error: String) -> ProtocolError {
+pub(super) fn graph_failed(error: String) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, "audio graph restoration failed").with_details(
         serde_json::json!({
             "domain": "audioRuntime",

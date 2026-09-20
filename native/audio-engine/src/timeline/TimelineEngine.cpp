@@ -54,6 +54,93 @@ void TimelineEngine::reclaimRetiredTimelines() noexcept {
 
 void TimelineEngine::serviceDeferredCleanup() noexcept { reclaimRetiredTimelines(); }
 
+void TimelineEngine::setProjectBoundaryCallback(std::function<void(std::uint64_t)> callback) {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    projectBoundaryCallback = std::move(callback);
+}
+
+bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
+                                        const std::optional<float> gainDb,
+                                        const std::optional<float> pan,
+                                        juce::String& error) noexcept {
+    if (trackId.isEmpty()) {
+        error = "A track id is required.";
+        return false;
+    }
+    if (!gainDb.has_value() && !pan.has_value()) {
+        error = "At least one of gainDb or pan is required.";
+        return false;
+    }
+    if ((gainDb.has_value() && !std::isfinite(*gainDb)) ||
+        (pan.has_value() && !std::isfinite(*pan))) {
+        error = "Track mix values must be finite.";
+        return false;
+    }
+
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) {
+        error = "The active Timeline graph is unavailable.";
+        return false;
+    }
+    const auto match = std::find_if(
+        timeline->tracks.begin(), timeline->tracks.end(),
+        [&trackId](const auto& track) { return track != nullptr && track->id == trackId; });
+    if (match == timeline->tracks.end() || *match == nullptr) {
+        error = "The requested Track is not present in the active Timeline graph.";
+        return false;
+    }
+
+    auto& runtime = *(*match)->runtime;
+    if (gainDb.has_value())
+        runtime.gainDb.store(juce::jlimit(-90.0f, 24.0f, *gainDb), std::memory_order_release);
+    if (pan.has_value())
+        runtime.pan.store(juce::jlimit(-1.0f, 1.0f, *pan), std::memory_order_release);
+    return true;
+}
+
+juce::Array<juce::var> TimelineEngine::meterSnapshot() {
+    struct MeterEntry final {
+        juce::String trackId;
+        TrackMeterSnapshot snapshot;
+    };
+
+    std::vector<MeterEntry> entries;
+    {
+        AudioReadScope read(*this);
+        const auto* active = read.get();
+        if (active == nullptr) return {};
+        entries.reserve(active->tracks.size());
+        for (const auto& track : active->tracks) {
+            if (track == nullptr || track->runtime == nullptr) continue;
+            entries.push_back({track->id, track->runtime->meter.consume()});
+        }
+    }
+
+    juce::Array<juce::var> meters;
+    meters.ensureStorageAllocated(static_cast<int>(entries.size()));
+    for (const auto& entry : entries) {
+        auto* value = new juce::DynamicObject();
+        value->setProperty("trackId", entry.trackId);
+        value->setProperty("peakLeft", entry.snapshot.peakLeft);
+        value->setProperty("peakRight", entry.snapshot.peakRight);
+        value->setProperty("rmsLeft", entry.snapshot.rmsLeft);
+        value->setProperty("rmsRight", entry.snapshot.rmsRight);
+        meters.add(juce::var(value));
+    }
+    return meters;
+}
+
+juce::String TimelineEngine::activeProjectId() const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    return timeline != nullptr ? timeline->projectId : juce::String{};
+}
+
+TimelineEngine::ActiveProjectMeterIdentity TimelineEngine::activeProjectMeterIdentity() const {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    if (timeline == nullptr) return {};
+    return {timeline->projectId, timeline->meterEpoch};
+}
+
 TimelineEngine::TimelineEngine(const bool offline)
     : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
@@ -125,7 +212,13 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
             error = "No prepared Timeline snapshot is available.";
             return false;
         }
+
         candidate = std::move(pendingTimeline);
+        const auto crossesProjectBoundary =
+            timeline == nullptr || timeline->projectId != candidate->projectId;
+        candidate->meterEpoch = crossesProjectBoundary
+                                    ? projectMeterEpoch.fetch_add(1, std::memory_order_relaxed) + 1
+                                    : timeline->meterEpoch;
         if (timeline != nullptr) {
             // Validate every reusable runtime before moving ownership. The
             // prepared graph was built against the active graph, but a direct
@@ -186,6 +279,8 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
         discontinuity.fetch_add(1, std::memory_order_relaxed);
         graphPublishCount.fetch_add(1, std::memory_order_relaxed);
         sequence.fetch_add(1, std::memory_order_relaxed);
+        if (crossesProjectBoundary && projectBoundaryCallback != nullptr)
+            projectBoundaryCallback(timeline->meterEpoch);
     }
     reclaimRetiredTimelines();
     return true;

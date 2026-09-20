@@ -1,4 +1,4 @@
-import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import type {
   ArrangementMutationResult,
   AudioStatus,
@@ -159,7 +159,7 @@ export class FakeNativeApi implements NativeApi {
     (state: BootstrapState['projectState']) => void
   >();
   private readonly projectActivatedListeners = new Set<(result: ProjectActivationResult) => void>();
-  private readonly audioMetersListeners = new Set<(meters: AudioMeters) => void>();
+  private readonly audioMetersListeners = new Set<(meters: AudioMeterFrame) => void>();
   private readonly hostConnectionListeners = new Set<(event: HostConnectionChangedEvent) => void>();
   private readonly jobs = new Map<string, BackgroundJobStatus>();
   private jobSequence = 0;
@@ -388,6 +388,9 @@ export class FakeNativeApi implements NativeApi {
   }
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
+  }
+  previewTrackMix(...args: Parameters<NativeApi['previewTrackMix']>) {
+    return this.command('previewTrackMix', args);
   }
   setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
     return this.command('setEmergencyMute', args);
@@ -1137,6 +1140,7 @@ const audioMethodNames = new Set<keyof NativeApi>([
 const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
   'previewMasterGainDb',
+  'previewTrackMix',
   'openTrackPluginEditor',
   'playTimeline',
   'stopTimeline',

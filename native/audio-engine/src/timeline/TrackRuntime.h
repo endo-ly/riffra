@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -19,6 +20,58 @@ namespace riffra {
 
 /// The stage at which a prepared audio take enters the track graph.
 enum class ProcessingStage { PreEffects, PostEffects };
+
+struct TrackMeterSnapshot final {
+    float peakLeft = 0.0f;
+    float peakRight = 0.0f;
+    float rmsLeft = 0.0f;
+    float rmsRight = 0.0f;
+};
+
+/// Holds the largest block meter values until the telemetry thread consumes them.
+/// The audio thread only performs atomic peak-holds; no audio buffer is shared
+/// with the control or telemetry threads.
+class TrackMeterAccumulator final {
+public:
+    void recordBlock(const float peakLeft, const float peakRight, const float rmsLeft,
+                     const float rmsRight) noexcept {
+        holdPeak(peakLeftValue, peakLeft);
+        holdPeak(peakRightValue, peakRight);
+        holdPeak(rmsLeftValue, rmsLeft);
+        holdPeak(rmsRightValue, rmsRight);
+    }
+
+    [[nodiscard]] TrackMeterSnapshot consume() noexcept {
+        return {
+            peakLeftValue.exchange(0.0f, std::memory_order_acq_rel),
+            peakRightValue.exchange(0.0f, std::memory_order_acq_rel),
+            rmsLeftValue.exchange(0.0f, std::memory_order_acq_rel),
+            rmsRightValue.exchange(0.0f, std::memory_order_acq_rel),
+        };
+    }
+
+    void reset() noexcept {
+        peakLeftValue.store(0.0f, std::memory_order_release);
+        peakRightValue.store(0.0f, std::memory_order_release);
+        rmsLeftValue.store(0.0f, std::memory_order_release);
+        rmsRightValue.store(0.0f, std::memory_order_release);
+    }
+
+private:
+    static void holdPeak(std::atomic<float>& peak, const float value) noexcept {
+        if (!std::isfinite(value) || value <= 0.0f) return;
+        auto current = peak.load(std::memory_order_relaxed);
+        while (value > current &&
+               !peak.compare_exchange_weak(current, value, std::memory_order_release,
+                                           std::memory_order_relaxed)) {
+        }
+    }
+
+    std::atomic<float> peakLeftValue{0.0f};
+    std::atomic<float> peakRightValue{0.0f};
+    std::atomic<float> rmsLeftValue{0.0f};
+    std::atomic<float> rmsRightValue{0.0f};
+};
 
 /// Owns one Track's realtime DSP state and plugin lifecycle.
 ///
@@ -154,8 +207,9 @@ public:
     std::size_t midiEventCapacity = 0;
     double outputSampleRate = 0.0;
     int preparedBlockSize = 0;
-    float gainDb = 0.0f;
-    float pan = 0.0f;
+    std::atomic<float> gainDb{0.0f};
+    std::atomic<float> pan{0.0f};
+    TrackMeterAccumulator meter;
     AutomationRuntime volumeAutomation;
     AutomationRuntime panAutomation;
     bool muted = false;

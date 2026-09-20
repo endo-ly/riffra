@@ -1,8 +1,6 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
-use std::time::Duration;
 
 impl HostState {
     fn response(
@@ -581,6 +579,34 @@ impl HostState {
                     .map_err(audio_error)?;
                 Ok(("ok", Value::Null, current.sequence))
             }
+            "track.mix.preview" => {
+                let params: TrackMixParams = decode(params)?;
+                if params.track_id.trim().is_empty() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "track id is required",
+                    ));
+                }
+                if params.gain_db.is_none() && params.pan.is_none() {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "at least one of gainDb or pan is required",
+                    ));
+                }
+                if params.gain_db.is_some_and(|value| !value.is_finite())
+                    || params.pan.is_some_and(|value| !value.is_finite())
+                {
+                    return Err(ProtocolError::new(
+                        ErrorCode::InvalidRequest,
+                        "track mix values must be finite",
+                    ));
+                }
+                self.core
+                    .audio()
+                    .preview_track_mix(&params.track_id, params.gain_db, params.pan)
+                    .map_err(audio_error)?;
+                Ok(("ok", Value::Null, current.sequence))
+            }
             "audio.emergency-mute" => {
                 let params: MuteParams = decode(params)?;
                 Ok((
@@ -688,20 +714,18 @@ impl HostState {
                 let target = self
                     .canonical()
                     .map_err(|error| command_error(error.to_string()))?;
-                self.runtime
-                    .apply_and_wait(
-                        runtime_timeline_snapshot(
-                            &self.data_root,
-                            self.built_in_instruments.as_ref(),
-                            &target.session,
-                        ),
-                        riffra_core::ProjectionKey {
-                            sequence: target.sequence,
-                            session_revision: target.session.arrangement.revision,
-                        },
-                        Duration::from_secs(60),
-                    )
-                    .map_err(runtime_error)?;
+                let project_id = self
+                    .project_store
+                    .active_project_id()
+                    .map_err(|error| command_error(error.to_string()))?;
+                if self.core.safe_mode() {
+                    return Err(runtime_unavailable(
+                        "Safe Mode keeps runtime projection offline",
+                    ));
+                }
+                self.run_audio_transition(|state| {
+                    project::apply_project_runtime_transition(state, &target, &project_id)
+                })?;
                 Ok((
                     "runtimeProjection",
                     serde_json::to_value(self.runtime.status()).map_err(serialize_error)?,
@@ -1642,6 +1666,9 @@ impl HostState {
             .project_store
             .active_session_store()
             .map_err(|error| command_error(error.to_string()))?;
+        let project_id = storage
+            .project_id()
+            .map_err(|error| command_error(error.to_string()))?;
         library::index::refresh(&self.data_root, &storage, &canonical.session);
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
@@ -1650,6 +1677,7 @@ impl HostState {
             self.runtime.as_ref(),
             &self.data_root,
             self.built_in_instruments.as_ref(),
+            &project_id,
             self.core.safe_mode(),
             effect,
         )
@@ -2010,7 +2038,9 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
 }
 
 fn requires_command_gate(command: &str) -> bool {
-    crate::dispatcher::command_requires_project_id(command) && !is_long_project_operation(command)
+    command == "runtime.projection.retry"
+        || crate::dispatcher::command_requires_project_id(command)
+            && !is_long_project_operation(command)
 }
 
 fn is_long_project_operation(command: &str) -> bool {
@@ -2028,6 +2058,7 @@ fn is_host_runtime_command(command: &str) -> bool {
             | "host.bootstrap"
             | "host.shutdown"
             | "audio.master-gain.preview"
+            | "track.mix.preview"
             | "audio.emergency-mute"
             | "audio.feedback-protection.reset"
             | "midi.listening.enable"
@@ -2120,6 +2151,14 @@ struct SeekParams {
 #[serde(rename_all = "camelCase")]
 struct MasterGainParams {
     gain_db: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrackMixParams {
+    track_id: String,
+    gain_db: Option<f64>,
+    pan: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2374,7 +2413,12 @@ mod tests {
 
     #[test]
     fn project_bound_runtime_commands_take_the_command_gate() {
-        for command in ["transport.play", "record.start", "render.start"] {
+        for command in [
+            "transport.play",
+            "record.start",
+            "render.start",
+            "runtime.projection.retry",
+        ] {
             assert!(super::requires_command_gate(command), "{command}");
         }
         for command in [

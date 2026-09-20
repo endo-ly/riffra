@@ -10,6 +10,25 @@
 
 namespace riffra {
 
+namespace {
+
+juce::var makeProjectSnapshot(const juce::String& projectId) {
+    auto* timebase = new juce::DynamicObject();
+    timebase->setProperty("ppq", 960);
+    timebase->setProperty("bpm", 120.0);
+    timebase->setProperty("timeSignatureNumerator", 4);
+    timebase->setProperty("timeSignatureDenominator", 4);
+
+    auto* snapshot = new juce::DynamicObject();
+    snapshot->setProperty("projectId", projectId);
+    snapshot->setProperty("revision", 1);
+    snapshot->setProperty("timebase", juce::var(timebase));
+    snapshot->setProperty("tracks", juce::Array<juce::var>{});
+    return juce::var(snapshot);
+}
+
+}  // namespace
+
 TEST(AudioProtocolTest, ParsesThreeByteNoteMessage) {
     juce::Array<juce::var> bytes;
     bytes.add(0x90);
@@ -65,14 +84,25 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     juce::AudioDeviceManager manager;
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::String error;
 
-    const auto meters = AudioStatusBuilder::currentMeters(callback);
+    ASSERT_TRUE(
+        timeline.loadSnapshot(makeProjectSnapshot("project:meters"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+
+    const auto meters = AudioStatusBuilder::currentMeters(callback, &timeline);
     const auto status = AudioStatusBuilder::currentStatus(manager, callback);
 
     ASSERT_TRUE(meters.isObject());
     EXPECT_EQ(meters.getProperty("type", {}).toString(), "audioMeters");
     EXPECT_EQ(meters.getProperty("muteReasons", 0).toString().getIntValue(), 0);
     EXPECT_EQ(static_cast<int>(meters.getProperty("invalidSamples", 0)), 0);
+    EXPECT_TRUE(meters.getProperty("projectId", {}).toString() == juce::String("project:meters"));
+    EXPECT_TRUE(meters.hasProperty("outputPeakLeft"));
+    EXPECT_TRUE(meters.hasProperty("outputPeakRight"));
+    EXPECT_TRUE(meters.hasProperty("trackMeters"));
     ASSERT_TRUE(status.isObject());
     EXPECT_EQ(status.getProperty("type", {}).toString(), "audioStatus");
     EXPECT_TRUE(status.hasProperty("state"));
@@ -88,6 +118,60 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     EXPECT_TRUE(status.hasProperty("diagnostics"));
     EXPECT_TRUE(status.hasProperty("midiInputs"));
     EXPECT_TRUE(status.hasProperty("midiOutputs"));
+}
+
+TEST(AudioDeviceServiceTest, KeepsProjectMeterEpochAndCumulativeDiagnosticsConsistent) {
+    juce::AudioDeviceManager manager;
+    TimelineEngine timeline;
+    AudioRenderPipeline callback(timeline);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::String error;
+
+    ASSERT_TRUE(
+        timeline.loadSnapshot(makeProjectSnapshot("project:old"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+    const auto oldProjectEpoch = timeline.activeProjectMeterIdentity().meterEpoch;
+    callback.metrics().beginProjectBlock(oldProjectEpoch);
+    callback.metrics().recordBlock(oldProjectEpoch, 0.9f, 0.95f, 0.98f, 0.97f, 0.96f, 6.0f, 3, 4);
+
+    ASSERT_TRUE(
+        timeline.loadSnapshot(makeProjectSnapshot("project:new"), formats, 48'000.0, 32, error))
+        << error.toStdString();
+
+    const auto newProjectEpoch = timeline.activeProjectMeterIdentity().meterEpoch;
+    callback.metrics().recordBlock(oldProjectEpoch, 0.9f, 0.95f, 0.98f, 0.97f, 0.96f, 6.0f, 3, 4);
+
+    const auto boundaryMeters = AudioStatusBuilder::currentMeters(callback, &timeline);
+    EXPECT_TRUE(boundaryMeters.getProperty("projectId", {}).toString() ==
+                juce::String("project:new"));
+    EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("inputPeak", 0.0)), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("outputPeak", 0.0)), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("preLimiterPeak", 0.0)), 0.0f);
+    EXPECT_FLOAT_EQ(static_cast<float>(boundaryMeters.getProperty("limiterGainReductionDb", 0.0)),
+                    0.0f);
+    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("invalidSamples", 0)), 8);
+    EXPECT_EQ(static_cast<int>(boundaryMeters.getProperty("hardClipSamples", 0)), 6);
+
+    callback.metrics().beginProjectBlock(newProjectEpoch);
+    callback.metrics().recordBlock(newProjectEpoch, 0.1f, 0.2f, 0.3f, 0.25f, 0.35f, 2.5f, 0, 0);
+
+    const auto status =
+        AudioStatusBuilder::currentStatus(manager, callback, nullptr, {}, &timeline);
+    const auto* diagnostics = status.getProperty("diagnostics", {}).getDynamicObject();
+    ASSERT_NE(diagnostics, nullptr);
+    EXPECT_FLOAT_EQ(static_cast<float>(status.getProperty("inputPeak", 0.0)), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(status.getProperty("outputPeak", 0.0)), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(diagnostics->getProperty("preLimiterPeak")), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(diagnostics->getProperty("limiterGainReductionDb")), 2.5f);
+
+    const auto meters = AudioStatusBuilder::currentMeters(callback, &timeline);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("inputPeak", 0.0)), 0.1f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeak", 0.0)), 0.3f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeakLeft", 0.0)), 0.25f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("outputPeakRight", 0.0)), 0.35f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("preLimiterPeak", 0.0)), 0.2f);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters.getProperty("limiterGainReductionDb", 0.0)), 2.5f);
 }
 
 TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {

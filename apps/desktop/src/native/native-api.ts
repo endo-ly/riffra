@@ -39,7 +39,7 @@ import type {
   HostTarget,
   LocalHostInfo,
 } from '@/model/domain';
-import type { AudioMeters } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import type { AssetPreviewOptions, ScanJobStatus, TransportStatus } from './contracts';
 
 export interface MidiNoteInput {
@@ -202,6 +202,8 @@ export interface AudioApi {
   getAudioStatus(): Promise<AudioStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
+  /** Applies a transient Track gain/pan change without persisting a session edit. */
+  previewTrackMix(trackId: string, patch: { gainDb?: number; pan?: number }): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   /** Explicitly releases the Native feedback-protection latch. */
@@ -448,7 +450,7 @@ export interface NativeEventApi {
    * unlisten is a no-op.
    */
   onAudioStatus(callback: (status: AudioStatus) => void): () => void;
-  onAudioMeters(callback: (meters: AudioMeters) => void): () => void;
+  onAudioMeters(callback: (meters: AudioMeterFrame) => void): () => void;
   onCanonicalStateChanged(callback: (state: CanonicalState) => void): () => void;
   onProjectStateChanged(callback: (state: ProjectState) => void): () => void;
   onProjectActivated(callback: (result: ProjectActivationResult) => void): () => void;

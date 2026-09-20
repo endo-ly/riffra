@@ -376,6 +376,45 @@ impl AudioSupervisor {
         Ok(())
     }
 
+    /// Applies a transient Track mix change to the active Native graph.
+    ///
+    /// A sidecar restart must reconstruct the Track from the canonical
+    /// projection instead of restoring an in-progress GUI drag.
+    pub fn preview_track_mix(
+        &self,
+        track_id: &str,
+        gain_db: Option<f64>,
+        pan: Option<f64>,
+    ) -> NativeAudioResult<()> {
+        if track_id.trim().is_empty() {
+            return Err(NativeAudioError::native_rejected(
+                "A Track id is required for mix preview.",
+            ));
+        }
+        if gain_db.is_none() && pan.is_none() {
+            return Err(NativeAudioError::native_rejected(
+                "At least one Track mix value is required.",
+            ));
+        }
+        if gain_db.is_some_and(|value| !value.is_finite())
+            || pan.is_some_and(|value| !value.is_finite())
+        {
+            return Err(NativeAudioError::native_rejected(
+                "Track mix values must be finite.",
+            ));
+        }
+        self.send_command_ack(
+            serde_json::json!({
+                "type": "setTrackMix",
+                "trackId": track_id,
+                "gainDb": gain_db.map(|value| value.clamp(-90.0, 24.0)),
+                "pan": pan.map(|value| value.clamp(-1.0, 1.0)),
+            }),
+            "",
+            Duration::from_secs(3),
+        )
+    }
+
     pub fn preview_sample(
         &self,
         path: &Path,

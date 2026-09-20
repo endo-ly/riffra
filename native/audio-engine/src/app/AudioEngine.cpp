@@ -151,7 +151,8 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
         while (meterPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (!meterPushRunning.load(std::memory_order_acquire)) break;
-            writeJson(AudioStatusBuilder::currentMeters(pipeline), {}, OutputKind::telemetry);
+            writeJson(AudioStatusBuilder::currentMeters(pipeline, &timelineEngine), {},
+                      OutputKind::telemetry);
         }
     });
 

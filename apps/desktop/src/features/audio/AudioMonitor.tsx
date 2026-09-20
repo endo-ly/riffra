@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
 import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
-import { getHostGeneration } from '@/native/invoke';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import type { AudioMonitorApi } from './audio-api';
+import { useMasterGainControl } from './hooks/useMasterGainControl';
 import styles from './AudioMonitor.module.css';
 
 interface AudioMonitorProps {
@@ -17,60 +16,19 @@ interface AudioMonitorProps {
 export function AudioMonitor(props: AudioMonitorProps) {
   const { session, applyCanonicalState, setAudio, api } = props;
   const meters = useAudioMeters();
-  const [masterDraftDb, setMasterDraftDb] = useState(session.settings.masterDb);
-  const masterEditing = useRef(false);
-  const previewTimer = useRef<number | null>(null);
-  const previewChain = useRef<Promise<void>>(Promise.resolve());
-  const lastCommittedMasterDb = useRef(session.settings.masterDb);
-
-  useEffect(() => {
-    lastCommittedMasterDb.current = session.settings.masterDb;
-    if (!masterEditing.current) setMasterDraftDb(session.settings.masterDb);
-  }, [session.settings.masterDb]);
-
-  useEffect(
-    () => () => {
-      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    },
-    [],
-  );
-
-  const previewMaster = (gainDb: number) => {
-    const generationAtSchedule = getHostGeneration();
-    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => {
-      previewTimer.current = null;
-      if (getHostGeneration() !== generationAtSchedule) return;
-      previewChain.current = previewChain.current
-        .catch(() => undefined)
-        .then(() => {
-          if (getHostGeneration() !== generationAtSchedule) return;
-          return api.previewMasterGainDb(gainDb);
-        })
-        .catch(() => undefined);
-    }, 40);
-  };
-
-  const commitMaster = async (gainDb: number) => {
-    const generationAtRequest = getHostGeneration();
-    if (previewTimer.current !== null) {
-      window.clearTimeout(previewTimer.current);
-      previewTimer.current = null;
-    }
-    await previewChain.current.catch(() => undefined);
-    if (getHostGeneration() !== generationAtRequest) return;
-    if (gainDb === lastCommittedMasterDb.current) return;
-    lastCommittedMasterDb.current = gainDb;
-    try {
-      const result = await api.setMasterGainDb(gainDb);
-      if (getHostGeneration() !== generationAtRequest) return;
-      if (applyCanonicalState(result.canonical)) setAudio(result.audio);
-    } catch {
-      if (getHostGeneration() !== generationAtRequest) return;
-      lastCommittedMasterDb.current = session.settings.masterDb;
-      setMasterDraftDb(session.settings.masterDb);
-    }
-  };
+  const {
+    draftDb: masterDraftDb,
+    setDraftDb: setMasterDraftDb,
+    beginEditing,
+    preview,
+    commit,
+  } = useMasterGainControl({
+    session,
+    applyCanonicalState,
+    setAudio,
+    api,
+    disabled: props.disabled,
+  });
 
   return (
     <div className={styles.monitor} data-audio-monitor aria-label="Audio monitor">
@@ -95,31 +53,29 @@ export function AudioMonitor(props: AudioMonitorProps) {
           aria-label="Master volume"
           disabled={props.disabled}
           type="range"
-          min="-60"
+          min="-90"
           max="0"
           step="0.5"
           value={masterDraftDb}
-          onPointerDown={() => {
-            masterEditing.current = true;
+          onPointerDown={beginEditing}
+          onKeyDown={(event) => {
+            if (
+              ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
+            )
+              beginEditing();
           }}
-          onPointerUp={(event) => {
-            masterEditing.current = false;
-            void commitMaster(Number(event.currentTarget.value));
-          }}
-          onBlur={(event) => {
-            masterEditing.current = false;
-            void commitMaster(Number(event.currentTarget.value));
-          }}
+          onPointerUp={(event) => void commit(Number(event.currentTarget.value))}
+          onBlur={(event) => void commit(Number(event.currentTarget.value))}
           onKeyUp={(event) => {
             if (
               ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)
             )
-              void commitMaster(Number(event.currentTarget.value));
+              void commit(Number(event.currentTarget.value));
           }}
           onChange={(event) => {
             const gainDb = Number(event.target.value);
             setMasterDraftDb(gainDb);
-            previewMaster(gainDb);
+            preview(gainDb);
           }}
         />
       </label>

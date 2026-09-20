@@ -1,12 +1,16 @@
 use super::HostState;
 use crate::model::ProjectState;
 use crate::projects;
+use crate::runtime_snapshot::runtime_timeline_snapshot;
 use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ErrorCode, ProtocolError};
 use riffra_core::CanonicalState;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::time::Duration;
+
+const PROJECT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) fn handles(command: &str) -> bool {
     matches!(
@@ -113,13 +117,20 @@ fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
     if status.recording.active || status.recording.processing {
         return Err(command_error("Stop recording before switching Projects."));
     }
-    if !state.core.safe_mode() {
-        state.runtime.stop().map_err(runtime_error)?;
-    }
     Ok(())
 }
 
 fn activate_project(
+    state: &HostState,
+    project_id: &str,
+) -> Result<(&'static str, Value, u64), ProtocolError> {
+    if state.core.safe_mode() {
+        return activate_project_inner(state, project_id);
+    }
+    state.run_audio_transition(|state| activate_project_inner(state, project_id))
+}
+
+fn activate_project_inner(
     state: &HostState,
     project_id: &str,
 ) -> Result<(&'static str, Value, u64), ProtocolError> {
@@ -150,26 +161,54 @@ fn activate_project(
     state
         .event_hub
         .set_plugin_project_id(Some(project_id.to_owned()));
-    if let Err(error) = crate::session::commit::finalize_arrangement_mutation(
-        activated.canonical.clone(),
-        state.runtime.as_ref(),
-        &state.data_root,
-        state.built_in_instruments.as_ref(),
-        state.core.safe_mode(),
-        CanonicalMutationEffect::ProjectArrangement,
-    ) {
-        tracing::warn!(error, "Project runtime projection could not be queued");
-    }
     let activation = projects::result(activated);
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
+    apply_project_runtime_transition(state, &activation.canonical, project_id)?;
     let sequence = activation.canonical.sequence;
     Ok((
         "projectActivation",
         serde_json::to_value(activation).map_err(serialize_error)?,
         sequence,
     ))
+}
+
+pub(super) fn apply_project_runtime_transition(
+    state: &HostState,
+    canonical: &CanonicalState,
+    project_id: &str,
+) -> Result<(), ProtocolError> {
+    if state.core.safe_mode() {
+        return Ok(());
+    }
+
+    state
+        .runtime
+        .apply_and_wait(
+            runtime_timeline_snapshot(
+                &state.data_root,
+                state.built_in_instruments.as_ref(),
+                project_id,
+                &canonical.session,
+            ),
+            riffra_core::ProjectionKey {
+                sequence: canonical.sequence,
+                session_revision: canonical.session.arrangement.revision,
+            },
+            PROJECT_RUNTIME_TIMEOUT,
+        )
+        .map_err(|error| {
+            super::audio::graph_failed(format!("Project runtime projection failed: {error}"))
+        })?;
+    state
+        .core
+        .audio()
+        .set_master_gain_db(canonical.session.settings.master_db)
+        .map_err(|error| {
+            super::audio::graph_failed(format!("Project master gain could not be applied: {error}"))
+        })?;
+    Ok(())
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError> {
@@ -191,10 +230,6 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
 
 fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
-}
-
-fn runtime_error(error: crate::RuntimeError) -> ProtocolError {
-    ProtocolError::new(ErrorCode::CommandFailed, error.to_string())
 }
 
 #[derive(Debug, Deserialize)]

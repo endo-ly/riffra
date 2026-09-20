@@ -28,6 +28,7 @@ constexpr std::array<std::string_view, 4> kTransportCommands{"playTimeline", "se
 constexpr std::array<std::string_view, 5> kMidiCommands{"enableMidiListening",
                                                         "disableMidiListening", "setLiveMidiTarget",
                                                         "sendTrackMidi", "panicTrackMidi"};
+constexpr std::array<std::string_view, 1> kTrackMixCommands{"setTrackMix"};
 constexpr std::array<std::string_view, 7> kPreviewCommands{
     "startTakeComparison", "switchTakeComparisonVariant", "stopTakeComparison",
     "previewSample",       "previewBuiltInInstrument",    "stopBuiltInInstrumentPreview",
@@ -46,6 +47,7 @@ CommandFamily commandFamilyFor(const std::string_view type) noexcept {
     if (contains(kTrackDeviceCommands, type)) return CommandFamily::trackDevice;
     if (contains(kTransportCommands, type)) return CommandFamily::transport;
     if (contains(kMidiCommands, type)) return CommandFamily::midi;
+    if (contains(kTrackMixCommands, type)) return CommandFamily::trackMix;
     if (contains(kPreviewCommands, type)) return CommandFamily::preview;
     if (contains(kDeviceCommands, type)) return CommandFamily::device;
     if (contains(kRecordingCommands, type)) return CommandFamily::recording;
