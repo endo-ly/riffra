@@ -12,7 +12,7 @@ include(CTest)
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
-set(RIFFRA_SONALLOY_VERSION "2026.9.18")
+set(RIFFRA_SONALLOY_VERSION "2026.9.21")
 set(RIFFRA_SONALLOY_RELEASE_TAG "v${RIFFRA_SONALLOY_VERSION}")
 
 FetchContent_Declare(
