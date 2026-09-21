@@ -15,9 +15,9 @@ use riffra_core::application::{
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
     AppCore, ApplicationError, AssetId, AssetKind, AudioClipMove, AudioClipPatch,
-    AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange, MidiClipMove,
-    MidiClipPatch, MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RackDevice,
-    RhythmPattern, TimelineTick, TrackKind, TrackPatch,
+    AutomationParameter, AutomationPoint, CreativeSession, FrameRange, MidiClipMove, MidiClipPatch,
+    MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RhythmPattern, TimelineTick,
+    TrackKind, TrackPatch,
 };
 use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::Deserialize;
@@ -988,32 +988,6 @@ fn parse_automation_parameter(value: &str) -> Result<AutomationParameter, Dispat
             "automation parameter must be volume or pan",
         )),
     }
-}
-
-fn plugin_device(id: String, path: String) -> Result<RackDevice, DispatchError> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Err(DispatchError::invalid_request(
-            "plugin path must not be empty",
-        ));
-    }
-    let name = Path::new(path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned();
-    Ok(RackDevice {
-        id,
-        name,
-        kind: DeviceKind::Plugin,
-        path: Some(path.to_owned()),
-        bypassed: false,
-        gain_db: 0.0,
-        parameter_values: Vec::new(),
-        state_data: None,
-        disabled_placeholder: false,
-    })
 }
 
 #[cfg(test)]

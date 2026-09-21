@@ -53,16 +53,17 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 `createdEntityIds`で利用できるキーは次のとおりである。これ以外のキーは推測して使わない。
 
-| キー              | 対象            |
-| ----------------- | --------------- |
-| `tracks`          | Track           |
-| `audioClips`      | Audio Clip      |
-| `midiClips`       | MIDI Clip       |
-| `midiNotes`       | MIDI Note       |
-| `markers`         | Marker          |
-| `regions`         | Region          |
-| `harmonyEvents`   | Harmony Event   |
-| `automationLanes` | Automation Lane |
+| キー              | 対象                        |
+| ----------------- | --------------------------- |
+| `tracks`          | Track                       |
+| `audioClips`      | Audio Clip                  |
+| `midiClips`       | MIDI Clip                   |
+| `midiNotes`       | MIDI Note                   |
+| `markers`         | Marker                      |
+| `regions`         | Region                      |
+| `harmonyEvents`   | Harmony Event               |
+| `automationLanes` | Automation Lane             |
+| `devices`         | Instrument or effect device |
 
 ### 複数操作の一括適用
 
@@ -80,7 +81,7 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
 ```
 
-各行は `command` と `params` を持つ既存Control Commandである。`trackName`は候補Session上で一意に解決され、`clipName`は同じTrack内で一意に解決される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。解決結果はProtocolやCanonical identityには保存されない。
+各行は `command` と `params` を持つ既存Control Commandである。`trackName`は候補Session上で一意に解決され、`clipName`は同じTrack内のMIDI Clipから一意に解決される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。解決結果はProtocolやCanonical identityには保存されない。
 
 Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。途中の失敗、非対応コマンド、名前の未解決・曖昧さ、`expectedSequence`の不一致ではCanonical Sessionを変更しない。`session.get`、`session.inspect`、`history`、Undo / Redo、Render、Transport、Recording、Asset importなどはBatchへ含めない。
 

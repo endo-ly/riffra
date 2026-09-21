@@ -3232,7 +3232,7 @@ mod tests {
     }
 
     #[test]
-    fn session_apply_reads_control_commands_and_phrase_preview_keeps_preview_options() {
+    fn session_apply_reads_control_commands_and_options() {
         let path = std::env::temp_dir().join(format!(
             "riffra-cli-session-apply-{}.jsonl",
             std::process::id()
@@ -3258,7 +3258,11 @@ mod tests {
         assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
         assert_eq!(request.params["includeCreatedIds"], true);
+        let _ = std::fs::remove_file(path);
+    }
 
+    #[test]
+    fn phrase_preview_keeps_preview_options() {
         let cli = Cli::try_parse_from([
             "riffra",
             "music",
@@ -3275,6 +3279,37 @@ mod tests {
         assert_eq!(request.name, "music.phrase.preview");
         assert_eq!(request.params["includeNotes"], true);
         assert_eq!(request.params["clipId"], "midi-clip:1");
-        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn session_apply_rejects_request_envelope_fields_in_operations() {
+        for (suffix, field) in [
+            ("request-id", "requestId"),
+            ("sequence", "expectedSequence"),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "riffra-cli-session-apply-{}-{suffix}.jsonl",
+                std::process::id()
+            ));
+            std::fs::write(
+                &path,
+                format!(
+                    r#"{{"command":"track.add","{field}":1,"params":{{"name":"Lead","kind":"instrument"}}}}"#
+                ),
+            )
+            .unwrap();
+            let cli = Cli::try_parse_from([
+                "riffra",
+                "session",
+                "apply",
+                "--file",
+                path.to_str().unwrap(),
+            ])
+            .unwrap();
+
+            let error = cli.request().unwrap_err();
+            assert!(error.contains("unknown field"));
+            let _ = std::fs::remove_file(path);
+        }
     }
 }

@@ -115,13 +115,19 @@ where
         })
     }
 
-    /// Adds an effect device and returns its identity.
+    /// Adds an effect device and returns its Core-allocated identity.
+    ///
+    /// The device identity is allocated from a UUID-based namespace so it is
+    /// independent of the canonical commit sequence and remains unique across
+    /// process restarts and candidate sessions.
     pub fn add_track_effect_with_created_ids(
         &self,
         track_id: &str,
-        device: RackDevice,
+        name: String,
+        path: String,
     ) -> Result<super::ApplicationMutation, ApplicationError> {
-        let device_id = device.id.clone();
+        let device_id = next_id("device:effect");
+        let device = plugin_device(device_id.clone(), name, path)?;
         let session = self.core.commit(self.storage, |session| {
             let track = session
                 .arrangement

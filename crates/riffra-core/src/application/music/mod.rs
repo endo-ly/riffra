@@ -389,14 +389,6 @@ where
         &self,
         request: MusicalNoteTransformRequest,
     ) -> Result<ApplicationMutation, ApplicationError> {
-        if request.timing_offset.is_none()
-            && request.velocity_offset.is_none()
-            && request.transpose_semitones.is_none()
-        {
-            return Err(ApplicationError::InvalidCommand(
-                "at least one note transform is required".into(),
-            ));
-        }
         if request
             .channel
             .is_some_and(|channel| !(1..=16).contains(&channel))
@@ -405,14 +397,14 @@ where
                 "note transform channel must be between 1 and 16".into(),
             ));
         }
-        if request
+        let has_change = request
             .timing_offset
-            .is_some_and(|offset| offset.numerator == 0)
-            && request.velocity_offset.is_none_or(|offset| offset == 0)
-            && request
+            .is_some_and(|offset| offset.numerator != 0)
+            || request.velocity_offset.is_some_and(|offset| offset != 0)
+            || request
                 .transpose_semitones
-                .is_none_or(|semitones| semitones == 0)
-        {
+                .is_some_and(|semitones| semitones != 0);
+        if !has_change {
             return Err(ApplicationError::InvalidCommand(
                 "note transform must change at least one value".into(),
             ));
@@ -479,7 +471,7 @@ where
                             ));
                         }
                         if let Some(transpose) = request.transpose_semitones {
-                            let next_pitch = i16::from(note.note) + transpose;
+                            let next_pitch = i32::from(note.note) + i32::from(transpose);
                             if !(0..=127).contains(&next_pitch) {
                                 return Err(ApplicationError::InvalidCommand(
                                     "note transform would move a pitch outside the MIDI range"
@@ -1198,8 +1190,7 @@ mod tests {
         assert!(application.get_musical_note(&clip_id, &note_id).is_err());
     }
 
-    #[test]
-    fn track_note_query_and_transform_are_grouped_deterministic_and_atomic() {
+    fn track_with_notes() -> (MemoryStorage, AppCore<()>, String, String, String) {
         let storage = MemoryStorage::default();
         let core = AppCore::new(
             PathBuf::from("data"),
@@ -1280,6 +1271,13 @@ mod tests {
             )
             .unwrap();
 
+        (storage, core, track_id, first_clip, second_clip)
+    }
+
+    #[test]
+    fn track_note_queries_are_deterministic() {
+        let (_storage, core, track_id, _first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
         let listed = application
             .list_musical_notes(MusicalNoteListRequest {
                 scope: MusicalNoteScope {
@@ -1319,7 +1317,12 @@ mod tests {
         };
         assert_eq!(note.start_tick, 3_840);
         assert!(note.id.is_some());
+    }
 
+    #[test]
+    fn musical_note_transform_clamps_velocity_and_is_atomic() {
+        let (_storage, core, _track_id, first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
         application
             .transform_musical_notes(MusicalNoteTransformRequest {
                 scope: MusicalNoteScope {
@@ -1362,6 +1365,46 @@ mod tests {
             unchanged.session.arrangement.midi_clips[0].notes[1].start_tick,
             TimelineTick(14_400)
         );
+    }
+
+    #[test]
+    fn musical_note_transform_rejects_noop_and_out_of_range_transpose() {
+        let (_storage, core, _track_id, _first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
+        let request = |velocity_offset, transpose_semitones| MusicalNoteTransformRequest {
+            scope: MusicalNoteScope {
+                clip_id: Some(second_clip.clone()),
+                track_id: None,
+            },
+            start: Some("5:1".parse().unwrap()),
+            end: Some("7:1".parse().unwrap()),
+            pitch: Some("D2".parse().unwrap()),
+            channel: Some(1),
+            timing_offset: None,
+            velocity_offset,
+            transpose_semitones,
+        };
+
+        let before = core.canonical_state().unwrap();
+        assert!(
+            application
+                .transform_musical_notes(request(Some(0), None))
+                .is_err()
+        );
+        assert!(
+            application
+                .transform_musical_notes(request(None, Some(0)))
+                .is_err()
+        );
+        assert!(
+            application
+                .transform_musical_notes(request(None, Some(i16::MAX)))
+                .is_err()
+        );
+        let after = core.canonical_state().unwrap();
+
+        assert_eq!(after.sequence, before.sequence);
+        assert_eq!(after.session, before.session);
     }
 
     #[test]

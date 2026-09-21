@@ -71,7 +71,7 @@ riffra --attach --expected-sequence 42 session apply `
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
 ```
 
-空行は無視される。各行は既存のControl Command契約に従い、Batch専用の楽曲記法は使わない。`trackName`はその時点の候補Sessionから一意に解決し、Clip名を使う場合は`trackId`または`trackName`も指定する。同名が複数ある場合は曖昧さとして失敗する。
+空行は無視される。各行は既存のControl Command契約に従い、Batch専用の楽曲記法は使わない。`trackName`はその時点の候補Sessionから一意に解決し、MIDI Clip名を使う場合は`trackId`または`trackName`も指定する。同名が複数ある場合は曖昧さとして失敗する。
 
 全operationが候補Session上で成功したときだけCanonical Sessionへ1回commitされる。途中で失敗した場合はそれまでのoperationも残らない。成功応答は `appliedCommands` と `createdEntityCounts` を含む小さな結果で、生成IDが必要な場合だけ `--include-created-ids` を付ける。`expected-sequence` の不一致も、operation開始前にBatch全体を拒否する。`instrument.apply` は外部snapshotを作成しない組み込みinstrumentに限りBatchへ含められる。`user:` instrumentは単独のcommandとして実行する。
 

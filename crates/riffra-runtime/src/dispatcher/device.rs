@@ -75,18 +75,14 @@ pub(super) fn dispatch<A>(
         }
         "effect.add" => {
             let params: PluginPathParams = decode(request.params)?;
-            let device_id = format!(
-                "device:effect:{}:{}",
-                params.track_id,
-                dispatcher.core.snapshot()?.sequence + 1
-            );
             dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .add_track_effect_with_created_ids(
                         &params.track_id,
-                        plugin_device(device_id, params.plugin_path)?,
+                        plugin_name(&params.plugin_path),
+                        params.plugin_path,
                     )?,
                 CanonicalMutationEffect::ProjectArrangement,
             )

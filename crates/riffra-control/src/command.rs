@@ -3,7 +3,7 @@ use serde_json::Value;
 
 /// A protocol command independent of a CLI argument syntax.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ControlCommand {
     /// Stable command name understood by a backend.
     #[serde(rename = "command")]

@@ -586,6 +586,7 @@ mod tests {
             .dispatch(request(
                 "session.apply",
                 json!({
+                    "includeCreatedIds": true,
                     "operations": [
                         {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
                         {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
@@ -601,7 +602,27 @@ mod tests {
         assert_eq!(result.value["createdEntityCounts"]["midiClips"], 1);
         assert_eq!(result.value["createdEntityCounts"]["midiNotes"], 1);
         assert!(result.value.get("canonical").is_none());
-        assert!(result.value.get("createdEntityIds").is_none());
+        assert_eq!(
+            result.value["createdEntityIds"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result.value["createdEntityIds"]["midiClips"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result.value["createdEntityIds"]["midiNotes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(result.sequence, 1);
 
         let undone = dispatcher.dispatch(request("undo", Value::Null)).unwrap();
@@ -612,6 +633,145 @@ mod tests {
                 .len(),
             0
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_rejects_ambiguous_and_conflicting_name_references() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-names-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let cases = [
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}
+                    ]
+                }),
+                2,
+                "music.midi-clip.create",
+                "ambiguous track name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"3:1"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"3:1","end":"5:1"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+                    ]
+                }),
+                3,
+                "music.note.insert",
+                "ambiguous clip name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"trackId":"track:given","trackName":"Lead","name":"Lead","kind":"instrument"}}
+                    ]
+                }),
+                0,
+                "track.add",
+                "trackId and trackName cannot both be specified",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"music.note.insert","params":{"trackId":"track:given","clipId":"midi-clip:given","clipName":"Verse","notes":[]}}
+                    ]
+                }),
+                0,
+                "music.note.insert",
+                "clipId and clipName cannot both be specified",
+            ),
+        ];
+
+        for (params, operation_index, command, message) in cases {
+            let error = dispatcher
+                .dispatch(request("session.apply", params))
+                .unwrap_err()
+                .protocol_error();
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(
+                error.details.as_ref().unwrap()["operationIndex"],
+                operation_index
+            );
+            assert_eq!(error.details.as_ref().unwrap()["command"], command);
+            assert!(
+                error.details.as_ref().unwrap()["cause"]
+                    .as_str()
+                    .unwrap()
+                    .contains(message)
+            );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_effect_ids_are_unique_across_existing_and_candidate_devices() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-effects-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(request(
+                "effect.add",
+                json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
+            ))
+            .unwrap();
+        let existing_id = dispatcher
+            .core
+            .canonical_state()
+            .unwrap()
+            .session
+            .arrangement
+            .tracks[0]
+            .rack
+            .devices[0]
+            .id
+            .clone();
+
+        let result = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "includeCreatedIds": true,
+                    "operations": [
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"first.vst3"}},
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"second.vst3"}}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let ids = result.value["createdEntityIds"]["devices"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        assert!(
+            ids.iter()
+                .all(|id| id.as_str() != Some(existing_id.as_str()))
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 
