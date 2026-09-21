@@ -308,20 +308,20 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 
 ### Rack 状態(Instrument / Effect / Device)
 
-| コマンド                  | 主要引数                                                                                       |
-| ------------------------- | ---------------------------------------------------------------------------------------------- |
-| `instrument builtin list` | -                                                                                              |
-| `instrument builtin set`  | `--track-id` `--preset-id`（Riffraに同梱されたBuilt-in instrument）                            |
-| `plugin instrument`       | `--track-id` `--plugin-path`(VST3 パス)                                                        |
-| `plugin effect`           | `--track-id` `--plugin-path`                                                                   |
-| `instrument clear`        | `--track-id`                                                                                   |
-| `effect remove`           | `--track-id` `--device-id`                                                                     |
-| `effect reorder`          | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
-| `device bypass`           | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
-| `device inspect`          | `--track-id` `--device-id`                                                                     |
-| `device parameter list`   | `--track-id` `--device-id`                                                                     |
-| `device parameter get`    | `--track-id` `--device-id` `--parameter-index`                                                 |
-| `device parameter set`    | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
+| コマンド                | 主要引数                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `instrument list`       | -                                                                                              |
+| `instrument apply`      | `--track-id` `--instrument-id`（catalogの`id`。Built-inは`builtin:<presetId>`）                |
+| `plugin instrument`     | `--track-id` `--plugin-path`(VST3 パス)                                                        |
+| `plugin effect`         | `--track-id` `--plugin-path`                                                                   |
+| `instrument clear`      | `--track-id`                                                                                   |
+| `effect remove`         | `--track-id` `--device-id`                                                                     |
+| `effect reorder`        | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
+| `device bypass`         | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
+| `device inspect`        | `--track-id` `--device-id`                                                                     |
+| `device parameter list` | `--track-id` `--device-id`                                                                     |
+| `device parameter get`  | `--track-id` `--device-id` `--parameter-index`                                                 |
+| `device parameter set`  | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
 
 パスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。
 
@@ -337,7 +337,7 @@ riffra --attach plugin preset set --track-id track:01j... --device-id device:01j
 
 Plugin presetはHostへ公開されたprogramだけを対象とし、Plugin固有GUIのpreset browserは対象外である。Plugin state fileにはschema version、Plugin path、parameter values、opaque stateを含め、別VST3のstateは適用しない。
 
-`instrument builtin list`はHostのresource catalogを返す。`instrument builtin set --track-id <id> --preset-id <id>`はcatalogに存在するpresetをTrackへ割り当てる。`track list`のInternal Instrumentには`presetId`が含まれるため、割り当て後のpresetを確認できる。Built-in instrumentの割り当てはSafe Modeでも実行できる。
+`instrument list`は同梱のBuilt-in instrumentとUser Instrumentのcatalogを返し、各エントリの`id`が`instrument apply`への入力になる（Built-inは`builtin:<presetId>`）。`instrument apply --track-id <id> --instrument-id <id>`はcatalogに存在するinstrumentをTrackへ割り当て、`instrument clear --track-id <id>`で解除する。割り当て後の`track list`は`instrument`として`name`と`source`（`internal`）を返す。Built-in instrumentの割り当てはSafe Modeでも実行できる。
 
 ### Missing 復旧
 

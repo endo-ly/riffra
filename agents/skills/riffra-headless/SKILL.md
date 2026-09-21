@@ -167,7 +167,7 @@ Event frameはRuntime型を直接持たない。
 - Agent向けCLIの正準Mutation成功応答は `result.type: "mutation"` となる軽量なreceiptである。`result.value.createdEntityIds` には、そのMutationで新しく生成されたIDだけが種類ごとに含まれ、生成IDがないMutationでは`{}`になる。現在のSession全体は後続の `session inspect` または `track list` で確認する
 - DesktopとHost間の共有Control接続では、Desktop同期のため従来のCanonical結果とCanonical eventを維持する
 
-後続の操作でIDが必要な場合は、応答の`createdEntityIds`を使う。たとえば`track add`の応答からTrack IDを取り出して`instrument builtin set`や`track update`へ渡す。
+後続の操作でIDが必要な場合は、応答の`createdEntityIds`を使う。たとえば`track add`の応答からTrack IDを取り出して`instrument apply`や`track update`へ渡す。
 
 interactive JSONLで操作を連鎖させる場合は、1つの要求を送り、応答を受け取ってから次の要求を組み立てる。`expectedSequence`を使う場合は直前の応答の`sequence`を渡し、Conflict時は状態を確認して操作を組み直す。
 

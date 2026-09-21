@@ -38,18 +38,18 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 
 ## リポジトリ構成
 
-| パス                             | 内容                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| `apps/desktop/`                  | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
-| `apps/cli/`                      | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
-| `crates/riffra-core/`            | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
-| `crates/riffra-control/`         | Local Host間通信の契約（endpoint / registry / transport / client）               |
-| `crates/riffra-host/`            | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
-| `crates/riffra-runtime/`         | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
-| `native/audio-engine/`           | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
-| `scripts/`                       | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
-| `docs/`                          | 設計・調整ドキュメント                                                           |
-| `.agent/skills/riffra-headless/` | AI エージェントが CLI でヘッドレス操作するためのスキル                           |
+| パス                     | 内容                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `apps/desktop/`          | Tauri デスクトップアプリ（React フロントエンド + `src-tauri` Rust バックエンド） |
+| `apps/cli/`              | Standalone編集、`riffra serve`、Hostへの`--attach`を提供するCLI                  |
+| `crates/riffra-core/`    | Application / Domain / Ports（Session / Asset / Rack / 履歴）                    |
+| `crates/riffra-control/` | Local Host間通信の契約（endpoint / registry / transport / client）               |
+| `crates/riffra-host/`    | SessionStore、Asset、Project、制作ファイル解析、DataRoot所有                     |
+| `crates/riffra-runtime/` | Desktop と Headless Host が共有するRuntime型・投影・ローカル制御の基盤           |
+| `native/audio-engine/`   | リアルタイム音声エンジンのサイドカー（C++ / JUCE）                               |
+| `scripts/`               | 型生成（`gen-barrel.js`）などの開発スクリプト                                    |
+| `docs/`                  | 設計・調整ドキュメント                                                           |
+| `agents/skills/`         | AI エージェントが参照するスキル（CLI ヘッドレス操作、作曲知識、曲設計図）        |
 
 依存関係は npm workspace（`@riffra/desktop`）と Cargo workspace（`riffra-core` / `riffra-control` / `riffra-host` / `riffra-runtime` / `riffra-cli` / デスクトップバイナリ）で管理する。
 
