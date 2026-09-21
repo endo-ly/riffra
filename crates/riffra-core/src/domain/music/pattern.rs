@@ -53,9 +53,10 @@ impl RhythmPattern {
                 return Err(invalid_pattern("rhythm velocity must be between 0 and 127"));
             }
             if !fraction_less(step.offset, length) {
-                return Err(invalid_pattern(
-                    "rhythm step offset must be less than pattern length",
-                ));
+                return Err(invalid_pattern(format!(
+                    "rhythm step offset \"{}\" exceeds pattern length \"{}\"; rhythm offsets and lengths use whole-note fractions",
+                    step.offset, length
+                )));
             }
         }
         self.length = length;
@@ -121,9 +122,10 @@ impl PhrasePattern {
                 return Err(invalid_pattern("phrase velocity must be between 0 and 127"));
             }
             if !fraction_less(note.offset, length) {
-                return Err(invalid_pattern(
-                    "phrase note offset must be less than pattern length",
-                ));
+                return Err(invalid_pattern(format!(
+                    "phrase note offset \"{}\" exceeds pattern length \"{}\"; phrase offsets and lengths use whole-note fractions",
+                    note.offset, length
+                )));
             }
         }
         self.length = length;

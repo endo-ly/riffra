@@ -248,6 +248,16 @@ impl HostState {
                 let mut mutation = self.after_canonical_commit(result.projection_effect())?;
                 mutation.created_entity_ids = result.created_entity_ids;
                 let sequence = mutation.canonical.sequence;
+                if result.result_type == "batchMutation" {
+                    let mut value = result.value;
+                    if let Value::Object(ref mut value) = value {
+                        value.insert(
+                            "projection".into(),
+                            serde_json::to_value(&mutation.projection).map_err(serialize_error)?,
+                        );
+                    }
+                    return Ok(("batchMutation", value, sequence));
+                }
                 return Ok((
                     "arrangementMutation",
                     serde_json::to_value(mutation).map_err(serialize_error)?,

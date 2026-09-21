@@ -7,13 +7,14 @@ pub use harmony::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
     MusicalHarmonyEventView,
 };
+pub use phrase::{ResolvedPhrase, ResolvedPhraseNote};
 
 use super::*;
-use crate::DomainError;
 use crate::domain::{
-    MidiNote, MusicalDuration, MusicalOffset, MusicalPitch, MusicalPosition, ProjectTimebase,
-    TimelineRegion, TimelineTick,
+    MidiNote, MusicalDuration, MusicalOffset, MusicalPitch, MusicalPosition, MusicalTimeDelta,
+    ProjectTimebase, TimelineRegion, TimelineTick,
 };
+use crate::{DomainError, InputLocation};
 use serde::{Deserialize, Serialize};
 
 /// A MIDI note described using musical position, duration, and pitch values.
@@ -23,7 +24,9 @@ pub struct MusicalMidiNoteInput {
     pub pitch: MusicalPitch,
     pub position: MusicalPosition,
     pub duration: MusicalDuration,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub velocity: Option<u8>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub channel: Option<u8>,
 }
 
@@ -31,12 +34,128 @@ pub struct MusicalMidiNoteInput {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalMidiNoteView {
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub pitch: MusicalPitch,
     pub position: MusicalPosition,
     pub duration: MusicalDuration,
     pub velocity: u8,
     pub channel: u8,
+}
+
+/// Scope for a music-level Note query or transform.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MusicalNoteScope {
+    /// One Clip to inspect, when supplied.
+    pub clip_id: Option<String>,
+    /// One Track whose MIDI Clips should be inspected, when supplied.
+    pub track_id: Option<String>,
+}
+
+/// Parameters for the lightweight Note query.
+#[derive(Clone, Debug)]
+pub struct MusicalNoteListRequest {
+    /// Clip or Track scope.
+    pub scope: MusicalNoteScope,
+    /// Optional half-open musical range.
+    pub start: Option<MusicalPosition>,
+    /// Optional half-open musical range end.
+    pub end: Option<MusicalPosition>,
+    /// Whether stable Note IDs should be included.
+    pub include_ids: bool,
+    /// Whether to return raw Clip-relative MIDI values instead of musical values.
+    pub raw: bool,
+}
+
+/// A grouped Note query response.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteListView {
+    /// Number of Notes across all returned Clips.
+    pub count: usize,
+    /// Raw timebase metadata, included only for raw responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timebase: Option<MusicalNoteTimebaseView>,
+    /// Notes grouped by Clip.
+    pub clips: Vec<MusicalNoteClipView>,
+}
+
+/// The project timebase needed to interpret raw Note ticks.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteTimebaseView {
+    pub ppq: u32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+}
+
+/// A Clip group in a Note query response.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteClipView {
+    pub clip_id: String,
+    /// Timeline Clip start, present only for raw responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_tick: Option<u64>,
+    pub notes: Vec<MusicalNoteListNoteView>,
+}
+
+/// One Note in either the musical or raw response representation.
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum MusicalNoteListNoteView {
+    /// A Note represented by musical coordinates.
+    Musical(MusicalMidiNoteView),
+    /// A Note represented by Clip-relative MIDI values.
+    Raw(RawMidiNoteView),
+}
+
+/// A raw MIDI Note with Clip-relative timing.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawMidiNoteView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub pitch: u8,
+    pub start_tick: u64,
+    pub duration_ticks: u64,
+    pub velocity: u8,
+    pub channel: u8,
+}
+
+/// Parameters for an atomic music-level Note transform.
+#[derive(Clone, Debug)]
+pub struct MusicalNoteTransformRequest {
+    /// Clip or Track scope.
+    pub scope: MusicalNoteScope,
+    /// Half-open range used to select Note start positions.
+    pub start: Option<MusicalPosition>,
+    /// Half-open range end used to select Note start positions.
+    pub end: Option<MusicalPosition>,
+    /// Optional pre-transform pitch filter.
+    pub pitch: Option<MusicalPitch>,
+    /// Optional pre-transform MIDI channel filter.
+    pub channel: Option<u8>,
+    /// Signed musical displacement.
+    pub timing_offset: Option<MusicalTimeDelta>,
+    /// Velocity displacement, clamped to the MIDI range.
+    pub velocity_offset: Option<i32>,
+    /// Pitch displacement in semitones.
+    pub transpose_semitones: Option<i16>,
+}
+
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom("expected a value, found null"));
+    }
+    T::deserialize(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 /// Partial update for a MIDI note expressed in musical coordinates.
@@ -143,7 +262,19 @@ where
             let timebase = arrangement.timebase;
             let notes = inputs
                 .into_iter()
-                .map(|input| resolve_musical_note(timebase, input))
+                .enumerate()
+                .map(|(index, input)| {
+                    resolve_musical_note(timebase, input).map_err(|error| {
+                        ApplicationError::InvalidInput {
+                            location: InputLocation {
+                                collection: "notes".into(),
+                                index,
+                                field: None,
+                            },
+                            message: error.to_string(),
+                        }
+                    })
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let ids = insert_resolved_midi_notes_in_arrangement(arrangement, clip_id, notes)?;
             for id in ids {
@@ -157,58 +288,229 @@ where
     /// Lists MIDI notes using absolute musical positions.
     pub fn list_musical_notes(
         &self,
-        clip_id: &str,
-        start: Option<MusicalPosition>,
-        end: Option<MusicalPosition>,
-    ) -> Result<Vec<MusicalMidiNoteView>, ApplicationError> {
-        if start.is_some() != end.is_some() {
-            return Err(ApplicationError::InvalidCommand(
-                "note list requires both start and end when filtering a range".into(),
-            ));
-        }
+        request: MusicalNoteListRequest,
+    ) -> Result<MusicalNoteListView, ApplicationError> {
         let session = self.get_session()?;
         let timebase = session.arrangement.timebase;
-        let clip = session
-            .arrangement
-            .midi_clips
-            .iter()
-            .find(|clip| clip.id == clip_id)
-            .ok_or_else(|| {
-                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
-            })?;
-        let query = start
-            .zip(end)
-            .map(|(start, end)| {
-                Ok::<_, ApplicationError>((
-                    timebase.musical_position_to_tick(start)?,
-                    timebase.musical_position_to_tick(end)?,
-                ))
-            })
-            .transpose()?;
-        if let Some((start, end)) = query
-            && end <= start
+        if let Some(track_id) = request.scope.track_id.as_deref()
+            && !session
+                .arrangement
+                .tracks
+                .iter()
+                .any(|track| track.id == track_id)
         {
+            return Err(ApplicationError::InvalidCommand(format!(
+                "track '{track_id}' is not registered"
+            )));
+        }
+        let query = resolve_note_range(timebase, request.start, request.end)?;
+        let clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
+        if request.scope.track_id.is_some() && query.is_none() {
             return Err(ApplicationError::InvalidCommand(
-                "note list range must have a positive duration".into(),
+                "track note list requires both start and end".into(),
             ));
         }
-        clip.notes
-            .iter()
-            .filter(|note| match query {
-                Some((start, end)) => {
-                    let note_start = clip.start_tick.0.checked_add(note.start_tick.0);
-                    let note_end =
-                        note_start.and_then(|value| value.checked_add(note.duration_ticks));
-                    note_start
-                        .zip(note_end)
-                        .is_some_and(|(note_start, note_end)| {
-                            note_start < end.0 && note_end > start.0
-                        })
+        let mut clip_views = clips
+            .into_iter()
+            .filter_map(|clip| {
+                let mut notes = clip
+                    .notes
+                    .iter()
+                    .filter(|note| note_overlaps_range(clip, note, query))
+                    .collect::<Vec<_>>();
+                notes.sort_by_key(|note| (note.start_tick, note.note, note.id.clone()));
+                if request.scope.track_id.is_some() && notes.is_empty() {
+                    return None;
                 }
-                None => true,
+                let notes = notes
+                    .into_iter()
+                    .map(
+                        |note| -> Result<MusicalNoteListNoteView, ApplicationError> {
+                            if request.raw {
+                                Ok(MusicalNoteListNoteView::Raw(RawMidiNoteView {
+                                    id: request.include_ids.then(|| note.id.clone()),
+                                    pitch: note.note,
+                                    start_tick: note.start_tick.0,
+                                    duration_ticks: note.duration_ticks,
+                                    velocity: note.velocity,
+                                    channel: note.channel,
+                                }))
+                            } else {
+                                Ok(MusicalNoteListNoteView::Musical(musical_note_view(
+                                    timebase,
+                                    clip.start_tick,
+                                    note,
+                                    request.include_ids,
+                                )?))
+                            }
+                        },
+                    )
+                    .collect::<Result<Vec<_>, ApplicationError>>();
+                Some(notes.map(|notes| MusicalNoteClipView {
+                    clip_id: clip.id.clone(),
+                    start_tick: request.raw.then_some(clip.start_tick.0),
+                    notes,
+                }))
             })
-            .map(|note| musical_note_view(timebase, clip.start_tick, note))
-            .collect()
+            .collect::<Result<Vec<_>, ApplicationError>>()?;
+        clip_views.sort_by(|left, right| {
+            let left_clip = session
+                .arrangement
+                .midi_clips
+                .iter()
+                .find(|clip| clip.id == left.clip_id)
+                .expect("selected clip remains in session");
+            let right_clip = session
+                .arrangement
+                .midi_clips
+                .iter()
+                .find(|clip| clip.id == right.clip_id)
+                .expect("selected clip remains in session");
+            left_clip
+                .start_tick
+                .cmp(&right_clip.start_tick)
+                .then_with(|| left.clip_id.cmp(&right.clip_id))
+        });
+        let count = clip_views.iter().map(|clip| clip.notes.len()).sum();
+        Ok(MusicalNoteListView {
+            count,
+            timebase: request.raw.then_some(MusicalNoteTimebaseView {
+                ppq: timebase.ppq,
+                time_signature_numerator: timebase.time_signature_numerator,
+                time_signature_denominator: timebase.time_signature_denominator,
+            }),
+            clips: clip_views,
+        })
+    }
+
+    /// Applies one atomic music-level transform to Notes selected by scope and
+    /// pre-transform musical conditions.
+    pub fn transform_musical_notes(
+        &self,
+        request: MusicalNoteTransformRequest,
+    ) -> Result<ApplicationMutation, ApplicationError> {
+        if request
+            .channel
+            .is_some_and(|channel| !(1..=16).contains(&channel))
+        {
+            return Err(ApplicationError::InvalidCommand(
+                "note transform channel must be between 1 and 16".into(),
+            ));
+        }
+        let has_change = request
+            .timing_offset
+            .is_some_and(|offset| offset.numerator != 0)
+            || request.velocity_offset.is_some_and(|offset| offset != 0)
+            || request
+                .transpose_semitones
+                .is_some_and(|semitones| semitones != 0);
+        if !has_change {
+            return Err(ApplicationError::InvalidCommand(
+                "note transform must change at least one value".into(),
+            ));
+        }
+        let mut matched = false;
+        let mutation = self.commit_arrangement_with_created_ids(|arrangement, _| {
+            let timebase = arrangement.timebase;
+            if let Some(track_id) = request.scope.track_id.as_deref()
+                && !arrangement.tracks.iter().any(|track| track.id == track_id)
+            {
+                return Err(ApplicationError::InvalidCommand(format!(
+                    "track '{track_id}' is not registered"
+                )));
+            }
+            let query = resolve_note_range(timebase, request.start, request.end)?;
+            if request.scope.track_id.is_some() && query.is_none() {
+                return Err(ApplicationError::InvalidCommand(
+                    "track note transform requires both start and end".into(),
+                ));
+            }
+            let timing_ticks = request
+                .timing_offset
+                .map(|offset| timebase.musical_time_delta_to_ticks(offset))
+                .transpose()?;
+            let clip_ids = select_note_clips(&arrangement.midi_clips, &request.scope)?
+                .into_iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>();
+            for clip_id in clip_ids {
+                let track_id = {
+                    let clip = arrangement
+                        .midi_clips
+                        .iter_mut()
+                        .find(|clip| clip.id == clip_id)
+                        .expect("selected clip remains in arrangement");
+                    for note in &mut clip.notes {
+                        let absolute_start = clip
+                            .start_tick
+                            .0
+                            .checked_add(note.start_tick.0)
+                            .ok_or_else(|| {
+                                ApplicationError::InvalidCommand(
+                                    "MIDI note position is too large".into(),
+                                )
+                            })?;
+                        if !note_starts_in_range(absolute_start, query)
+                            || request
+                                .pitch
+                                .is_some_and(|pitch| pitch.midi_pitch() != note.note)
+                            || request
+                                .channel
+                                .is_some_and(|channel| channel != note.channel)
+                        {
+                            continue;
+                        }
+                        matched = true;
+                        let next_start = timing_ticks
+                            .map(|offset| i128::from(note.start_tick.0) + i128::from(offset))
+                            .unwrap_or_else(|| i128::from(note.start_tick.0));
+                        let next_end = next_start + i128::from(note.duration_ticks);
+                        if next_start < 0 || next_end > i128::from(clip.duration_ticks) {
+                            return Err(ApplicationError::InvalidCommand(
+                                "note transform would move a note outside its MIDI clip".into(),
+                            ));
+                        }
+                        if let Some(transpose) = request.transpose_semitones {
+                            let next_pitch = i32::from(note.note) + i32::from(transpose);
+                            if !(0..=127).contains(&next_pitch) {
+                                return Err(ApplicationError::InvalidCommand(
+                                    "note transform would move a pitch outside the MIDI range"
+                                        .into(),
+                                ));
+                            }
+                            note.note = u8::try_from(next_pitch).expect("pitch range was checked");
+                        }
+                        if let Some(offset) = request.velocity_offset {
+                            let next_velocity = i32::from(note.velocity)
+                                .saturating_add(offset)
+                                .clamp(0, 127);
+                            note.velocity =
+                                u8::try_from(next_velocity).expect("velocity was clamped");
+                        }
+                        note.start_tick = TimelineTick(
+                            u64::try_from(next_start).expect("note start was checked non-negative"),
+                        );
+                    }
+                    clip.track_id.clone()
+                };
+                let track = arrangement.tracks.iter().find(|track| track.id == track_id);
+                let clip = arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.id == clip_id)
+                    .expect("selected clip remains in arrangement");
+                clip.validate_and_normalize(track)
+                    .map_err(DomainError::InvalidClip)?;
+            }
+            if !matched {
+                return Err(ApplicationError::InvalidCommand(
+                    "note selection matched no notes".into(),
+                ));
+            }
+            arrangement.revision = arrangement.revision.saturating_add(1);
+            Ok(())
+        })?;
+        Ok(mutation)
     }
 
     /// Gets one MIDI note using musical coordinates.
@@ -234,7 +536,7 @@ where
             .ok_or_else(|| {
                 ApplicationError::InvalidCommand(format!("midi note '{note_id}' is not registered"))
             })?;
-        musical_note_view(timebase, clip.start_tick, note)
+        musical_note_view(timebase, clip.start_tick, note, true)
     }
 
     /// Updates one MIDI note using only the supplied musical fields.
@@ -455,18 +757,88 @@ fn musical_note_view(
     timebase: ProjectTimebase,
     clip_start: TimelineTick,
     note: &MidiNote,
+    include_id: bool,
 ) -> Result<MusicalMidiNoteView, ApplicationError> {
     let absolute_start = clip_start.0.checked_add(note.start_tick.0).ok_or_else(|| {
         ApplicationError::InvalidCommand("MIDI note position is too large".into())
     })?;
     Ok(MusicalMidiNoteView {
-        id: note.id.clone(),
+        id: include_id.then(|| note.id.clone()),
         pitch: MusicalPitch::from_midi_pitch(note.note)?,
         position: timebase.tick_to_musical_position(TimelineTick(absolute_start)),
         duration: timebase.ticks_to_musical_duration(note.duration_ticks)?,
         velocity: note.velocity,
         channel: note.channel,
     })
+}
+
+fn resolve_note_range(
+    timebase: ProjectTimebase,
+    start: Option<MusicalPosition>,
+    end: Option<MusicalPosition>,
+) -> Result<Option<(TimelineTick, TimelineTick)>, ApplicationError> {
+    if start.is_some() != end.is_some() {
+        return Err(ApplicationError::InvalidCommand(
+            "note range requires both start and end".into(),
+        ));
+    }
+    let range = start
+        .zip(end)
+        .map(|(start, end)| {
+            let start = timebase.musical_position_to_tick(start)?;
+            let end = timebase.musical_position_to_tick(end)?;
+            if end <= start {
+                return Err(ApplicationError::InvalidCommand(
+                    "note range must have a positive duration".into(),
+                ));
+            }
+            Ok((start, end))
+        })
+        .transpose()?;
+    Ok(range)
+}
+
+fn select_note_clips<'a>(
+    clips: &'a [crate::domain::MidiClip],
+    scope: &MusicalNoteScope,
+) -> Result<Vec<&'a crate::domain::MidiClip>, ApplicationError> {
+    match (&scope.clip_id, &scope.track_id) {
+        (Some(_), Some(_)) | (None, None) => Err(ApplicationError::InvalidCommand(
+            "note scope requires exactly one clipId or trackId".into(),
+        )),
+        (Some(clip_id), None) => clips
+            .iter()
+            .find(|clip| clip.id == *clip_id)
+            .map(|clip| vec![clip])
+            .ok_or_else(|| {
+                ApplicationError::InvalidCommand(format!("midi clip '{clip_id}' is not registered"))
+            }),
+        (None, Some(track_id)) => Ok(clips
+            .iter()
+            .filter(|clip| clip.track_id == *track_id)
+            .collect()),
+    }
+}
+
+fn note_overlaps_range(
+    clip: &crate::domain::MidiClip,
+    note: &MidiNote,
+    range: Option<(TimelineTick, TimelineTick)>,
+) -> bool {
+    let Some((start, end)) = range else {
+        return true;
+    };
+    let Some(note_start) = clip.start_tick.0.checked_add(note.start_tick.0) else {
+        return false;
+    };
+    let Some(note_end) = note_start.checked_add(note.duration_ticks) else {
+        return false;
+    };
+    note_start < end.0 && note_end > start.0
+}
+
+fn note_starts_in_range(note_start: u64, range: Option<(TimelineTick, TimelineTick)>) -> bool {
+    range.is_none_or(|(start, end)| start.0 <= note_start && note_start < end.0)
 }
 
 fn insert_resolved_midi_notes_in_arrangement(
@@ -777,16 +1149,24 @@ mod tests {
             .clone();
 
         let listed = application
-            .list_musical_notes(
-                &clip_id,
-                Some("2:1+1/8".parse().unwrap()),
-                Some("2:1+1/4".parse().unwrap()),
-            )
+            .list_musical_notes(MusicalNoteListRequest {
+                scope: MusicalNoteScope {
+                    clip_id: Some(clip_id.clone()),
+                    track_id: None,
+                },
+                start: Some("2:1+1/8".parse().unwrap()),
+                end: Some("2:1+1/4".parse().unwrap()),
+                include_ids: true,
+                raw: false,
+            })
             .unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].position.to_string(), "2:1");
-        assert_eq!(listed[0].duration.to_string(), "1/4");
-        assert_eq!(listed[0].channel, 2);
+        assert_eq!(listed.count, 1);
+        let MusicalNoteListNoteView::Musical(note) = &listed.clips[0].notes[0] else {
+            panic!("expected musical note view");
+        };
+        assert_eq!(note.position.to_string(), "2:1");
+        assert_eq!(note.duration.to_string(), "1/4");
+        assert_eq!(note.channel, 2);
 
         application
             .update_musical_note(
@@ -808,6 +1188,223 @@ mod tests {
         assert_eq!(fetched.duration.to_string(), "1/2");
         application.remove_musical_note(&clip_id, &note_id).unwrap();
         assert!(application.get_musical_note(&clip_id, &note_id).is_err());
+    }
+
+    fn track_with_notes() -> (MemoryStorage, AppCore<()>, String, String, String) {
+        let storage = MemoryStorage::default();
+        let core = AppCore::new(
+            PathBuf::from("data"),
+            CreativeSession::new(1),
+            (),
+            false,
+            false,
+        );
+        let application = core.application(&storage);
+        let track_id = application
+            .add_track_with_created_ids("Drums", TrackKind::Instrument)
+            .unwrap()
+            .session
+            .arrangement
+            .tracks[0]
+            .id
+            .clone();
+        let first_clip = application
+            .create_musical_midi_clip_with_created_ids(
+                &track_id,
+                "1:1".parse().unwrap(),
+                "5:1".parse().unwrap(),
+                None,
+            )
+            .unwrap()
+            .session
+            .arrangement
+            .midi_clips[0]
+            .id
+            .clone();
+        let second_clip = application
+            .create_musical_midi_clip_with_created_ids(
+                &track_id,
+                "5:1".parse().unwrap(),
+                "9:1".parse().unwrap(),
+                None,
+            )
+            .unwrap()
+            .session
+            .arrangement
+            .midi_clips
+            .iter()
+            .find(|clip| clip.id != first_clip)
+            .unwrap()
+            .id
+            .clone();
+        application
+            .insert_musical_notes_with_created_ids(
+                &first_clip,
+                vec![
+                    MusicalMidiNoteInput {
+                        pitch: "C4".parse().unwrap(),
+                        position: "2:1".parse().unwrap(),
+                        duration: "1/4".parse().unwrap(),
+                        velocity: Some(20),
+                        channel: Some(1),
+                    },
+                    MusicalMidiNoteInput {
+                        pitch: "C4".parse().unwrap(),
+                        position: "4:4".parse().unwrap(),
+                        duration: "1/4".parse().unwrap(),
+                        velocity: Some(30),
+                        channel: Some(1),
+                    },
+                ],
+            )
+            .unwrap();
+        application
+            .insert_musical_notes_with_created_ids(
+                &second_clip,
+                vec![MusicalMidiNoteInput {
+                    pitch: "D2".parse().unwrap(),
+                    position: "6:1".parse().unwrap(),
+                    duration: "1/4".parse().unwrap(),
+                    velocity: Some(126),
+                    channel: Some(1),
+                }],
+            )
+            .unwrap();
+
+        (storage, core, track_id, first_clip, second_clip)
+    }
+
+    #[test]
+    fn track_note_queries_are_deterministic() {
+        let (_storage, core, track_id, _first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
+        let listed = application
+            .list_musical_notes(MusicalNoteListRequest {
+                scope: MusicalNoteScope {
+                    clip_id: None,
+                    track_id: Some(track_id.clone()),
+                },
+                start: Some("5:1".parse().unwrap()),
+                end: Some("7:1".parse().unwrap()),
+                include_ids: false,
+                raw: false,
+            })
+            .unwrap();
+        assert_eq!(listed.count, 1);
+        assert_eq!(listed.clips[0].clip_id, second_clip);
+        let MusicalNoteListNoteView::Musical(note) = &listed.clips[0].notes[0] else {
+            panic!("expected a musical Note");
+        };
+        assert_eq!(note.id, None);
+        assert_eq!(note.pitch.to_string(), "D2");
+
+        let raw = application
+            .list_musical_notes(MusicalNoteListRequest {
+                scope: MusicalNoteScope {
+                    clip_id: Some(second_clip.clone()),
+                    track_id: None,
+                },
+                start: None,
+                end: None,
+                include_ids: true,
+                raw: true,
+            })
+            .unwrap();
+        assert_eq!(raw.timebase.unwrap().ppq, 960);
+        assert_eq!(raw.clips[0].start_tick, Some(15_360));
+        let MusicalNoteListNoteView::Raw(note) = &raw.clips[0].notes[0] else {
+            panic!("expected a raw Note");
+        };
+        assert_eq!(note.start_tick, 3_840);
+        assert!(note.id.is_some());
+    }
+
+    #[test]
+    fn musical_note_transform_clamps_velocity_and_is_atomic() {
+        let (_storage, core, _track_id, first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
+        application
+            .transform_musical_notes(MusicalNoteTransformRequest {
+                scope: MusicalNoteScope {
+                    clip_id: Some(second_clip.clone()),
+                    track_id: None,
+                },
+                start: Some("5:1".parse().unwrap()),
+                end: Some("7:1".parse().unwrap()),
+                pitch: Some("D2".parse().unwrap()),
+                channel: Some(1),
+                timing_offset: Some("+1/48".parse().unwrap()),
+                velocity_offset: Some(4),
+                transpose_semitones: None,
+            })
+            .unwrap();
+        let transformed = core.canonical_state().unwrap();
+        let transformed_note = &transformed.session.arrangement.midi_clips[1].notes[0];
+        assert_eq!(transformed_note.start_tick, TimelineTick(3_920));
+        assert_eq!(transformed_note.velocity, 127);
+
+        assert!(
+            application
+                .transform_musical_notes(MusicalNoteTransformRequest {
+                    scope: MusicalNoteScope {
+                        clip_id: Some(first_clip),
+                        track_id: None,
+                    },
+                    start: Some("1:1".parse().unwrap()),
+                    end: Some("5:1".parse().unwrap()),
+                    pitch: Some("C4".parse().unwrap()),
+                    channel: None,
+                    timing_offset: Some("+1/48".parse().unwrap()),
+                    velocity_offset: None,
+                    transpose_semitones: None,
+                })
+                .is_err()
+        );
+        let unchanged = core.canonical_state().unwrap();
+        assert_eq!(
+            unchanged.session.arrangement.midi_clips[0].notes[1].start_tick,
+            TimelineTick(14_400)
+        );
+    }
+
+    #[test]
+    fn musical_note_transform_rejects_noop_and_out_of_range_transpose() {
+        let (_storage, core, _track_id, _first_clip, second_clip) = track_with_notes();
+        let application = core.application(&_storage);
+        let request = |velocity_offset, transpose_semitones| MusicalNoteTransformRequest {
+            scope: MusicalNoteScope {
+                clip_id: Some(second_clip.clone()),
+                track_id: None,
+            },
+            start: Some("5:1".parse().unwrap()),
+            end: Some("7:1".parse().unwrap()),
+            pitch: Some("D2".parse().unwrap()),
+            channel: Some(1),
+            timing_offset: None,
+            velocity_offset,
+            transpose_semitones,
+        };
+
+        let before = core.canonical_state().unwrap();
+        assert!(
+            application
+                .transform_musical_notes(request(Some(0), None))
+                .is_err()
+        );
+        assert!(
+            application
+                .transform_musical_notes(request(None, Some(0)))
+                .is_err()
+        );
+        assert!(
+            application
+                .transform_musical_notes(request(None, Some(i16::MAX)))
+                .is_err()
+        );
+        let after = core.canonical_state().unwrap();
+
+        assert_eq!(after.sequence, before.sequence);
+        assert_eq!(after.session, before.session);
     }
 
     #[test]

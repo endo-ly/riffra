@@ -4,6 +4,7 @@
 //! bypass, and utility settings needed for audio processing right now.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use ts_rs::TS;
 
 /// Functional role of a slot in the rack signal chain.
@@ -67,8 +68,12 @@ pub(crate) fn validate_and_normalize(rack: &mut RackInstance) -> Result<(), Stri
     if rack.macros.len() > 64 {
         return Err("A session cannot contain more than 64 rack macros.".into());
     }
+    let mut device_ids = HashSet::with_capacity(rack.devices.len());
     for device in &mut rack.devices {
         validate_and_normalize_device(device)?;
+        if !device_ids.insert(device.id.clone()) {
+            return Err(format!("Rack device id '{}' is duplicated.", device.id));
+        }
     }
     for macro_control in &mut rack.macros {
         if macro_control.id.trim().is_empty() || macro_control.name.trim().is_empty() {
@@ -157,5 +162,26 @@ mod tests {
         };
 
         assert!(validate_and_normalize_device(&mut device).is_err());
+    }
+
+    #[test]
+    fn rack_rejects_duplicate_device_ids() {
+        let device = RackDevice {
+            id: "device:duplicate".into(),
+            name: "Synth".into(),
+            kind: DeviceKind::Plugin,
+            path: None,
+            bypassed: false,
+            gain_db: 0.0,
+            parameter_values: Vec::new(),
+            state_data: None,
+            disabled_placeholder: false,
+        };
+        let mut rack = RackInstance {
+            devices: vec![device.clone(), device],
+            macros: Vec::new(),
+        };
+
+        assert!(validate_and_normalize(&mut rack).is_err());
     }
 }

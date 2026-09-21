@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use thiserror::Error;
 
 /// A production rule violation reported to callers as a structured error.
@@ -45,6 +46,12 @@ pub enum ApplicationError {
     /// The requested production edit violates a domain rule.
     #[error("invalid command: {0}")]
     InvalidCommand(String),
+    /// A bulk input element failed semantic validation.
+    #[error("invalid input at {location}: {message}")]
+    InvalidInput {
+        location: InputLocation,
+        message: String,
+    },
     /// The canonical state could not be validated before the commit.
     #[error("invalid session: {0}")]
     InvalidSession(String),
@@ -60,6 +67,27 @@ pub enum ApplicationError {
     /// No history entry is available for the requested direction.
     #[error("history is empty")]
     HistoryEmpty,
+}
+
+/// A stable location within a bulk application input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InputLocation {
+    /// The input collection containing the invalid element.
+    pub collection: String,
+    /// The zero-based element index within the collection.
+    pub index: usize,
+    /// The field that failed validation, when it can be identified.
+    pub field: Option<String>,
+}
+
+impl fmt::Display for InputLocation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "/{}/{}", self.collection, self.index)?;
+        if let Some(field) = &self.field {
+            write!(formatter, "/{field}")?;
+        }
+        Ok(())
+    }
 }
 
 impl From<DomainError> for ApplicationError {

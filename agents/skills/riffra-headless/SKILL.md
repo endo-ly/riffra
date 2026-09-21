@@ -45,16 +45,52 @@ description: >-
 1. `session inspect` で現在の構造と `sequence` を確認する
 2. トラック、音源、テンポ、リージョンを必要な範囲で設定する
 3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
-4. 必要な箇所だけ `music note` で個別に調整する
-5. `session inspect` または `track list` で結果を確認する
-6. `render start` で音声を書き出し、Attachedでワンショット実行する場合は `job wait`、interactiveでは `job.get` の繰り返しで完了を確認する
-7. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
+4. 既存Noteの確認は `music note list` で必要なClipまたはTrackと範囲だけ取得する
+5. 範囲・音高・channelに一致するNoteの一括調整は `music note transform` で行う
+6. 個別の更新・削除が必要な場合だけ `--include-ids` でIDを取得し、`music note update` / `remove` を使う
+7. raw tickやMIDI値が必要な場合だけ `music note list --raw` を使う
+8. `session inspect` または `track list` で結果を確認する
+9. ミックスのバランスを `track update`(gain / pan / mute / solo)、`audio-clip update`、`automation set`、`session settings update --master-db` で整える
+10. `render start` で音声を書き出し、Attachedでワンショット実行する場合は `job wait`、interactiveでは `job.get` の繰り返しで完了を確認する
+11. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
 
 音声を扱わない編集はStandaloneで行い、再生・録音・RenderなどRuntimeを使う操作はLive HostへAttachedして行う。大きなJSONは`--*-file`で渡し、連続した操作はinteractive JSONLで送る。意味のある進捗率を取得できない間、ジョブの`progress`は`null`になる。
+
+### まとめて構築する場合
+
+楽曲の初期構築や、事前に決めた複数の正準編集は `session apply` を第一候補にする。Track、MIDI Clip、Note、Phrase、Harmony、MarkerなどのControl Commandを1行ずつJSONLへ書き、1回のcommitとして適用できる。
+
+```powershell
+riffra --attach --expected-sequence 42 session apply `
+  --file ./song.jsonl
+```
+
+```jsonl
+{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"9:1"}}
+{"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+```
+
+空行は無視される。各行は既存のControl Command契約に従い、Batch専用の楽曲記法は使わない。`trackName`はその時点の候補Sessionから一意に解決し、MIDI Clip名を使う場合は`trackId`または`trackName`も指定する。同名が複数ある場合は曖昧さとして失敗する。
+
+全operationが候補Session上で成功したときだけCanonical Sessionへ1回commitされる。途中で失敗した場合はそれまでのoperationも残らない。成功応答は `appliedCommands` と `createdEntityCounts` を含む小さな結果で、生成IDが必要な場合だけ `--include-created-ids` を付ける。`expected-sequence` の不一致も、operation開始前にBatch全体を拒否する。`instrument.apply` は外部snapshotを作成しない組み込みinstrumentに限りBatchへ含められる。`user:` instrumentは単独のcommandとして実行する。
+
+途中結果を確認して次の編集を決める場合や、1操作ずつUndoしたい場合は `--interactive` を使う。`session apply`へ読み取りコマンド、Undo / Redo、Render、Transport、RecordingなどRuntime副作用を持つコマンドは含めない。
 
 `session inspect`、Mutation、`render start`、`undo`、`redo` は `expectedSequence` を検証する。確認後に別の編集が入ってConflictになった場合は、最新状態を確認してから操作を組み直す。
 
 `sequence`が競合検出用の値として機能するのは、同じ `AppCore` が動作している間だけである。GUIと共同編集する場合はLive HostへAttachedし、Standaloneで連続操作する場合は`--interactive`を使う。
+
+### 音源選択
+
+楽曲内の役割とプリセットの `category` を直接対応付けない。
+
+「リード」「ベースライン」「コード」「背景」などの役割に使う音源を選ぶときは、
+同名のカテゴリだけに候補を限定せず、利用可能なプリセット全体から
+`description`、`tags`、`recommended_range`、演奏特性を見て選択する。
+
+たとえば主旋律には `Lead` だけでなく、`Pluck`、`Mallet`、`Keys` なども候補になりうる。
+`category` はプリセットライブラリ上の主分類として扱う。
 
 ## 楽曲制作の入力契約
 
@@ -70,6 +106,10 @@ description: >-
 
 通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
 
+既存Noteの通常の調整では、`session get` で全Sessionを取得したり、Note IDを列挙して再挿入したりしない。必要範囲を `music note list` で確認し、`music note transform` で一括編集する。`midi-note transform` は、既知のNote IDをraw tick / MIDI値で直接操作するときだけ使う。
+
+TimelineのPPQは `session inspect.project.ppq` を正とする。Instrument previewの `ticksPerBeat` はpreview固有の値であり、Timelineのtick計算には使わない。現在の正準Timeline PPQは960だが、エージェントは固定値を再定義せずinspectionの値を使う。
+
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 
 小さな構造入力はinline JSON、大きな構造入力は`--*-file`、連続操作はinteractive JSONLを使う。CLI入力とControl Protocolのparamsの詳細な対応は [references/commands.md](references/commands.md) を参照する。
@@ -83,6 +123,37 @@ description: >-
 反復する旋律やモチーフは、半音差で表す `PhrasePattern` と複数の `placements` を `music phrase insert` へ渡す。コードヒットの反復は `music harmony realize` の `RhythmPattern` で指定する。同じ音高を繰り返すドラムパターンもPhraseで表現できるため、KickやSnareなどのNoteを大量に列挙する前に利用を検討する。
 
 和声のTone、MIDI pitch番号、Phrase / Rhythmの反復、bar・beatからtickへの変換、Clip相対位置はエージェント側で計算しない。Coreが解決・展開し、HarmonyEventを正準セッションへ保存する。
+
+Patternの時間は2種類に分けて考える。`Position`は `bar:beat` または `bar:beat+fraction-of-beat` で、たとえば `5:1+1/2` は5小節1拍目から半拍後を表す。`length`、`offset`、`duration` は全音符を1とする音価の分数で、`1/8`は8分音符、`1/4`は4分音符、`1/2`は2分音符である。
+
+Phraseを挿入する前に展開規模とClip内への収まりを確認する場合は、同じ入力で `music phrase preview` を使う。既定ではNote数・配置数・開始位置・終了位置だけを返し、`--include-notes` を付けたときだけ展開Noteを音楽座標で返す。PreviewはSessionを変更しない。
+
+```powershell
+riffra --attach music phrase preview `
+  --clip-id midi-clip:01j... `
+  --phrase-file ./phrase.json `
+  --include-notes
+```
+
+## ミックス
+
+ミックスの正本は既存の正準状態であり、BusやSendのようなMixer専用の正準モデルは存在しない。TrackとClipのパラメータ、Master音量、Automationの組み合わせで表現する。
+
+| 項目                     | 正準状態                                 | 編集コマンド                                    |
+| ------------------------ | ---------------------------------------- | ----------------------------------------------- |
+| Track Gain / Pan         | `arrangement.tracks` の `gainDb` / `pan` | `track update --gain-db` / `--pan`              |
+| Track Mute / Solo        | 同 `muted` / `solo`                      | `track update --muted` / `--solo`               |
+| Master                   | `settings.masterDb`                      | `session settings update --master-db`           |
+| Automation(volume / pan) | `arrangement.automationLanes`            | `automation set` / `automation clear`           |
+| Clip Gain / Pan / Mute   | 各Clipの `gainDb` / `pan` / `muted`      | `audio-clip update`(MIDI Clipは `--muted` のみ) |
+
+値の契約と挙動は次のとおりである。
+
+- GainとAutomationのvolumeはdB、PanとAutomationのpanは-1.0(左)..1.0(右)である。TrackとClipのGain、Automation volumeは-90..24 dB、Masterは-90..0 dB、Panは-1.0..1.0へclampされて受理されるため、エージェントは範囲内の値を渡す
+- 1つでもSoloが有効なTrackがあるとSolo以外のTrackは無音になり、MuteとSoloが両方有効なTrackも無音になる。Clip MuteはTrackのMute/Soloとは独立にそのClipだけを消す
+- Automationのレーンは`points`配列での全体置換であり、非空のレーンはその区間で静的なfader値を置き換える
+
+ミックス状態の確認は`track list`と`session inspect`で行い、聞こえの確認はRenderで行う。Renderは上記のミックス状態をすべて反映する。
 
 ## Host discoveryとDataRoot
 
@@ -130,6 +201,8 @@ cargo run -p riffra-cli -- --attach host status
   "params": { "name": "Bass", "kind": "instrument" }
 }
 ```
+
+`session apply`の失敗には、`error.details.operationIndex`（0始まり）と`command`が付く。CLIからファイルを指定した場合は、空行を含む元ファイルの物理行が`inputLine`として追加される。paramsのdeserialize失敗には、可能な範囲でJSON Pointer形式の`path`、配列要素の`index`、問題の`value`も付く。
 
 - `requestId`: 任意の文字列。応答へそのまま返る
 - `command`: 操作名

@@ -40,6 +40,13 @@ pub struct PreparedSession {
 }
 
 impl PreparedSession {
+    pub(crate) fn new(session: CreativeSession, expected_sequence: u64) -> Self {
+        Self {
+            session,
+            expected_sequence,
+        }
+    }
+
     /// Returns the exact candidate that an external runtime should validate.
     pub fn session(&self) -> &CreativeSession {
         &self.session
@@ -546,8 +553,8 @@ mod tests {
     use super::*;
     use crate::domain::asset::mint_asset_id;
     use crate::domain::{
-        AudioClip, AudioClipMove, DeviceKind, FrameRange, MidiClip, MidiNote, RackDevice,
-        TimelineTick, TrackInstrument, TrackKind,
+        AudioClip, AudioClipMove, FrameRange, MidiClip, MidiNote, TimelineTick, TrackInstrument,
+        TrackKind,
     };
     use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
     use std::sync::{Arc, Barrier, Mutex};
@@ -1053,20 +1060,7 @@ mod tests {
             .unwrap();
 
         application
-            .add_track_effect_with_created_ids(
-                &track_id,
-                RackDevice {
-                    id: "device:gain".into(),
-                    name: "Gain".into(),
-                    kind: DeviceKind::Utility,
-                    path: None,
-                    bypassed: false,
-                    gain_db: 0.0,
-                    parameter_values: Vec::new(),
-                    state_data: None,
-                    disabled_placeholder: false,
-                },
-            )
+            .add_track_effect_with_created_ids(&track_id, "Gain".into(), "builtin:gain".into())
             .unwrap();
 
         let undone = core.undo(&storage).unwrap();

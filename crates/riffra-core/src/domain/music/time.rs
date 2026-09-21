@@ -136,7 +136,11 @@ impl FromStr for MusicalPosition {
         let value = value.trim();
         let (bar, beat_with_offset) = value
             .split_once(':')
-            .ok_or_else(|| invalid_value("position must use bar:beat notation"))?;
+            .ok_or_else(|| {
+                invalid_value(
+                    "position must use bar:beat or bar:beat+fraction notation; the optional fraction is relative to one beat",
+                )
+            })?;
         let (beat, offset) = match beat_with_offset.split_once('+') {
             Some((beat, fraction)) => (beat, parse_fraction(fraction, "position offset")?),
             None => (
@@ -287,6 +291,91 @@ impl<'de> Deserialize<'de> for MusicalOffset {
     }
 }
 
+/// A signed whole-note fraction used to move musical events in either direction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicalTimeDelta {
+    /// The reduced signed numerator.
+    pub numerator: i32,
+    /// The positive denominator.
+    pub denominator: u32,
+}
+
+impl MusicalTimeDelta {
+    /// Creates and reduces a signed musical delta.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the denominator is zero.
+    pub fn new(numerator: i32, denominator: u32) -> Result<Self, DomainError> {
+        if denominator == 0 {
+            return Err(invalid_value("time delta denominator must be positive"));
+        }
+        if numerator == 0 {
+            return Ok(Self {
+                numerator: 0,
+                denominator: 1,
+            });
+        }
+        let divisor = gcd_u128(
+            u128::from(numerator.unsigned_abs()),
+            u128::from(denominator),
+        );
+        let numerator = i64::from(numerator) / i64::try_from(divisor).expect("gcd fits i64");
+        let denominator =
+            u32::try_from(u128::from(denominator) / divisor).expect("reduced denominator fits u32");
+        Ok(Self {
+            numerator: i32::try_from(numerator).expect("reduced numerator fits i32"),
+            denominator,
+        })
+    }
+}
+
+impl fmt::Display for MusicalTimeDelta {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{:+}/{}", self.numerator, self.denominator)
+    }
+}
+
+impl FromStr for MusicalTimeDelta {
+    type Err = DomainError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        let (numerator, denominator) = value
+            .split_once('/')
+            .ok_or_else(|| invalid_value("time delta must use numerator/denominator notation"))?;
+        let numerator = numerator
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| invalid_value("time delta numerator must be an integer"))?;
+        let denominator = denominator
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| invalid_value("time delta denominator must be a positive integer"))?;
+        Self::new(numerator, denominator)
+    }
+}
+
+impl Serialize for MusicalTimeDelta {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for MusicalTimeDelta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(D::Error::custom)
+    }
+}
+
 impl ProjectTimebase {
     /// Converts a project-wide bar/beat position to an absolute timeline tick.
     ///
@@ -408,6 +497,30 @@ impl ProjectTimebase {
         u64::try_from(ticks).map_err(|_| invalid_value("offset is too large"))
     }
 
+    /// Converts a signed whole-note delta to the nearest timeline tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timebase or delta is invalid, or when the
+    /// result cannot be represented by an `i64`.
+    pub fn musical_time_delta_to_ticks(self, delta: MusicalTimeDelta) -> Result<i64, DomainError> {
+        self.ticks_per_notated_beat()?;
+        let delta = MusicalTimeDelta::new(delta.numerator, delta.denominator)?;
+        let whole_note_ticks = u128::from(self.ppq)
+            .checked_mul(4)
+            .ok_or_else(|| invalid_value("time delta is too large"))?;
+        let ticks = round_fraction(
+            whole_note_ticks * u128::from(delta.numerator.unsigned_abs()),
+            u128::from(delta.denominator),
+        );
+        let ticks = i64::try_from(ticks).map_err(|_| invalid_value("time delta is too large"))?;
+        Ok(if delta.numerator.is_negative() {
+            -ticks
+        } else {
+            ticks
+        })
+    }
+
     fn ticks_per_notated_beat(self) -> Result<u64, DomainError> {
         if self.ppq == 0
             || self.time_signature_numerator == 0
@@ -493,6 +606,37 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&fraction).unwrap(),
             r#"{"numerator":1,"denominator":2}"#
+        );
+    }
+
+    #[test]
+    fn signed_time_delta_uses_project_ppq_and_symmetric_rounding() {
+        let timebase = ProjectTimebase::default();
+        assert_eq!(
+            "+2/96".parse::<MusicalTimeDelta>().unwrap().to_string(),
+            "+1/48"
+        );
+        assert_eq!(
+            timebase
+                .musical_time_delta_to_ticks("+1/48".parse().unwrap())
+                .unwrap(),
+            80
+        );
+        assert_eq!(
+            timebase
+                .musical_time_delta_to_ticks("-1/48".parse().unwrap())
+                .unwrap(),
+            -80
+        );
+
+        let ppq = ProjectTimebase {
+            ppq: 480,
+            ..timebase
+        };
+        assert_eq!(
+            ppq.musical_time_delta_to_ticks("+1/48".parse().unwrap())
+                .unwrap(),
+            40
         );
     }
 

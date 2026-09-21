@@ -25,7 +25,9 @@ use uuid::Uuid;
 pub use music::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
     MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalMidiNotePatch, MusicalMidiNoteView,
-    MusicalRegionView,
+    MusicalNoteClipView, MusicalNoteListNoteView, MusicalNoteListRequest, MusicalNoteListView,
+    MusicalNoteScope, MusicalNoteTimebaseView, MusicalNoteTransformRequest, MusicalRegionView,
+    RawMidiNoteView, ResolvedPhrase, ResolvedPhraseNote,
 };
 pub use session::{
     ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
@@ -190,6 +192,22 @@ where
         prepared: PreparedSession,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit_prepared(self.storage, prepared)
+    }
+
+    /// Commits a candidate produced by a compound mutation against its
+    /// optimistic-concurrency base sequence.
+    ///
+    /// # Errors
+    /// Returns an error when the canonical base changed or persistence fails.
+    pub fn commit_prepared_candidate(
+        &self,
+        candidate: CreativeSession,
+        expected_sequence: u64,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.core.commit_prepared(
+            self.storage,
+            PreparedSession::new(candidate, expected_sequence),
+        )
     }
 }
 

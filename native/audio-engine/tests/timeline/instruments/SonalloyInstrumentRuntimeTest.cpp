@@ -26,6 +26,7 @@ extern "C" void* __wrap_malloc(const std::size_t size) noexcept {
 }
 #endif
 
+#include "../SonalloyTestSupport.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
 
 namespace riffra {
@@ -123,27 +124,27 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     const auto manifestPresets = manifest.getProperty("presets", {});
     ASSERT_TRUE(manifestPresets.isArray());
 
-    const auto directories = presetRoot().findChildFiles(juce::File::findDirectories, false, "*");
-    ASSERT_FALSE(directories.isEmpty());
-    std::vector<juce::String> stagedPresetIds;
-    for (const auto& directory : directories) {
-        const auto definition = directory.getChildFile("definition.json");
-        if (!definition.existsAsFile()) continue;
-        stagedPresetIds.push_back(directory.getFileName());
+    const auto definitionFiles =
+        presetRoot().findChildFiles(juce::File::findFiles, true, "definition.json");
+    ASSERT_FALSE(definitionFiles.isEmpty());
+    std::vector<juce::String> stagedDefinitionPaths;
+    for (const auto& definition : definitionFiles) {
+        const auto directory = definition.getParentDirectory();
+        stagedDefinitionPaths.push_back(definition.getRelativePathFrom(presetRoot()));
         juce::String error;
         auto runtime = loadPreset(directory, error);
         ASSERT_NE(runtime, nullptr)
-            << directory.getFileName().toStdString() << ": " << error.toStdString();
+            << definition.getFullPathName().toStdString() << ": " << error.toStdString();
 
         juce::AudioBuffer<float> output(2, 256);
         juce::MidiBuffer midi;
         midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
         runtime->process(output.getArrayOfWritePointers(), 2, 256, &midi, playingContext());
         expectFinite(output);
-        ASSERT_GT(maximumMagnitude(output), 0.0f) << directory.getFileName().toStdString();
-        ASSERT_EQ(runtime->faultCode(), 0u) << directory.getFileName().toStdString();
+        ASSERT_GT(maximumMagnitude(output), 0.0f) << definition.getFullPathName().toStdString();
+        ASSERT_EQ(runtime->faultCode(), 0u) << definition.getFullPathName().toStdString();
     }
-    std::vector<juce::String> manifestPresetIds;
+    std::vector<juce::String> manifestDefinitionPaths;
     for (const auto& preset : *manifestPresets.getArray()) {
         const auto* presetObject = preset.getDynamicObject();
         ASSERT_NE(presetObject, nullptr);
@@ -155,26 +156,25 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
             << presetId.toStdString();
         ASSERT_TRUE(presetRoot().getChildFile(resourceBasePath).isDirectory())
             << presetId.toStdString();
-        manifestPresetIds.push_back(presetId);
+        manifestDefinitionPaths.push_back(definitionPath);
     }
     const auto comparePresetIds = [](const juce::String& left, const juce::String& right) {
         return left.compare(right) < 0;
     };
-    std::sort(stagedPresetIds.begin(), stagedPresetIds.end(), comparePresetIds);
-    std::sort(manifestPresetIds.begin(), manifestPresetIds.end(), comparePresetIds);
-    ASSERT_EQ(manifestPresetIds, stagedPresetIds);
+    std::sort(stagedDefinitionPaths.begin(), stagedDefinitionPaths.end(), comparePresetIds);
+    std::sort(manifestDefinitionPaths.begin(), manifestDefinitionPaths.end(), comparePresetIds);
+    ASSERT_EQ(manifestDefinitionPaths, stagedDefinitionPaths);
 }
 
 TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysRepresentativePresets) {
     constexpr std::array representativePresetIds{
-        "01-clean-sub-bass", "11-supersaw-lead",          "17-warm-analog-pad",
-        "35-fm-bell",        "50-rhythmic-wave-sequence",
+        "BASS-001", "LEAD-002", "PAD-001", "MALLET-001", "SEQ-001",
     };
 
     for (const auto* presetId : representativePresetIds) {
         SCOPED_TRACE(presetId);
         juce::String error;
-        auto runtime = loadPreset(presetRoot().getChildFile(presetId), error);
+        auto runtime = loadPreset(test::builtInPresetDirectory(presetId), error);
         ASSERT_NE(runtime, nullptr) << error.toStdString();
 
         juce::AudioBuffer<float> output(2, 256);
@@ -190,7 +190,7 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysRepresentativePresets) {
 
 TEST(SonalloyInstrumentRuntimeTest, NoteOffReleasesTheNewestVoice) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -212,7 +212,7 @@ TEST(SonalloyInstrumentRuntimeTest, NoteOffReleasesTheNewestVoice) {
 
 TEST(SonalloyInstrumentRuntimeTest, SustainPedalDefersAndThenReleasesNoteOff) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -241,7 +241,7 @@ TEST(SonalloyInstrumentRuntimeTest, SustainPedalDefersAndThenReleasesNoteOff) {
 
 TEST(SonalloyInstrumentRuntimeTest, ChannelExpressionEventsAreAccepted) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -265,7 +265,7 @@ TEST(SonalloyInstrumentRuntimeTest, ChannelExpressionEventsAreAccepted) {
 
 TEST(SonalloyInstrumentRuntimeTest, RepeatedNotesReleaseNewestVoiceFirst) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -284,7 +284,7 @@ TEST(SonalloyInstrumentRuntimeTest, RepeatedNotesReleaseNewestVoiceFirst) {
 
 TEST(SonalloyInstrumentRuntimeTest, SameOffsetNoteOffPrecedesNewNoteOn) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -314,7 +314,7 @@ TEST(SonalloyInstrumentRuntimeTest, SameOffsetNoteOffPrecedesNewNoteOn) {
 
 TEST(SonalloyInstrumentRuntimeTest, ResetAndBypassRemainRealtimeSafe) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -344,7 +344,7 @@ TEST(SonalloyInstrumentRuntimeTest, ResetAndBypassRemainRealtimeSafe) {
 
 TEST(SonalloyInstrumentRuntimeTest, ResetRestartsRuntimeLocalFrameAndPreservesContinuity) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -369,7 +369,7 @@ TEST(SonalloyInstrumentRuntimeTest, ResetRestartsRuntimeLocalFrameAndPreservesCo
 
 TEST(SonalloyInstrumentRuntimeTest, ProcessContextRemainsContinuousAcrossBlocks) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
@@ -395,8 +395,7 @@ TEST(SonalloyInstrumentRuntimeTest, AcceptsOnlyDefinitionsWithoutRequiredAudioIn
 TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
     juce::String error;
     auto runtime = SonalloyInstrumentRuntime::create(
-        "{", presetRoot().getChildFile("01-clean-sub-bass").getFullPathName(), 48'000.0, 256,
-        error);
+        "{", test::builtInPresetDirectory("BASS-001").getFullPathName(), 48'000.0, 256, error);
     EXPECT_EQ(runtime, nullptr);
     EXPECT_NE(error.indexOf("Built-in instrument definition compilation failed"), -1);
     EXPECT_FALSE(error.isEmpty());
@@ -405,7 +404,7 @@ TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
 TEST(SonalloyInstrumentRuntimeTest, EnforcesRealtimeMidiCapacityContracts) {
     {
         juce::String error;
-        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
         ASSERT_NE(runtime, nullptr) << error.toStdString();
 
         juce::AudioBuffer<float> output(2, 256);
@@ -422,7 +421,7 @@ TEST(SonalloyInstrumentRuntimeTest, EnforcesRealtimeMidiCapacityContracts) {
 
     {
         juce::String error;
-        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
         ASSERT_NE(runtime, nullptr) << error.toStdString();
         ASSERT_TRUE(runtime->prepareTimelineMidiCapacity(768, error)) << error.toStdString();
         EXPECT_FALSE(runtime->prepareTimelineMidiCapacity(769, error));
@@ -443,7 +442,7 @@ TEST(SonalloyInstrumentRuntimeTest, EnforcesRealtimeMidiCapacityContracts) {
 
     {
         juce::String error;
-        auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+        auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
         ASSERT_NE(runtime, nullptr) << error.toStdString();
 
         for (int index = 0; index < 257; ++index)
@@ -455,7 +454,7 @@ TEST(SonalloyInstrumentRuntimeTest, EnforcesRealtimeMidiCapacityContracts) {
 
 TEST(SonalloyInstrumentRuntimeTest, IgnoresMaximumSizedSysExWithoutCallbackAllocation) {
     juce::String error;
-    auto runtime = loadPreset(presetRoot().getChildFile("01-clean-sub-bass"), error);
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
     ASSERT_NE(runtime, nullptr) << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);

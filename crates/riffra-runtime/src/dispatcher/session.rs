@@ -7,6 +7,7 @@ pub(super) fn handles(command: &str) -> bool {
         command,
         "session.get"
             | "session.inspect"
+            | "session.apply"
             | "session.settings.update"
             | "history.get"
             | "undo"
@@ -42,16 +43,204 @@ pub(super) fn dispatch<A>(
                 effect,
             )
         }
+        "session.apply" => {
+            let params: SessionApplyParams = decode(request.params)?;
+            dispatcher.apply_batch(canonical, params.operations, params.include_created_ids)?
+        }
         "history.get" => dispatcher.value("history", canonical.history),
         "undo" => dispatcher.session(dispatcher.core.application(&dispatcher.storage).undo()?),
         "redo" => dispatcher.session(dispatcher.core.application(&dispatcher.storage).redo()?),
         _ => unreachable!("unsupported session command family"),
     })
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionApplyParams {
+    operations: Vec<ControlCommand>,
+    #[serde(default)]
+    include_created_ids: bool,
+}
+
+pub(super) fn is_batch_supported_command(command: &str) -> bool {
+    matches!(
+        command,
+        "session.settings.update"
+            | "track.add"
+            | "track.update"
+            | "track.remove"
+            | "track.duplicate"
+            | "track.reorder"
+            | "track.audio-input.set"
+            | "track.audio-input.clear"
+            | "track.midi-input.set"
+            | "track.midi-input.clear"
+            | "audio-clip.update"
+            | "audio-clip.move"
+            | "audio-clip.trim"
+            | "audio-clip.split"
+            | "audio-clip.duplicate"
+            | "audio-clip.crossfade"
+            | "midi-clip.create"
+            | "midi-clip.update"
+            | "midi-clip.move"
+            | "midi-clip.trim"
+            | "midi-clip.split"
+            | "midi-clip.duplicate"
+            | "midi-note.add"
+            | "midi-note.insert"
+            | "midi-note.update"
+            | "midi-note.update-many"
+            | "midi-note.remove"
+            | "midi-note.remove-many"
+            | "midi-note.clear"
+            | "midi-note.quantize"
+            | "midi-note.transform"
+            | "midi-note.duplicate"
+            | "music.midi-clip.create"
+            | "music.midi-clip.resize"
+            | "music.note.insert"
+            | "music.note.update"
+            | "music.note.remove"
+            | "music.note.transform"
+            | "music.harmony.insert"
+            | "music.harmony.update"
+            | "music.harmony.remove"
+            | "music.harmony.realize"
+            | "music.phrase.insert"
+            | "music.region.add"
+            | "music.region.update"
+            | "music.region.remove"
+            | "clip.remove"
+            | "clip.paste"
+            | "marker.add"
+            | "marker.update"
+            | "marker.remove"
+            | "timebase.update"
+            | "loop-range.set"
+            | "punch-range.set"
+            | "automation.set"
+            | "automation.clear"
+            | "instrument.apply"
+            | "instrument.clear"
+            | "effect.add"
+            | "effect.remove"
+            | "effect.reorder"
+            | "device.bypass"
+            | "device.parameter.set"
+    )
+}
+
+pub(super) fn is_batch_supported_operation(operation: &ControlCommand) -> bool {
+    if !is_batch_supported_command(&operation.name) {
+        return false;
+    }
+
+    if operation.name == "instrument.apply"
+        && let Some(instrument_id) = operation.params.get("instrumentId").and_then(Value::as_str)
+    {
+        return instrument_id.starts_with("builtin:");
+    }
+
+    true
+}
+
+pub(super) fn resolve_batch_references<A>(
+    dispatcher: &HostDispatcher<'_, A>,
+    operation: ControlCommand,
+) -> Result<ControlCommand, DispatchError> {
+    let mut params = operation.params;
+    let Value::Object(ref mut params) = params else {
+        return Ok(ControlCommand::new(operation.name, params));
+    };
+
+    if params.contains_key("trackName") {
+        if params.contains_key("trackId") {
+            return Err(DispatchError::invalid_request(
+                "trackId and trackName cannot both be specified",
+            ));
+        }
+        let name = params
+            .get("trackName")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DispatchError::invalid_request("trackName must be a string"))?;
+        let canonical = dispatcher.core.canonical_state()?;
+        let matches = canonical
+            .session
+            .arrangement
+            .tracks
+            .iter()
+            .filter(|track| track.name == name)
+            .collect::<Vec<_>>();
+        let track_id = match matches.as_slice() {
+            [] => {
+                return Err(DispatchError::invalid_request(format!(
+                    "unknown track name '{name}'"
+                )));
+            }
+            [track] => track.id.clone(),
+            matches => {
+                return Err(DispatchError::invalid_request(format!(
+                    "ambiguous track name '{name}': {} tracks matched",
+                    matches.len()
+                )));
+            }
+        };
+        params.remove("trackName");
+        params.insert("trackId".into(), Value::String(track_id));
+    }
+
+    if params.contains_key("clipName") {
+        if params.contains_key("clipId") {
+            return Err(DispatchError::invalid_request(
+                "clipId and clipName cannot both be specified",
+            ));
+        }
+        let track_id = params
+            .get("trackId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DispatchError::invalid_request("clipName requires trackId or trackName")
+            })?;
+        let name = params
+            .get("clipName")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DispatchError::invalid_request("clipName must be a string"))?;
+        let canonical = dispatcher.core.canonical_state()?;
+        let matches = canonical
+            .session
+            .arrangement
+            .midi_clips
+            .iter()
+            .filter(|clip| clip.track_id == track_id && clip.name == name)
+            .collect::<Vec<_>>();
+        let clip_id = match matches.as_slice() {
+            [] => {
+                return Err(DispatchError::invalid_request(format!(
+                    "unknown clip name '{name}'"
+                )));
+            }
+            [clip] => clip.id.clone(),
+            matches => {
+                return Err(DispatchError::invalid_request(format!(
+                    "ambiguous clip name '{name}': {} clips matched",
+                    matches.len()
+                )));
+            }
+        };
+        params.remove("clipName");
+        params.insert("clipId".into(), Value::String(clip_id));
+    }
+
+    Ok(ControlCommand::new(
+        operation.name,
+        Value::Object(params.clone()),
+    ))
+}
 #[cfg(test)]
 mod tests {
     use crate::dispatcher::Dispatcher;
-    use riffra_control::{ControlCommand, new_instance_id};
+    use riffra_control::{ControlCommand, ControlRequest, ErrorCode, new_instance_id};
     use riffra_host::now_ms;
     use serde_json::{Value, json};
     use std::fs;
@@ -108,6 +297,7 @@ mod tests {
         assert_eq!(inspected.value["counts"]["tracks"], 1);
         assert_eq!(inspected.value["counts"]["midiClips"], 1);
         assert_eq!(inspected.value["counts"]["midiNotes"], 1);
+        assert_eq!(inspected.value["project"]["ppq"], 960);
         assert_eq!(inspected.value["tracks"][0]["clips"][0]["kind"], "midi");
         assert_eq!(inspected.value["tracks"][0]["clips"][0]["noteCount"], 1);
         let encoded = inspected.value.to_string();
@@ -378,6 +568,359 @@ mod tests {
             )
             .unwrap(),
             b"v2"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_resolves_names_commits_once_and_keeps_success_compact() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let result = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "includeCreatedIds": true,
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+                    ]
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(result.result_type, "batchMutation");
+        assert_eq!(result.value["appliedCommands"], 3);
+        assert_eq!(result.value["createdEntityCounts"]["tracks"], 1);
+        assert_eq!(result.value["createdEntityCounts"]["midiClips"], 1);
+        assert_eq!(result.value["createdEntityCounts"]["midiNotes"], 1);
+        assert!(result.value.get("canonical").is_none());
+        assert_eq!(
+            result.value["createdEntityIds"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result.value["createdEntityIds"]["midiClips"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result.value["createdEntityIds"]["midiNotes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(result.sequence, 1);
+
+        let undone = dispatcher.dispatch(request("undo", Value::Null)).unwrap();
+        assert_eq!(
+            undone.value["canonical"]["session"]["arrangement"]["tracks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_omits_created_ids_by_default() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-compact-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let result = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+                    ]
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(result.result_type, "batchMutation");
+        assert_eq!(result.value["createdEntityCounts"]["tracks"], 1);
+        assert!(result.value.get("createdEntityIds").is_none());
+        assert!(result.value.get("canonical").is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_rejects_ambiguous_and_conflicting_name_references() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-names-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let cases = [
+            (
+                json!({
+                    "operations": [
+                        {"command":"music.midi-clip.create","params":{"trackName":"Missing","name":"Verse","start":"1:1","end":"5:1"}}
+                    ]
+                }),
+                0,
+                "music.midi-clip.create",
+                "unknown track name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Missing","notes":[]}}
+                    ]
+                }),
+                1,
+                "music.note.insert",
+                "unknown clip name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}
+                    ]
+                }),
+                2,
+                "music.midi-clip.create",
+                "ambiguous track name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"3:1"}},
+                        {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"3:1","end":"5:1"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+                    ]
+                }),
+                3,
+                "music.note.insert",
+                "ambiguous clip name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"trackId":"track:given","trackName":"Lead","name":"Lead","kind":"instrument"}}
+                    ]
+                }),
+                0,
+                "track.add",
+                "trackId and trackName cannot both be specified",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"music.note.insert","params":{"trackId":"track:given","clipId":"midi-clip:given","clipName":"Verse","notes":[]}}
+                    ]
+                }),
+                0,
+                "music.note.insert",
+                "clipId and clipName cannot both be specified",
+            ),
+        ];
+
+        for (params, operation_index, command, message) in cases {
+            let error = dispatcher
+                .dispatch(request("session.apply", params))
+                .unwrap_err()
+                .protocol_error();
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(
+                error.details.as_ref().unwrap()["operationIndex"],
+                operation_index
+            );
+            assert_eq!(error.details.as_ref().unwrap()["command"], command);
+            assert!(
+                error.details.as_ref().unwrap()["cause"]
+                    .as_str()
+                    .unwrap()
+                    .contains(message)
+            );
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_apply_effect_ids_are_unique_across_existing_and_candidate_devices() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-effects-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(request(
+                "effect.add",
+                json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
+            ))
+            .unwrap();
+        let existing_id = dispatcher
+            .core
+            .canonical_state()
+            .unwrap()
+            .session
+            .arrangement
+            .tracks[0]
+            .rack
+            .devices[0]
+            .id
+            .clone();
+
+        let result = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "includeCreatedIds": true,
+                    "operations": [
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"first.vst3"}},
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"second.vst3"}}
+                    ]
+                }),
+            ))
+            .unwrap();
+        let ids = result.value["createdEntityIds"]["devices"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        assert!(
+            ids.iter()
+                .all(|id| id.as_str() != Some(existing_id.as_str()))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_session_apply_does_not_change_canonical_state_and_reports_operation_context() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-error-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let before = dispatcher
+            .dispatch(request("session.get", Value::Null))
+            .unwrap();
+        let error = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.note.insert","params":{"clipId":"midi-clip:missing","notes":[{"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}]}}
+                    ]
+                }),
+            ))
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 1);
+        assert_eq!(
+            error.details.as_ref().unwrap()["command"],
+            "music.note.insert"
+        );
+        assert_eq!(
+            error.details.as_ref().unwrap()["path"],
+            "/params/notes/0/velocity"
+        );
+        assert_eq!(error.details.as_ref().unwrap()["value"], Value::Null);
+
+        let after = dispatcher
+            .dispatch(request("session.get", Value::Null))
+            .unwrap();
+        assert_eq!(after.sequence, before.sequence);
+        assert_eq!(after.value, before.value);
+
+        let conflict = dispatcher
+            .dispatch_request(ControlRequest::new(
+                "apply-conflict",
+                ControlCommand::new(
+                    "session.apply",
+                    json!({"operations":[{"command":"track.add","params":{"name":"Pad","kind":"instrument"}}]}),
+                ),
+                Some(1),
+            ))
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(conflict.code, ErrorCode::Conflict);
+        let unchanged = dispatcher
+            .dispatch(request("session.get", Value::Null))
+            .unwrap();
+        assert_eq!(unchanged.value, before.value);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unsupported_batch_command_is_rejected_before_candidate_commit() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-unsupported-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let error = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({"operations":[{"command":"render.start","params":{}}]}),
+            ))
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.details.as_ref().unwrap()["operationIndex"], 0);
+        assert_eq!(error.details.as_ref().unwrap()["command"], "render.start");
+        assert!(error.message.contains("batch operation failed"));
+
+        let user_instrument_error = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "operations":[{
+                        "command":"instrument.apply",
+                        "params":{"trackId":"track:missing","instrumentId":"user:example"}
+                    }]
+                }),
+            ))
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(
+            user_instrument_error.details.as_ref().unwrap()["command"],
+            "instrument.apply"
         );
 
         let _ = fs::remove_dir_all(root);

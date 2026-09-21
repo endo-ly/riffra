@@ -507,7 +507,7 @@ mod tests {
         let error = dispatcher
             .dispatch(request("timebase.update", json!({"ppq": 960})))
             .unwrap_err();
-        assert!(matches!(error, super::DispatchError::InvalidRequest(_)));
+        assert!(matches!(error, super::DispatchError::InvalidRequest { .. }));
         let _ = fs::remove_dir_all(root);
     }
 

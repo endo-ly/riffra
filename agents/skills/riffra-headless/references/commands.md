@@ -4,10 +4,10 @@
 
 コマンドは次の 2 系統しかない。4 つの実行形態(ワンショット / 対話 / serve / attach)は同じコマンドへの要求経路の違いであり、引数は共通である。
 
-| 系統             | 主なコマンド                                                              | 実行できる場所                 |
-| ---------------- | ------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / rack / missing 復旧 | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin  | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                           | 実行できる場所                 |
+| ---------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / rack / missing 復旧 | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin               | Live Host(`serve`)+ `--attach` |
 
 ## Hostの発見と接続
 
@@ -26,7 +26,7 @@ riffra --attach --host <instance-id> session inspect
 ### 基本サイクル
 
 1. `session inspect` で現在の構造と `sequence` を把握する。必要なら `--start` / `--end` または `--track-id` で対象を絞る。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う
-2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡し、対象 ID(`track:*` / `clip:*` / `note:*` / `marker:*`)を読む
+2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡す。既存Noteの範囲編集は `music note list` と `music note transform` を優先し、個別操作だけ `--include-ids` で取得した `note:*` を使う
 3. 編集後は同じ範囲を `session inspect` し、音を確認するときは確認後の `sequence` を `--expected-sequence` に指定した `render start` と `job get` を使う。採用しない変更は変更後の `sequence` を `--expected-sequence` に指定した `undo` を実行して再Inspectする
 4. `conflict` になったMutation・Render・Undo・Redoは自動再送せず、最新状態をInspectして内容を決め直す
 
@@ -51,9 +51,76 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 状態を変更する要求が成功すると、`result.value.createdEntityIds`にその要求で新しく生成されたIDだけが種類ごとに入る。生成IDがない要求では`{}`になる。後続の要求でIDが必要な場合は、この値を使う。
 
+`createdEntityIds`で利用できるキーは次のとおりである。これ以外のキーは推測して使わない。
+
+| キー              | 対象                        |
+| ----------------- | --------------------------- |
+| `tracks`          | Track                       |
+| `audioClips`      | Audio Clip                  |
+| `midiClips`       | MIDI Clip                   |
+| `midiNotes`       | MIDI Note                   |
+| `markers`         | Marker                      |
+| `regions`         | Region                      |
+| `harmonyEvents`   | Harmony Event               |
+| `automationLanes` | Automation Lane             |
+| `devices`         | Instrument or effect device |
+
+### 複数操作の一括適用
+
+複数の正準Mutationを事前に決めている場合は、CLI側でIDを受け渡すスクリプトを書かずに `session apply` へJSONLを渡す。空行は無視され、外側の要求だけが `expectedSequence` を持つ。
+
+```powershell
+riffra --data-root ./riffra-data --expected-sequence 42 session apply `
+  --file ./song.jsonl
+riffra --attach session apply --file ./song.jsonl --include-created-ids
+```
+
+```jsonl
+{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"9:1"}}
+{"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+```
+
+各行は `command` と `params` を持つ既存Control Commandである。`trackName`は候補Session上で一意に解決され、`clipName`は同じTrack内のMIDI Clipから一意に解決される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。解決結果はProtocolやCanonical identityには保存されない。
+
+Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。途中の失敗、非対応コマンド、名前の未解決・曖昧さ、`expectedSequence`の不一致ではCanonical Sessionを変更しない。`session.get`、`session.inspect`、`history`、Undo / Redo、Render、Transport、Recording、Asset importなどはBatchへ含めない。
+
+成功応答はCanonical Sessionやoperationごとの結果を含まない。
+
+```json
+{
+  "type": "batchMutation",
+  "value": {
+    "appliedCommands": 34,
+    "createdEntityCounts": {
+      "tracks": 8,
+      "midiClips": 8,
+      "midiNotes": 642
+    }
+  }
+}
+```
+
+生成IDが必要なときだけ `--include-created-ids` を指定する。失敗時は `error.details.operationIndex` と `command`でoperationを特定でき、CLIのJSONL入力では元ファイルの物理行が`inputLine`に入る。paramsの入力エラーには、`path`、配列要素の`index`、小さな入力値の`value`が追加される。
+
 interactive JSONLで要求を連鎖させる場合は、要求を送って応答を受け取ってから、次の要求を組み立てる。`expectedSequence`には直前の応答の`sequence`を使い、Conflictが返った場合は`session inspect`で状態を確認して操作を組み直す。
 
 interactive JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
+
+bulk入力のdeserializeエラーには、JSON Pointer形式の`error.details.path`、配列要素のゼロ始まり`index`、問題の値が付く。大きなObjectやArrayの値はレスポンスを膨らませないため省略される。`inputLine`とこれらのdetailsは同じエラーへ共存する。
+
+```json
+{
+  "code": "invalidRequest",
+  "message": "invalid command parameters: expected u8",
+  "details": {
+    "inputLine": 12,
+    "path": "/notes/37/velocity",
+    "index": 37,
+    "value": null
+  }
+}
+```
 
 ### Music Operations
 
@@ -70,21 +137,32 @@ riffra --data-root ./riffra-data music note insert `
 
 `position` はArrangement全体の絶対位置で、Clip内部の相対位置ではない。`velocity` の既定値は100、`channel` の既定値は1である。複数Noteは1回の `music note insert` で渡す。
 
-Noteの参照と更新も音楽座標を使う。
+Noteの参照と更新も音楽座標を使う。既存Noteの通常の調整では、まず必要範囲をlistし、条件に合うNoteをtransformする。全Sessionの取得、Note IDの列挙、Note配列の再生成は不要である。
 
 ```powershell
 riffra --attach music note list --clip-id midi-clip:01j... --start 5:1 --end 9:1
+riffra --attach music note list --track-id track:drums --start 5:1 --end 13:1
+riffra --attach music note list --clip-id midi-clip:01j... --raw --include-ids
+riffra --attach --expected-sequence 20 music note transform `
+  --track-id track:drums --start 5:1 --end 13:1 `
+  --pitch D2 --timing-offset +1/48 --velocity-offset 4
 riffra --attach music note get --clip-id midi-clip:01j... --note-id note:01j...
-riffra --attach --expected-sequence 20 music note update `
+riffra --attach --expected-sequence 21 music note update `
   --clip-id midi-clip:01j... --note-id note:01j... `
   --position 6:1 --duration 1/4 --pitch F#4 --velocity 96
-riffra --attach --expected-sequence 21 music note remove `
+riffra --attach --expected-sequence 22 music note remove `
   --clip-id midi-clip:01j... --note-id note:01j...
-riffra --attach --expected-sequence 22 music midi-clip resize `
+riffra --attach --expected-sequence 23 music midi-clip resize `
   --clip-id midi-clip:01j... --end 17:1
 ```
 
-Noteのlist/get応答にはtickやMIDI note numberを含めない。listの範囲は半開区間で、Noteと範囲が重なるものを返す。ClipのresizeはNote/EventのArrangement上の絶対位置を保ち、範囲外へ出る場合はNote/Eventを削除・cropせず失敗する。
+`music note list` はClipまたはTrackを一つだけ指定する。Track指定では範囲も必須である。listの範囲は半開区間で、Noteと範囲が重なるものを返す。Track指定の結果はClipごとにgroup化され、各NoteへClip IDを繰り返さない。通常結果は音楽座標だけで、IDは`--include-ids`、raw tick / MIDI値は`--raw`を指定したときだけ返る。
+
+`--raw` の結果ではClipの`startTick`がArrangement上の位置、Noteの`startTick`がClip相対位置になる。絶対tickが必要な場合は両者を加算する。raw結果には`timebase.ppq`と拍子も含まれる。
+
+`music note transform` は、指定範囲内で開始するNoteだけを対象にする。範囲指定はClip開始位置に対する絶対的な音楽座標で、Track指定では必須である。`--pitch`と`--channel`は変形前の値に対して判定される。`--timing-offset`は符号付き音価（例：`+1/48`、`-1/48`）、`--velocity-offset`は0〜127へclampされ、`--transpose-semitones`がMIDI範囲外になる場合や移動後のNoteがClip外になる場合はMutation全体が失敗する。対象Noteが0件でも失敗する。
+
+ClipのresizeはNote/EventのArrangement上の絶対位置を保ち、範囲外へ出る場合はNote/Eventを削除・cropせず失敗する。
 
 Note入力はJSON配列を一度に渡す。inline、file、stdinは排他的で、file/stdinでも1回のMutationになる。
 
@@ -105,6 +183,7 @@ Noteのpitch、position、duration、velocity、channelの意味検証はCoreが
 | `--events-json` / `--events-file`           | `events`                                   |
 | `--rhythm-json` / `--rhythm-file`           | `rhythm`                                   |
 | `--phrase-json` / `--phrase-file`           | `pattern` と `placements`                  |
+| `session apply --file`                      | `operations`                               |
 | `music note update` の個別項目              | `clipId`、`noteId`、変更項目をparams直下へ |
 | `music harmony update --patch-json`         | patchの各項目をparams直下へ展開            |
 
@@ -173,6 +252,19 @@ riffra --data-root ./riffra-data music phrase insert `
 
 `PhrasePattern` と `RhythmPattern` は操作入力であり、正準セッションへ二重保存しない。Chord ToneやNote JSONをエージェント側で展開する必要はない。
 
+Patternの絶対位置は `bar:beat` または `bar:beat+fraction-of-beat` で表す。`5:1+1/2`は5小節1拍目から半拍後である。`length`、`offset`、`duration`は全音符を1とする音価の分数で、`1/8`は8分音符、`1/4`は4分音符、`1/2`は2分音符である。Pattern単位のエラーは、この単位を含む説明を返す。
+
+挿入前の検証と展開規模の確認には `music phrase preview` を使う。PreviewはPattern、配置、Clip境界、MIDI pitch、channel、Note上限を検証するがSessionを変更しない。既定ではsummaryだけを返し、`--include-notes`を付けた場合だけ展開Noteを返す。Previewと同じSession状態での `music phrase insert` は同じresolverを使う。
+
+```powershell
+riffra --attach music phrase preview `
+  --clip-id midi-clip:01j... `
+  --phrase-file ./phrase.json
+riffra --attach music phrase preview `
+  --clip-id midi-clip:01j... `
+  --phrase-file ./phrase.json --include-notes
+```
+
 同じ音高を繰り返すドラムパターンもPhraseで表現できる。Kick、Snare、Hi-HatなどのNoteを大量に手書きする前に、次のようなPatternで表現できるか確認する。
 
 ```json
@@ -209,14 +301,14 @@ riffra --data-root ./riffra-data --interactive
 
 ### Session と Timebase
 
-| コマンド                  | 主要引数                                                                                          | 備考                                                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `session inspect`         | [`--start <bar:beat>` `--end <bar:beat>`] [`--track-id <id>`]                                     | 軽量な構造Projection。全Track/Clip/Region/Harmony/Markerを返し、Note/Event/Automation Point/Plugin stateは展開しない。`--start`と`--end`は両方指定する |
-| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意                                                            |
-| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                   |
-| `history get`             | -                                                                                                 | 履歴状態                                                                                                                                               |
-| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                   |
-| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                  |
+| コマンド                  | 主要引数                                                                                          | 備考                                                                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session inspect`         | [`--start <bar:beat>` `--end <bar:beat>`] [`--track-id <id>`]                                     | 軽量な構造Projection。全Track/Clip/Region/Harmony/Markerを返し、Note/Event/Automation Point/Plugin stateは展開しない。`project.ppq`に正準Timeline PPQを返す。`--start`と`--end`は両方指定する |
+| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意                                                                                                   |
+| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                                                          |
+| `history get`             | -                                                                                                 | 履歴状態                                                                                                                                                                                      |
+| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                                                          |
+| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                                                         |
 
 ### Track と入力 Routing
 
@@ -258,6 +350,46 @@ $ids = Get-Content -Raw .\midi-clip-ids.json
 riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 ```
 
+### ミックス
+
+ミックスの正本は既存の正準状態であり、BusやSendのようなMixer専用の正準モデルは存在しない。ミックスは正準編集コマンドの組み合わせで表現する。
+
+| 項目                  | コマンドと主な引数                                       | 値の範囲                                 |
+| --------------------- | -------------------------------------------------------- | ---------------------------------------- |
+| Track Gain            | `track update --track-id <id> --gain-db <dB>`            | -90..24 dB。範囲外はclampされる          |
+| Track Pan             | `track update --pan <-1.0..1.0>`                         | -1.0(左)..1.0(右)。範囲外はclampされる   |
+| Track Mute / Solo     | `track update --muted <bool>` / `--solo <bool>`          | true / false                             |
+| Master                | `session settings update --master-db <dB>`               | -90..0 dB。範囲外はclamp、非有限値は失敗 |
+| Audio Clip Gain / Pan | `audio-clip update --clip-id <id> --gain-db` / `--pan`   | Trackと同じ範囲でclampされる             |
+| Clip Mute             | `audio-clip update --muted` / `midi-clip update --muted` | true / false                             |
+| Effect Bypass         | `device bypass --bypassed <bool>`(既定はfalse)           | true / false                             |
+
+- `track update`は指定した項目だけを更新する。ミックスの現在値は`track list`または`session inspect`で確認する
+- 1つでもSoloが有効なTrackがあるとSolo以外のTrackは無音になり、MuteとSoloが両方有効なTrackも無音になる。Clip MuteはTrackのMute/Soloとは独立にそのClipだけを消す。Soloの解除は、Soloを立てた各Trackへ`--solo false`を渡して行う
+- RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。`render start --track-id`のstem Renderは対象Track以外をmutedにした状態で書き出す。`--normalize true`はMaster Gain適用後のピーク正規化であり、ミックス内の相対バランスは保たれる
+
+#### Automation(volume / pan)
+
+TrackのvolumeとpanをTimeline上で制御する。`points`の配列で該当するTrackのレーン全体を置き換え、空配列を渡すとレーンが削除される。`automation clear`は空配列での置換と同じである。
+
+```powershell
+riffra --attach automation set `
+  --track-id track:01j... --parameter volume `
+  --points-json '[{"id":"v1","tick":0,"value":-6},{"id":"v2","tick":3840,"value":0}]'
+
+riffra --attach automation set `
+  --track-id track:01j... --parameter pan `
+  --points-json '[{"id":"p1","tick":3840,"value":-0.5},{"id":"p2","tick":7680,"value":0.5}]'
+
+riffra --attach automation clear --track-id track:01j... --parameter volume
+```
+
+- `value`の意味は`parameter`で決まる。`volume`はdB(-90..24へclamp)、`pan`は-1.0..1.0へclampされる。0..1の正規化値ではない
+- 各点は`id`(レーン内で一意、空は不可)、`tick`(u64)、`value`を持つ。同一tickの重複は失敗し、点はtick順に正規化される。1レーンの上限は16,384点である
+- `tick`はTimeline上の絶対位置である。`bar:beat`からの変換は`session inspect`で得た`ppq`と拍子を用いて行い、PPQを固定値として扱わない
+- レーンIDは`automation:{trackId}:{volume|pan}`で採番され、新規作成時は`createdEntityIds.automationLanes`に入る
+- 非空のレーンがある区間では、volumeとpanはTrackの静的な`--gain-db`/`--pan`を置き換える。点の範囲外では静的な値へ戻る。Mute/SoloはAutomationと独立にTrack出力の可否を決める
+
 ### 低レベル MIDI Note
 
 | コマンド                           | 主要引数                                                                                                   |
@@ -274,19 +406,15 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 
 低レベルMIDI操作は、既存NoteのIDを指定した直接編集や、CC・Pitch Bendなどを含むイベントを直接編集する場合に使う。通常の音符の作成・配置には `music midi-clip` と `music note` を使う。
 
-### Marker・Range・Automation
+### Marker と Range
 
-| コマンド           | 主要引数                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| `marker add`       | `--name` `--position <bar:beat>`                                                            |
-| `marker update`    | `--marker-id` [`--name`] [`--position <bar:beat>`]                                          |
-| `marker remove`    | `--marker-id`                                                                               |
-| `loop-range set`   | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>`                           |
-| `punch-range set`  | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>`                           |
-| `automation set`   | `--track-id` `--parameter volume\|pan` `--points-json '[{"id":"p1","tick":0,"value":0.8}]'` |
-| `automation clear` | `--track-id` `--parameter volume\|pan`                                                      |
-
-Automation の points 配列は既存ポイントを置き換える。各要素は `id`・`tick`・`value` を持つ。
+| コマンド          | 主要引数                                                          |
+| ----------------- | ----------------------------------------------------------------- |
+| `marker add`      | `--name` `--position <bar:beat>`                                  |
+| `marker update`   | `--marker-id` [`--name`] [`--position <bar:beat>`]                |
+| `marker remove`   | `--marker-id`                                                     |
+| `loop-range set`  | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>` |
+| `punch-range set` | [`--enabled true\|false`] `--start <bar:beat>` `--end <bar:beat>` |
 
 Marker、Loop Range、Punch Rangeは音楽座標を受け取り、プロジェクトの拍子に合わせて内部のTimeline tickへ変換する。MIDI NoteやClipの低レベル操作ではtickを使う。
 

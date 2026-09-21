@@ -15,6 +15,7 @@
 
 #include "../support/TestAudioProcessor.h"
 #include "../support/TestSupport.h"
+#include "SonalloyTestSupport.h"
 #include "audio/AudioRenderPipeline.h"
 #include "instruments/Vst3InstrumentRuntime.h"
 #include "recording/ArrangeRecordingSession.h"
@@ -327,13 +328,12 @@ juce::var makeBuiltInInstrumentSnapshot(const juce::String& trackId, const bool 
     timebase->setProperty("timeSignatureNumerator", 4);
     timebase->setProperty("timeSignatureDenominator", 4);
 
-    const auto preset =
-        juce::File(RIFFRA_SONALLOY_TEST_PRESET_ROOT).getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     auto* instrument = new juce::DynamicObject();
     instrument->setProperty("id", "instrument:clean-sub-bass");
     instrument->setProperty("type", "internal");
     instrument->setProperty("resourceType", "builtInPreset");
-    instrument->setProperty("presetId", "01-clean-sub-bass");
+    instrument->setProperty("presetId", "BASS-001");
     instrument->setProperty("definitionJson",
                             preset.getChildFile("definition.json").loadFileAsString());
     instrument->setProperty("definitionBaseDir", preset.getFullPathName());

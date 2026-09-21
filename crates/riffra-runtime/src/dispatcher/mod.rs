@@ -8,15 +8,16 @@ use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
     HarmonyEventPatch, HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput,
-    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, SessionInspectionQuery,
-    SessionSettingsPatch, inspect_canonical_state,
+    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, MusicalNoteListRequest, MusicalNoteScope,
+    MusicalNoteTransformRequest, SessionInspectionQuery, SessionSettingsPatch,
+    inspect_canonical_state,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
     AppCore, ApplicationError, AssetId, AssetKind, AudioClipMove, AudioClipPatch,
-    AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange, MidiClipMove,
-    MidiClipPatch, MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RackDevice,
-    RhythmPattern, TimelineTick, TrackKind, TrackPatch,
+    AutomationParameter, AutomationPoint, CreativeSession, FrameRange, MidiClipMove, MidiClipPatch,
+    MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RhythmPattern, TimelineTick,
+    TrackKind, TrackPatch,
 };
 use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
 use serde::Deserialize;
@@ -46,7 +47,10 @@ pub(crate) use track::{AudioInputParams, MidiInputParams};
 
 #[derive(Debug)]
 pub enum DispatchError {
-    InvalidRequest(String),
+    InvalidRequest {
+        message: String,
+        details: Option<Value>,
+    },
     CommandFailed(String),
     RuntimeUnavailable(String),
     Conflict {
@@ -62,7 +66,7 @@ pub enum DispatchError {
 impl fmt::Display for DispatchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRequest(error)
+            Self::InvalidRequest { message: error, .. }
             | Self::CommandFailed(error)
             | Self::RuntimeUnavailable(error) => formatter.write_str(error),
             Self::Conflict {
@@ -86,7 +90,12 @@ impl fmt::Display for DispatchError {
 impl DispatchError {
     pub fn protocol_error(&self) -> ProtocolError {
         match self {
-            Self::InvalidRequest(message) => ProtocolError::new(ErrorCode::InvalidRequest, message),
+            Self::InvalidRequest { message, details } => {
+                let error = ProtocolError::new(ErrorCode::InvalidRequest, message);
+                details
+                    .clone()
+                    .map_or(error.clone(), |details| error.with_details(details))
+            }
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
             Self::RuntimeUnavailable(message) => {
                 ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
@@ -103,7 +112,54 @@ impl DispatchError {
     }
 
     fn invalid_request(error: impl Into<String>) -> Self {
-        Self::InvalidRequest(error.into())
+        Self::InvalidRequest {
+            message: error.into(),
+            details: None,
+        }
+    }
+
+    fn invalid_request_with_details(error: impl Into<String>, details: Value) -> Self {
+        Self::InvalidRequest {
+            message: error.into(),
+            details: Some(details),
+        }
+    }
+
+    fn attach_input_value(mut self, params: &Value) -> Self {
+        if let Self::InvalidRequest {
+            details: Some(Value::Object(details)),
+            ..
+        } = &mut self
+            && let Some(path) = details.get("path").and_then(Value::as_str)
+            && !details.contains_key("value")
+            && let Some(value) = params.pointer(path)
+            && should_include_error_value(value)
+        {
+            details.insert("value".into(), value.clone());
+        }
+        self
+    }
+
+    fn with_batch_context(self, operation_index: usize, command: &str) -> Self {
+        let cause = self.to_string();
+        let details = match self {
+            Self::InvalidRequest { details, .. } => details,
+            _ => None,
+        };
+        let mut details = match details {
+            Some(Value::Object(details)) => details,
+            _ => serde_json::Map::new(),
+        };
+        if let Some(Value::String(path)) = details.get_mut("path")
+            && path.starts_with('/')
+            && !path.starts_with("/params/")
+        {
+            *path = format!("/params{path}");
+        }
+        details.insert("operationIndex".into(), serde_json::json!(operation_index));
+        details.insert("command".into(), Value::String(command.to_owned()));
+        details.insert("cause".into(), Value::String(cause));
+        Self::invalid_request_with_details("batch operation failed", Value::Object(details))
     }
 }
 
@@ -129,6 +185,20 @@ impl From<ApplicationError> for DispatchError {
                 expected_sequence,
                 current_sequence,
             },
+            ApplicationError::InvalidInput { location, message } => {
+                let mut path = format!("/{}/{}", location.collection, location.index);
+                if let Some(field) = location.field {
+                    path.push('/');
+                    path.push_str(&json_pointer_segment(&field));
+                }
+                Self::invalid_request_with_details(
+                    format!("invalid command parameters: {message}"),
+                    serde_json::json!({
+                        "path": path,
+                        "index": location.index,
+                    }),
+                )
+            }
             error => Self::CommandFailed(error.to_string()),
         }
     }
@@ -142,6 +212,16 @@ enum CoreRef<'a, A> {
 enum StorageRef<'a> {
     Owned(Mutex<SessionStore>),
     Borrowed(&'a SessionStore),
+    Memory(Arc<MemorySessionStorage>),
+}
+
+#[derive(Default)]
+struct MemorySessionStorage;
+
+impl SessionStorage for MemorySessionStorage {
+    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
+        Ok(())
+    }
 }
 
 impl StorageRef<'_> {
@@ -152,6 +232,7 @@ impl StorageRef<'_> {
                 .map(|storage| storage.clone())
                 .map_err(|_| "session storage lock was poisoned".into()),
             Self::Borrowed(storage) => Ok((*storage).clone()),
+            Self::Memory(_) => Err("candidate session has no persistent storage".into()),
         }
     }
 
@@ -186,6 +267,7 @@ impl<'a> SessionStorage for StorageRef<'a> {
                 .map_err(|_| PortError::Storage("session storage lock was poisoned".into()))
                 .and_then(|storage| SessionStorage::save(&*storage, session)),
             Self::Borrowed(storage) => SessionStorage::save(*storage, session),
+            Self::Memory(storage) => SessionStorage::save(storage.as_ref(), session),
         }
     }
 }
@@ -292,6 +374,35 @@ impl HostDispatcher<'static, ()> {
 }
 
 impl<'a, A> HostDispatcher<'a, A> {
+    fn batch_candidate(&self, session: CreativeSession) -> HostDispatcher<'static, ()> {
+        HostDispatcher {
+            _lease: None,
+            core: CoreRef::Owned(AppCore::new(
+                self.data_root.clone(),
+                session,
+                (),
+                false,
+                false,
+            )),
+            storage: StorageRef::Memory(Arc::new(MemorySessionStorage)),
+            project_store: ProjectStoreRef::Owned(ProjectStore::new(&self.data_root)),
+            data_root: self.data_root.clone(),
+            sonalloy: self.sonalloy.clone(),
+            built_in_instruments: Arc::clone(&self.built_in_instruments),
+            allow_runtime_commands: false,
+        }
+    }
+
+    fn commit_batch_candidate(
+        &self,
+        candidate: CreativeSession,
+        expected_sequence: u64,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.core
+            .application(&self.storage)
+            .commit_prepared_candidate(candidate, expected_sequence)
+    }
+
     /// Creates a dispatcher view over an already-owned live Host.
     pub(crate) fn borrowed(
         core: &'a AppCore<A>,
@@ -319,7 +430,7 @@ impl<'a, A> HostDispatcher<'a, A> {
     ) -> Result<DispatchResult, DispatchError> {
         request
             .validate()
-            .map_err(|error| DispatchError::InvalidRequest(error.message))?;
+            .map_err(|error| DispatchError::invalid_request(error.message))?;
         if !self.allow_runtime_commands && is_runtime_host_only(&request.command) {
             return Err(DispatchError::RuntimeUnavailable(
                 "this command requires --attach to a running Riffra Host".into(),
@@ -353,7 +464,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                 expected_project_id: request.expected_project_id.clone().unwrap_or_default(),
                 current_project_id,
             },
-            _ => DispatchError::InvalidRequest(error.message),
+            _ => DispatchError::invalid_request(error.message),
         })?;
         if let Some(expected_sequence) = request.expected_sequence
             && expected_sequence != canonical.sequence
@@ -371,6 +482,77 @@ impl<'a, A> HostDispatcher<'a, A> {
         self.dispatch_with_canonical(request, canonical)
     }
 
+    fn apply_batch(
+        &self,
+        canonical: riffra_core::CanonicalState,
+        operations: Vec<ControlCommand>,
+        include_created_ids: bool,
+    ) -> Result<DispatchResult, DispatchError> {
+        if operations.is_empty() {
+            return Err(DispatchError::invalid_request(
+                "session apply requires at least one operation",
+            ));
+        }
+
+        let operation_count = operations.len();
+        let candidate = self.batch_candidate(canonical.session);
+        let mut created_entity_counts = BTreeMap::<String, usize>::new();
+        let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        for (operation_index, operation) in operations.into_iter().enumerate() {
+            let command = operation.name.clone();
+            if !session::is_batch_supported_operation(&operation) {
+                return Err(DispatchError::invalid_request(format!(
+                    "command '{command}' cannot be used in session apply"
+                ))
+                .with_batch_context(operation_index, &command));
+            }
+            let operation = session::resolve_batch_references(&candidate, operation)
+                .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            let result = candidate
+                .dispatch(operation)
+                .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            for (kind, ids) in result.created_entity_ids {
+                *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
+                if include_created_ids {
+                    created_entity_ids.entry(kind).or_default().extend(ids);
+                }
+            }
+        }
+
+        let candidate_session = candidate
+            .core
+            .snapshot()
+            .map_err(DispatchError::from)?
+            .session;
+        self.commit_batch_candidate(candidate_session, canonical.sequence)
+            .map_err(DispatchError::from)?;
+
+        let mut value = serde_json::json!({
+            "appliedCommands": operation_count,
+            "createdEntityCounts": created_entity_counts,
+        });
+        if let Value::Object(ref mut value) = value
+            && include_created_ids
+        {
+            value.insert(
+                "createdEntityIds".into(),
+                serde_json::json!(created_entity_ids),
+            );
+        }
+
+        Ok(DispatchResult {
+            result_type: "batchMutation",
+            value,
+            sequence: 0,
+            created_entity_ids: if include_created_ids {
+                created_entity_ids
+            } else {
+                BTreeMap::new()
+            },
+            projection_effect: CanonicalMutationEffect::ProjectArrangement,
+        })
+    }
+
     pub(crate) fn dispatch_with_canonical(
         &self,
         request: ControlCommand,
@@ -383,27 +565,29 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
         let command = request.name.clone();
         let canonical_sequence = canonical.sequence;
+        let params = request.params.clone();
         let result = if session::handles(&command) {
-            session::dispatch(self, request, canonical.clone())?
+            session::dispatch(self, request, canonical.clone())
         } else if track::handles(&command) {
-            track::dispatch(self, request, canonical.clone())?
+            track::dispatch(self, request, canonical.clone())
         } else if clips::handles(&command) {
-            clips::dispatch(self, request, canonical.clone())?
+            clips::dispatch(self, request, canonical.clone())
         } else if music::handles(&command) {
-            music::dispatch(self, request, canonical.clone())?
+            music::dispatch(self, request, canonical.clone())
         } else if asset::handles(&command) {
-            asset::dispatch(self, request, canonical.clone())?
+            asset::dispatch(self, request, canonical.clone())
         } else if project::handles(&command) {
-            project::dispatch(self, request, canonical.clone())?
+            project::dispatch(self, request, canonical.clone())
         } else if instrument::handles(&command) {
-            instrument::dispatch(self, request)?
+            instrument::dispatch(self, request)
         } else if device::handles(&command) {
-            device::dispatch(self, request)?
+            device::dispatch(self, request)
         } else {
             return Err(DispatchError::invalid_request(format!(
                 "unknown command: {command}"
             )));
-        };
+        }
+        .map_err(|error: DispatchError| error.attach_input_value(&params))?;
         let created_entity_ids = result.created_entity_ids.clone();
         let sequence = if is_read_command(&command) {
             canonical_sequence
@@ -554,6 +738,7 @@ fn is_read_command(command: &str) -> bool {
             | "music.harmony.list"
             | "music.note.list"
             | "music.note.get"
+            | "music.phrase.preview"
             | "music.region.list"
             | "device.inspect"
             | "device.parameter.list"
@@ -721,9 +906,63 @@ fn is_runtime_host_only(command: &str) -> bool {
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, DispatchError> {
-    serde_json::from_value(value).map_err(|error| {
-        DispatchError::invalid_request(format!("invalid command parameters: {error}"))
+    let input = value.clone();
+    let input_bytes = serde_json::to_vec(&value).expect("JSON values must serialize");
+    let mut deserializer = serde_json::Deserializer::from_slice(&input_bytes);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        let (path, index) = json_path_to_pointer(error.path());
+        let mut details = serde_json::Map::new();
+        details.insert("path".into(), Value::String(path.clone()));
+        if let Some(index) = index {
+            details.insert("index".into(), serde_json::json!(index));
+        }
+        if let Some(value) = input.pointer(&path)
+            && should_include_error_value(value)
+        {
+            details.insert("value".into(), value.clone());
+        }
+        DispatchError::invalid_request_with_details(
+            format!("invalid command parameters: {}", error.inner()),
+            Value::Object(details),
+        )
     })
+}
+
+fn json_path_to_pointer(path: &serde_path_to_error::Path) -> (String, Option<usize>) {
+    let mut pointer = String::new();
+    let mut innermost_index = None;
+    for segment in path.iter() {
+        match segment {
+            serde_path_to_error::Segment::Map { key } => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(key));
+            }
+            serde_path_to_error::Segment::Seq { index } => {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+                innermost_index = Some(*index);
+            }
+            serde_path_to_error::Segment::Enum { variant } => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(variant));
+            }
+            serde_path_to_error::Segment::Unknown => {}
+        }
+    }
+    (pointer, innermost_index)
+}
+
+fn json_pointer_segment(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
+fn should_include_error_value(value: &Value) -> bool {
+    let small_shape = match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        Value::Array(values) => values.len() <= 4,
+        Value::Object(values) => values.len() <= 8,
+    };
+    small_shape && serde_json::to_vec(value).is_ok_and(|value| value.len() <= 512)
 }
 
 fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {
@@ -749,32 +988,6 @@ fn parse_automation_parameter(value: &str) -> Result<AutomationParameter, Dispat
             "automation parameter must be volume or pan",
         )),
     }
-}
-
-fn plugin_device(id: String, path: String) -> Result<RackDevice, DispatchError> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Err(DispatchError::invalid_request(
-            "plugin path must not be empty",
-        ));
-    }
-    let name = Path::new(path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned();
-    Ok(RackDevice {
-        id,
-        name,
-        kind: DeviceKind::Plugin,
-        path: Some(path.to_owned()),
-        bypassed: false,
-        gain_db: 0.0,
-        parameter_values: Vec::new(),
-        state_data: None,
-        disabled_placeholder: false,
-    })
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <utility>
 
+#include "../timeline/SonalloyTestSupport.h"
 #include "audio/InstrumentPreviewSession.h"
 #include "audio/InstrumentPreviewTiming.h"
 #include "audio/PreviewEngine.h"
@@ -51,7 +52,7 @@ TEST(InstrumentPreviewSessionTest, CalculatesBarPositionForCompoundMeters) {
 }
 
 TEST(InstrumentPreviewSessionTest, RendersPreparedBuiltInNoteEvents) {
-    const auto preset = presetRoot().getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
     juce::String error;
@@ -72,7 +73,7 @@ TEST(InstrumentPreviewSessionTest, RendersPreparedBuiltInNoteEvents) {
 }
 
 TEST(InstrumentPreviewSessionTest, AddsPreviewToAnExistingFiniteDestinationSignal) {
-    const auto preset = presetRoot().getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
 
@@ -133,7 +134,7 @@ TEST(InstrumentPreviewSessionTest, RejectsInvalidPreviewNumeratorAndNoteOrder) {
 }
 
 TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
-    const auto preset = presetRoot().getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
     PreviewEngine engine;
@@ -172,7 +173,7 @@ TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
 }
 
 TEST(PreviewEngineTest, NaturalBuiltInPreviewFinishLeavesTakeComparisonActive) {
-    const auto preset = presetRoot().getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
     PreviewEngine engine;
@@ -199,7 +200,7 @@ TEST(PreviewEngineTest, NaturalBuiltInPreviewFinishLeavesTakeComparisonActive) {
 }
 
 TEST(PreviewEngineTest, BuiltInPreviewLeavesTakeComparisonVoiceIndependent) {
-    const auto preset = presetRoot().getChildFile("01-clean-sub-bass");
+    const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
     PreviewEngine engine;

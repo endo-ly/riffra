@@ -15,7 +15,7 @@ pub use app::{
     PreparedSession,
 };
 pub use domain::*;
-pub use errors::{ApplicationError, DomainError};
+pub use errors::{ApplicationError, DomainError, InputLocation};
 pub use ports::{
     OfflineRenderRequest, PortError, ProjectionKey, RenderRuntime, RuntimeProjection,
     RuntimeProjectionRequest, SessionStorage,
