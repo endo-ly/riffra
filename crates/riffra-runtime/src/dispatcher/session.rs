@@ -637,6 +637,35 @@ mod tests {
     }
 
     #[test]
+    fn session_apply_omits_created_ids_by_default() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-apply-compact-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+
+        let result = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+                    ]
+                }),
+            ))
+            .unwrap();
+
+        assert_eq!(result.result_type, "batchMutation");
+        assert_eq!(result.value["createdEntityCounts"]["tracks"], 1);
+        assert!(result.value.get("createdEntityIds").is_none());
+        assert!(result.value.get("canonical").is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn session_apply_rejects_ambiguous_and_conflicting_name_references() {
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-apply-names-{}", now_ms()));
         let dispatcher = Dispatcher::open(
@@ -646,6 +675,27 @@ mod tests {
         .unwrap();
 
         let cases = [
+            (
+                json!({
+                    "operations": [
+                        {"command":"music.midi-clip.create","params":{"trackName":"Missing","name":"Verse","start":"1:1","end":"5:1"}}
+                    ]
+                }),
+                0,
+                "music.midi-clip.create",
+                "unknown track name",
+            ),
+            (
+                json!({
+                    "operations": [
+                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Missing","notes":[]}}
+                    ]
+                }),
+                1,
+                "music.note.insert",
+                "unknown clip name",
+            ),
             (
                 json!({
                     "operations": [
