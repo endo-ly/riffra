@@ -6,6 +6,10 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::PathBuf;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "riffra", version, about = "Headless production editing host")]
 pub struct Cli {
@@ -692,6 +696,7 @@ pub enum MusicNoteCommand {
     Insert(MusicalNoteBulkArgs),
     Update(MusicalNoteUpdateArgs),
     Remove(MusicalNoteRemoveArgs),
+    Transform(MusicalNoteTransformArgs),
 }
 
 #[derive(Debug, Args)]
@@ -710,13 +715,23 @@ pub struct MusicalNoteBulkArgs {
 #[serde(rename_all = "camelCase")]
 pub struct MusicalNoteListArgs {
     #[arg(long)]
-    pub clip_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub include_ids: bool,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub raw: bool,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -759,6 +774,38 @@ pub struct MusicalNoteRemoveArgs {
     pub clip_id: String,
     #[arg(long)]
     pub note_id: String,
+}
+
+#[derive(Debug, Args, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicalNoteTransformArgs {
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<String>,
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<u8>,
+    #[arg(long, allow_hyphen_values = true)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing_offset: Option<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub velocity_offset: Option<i32>,
+    #[arg(long, allow_hyphen_values = true)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transpose_semitones: Option<i16>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1800,6 +1847,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
                 )?,
                 MusicNoteCommand::Update(args) => value("music.note.update", args),
                 MusicNoteCommand::Remove(args) => value("music.note.remove", args),
+                MusicNoteCommand::Transform(args) => value("music.note.transform", args),
             },
             MusicCommand::Region { command } => match command {
                 MusicRegionCommand::List => simple("music.region.list"),
@@ -2532,6 +2580,38 @@ mod tests {
             json!({
                 "clipId":"midi-clip:1",
                 "notes":[{"pitch":"C4","position":"5:1","duration":"1/8"}]
+            })
+        );
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "--data-root",
+            "data",
+            "music",
+            "note",
+            "transform",
+            "--track-id",
+            "track:drums",
+            "--start",
+            "5:1",
+            "--end",
+            "13:1",
+            "--pitch",
+            "D2",
+            "--timing-offset",
+            "-1/48",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.note.transform");
+        assert_eq!(
+            request.params,
+            json!({
+                "trackId":"track:drums",
+                "start":"5:1",
+                "end":"13:1",
+                "pitch":"D2",
+                "timingOffset":"-1/48"
             })
         );
 

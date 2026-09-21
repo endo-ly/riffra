@@ -44,6 +44,7 @@ pub struct SessionInspection {
 pub struct ProjectInspection {
     pub project_name: Option<String>,
     pub bpm: f64,
+    pub ppq: u32,
     pub time_signature_numerator: u8,
     pub time_signature_denominator: u8,
     pub content_end: Option<MusicalPosition>,
@@ -287,6 +288,7 @@ pub fn inspect_canonical_state(
         project: ProjectInspection {
             project_name: canonical.session.project_name.clone(),
             bpm: timebase.bpm,
+            ppq: timebase.ppq,
             time_signature_numerator: timebase.time_signature_numerator,
             time_signature_denominator: timebase.time_signature_denominator,
             content_end: content_end(arrangement, timebase),

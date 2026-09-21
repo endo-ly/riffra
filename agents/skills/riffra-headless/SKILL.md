@@ -45,10 +45,13 @@ description: >-
 1. `session inspect` で現在の構造と `sequence` を確認する
 2. トラック、音源、テンポ、リージョンを必要な範囲で設定する
 3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
-4. 必要な箇所だけ `music note` で個別に調整する
-5. `session inspect` または `track list` で結果を確認する
-6. `render start` で音声を書き出し、Attachedでワンショット実行する場合は `job wait`、interactiveでは `job.get` の繰り返しで完了を確認する
-7. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
+4. 既存Noteの確認は `music note list` で必要なClipまたはTrackと範囲だけ取得する
+5. 範囲・音高・channelに一致するNoteの一括調整は `music note transform` で行う
+6. 個別の更新・削除が必要な場合だけ `--include-ids` でIDを取得し、`music note update` / `remove` を使う
+7. raw tickやMIDI値が必要な場合だけ `music note list --raw` を使う
+8. `session inspect` または `track list` で結果を確認する
+9. `render start` で音声を書き出し、Attachedでワンショット実行する場合は `job wait`、interactiveでは `job.get` の繰り返しで完了を確認する
+10. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
 
 音声を扱わない編集はStandaloneで行い、再生・録音・RenderなどRuntimeを使う操作はLive HostへAttachedして行う。大きなJSONは`--*-file`で渡し、連続した操作はinteractive JSONLで送る。意味のある進捗率を取得できない間、ジョブの`progress`は`null`になる。
 
@@ -69,6 +72,10 @@ description: >-
 通常の楽曲制作では、位置・音価・音名を音楽座標のままCLIへ渡す。拍子に応じたtick、音名に対応するMIDI pitch番号、Clipを基準にした相対位置への変換はCLIとCoreが行う。
 
 通常のNoteの参照・作成・更新・削除・配置には、音楽座標を扱う `music note` と `music midi-clip` を使う。`midi-note` は、音楽座標に相当する操作がない量子化・変形・複製など、既存Noteをraw tickやMIDI値で直接編集する操作に使う。`midi-*` はCC、Pitch Bendなど音楽上の基本操作に含まれないMIDIイベントを直接編集するときにも使う。
+
+既存Noteの通常の調整では、`session get` で全Sessionを取得したり、Note IDを列挙して再挿入したりしない。必要範囲を `music note list` で確認し、`music note transform` で一括編集する。`midi-note transform` は、既知のNote IDをraw tick / MIDI値で直接操作するときだけ使う。
+
+TimelineのPPQは `session inspect.project.ppq` を正とする。Instrument previewの `ticksPerBeat` はpreview固有の値であり、Timelineのtick計算には使わない。現在の正準Timeline PPQは960だが、エージェントは固定値を再定義せずinspectionの値を使う。
 
 `music.*` はStandalone、serve、Attachedで同じControl契約を使える。
 

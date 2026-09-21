@@ -26,7 +26,7 @@ riffra --attach --host <instance-id> session inspect
 ### 基本サイクル
 
 1. `session inspect` で現在の構造と `sequence` を把握する。必要なら `--start` / `--end` または `--track-id` で対象を絞る。`session get` は MIDI ノート全件や録音の詳細を含むフルスナップショットなので、Inspectにない詳細が必要なときだけ使う
-2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡し、対象 ID(`track:*` / `clip:*` / `note:*` / `marker:*`)を読む
+2. 編集コマンドを実行する。Inspectまたは直前の応答の `sequence` を `--expected-sequence` に渡す。既存Noteの範囲編集は `music note list` と `music note transform` を優先し、個別操作だけ `--include-ids` で取得した `note:*` を使う
 3. 編集後は同じ範囲を `session inspect` し、音を確認するときは確認後の `sequence` を `--expected-sequence` に指定した `render start` と `job get` を使う。採用しない変更は変更後の `sequence` を `--expected-sequence` に指定した `undo` を実行して再Inspectする
 4. `conflict` になったMutation・Render・Undo・Redoは自動再送せず、最新状態をInspectして内容を決め直す
 
@@ -51,9 +51,37 @@ riffra --attach --expected-sequence 2 music note insert --clip-id midi-clip:01j.
 
 状態を変更する要求が成功すると、`result.value.createdEntityIds`にその要求で新しく生成されたIDだけが種類ごとに入る。生成IDがない要求では`{}`になる。後続の要求でIDが必要な場合は、この値を使う。
 
+`createdEntityIds`で利用できるキーは次のとおりである。これ以外のキーは推測して使わない。
+
+| キー              | 対象            |
+| ----------------- | --------------- |
+| `tracks`          | Track           |
+| `audioClips`      | Audio Clip      |
+| `midiClips`       | MIDI Clip       |
+| `midiNotes`       | MIDI Note       |
+| `markers`         | Marker          |
+| `regions`         | Region          |
+| `harmonyEvents`   | Harmony Event   |
+| `automationLanes` | Automation Lane |
+
 interactive JSONLで要求を連鎖させる場合は、要求を送って応答を受け取ってから、次の要求を組み立てる。`expectedSequence`には直前の応答の`sequence`を使い、Conflictが返った場合は`session inspect`で状態を確認して操作を組み直す。
 
 interactive JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
+
+bulk入力のdeserializeエラーには、JSON Pointer形式の`error.details.path`、配列要素のゼロ始まり`index`、問題の値が付く。大きなObjectやArrayの値はレスポンスを膨らませないため省略される。`inputLine`とこれらのdetailsは同じエラーへ共存する。
+
+```json
+{
+  "code": "invalidRequest",
+  "message": "invalid command parameters: expected u8",
+  "details": {
+    "inputLine": 12,
+    "path": "/notes/37/velocity",
+    "index": 37,
+    "value": null
+  }
+}
+```
 
 ### Music Operations
 
@@ -70,21 +98,32 @@ riffra --data-root ./riffra-data music note insert `
 
 `position` はArrangement全体の絶対位置で、Clip内部の相対位置ではない。`velocity` の既定値は100、`channel` の既定値は1である。複数Noteは1回の `music note insert` で渡す。
 
-Noteの参照と更新も音楽座標を使う。
+Noteの参照と更新も音楽座標を使う。既存Noteの通常の調整では、まず必要範囲をlistし、条件に合うNoteをtransformする。全Sessionの取得、Note IDの列挙、Note配列の再生成は不要である。
 
 ```powershell
 riffra --attach music note list --clip-id midi-clip:01j... --start 5:1 --end 9:1
+riffra --attach music note list --track-id track:drums --start 5:1 --end 13:1
+riffra --attach music note list --clip-id midi-clip:01j... --raw --include-ids
+riffra --attach --expected-sequence 20 music note transform `
+  --track-id track:drums --start 5:1 --end 13:1 `
+  --pitch D2 --timing-offset +1/48 --velocity-offset 4
 riffra --attach music note get --clip-id midi-clip:01j... --note-id note:01j...
-riffra --attach --expected-sequence 20 music note update `
+riffra --attach --expected-sequence 21 music note update `
   --clip-id midi-clip:01j... --note-id note:01j... `
   --position 6:1 --duration 1/4 --pitch F#4 --velocity 96
-riffra --attach --expected-sequence 21 music note remove `
+riffra --attach --expected-sequence 22 music note remove `
   --clip-id midi-clip:01j... --note-id note:01j...
-riffra --attach --expected-sequence 22 music midi-clip resize `
+riffra --attach --expected-sequence 23 music midi-clip resize `
   --clip-id midi-clip:01j... --end 17:1
 ```
 
-Noteのlist/get応答にはtickやMIDI note numberを含めない。listの範囲は半開区間で、Noteと範囲が重なるものを返す。ClipのresizeはNote/EventのArrangement上の絶対位置を保ち、範囲外へ出る場合はNote/Eventを削除・cropせず失敗する。
+`music note list` はClipまたはTrackを一つだけ指定する。Track指定では範囲も必須である。listの範囲は半開区間で、Noteと範囲が重なるものを返す。Track指定の結果はClipごとにgroup化され、各NoteへClip IDを繰り返さない。通常結果は音楽座標だけで、IDは`--include-ids`、raw tick / MIDI値は`--raw`を指定したときだけ返る。
+
+`--raw` の結果ではClipの`startTick`がArrangement上の位置、Noteの`startTick`がClip相対位置になる。絶対tickが必要な場合は両者を加算する。raw結果には`timebase.ppq`と拍子も含まれる。
+
+`music note transform` は、指定範囲内で開始するNoteだけを対象にする。範囲指定はClip開始位置に対する絶対的な音楽座標で、Track指定では必須である。`--pitch`と`--channel`は変形前の値に対して判定される。`--timing-offset`は符号付き音価（例：`+1/48`、`-1/48`）、`--velocity-offset`は0〜127へclampされ、`--transpose-semitones`がMIDI範囲外になる場合や移動後のNoteがClip外になる場合はMutation全体が失敗する。対象Noteが0件でも失敗する。
+
+ClipのresizeはNote/EventのArrangement上の絶対位置を保ち、範囲外へ出る場合はNote/Eventを削除・cropせず失敗する。
 
 Note入力はJSON配列を一度に渡す。inline、file、stdinは排他的で、file/stdinでも1回のMutationになる。
 
@@ -209,14 +248,14 @@ riffra --data-root ./riffra-data --interactive
 
 ### Session と Timebase
 
-| コマンド                  | 主要引数                                                                                          | 備考                                                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `session inspect`         | [`--start <bar:beat>` `--end <bar:beat>`] [`--track-id <id>`]                                     | 軽量な構造Projection。全Track/Clip/Region/Harmony/Markerを返し、Note/Event/Automation Point/Plugin stateは展開しない。`--start`と`--end`は両方指定する |
-| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意                                                            |
-| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                   |
-| `history get`             | -                                                                                                 | 履歴状態                                                                                                                                               |
-| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                   |
-| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                  |
+| コマンド                  | 主要引数                                                                                          | 備考                                                                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session inspect`         | [`--start <bar:beat>` `--end <bar:beat>`] [`--track-id <id>`]                                     | 軽量な構造Projection。全Track/Clip/Region/Harmony/Markerを返し、Note/Event/Automation Point/Plugin stateは展開しない。`project.ppq`に正準Timeline PPQを返す。`--start`と`--end`は両方指定する |
+| `session get`             | -                                                                                                 | CreativeSession 全体(MIDI ノート全件・録音詳細込み)とシーケンスを返す。応答は大きいため注意                                                                                                   |
+| `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                                                          |
+| `history get`             | -                                                                                                 | 履歴状態                                                                                                                                                                                      |
+| `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                                                          |
+| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                                                         |
 
 ### Track と入力 Routing
 

@@ -8,8 +8,9 @@ use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
     HarmonyEventPatch, HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput,
-    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, SessionInspectionQuery,
-    SessionSettingsPatch, inspect_canonical_state,
+    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, MusicalNoteListRequest, MusicalNoteScope,
+    MusicalNoteTransformRequest, SessionInspectionQuery, SessionSettingsPatch,
+    inspect_canonical_state,
 };
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{
@@ -46,7 +47,10 @@ pub(crate) use track::{AudioInputParams, MidiInputParams};
 
 #[derive(Debug)]
 pub enum DispatchError {
-    InvalidRequest(String),
+    InvalidRequest {
+        message: String,
+        details: Option<Value>,
+    },
     CommandFailed(String),
     RuntimeUnavailable(String),
     Conflict {
@@ -62,7 +66,7 @@ pub enum DispatchError {
 impl fmt::Display for DispatchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRequest(error)
+            Self::InvalidRequest { message: error, .. }
             | Self::CommandFailed(error)
             | Self::RuntimeUnavailable(error) => formatter.write_str(error),
             Self::Conflict {
@@ -86,7 +90,12 @@ impl fmt::Display for DispatchError {
 impl DispatchError {
     pub fn protocol_error(&self) -> ProtocolError {
         match self {
-            Self::InvalidRequest(message) => ProtocolError::new(ErrorCode::InvalidRequest, message),
+            Self::InvalidRequest { message, details } => {
+                let error = ProtocolError::new(ErrorCode::InvalidRequest, message);
+                details
+                    .clone()
+                    .map_or(error.clone(), |details| error.with_details(details))
+            }
             Self::CommandFailed(message) => ProtocolError::new(ErrorCode::CommandFailed, message),
             Self::RuntimeUnavailable(message) => {
                 ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
@@ -103,7 +112,32 @@ impl DispatchError {
     }
 
     fn invalid_request(error: impl Into<String>) -> Self {
-        Self::InvalidRequest(error.into())
+        Self::InvalidRequest {
+            message: error.into(),
+            details: None,
+        }
+    }
+
+    fn invalid_request_with_details(error: impl Into<String>, details: Value) -> Self {
+        Self::InvalidRequest {
+            message: error.into(),
+            details: Some(details),
+        }
+    }
+
+    fn attach_input_value(mut self, params: &Value) -> Self {
+        if let Self::InvalidRequest {
+            details: Some(Value::Object(details)),
+            ..
+        } = &mut self
+            && let Some(path) = details.get("path").and_then(Value::as_str)
+            && !details.contains_key("value")
+            && let Some(value) = params.pointer(path)
+            && should_include_error_value(value)
+        {
+            details.insert("value".into(), value.clone());
+        }
+        self
     }
 }
 
@@ -129,6 +163,20 @@ impl From<ApplicationError> for DispatchError {
                 expected_sequence,
                 current_sequence,
             },
+            ApplicationError::InvalidInput { location, message } => {
+                let mut path = format!("/{}/{}", location.collection, location.index);
+                if let Some(field) = location.field {
+                    path.push('/');
+                    path.push_str(&json_pointer_segment(&field));
+                }
+                Self::invalid_request_with_details(
+                    format!("invalid command parameters: {message}"),
+                    serde_json::json!({
+                        "path": path,
+                        "index": location.index,
+                    }),
+                )
+            }
             error => Self::CommandFailed(error.to_string()),
         }
     }
@@ -319,7 +367,7 @@ impl<'a, A> HostDispatcher<'a, A> {
     ) -> Result<DispatchResult, DispatchError> {
         request
             .validate()
-            .map_err(|error| DispatchError::InvalidRequest(error.message))?;
+            .map_err(|error| DispatchError::invalid_request(error.message))?;
         if !self.allow_runtime_commands && is_runtime_host_only(&request.command) {
             return Err(DispatchError::RuntimeUnavailable(
                 "this command requires --attach to a running Riffra Host".into(),
@@ -353,7 +401,7 @@ impl<'a, A> HostDispatcher<'a, A> {
                 expected_project_id: request.expected_project_id.clone().unwrap_or_default(),
                 current_project_id,
             },
-            _ => DispatchError::InvalidRequest(error.message),
+            _ => DispatchError::invalid_request(error.message),
         })?;
         if let Some(expected_sequence) = request.expected_sequence
             && expected_sequence != canonical.sequence
@@ -383,27 +431,29 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
         let command = request.name.clone();
         let canonical_sequence = canonical.sequence;
+        let params = request.params.clone();
         let result = if session::handles(&command) {
-            session::dispatch(self, request, canonical.clone())?
+            session::dispatch(self, request, canonical.clone())
         } else if track::handles(&command) {
-            track::dispatch(self, request, canonical.clone())?
+            track::dispatch(self, request, canonical.clone())
         } else if clips::handles(&command) {
-            clips::dispatch(self, request, canonical.clone())?
+            clips::dispatch(self, request, canonical.clone())
         } else if music::handles(&command) {
-            music::dispatch(self, request, canonical.clone())?
+            music::dispatch(self, request, canonical.clone())
         } else if asset::handles(&command) {
-            asset::dispatch(self, request, canonical.clone())?
+            asset::dispatch(self, request, canonical.clone())
         } else if project::handles(&command) {
-            project::dispatch(self, request, canonical.clone())?
+            project::dispatch(self, request, canonical.clone())
         } else if instrument::handles(&command) {
-            instrument::dispatch(self, request)?
+            instrument::dispatch(self, request)
         } else if device::handles(&command) {
-            device::dispatch(self, request)?
+            device::dispatch(self, request)
         } else {
             return Err(DispatchError::invalid_request(format!(
                 "unknown command: {command}"
             )));
-        };
+        }
+        .map_err(|error: DispatchError| error.attach_input_value(&params))?;
         let created_entity_ids = result.created_entity_ids.clone();
         let sequence = if is_read_command(&command) {
             canonical_sequence
@@ -721,9 +771,63 @@ fn is_runtime_host_only(command: &str) -> bool {
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, DispatchError> {
-    serde_json::from_value(value).map_err(|error| {
-        DispatchError::invalid_request(format!("invalid command parameters: {error}"))
+    let input = value.clone();
+    let input_bytes = serde_json::to_vec(&value).expect("JSON values must serialize");
+    let mut deserializer = serde_json::Deserializer::from_slice(&input_bytes);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        let (path, index) = json_path_to_pointer(error.path());
+        let mut details = serde_json::Map::new();
+        details.insert("path".into(), Value::String(path.clone()));
+        if let Some(index) = index {
+            details.insert("index".into(), serde_json::json!(index));
+        }
+        if let Some(value) = input.pointer(&path)
+            && should_include_error_value(value)
+        {
+            details.insert("value".into(), value.clone());
+        }
+        DispatchError::invalid_request_with_details(
+            format!("invalid command parameters: {}", error.inner()),
+            Value::Object(details),
+        )
     })
+}
+
+fn json_path_to_pointer(path: &serde_path_to_error::Path) -> (String, Option<usize>) {
+    let mut pointer = String::new();
+    let mut innermost_index = None;
+    for segment in path.iter() {
+        match segment {
+            serde_path_to_error::Segment::Map { key } => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(key));
+            }
+            serde_path_to_error::Segment::Seq { index } => {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+                innermost_index = Some(*index);
+            }
+            serde_path_to_error::Segment::Enum { variant } => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(variant));
+            }
+            serde_path_to_error::Segment::Unknown => {}
+        }
+    }
+    (pointer, innermost_index)
+}
+
+fn json_pointer_segment(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
+fn should_include_error_value(value: &Value) -> bool {
+    let small_shape = match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        Value::Array(values) => values.len() <= 4,
+        Value::Object(values) => values.len() <= 8,
+    };
+    small_shape && serde_json::to_vec(value).is_ok_and(|value| value.len() <= 512)
 }
 
 fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {

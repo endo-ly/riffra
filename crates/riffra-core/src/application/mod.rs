@@ -25,7 +25,9 @@ use uuid::Uuid;
 pub use music::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
     MusicalHarmonyEventView, MusicalMidiNoteInput, MusicalMidiNotePatch, MusicalMidiNoteView,
-    MusicalRegionView,
+    MusicalNoteClipView, MusicalNoteListNoteView, MusicalNoteListRequest, MusicalNoteListView,
+    MusicalNoteScope, MusicalNoteTimebaseView, MusicalNoteTransformRequest, MusicalRegionView,
+    RawMidiNoteView,
 };
 pub use session::{
     ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,

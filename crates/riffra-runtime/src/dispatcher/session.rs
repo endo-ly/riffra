@@ -108,6 +108,7 @@ mod tests {
         assert_eq!(inspected.value["counts"]["tracks"], 1);
         assert_eq!(inspected.value["counts"]["midiClips"], 1);
         assert_eq!(inspected.value["counts"]["midiNotes"], 1);
+        assert_eq!(inspected.value["project"]["ppq"], 960);
         assert_eq!(inspected.value["tracks"][0]["clips"][0]["kind"], "midi");
         assert_eq!(inspected.value["tracks"][0]["clips"][0]["noteCount"], 1);
         let encoded = inspected.value.to_string();

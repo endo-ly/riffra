@@ -412,8 +412,8 @@ fn request_id_from_json(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::handle_request;
-    use riffra_control::ErrorCode;
+    use super::{handle_request, with_input_line};
+    use riffra_control::{ErrorCode, ProtocolError};
     use riffra_runtime::Dispatcher;
     use serde_json::json;
     use std::fs;
@@ -654,6 +654,15 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(error.details.unwrap()["inputLine"], 3);
         assert!(error.message.starts_with("input line 3: "));
+
+        let error = with_input_line(
+            ProtocolError::new(ErrorCode::InvalidRequest, "invalid command parameters")
+                .with_details(serde_json::json!({"path":"/notes/37/velocity"})),
+            Some(12),
+        );
+        let details = error.details.unwrap();
+        assert_eq!(details["inputLine"], 12);
+        assert_eq!(details["path"], "/notes/37/velocity");
 
         let response = handle_request(
             &dispatcher,

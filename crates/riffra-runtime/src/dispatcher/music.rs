@@ -12,6 +12,7 @@ pub(super) fn handles(command: &str) -> bool {
             | "music.note.get"
             | "music.note.update"
             | "music.note.remove"
+            | "music.note.transform"
             | "music.harmony.resolve"
             | "music.harmony.list"
             | "music.harmony.insert"
@@ -64,7 +65,16 @@ pub(super) fn dispatch<A>(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
-                    .list_musical_notes(&params.clip_id, params.start, params.end)?,
+                    .list_musical_notes(MusicalNoteListRequest {
+                        scope: MusicalNoteScope {
+                            clip_id: params.clip_id,
+                            track_id: params.track_id,
+                        },
+                        start: params.start,
+                        end: params.end,
+                        include_ids: params.include_ids,
+                        raw: params.raw,
+                    })?,
             )
         }
         "music.note.get" => {
@@ -85,8 +95,8 @@ pub(super) fn dispatch<A>(
                 && params.patch.velocity.is_none()
                 && params.patch.channel.is_none()
             {
-                return Err(DispatchError::InvalidRequest(
-                    "at least one musical note field is required".into(),
+                return Err(DispatchError::invalid_request(
+                    "at least one musical note field is required",
                 ));
             }
             dispatcher.session_with_effect(
@@ -107,11 +117,33 @@ pub(super) fn dispatch<A>(
                 CanonicalMutationEffect::ProjectArrangement,
             )
         }
+        "music.note.transform" => {
+            let params: MusicalNoteTransformParams = decode(request.params)?;
+            dispatcher.application_mutation(
+                dispatcher
+                    .core
+                    .application(&dispatcher.storage)
+                    .transform_musical_notes(MusicalNoteTransformRequest {
+                        scope: MusicalNoteScope {
+                            clip_id: params.clip_id,
+                            track_id: params.track_id,
+                        },
+                        start: params.start,
+                        end: params.end,
+                        pitch: params.pitch,
+                        channel: params.channel,
+                        timing_offset: params.timing_offset,
+                        velocity_offset: params.velocity_offset,
+                        transpose_semitones: params.transpose_semitones,
+                    })?,
+                CanonicalMutationEffect::ProjectArrangement,
+            )
+        }
         "music.midi-clip.resize" => {
             let params: MusicalMidiClipResizeParams = decode(request.params)?;
             if params.start.is_none() && params.end.is_none() {
-                return Err(DispatchError::InvalidRequest(
-                    "MIDI clip resize requires a start or end".into(),
+                return Err(DispatchError::invalid_request(
+                    "MIDI clip resize requires a start or end",
                 ));
             }
             dispatcher.session_with_effect(
@@ -266,9 +298,28 @@ struct MusicalNoteInsertParams {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MusicalNoteListParams {
-    clip_id: String,
+    clip_id: Option<String>,
+    track_id: Option<String>,
     start: Option<riffra_core::MusicalPosition>,
     end: Option<riffra_core::MusicalPosition>,
+    #[serde(default)]
+    include_ids: bool,
+    #[serde(default)]
+    raw: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalNoteTransformParams {
+    clip_id: Option<String>,
+    track_id: Option<String>,
+    start: Option<riffra_core::MusicalPosition>,
+    end: Option<riffra_core::MusicalPosition>,
+    pitch: Option<riffra_core::MusicalPitch>,
+    channel: Option<u8>,
+    timing_offset: Option<riffra_core::MusicalTimeDelta>,
+    velocity_offset: Option<i32>,
+    transpose_semitones: Option<i16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -408,6 +459,23 @@ mod tests {
             .unwrap();
         let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
         let clip_id = session.arrangement.midi_clips[0].id.clone();
+        let invalid = dispatcher
+            .dispatch(request(
+                "music.note.insert",
+                json!({
+                    "clipId": clip_id,
+                    "notes": [
+                        {"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}
+                    ]
+                }),
+            ))
+            .unwrap_err()
+            .protocol_error();
+        let details = invalid.details.clone().unwrap();
+        assert_eq!(invalid.code, riffra_control::ErrorCode::InvalidRequest);
+        assert_eq!(details["path"], "/notes/0/velocity");
+        assert_eq!(details["index"], 0);
+        assert!(details["value"].is_null());
         let region = dispatcher
             .dispatch(request(
                 "music.region.add",
@@ -455,10 +523,15 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(listed.result_type, "musicNotes");
-        assert_eq!(listed.value.as_array().unwrap().len(), 1);
-        assert_eq!(listed.value[0]["pitch"], "C4");
-        assert!(listed.value[0].get("startTick").is_none());
-        assert!(listed.value[0].get("note").is_none());
+        assert_eq!(listed.value["count"], 1);
+        assert_eq!(listed.value["clips"][0]["notes"][0]["pitch"], "C4");
+        assert!(listed.value["clips"][0]["notes"][0].get("id").is_none());
+        assert!(
+            listed.value["clips"][0]["notes"][0]
+                .get("startTick")
+                .is_none()
+        );
+        assert!(listed.value["clips"][0]["notes"][0].get("note").is_none());
 
         let fetched = dispatcher
             .dispatch(request(
@@ -488,6 +561,22 @@ mod tests {
             .unwrap();
         assert_eq!(updated.value["position"], "5:2");
         assert_eq!(updated.value["duration"], "1/4");
+
+        let transformed = dispatcher
+            .dispatch(request(
+                "music.note.transform",
+                json!({
+                    "clipId": clip_id,
+                    "start": "5:1",
+                    "end": "5:2",
+                    "pitch": "E4",
+                    "velocityOffset": 4
+                }),
+            ))
+            .unwrap();
+        let transformed: riffra_core::CreativeSession =
+            serde_json::from_value(transformed.value).unwrap();
+        assert_eq!(transformed.arrangement.midi_clips[0].notes[1].velocity, 104);
 
         dispatcher
             .dispatch(request(
