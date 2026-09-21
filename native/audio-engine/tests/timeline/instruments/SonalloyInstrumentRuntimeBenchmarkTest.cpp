@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "../SonalloyTestSupport.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
 
 namespace riffra {
@@ -27,8 +28,7 @@ struct BenchmarkResult final {
 };
 
 std::unique_ptr<SonalloyInstrumentRuntime> loadBenchmarkRuntime(juce::String& error) {
-    const juce::File presetDirectory(RIFFRA_SONALLOY_TEST_PRESET_ROOT);
-    const auto directory = presetDirectory.getChildFile("01-clean-sub-bass");
+    const auto directory = test::builtInPresetDirectory("BASS-001");
     const auto definition = directory.getChildFile("definition.json");
     return SonalloyInstrumentRuntime::create(definition.loadFileAsString(),
                                              directory.getFullPathName(), 48'000.0, 256, error);
