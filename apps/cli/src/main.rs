@@ -63,6 +63,7 @@ fn run(cli: Cli) -> Result<(), String> {
     let audio_diagnostics_options = cli.audio_diagnostics_options();
     let host_id = cli.host.clone();
     let expected_sequence = cli.expected_sequence;
+    let batch_operation_lines = cli.batch_operation_lines()?;
     let is_host_list = matches!(
         cli.command.as_ref(),
         Some(CliCommand::Host {
@@ -161,11 +162,10 @@ fn run(cli: Cli) -> Result<(), String> {
             request.expect("one-shot request is present"),
             expected_sequence,
         );
-        let response = save_plugin_state_response(
-            plugin_state_output.as_deref(),
-            &request,
-            attached.request(&request)?,
-        )?;
+        let response = attached.request(&request)?;
+        let response = annotate_batch_error(response, batch_operation_lines.as_deref());
+        let response =
+            save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
         let response = compact_agent_response(&request.command, response, None);
         if let Some((json, _)) = audio_diagnostics_options {
             return write_audio_diagnostics(&response, json);
@@ -204,6 +204,7 @@ fn run(cli: Cli) -> Result<(), String> {
             value: dispatched.value,
         },
     );
+    let response = annotate_batch_error(response, batch_operation_lines.as_deref());
     let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
     if let Some((json, _)) = audio_diagnostics_options {
         return write_audio_diagnostics(&response, json);
@@ -213,6 +214,38 @@ fn run(cli: Cli) -> Result<(), String> {
         response,
         Some(serde_json::to_value(dispatched.created_entity_ids).expect("entity ids serialize")),
     ))
+}
+
+fn annotate_batch_error(
+    mut response: ControlResponse,
+    operation_lines: Option<&[usize]>,
+) -> ControlResponse {
+    let Some(operation_lines) = operation_lines else {
+        return response;
+    };
+    let Some(error) = response.error.as_mut() else {
+        return response;
+    };
+    let Some(details) = error
+        .details
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return response;
+    };
+    let Some(operation_index) = details
+        .get("operationIndex")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+    else {
+        return response;
+    };
+    let Some(input_line) = operation_lines.get(operation_index).copied() else {
+        return response;
+    };
+    details.insert("inputLine".into(), serde_json::json!(input_line));
+    error.message = format!("input line {input_line}: {}", error.message);
+    response
 }
 
 fn save_plugin_state_response(
@@ -412,8 +445,8 @@ fn request_id_from_json(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_request, with_input_line};
-    use riffra_control::{ErrorCode, ProtocolError};
+    use super::{annotate_batch_error, handle_request, with_input_line};
+    use riffra_control::{ControlResponse, ErrorCode, ProtocolError};
     use riffra_runtime::Dispatcher;
     use serde_json::json;
     use std::fs;
@@ -839,5 +872,19 @@ mod tests {
             ErrorCode::RuntimeUnavailable
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_errors_are_annotated_with_physical_input_lines() {
+        let response = ControlResponse::failure(
+            "batch",
+            None,
+            ProtocolError::new(ErrorCode::InvalidRequest, "batch operation failed")
+                .with_details(json!({"operationIndex": 2})),
+        );
+        let response = annotate_batch_error(response, Some(&[1, 4, 7]));
+        let error = response.error.unwrap();
+        assert_eq!(error.details.unwrap()["inputLine"], 7);
+        assert_eq!(error.message, "input line 7: batch operation failed");
     }
 }

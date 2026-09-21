@@ -136,7 +136,11 @@ impl FromStr for MusicalPosition {
         let value = value.trim();
         let (bar, beat_with_offset) = value
             .split_once(':')
-            .ok_or_else(|| invalid_value("position must use bar:beat notation"))?;
+            .ok_or_else(|| {
+                invalid_value(
+                    "position must use bar:beat or bar:beat+fraction notation; the optional fraction is relative to one beat",
+                )
+            })?;
         let (beat, offset) = match beat_with_offset.split_once('+') {
             Some((beat, fraction)) => (beat, parse_fraction(fraction, "position offset")?),
             None => (

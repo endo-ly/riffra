@@ -40,6 +40,13 @@ pub struct PreparedSession {
 }
 
 impl PreparedSession {
+    pub(crate) fn new(session: CreativeSession, expected_sequence: u64) -> Self {
+        Self {
+            session,
+            expected_sequence,
+        }
+    }
+
     /// Returns the exact candidate that an external runtime should validate.
     pub fn session(&self) -> &CreativeSession {
         &self.session

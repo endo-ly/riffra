@@ -7,6 +7,7 @@ pub use harmony::{
     ChordVoicingInput, HarmonyEventInput, HarmonyEventPatch, HarmonyRealizeSelection,
     MusicalHarmonyEventView,
 };
+pub use phrase::{ResolvedPhrase, ResolvedPhraseNote};
 
 use super::*;
 use crate::domain::{

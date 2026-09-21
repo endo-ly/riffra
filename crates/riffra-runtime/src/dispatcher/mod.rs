@@ -139,6 +139,28 @@ impl DispatchError {
         }
         self
     }
+
+    fn with_batch_context(self, operation_index: usize, command: &str) -> Self {
+        let cause = self.to_string();
+        let details = match self {
+            Self::InvalidRequest { details, .. } => details,
+            _ => None,
+        };
+        let mut details = match details {
+            Some(Value::Object(details)) => details,
+            _ => serde_json::Map::new(),
+        };
+        if let Some(Value::String(path)) = details.get_mut("path")
+            && path.starts_with('/')
+            && !path.starts_with("/params/")
+        {
+            *path = format!("/params{path}");
+        }
+        details.insert("operationIndex".into(), serde_json::json!(operation_index));
+        details.insert("command".into(), Value::String(command.to_owned()));
+        details.insert("cause".into(), Value::String(cause));
+        Self::invalid_request_with_details("batch operation failed", Value::Object(details))
+    }
 }
 
 impl From<String> for DispatchError {
@@ -190,6 +212,16 @@ enum CoreRef<'a, A> {
 enum StorageRef<'a> {
     Owned(Mutex<SessionStore>),
     Borrowed(&'a SessionStore),
+    Memory(Arc<MemorySessionStorage>),
+}
+
+#[derive(Default)]
+struct MemorySessionStorage;
+
+impl SessionStorage for MemorySessionStorage {
+    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
+        Ok(())
+    }
 }
 
 impl StorageRef<'_> {
@@ -200,6 +232,7 @@ impl StorageRef<'_> {
                 .map(|storage| storage.clone())
                 .map_err(|_| "session storage lock was poisoned".into()),
             Self::Borrowed(storage) => Ok((*storage).clone()),
+            Self::Memory(_) => Err("candidate session has no persistent storage".into()),
         }
     }
 
@@ -234,6 +267,7 @@ impl<'a> SessionStorage for StorageRef<'a> {
                 .map_err(|_| PortError::Storage("session storage lock was poisoned".into()))
                 .and_then(|storage| SessionStorage::save(&*storage, session)),
             Self::Borrowed(storage) => SessionStorage::save(*storage, session),
+            Self::Memory(storage) => SessionStorage::save(storage.as_ref(), session),
         }
     }
 }
@@ -340,6 +374,35 @@ impl HostDispatcher<'static, ()> {
 }
 
 impl<'a, A> HostDispatcher<'a, A> {
+    fn batch_candidate(&self, session: CreativeSession) -> HostDispatcher<'static, ()> {
+        HostDispatcher {
+            _lease: None,
+            core: CoreRef::Owned(AppCore::new(
+                self.data_root.clone(),
+                session,
+                (),
+                false,
+                false,
+            )),
+            storage: StorageRef::Memory(Arc::new(MemorySessionStorage)),
+            project_store: ProjectStoreRef::Owned(ProjectStore::new(&self.data_root)),
+            data_root: self.data_root.clone(),
+            sonalloy: self.sonalloy.clone(),
+            built_in_instruments: Arc::clone(&self.built_in_instruments),
+            allow_runtime_commands: false,
+        }
+    }
+
+    fn commit_batch_candidate(
+        &self,
+        candidate: CreativeSession,
+        expected_sequence: u64,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.core
+            .application(&self.storage)
+            .commit_prepared_candidate(candidate, expected_sequence)
+    }
+
     /// Creates a dispatcher view over an already-owned live Host.
     pub(crate) fn borrowed(
         core: &'a AppCore<A>,
@@ -417,6 +480,77 @@ impl<'a, A> HostDispatcher<'a, A> {
     pub fn dispatch(&self, request: ControlCommand) -> Result<DispatchResult, DispatchError> {
         let canonical = self.core.canonical_state()?;
         self.dispatch_with_canonical(request, canonical)
+    }
+
+    fn apply_batch(
+        &self,
+        canonical: riffra_core::CanonicalState,
+        operations: Vec<ControlCommand>,
+        include_created_ids: bool,
+    ) -> Result<DispatchResult, DispatchError> {
+        if operations.is_empty() {
+            return Err(DispatchError::invalid_request(
+                "session apply requires at least one operation",
+            ));
+        }
+
+        let operation_count = operations.len();
+        let candidate = self.batch_candidate(canonical.session);
+        let mut created_entity_counts = BTreeMap::<String, usize>::new();
+        let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
+        for (operation_index, operation) in operations.into_iter().enumerate() {
+            let command = operation.name.clone();
+            if !session::is_batch_supported_operation(&operation) {
+                return Err(DispatchError::invalid_request(format!(
+                    "command '{command}' cannot be used in session apply"
+                ))
+                .with_batch_context(operation_index, &command));
+            }
+            let operation = session::resolve_batch_references(&candidate, operation)
+                .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            let result = candidate
+                .dispatch(operation)
+                .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            for (kind, ids) in result.created_entity_ids {
+                *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
+                if include_created_ids {
+                    created_entity_ids.entry(kind).or_default().extend(ids);
+                }
+            }
+        }
+
+        let candidate_session = candidate
+            .core
+            .snapshot()
+            .map_err(DispatchError::from)?
+            .session;
+        self.commit_batch_candidate(candidate_session, canonical.sequence)
+            .map_err(DispatchError::from)?;
+
+        let mut value = serde_json::json!({
+            "appliedCommands": operation_count,
+            "createdEntityCounts": created_entity_counts,
+        });
+        if let Value::Object(ref mut value) = value
+            && include_created_ids
+        {
+            value.insert(
+                "createdEntityIds".into(),
+                serde_json::json!(created_entity_ids),
+            );
+        }
+
+        Ok(DispatchResult {
+            result_type: "batchMutation",
+            value,
+            sequence: 0,
+            created_entity_ids: if include_created_ids {
+                created_entity_ids
+            } else {
+                BTreeMap::new()
+            },
+            projection_effect: CanonicalMutationEffect::ProjectArrangement,
+        })
     }
 
     pub(crate) fn dispatch_with_canonical(
@@ -604,6 +738,7 @@ fn is_read_command(command: &str) -> bool {
             | "music.harmony.list"
             | "music.note.list"
             | "music.note.get"
+            | "music.phrase.preview"
             | "music.region.list"
             | "device.inspect"
             | "device.parameter.list"

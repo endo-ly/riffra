@@ -20,6 +20,7 @@ pub(super) fn handles(command: &str) -> bool {
             | "music.harmony.remove"
             | "music.harmony.realize"
             | "music.phrase.insert"
+            | "music.phrase.preview"
             | "music.region.list"
             | "music.region.add"
             | "music.region.update"
@@ -238,6 +239,43 @@ pub(super) fn dispatch<A>(
                 CanonicalMutationEffect::ProjectArrangement,
             )
         }
+        "music.phrase.preview" => {
+            let params: MusicalPhrasePreviewParams = decode(request.params)?;
+            let application = dispatcher.core.application(&dispatcher.storage);
+            let resolved = application.resolve_phrase_pattern(
+                &params.clip_id,
+                params.pattern,
+                params.placements,
+                params.channel,
+            )?;
+            let timebase = _canonical.session.arrangement.timebase;
+            let mut value = serde_json::json!({
+                "noteCount": resolved.notes.len(),
+                "placementCount": resolved.placement_count,
+                "start": timebase.tick_to_musical_position(resolved.start_tick),
+                "end": timebase.tick_to_musical_position(resolved.end_tick),
+            });
+            if params.include_notes {
+                let notes = resolved
+                    .notes
+                    .into_iter()
+                    .map(|note| {
+                        Ok(serde_json::json!({
+                            "pitch": riffra_core::MusicalPitch::from_midi_pitch(note.pitch)
+                                .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
+                            "position": timebase.tick_to_musical_position(note.start_tick),
+                            "duration": timebase
+                                .ticks_to_musical_duration(note.duration_ticks)
+                                .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
+                            "velocity": note.velocity,
+                            "channel": note.channel,
+                        }))
+                    })
+                    .collect::<Result<Vec<_>, DispatchError>>()?;
+                value["notes"] = serde_json::json!(notes);
+            }
+            dispatcher.value("phrasePreview", value)
+        }
         "music.region.list" => dispatcher.value(
             "regions",
             dispatcher
@@ -391,6 +429,17 @@ struct MusicalPhraseInsertParams {
     pattern: PhrasePattern,
     placements: Vec<PhrasePlacement>,
     channel: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MusicalPhrasePreviewParams {
+    clip_id: String,
+    pattern: PhrasePattern,
+    placements: Vec<PhrasePlacement>,
+    channel: Option<u8>,
+    #[serde(default)]
+    include_notes: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -696,6 +745,29 @@ mod tests {
         let session: riffra_core::CreativeSession =
             serde_json::from_value(updated.value.clone()).unwrap();
         assert_eq!(session.arrangement.harmony_events[0].chord.name, "Dm9");
+
+        let phrase = dispatcher
+            .dispatch(request(
+                "music.phrase.preview",
+                json!({
+                    "clipId": clip_id,
+                    "pattern": {
+                        "length":"1/4",
+                        "notes":[
+                            {"offset":"0/1","duration":"1/8","semitones":0},
+                            {"offset":"1/8","duration":"1/8","semitones":2}
+                        ]
+                    },
+                    "placements":[{"position":"1:1","anchor":"C4","repeats":1}],
+                    "includeNotes": true
+                }),
+            ))
+            .unwrap();
+        assert_eq!(phrase.result_type, "phrasePreview");
+        assert_eq!(phrase.value["noteCount"], 2);
+        assert_eq!(phrase.value["placementCount"], 1);
+        assert_eq!(phrase.value["notes"].as_array().unwrap().len(), 2);
+        assert_eq!(phrase.value["notes"][0]["pitch"], "C4");
 
         let phrase = dispatcher
             .dispatch(request(

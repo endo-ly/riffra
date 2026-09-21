@@ -3,6 +3,7 @@ use riffra_control::ControlCommand;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::ffi::OsString;
+use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -178,10 +179,21 @@ pub enum HostCommand {
 pub enum SessionCommand {
     Get,
     Inspect(SessionInspectArgs),
+    Apply(SessionApplyArgs),
     Settings {
         #[command(subcommand)]
         command: SessionSettingsCommand,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct SessionApplyArgs {
+    /// JSON Lines file containing one Control Command per non-empty line.
+    #[arg(long)]
+    pub file: PathBuf,
+    /// Include the identities allocated by the complete mutation.
+    #[arg(long)]
+    pub include_created_ids: bool,
 }
 
 #[derive(Debug, Args, Serialize)]
@@ -646,6 +658,7 @@ pub struct MusicalHarmonyRealizeArgs {
 #[derive(Debug, Subcommand)]
 pub enum MusicPhraseCommand {
     Insert(MusicalPhraseInsertArgs),
+    Preview(MusicalPhrasePreviewArgs),
 }
 
 #[derive(Debug, Args)]
@@ -658,6 +671,20 @@ pub struct MusicalPhraseInsertArgs {
     pub phrase_file: Option<PathBuf>,
     #[arg(long)]
     pub channel: Option<u8>,
+}
+
+#[derive(Debug, Args)]
+pub struct MusicalPhrasePreviewArgs {
+    #[arg(long)]
+    pub clip_id: String,
+    #[arg(long, alias = "phrase")]
+    pub phrase_json: Option<String>,
+    #[arg(long)]
+    pub phrase_file: Option<PathBuf>,
+    #[arg(long)]
+    pub channel: Option<u8>,
+    #[arg(long)]
+    pub include_notes: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1697,6 +1724,24 @@ impl Cli {
             _ => None,
         }
     }
+
+    pub(crate) fn batch_operation_lines(&self) -> Result<Option<Vec<usize>>, String> {
+        let Some(CliCommand::Session {
+            command: SessionCommand::Apply(args),
+        }) = self.command.as_ref()
+        else {
+            return Ok(None);
+        };
+        let contents = fs::read_to_string(&args.file)
+            .map_err(|error| format!("session apply file could not be read: {error}"))?;
+        Ok(Some(
+            contents
+                .lines()
+                .enumerate()
+                .filter_map(|(index, line)| (!line.trim().is_empty()).then_some(index + 1))
+                .collect(),
+        ))
+    }
 }
 
 fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
@@ -1714,6 +1759,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
         CliCommand::Session { command } => match command {
             SessionCommand::Get => simple("session.get"),
             SessionCommand::Inspect(args) => value("session.inspect", args),
+            SessionCommand::Apply(args) => session_apply(args)?,
             SessionCommand::Settings { command } => match command {
                 SessionSettingsCommand::Update(args) => value("session.settings.update", args),
             },
@@ -1869,6 +1915,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             },
             MusicCommand::Phrase { command } => match command {
                 MusicPhraseCommand::Insert(args) => phrase_insert(args)?,
+                MusicPhraseCommand::Preview(args) => phrase_preview(args)?,
             },
         },
         CliCommand::Clip { command } => match command {
@@ -2270,8 +2317,41 @@ fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, St
     Ok(value("music.harmony.realize", Value::Object(params)))
 }
 
-fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String> {
-    let phrase = json_source(args.phrase_json, args.phrase_file, false, "phrase", true)?
+fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, String> {
+    let contents = fs::read_to_string(&args.file)
+        .map_err(|error| format!("session apply file could not be read: {error}"))?;
+    let mut operations = Vec::new();
+    for (line_index, line) in contents.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let operation = serde_json::from_str::<ControlCommand>(line).map_err(|error| {
+            format!(
+                "session apply line {} is not a valid Control Command: {error}",
+                line_index + 1
+            )
+        })?;
+        operations.push(operation);
+    }
+    if operations.is_empty() {
+        return Err("session apply file must contain at least one command".into());
+    }
+    Ok(value(
+        "session.apply",
+        json!({
+            "operations": operations,
+            "includeCreatedIds": args.include_created_ids,
+        }),
+    ))
+}
+
+fn phrase_params(
+    clip_id: String,
+    phrase_json: Option<String>,
+    phrase_file: Option<PathBuf>,
+    channel: Option<u8>,
+) -> Result<serde_json::Map<String, Value>, String> {
+    let phrase = json_source(phrase_json, phrase_file, false, "phrase", true)?
         .expect("required JSON source is present");
     let mut phrase = phrase
         .as_object()
@@ -2290,13 +2370,34 @@ fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String
         return Err("--phrase-json may contain only pattern and placements".into());
     }
     let mut params = serde_json::Map::new();
-    params.insert("clipId".into(), Value::String(args.clip_id));
+    params.insert("clipId".into(), Value::String(clip_id));
     params.insert("pattern".into(), pattern);
     params.insert("placements".into(), placements);
-    if let Some(channel) = args.channel {
+    if let Some(channel) = channel {
         params.insert("channel".into(), json!(channel));
     }
+    Ok(params)
+}
+
+fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String> {
+    let params = phrase_params(
+        args.clip_id,
+        args.phrase_json,
+        args.phrase_file,
+        args.channel,
+    )?;
     Ok(value("music.phrase.insert", Value::Object(params)))
+}
+
+fn phrase_preview(args: MusicalPhrasePreviewArgs) -> Result<ControlCommand, String> {
+    let mut params = phrase_params(
+        args.clip_id,
+        args.phrase_json,
+        args.phrase_file,
+        args.channel,
+    )?;
+    params.insert("includeNotes".into(), json!(args.include_notes));
+    Ok(value("music.phrase.preview", Value::Object(params)))
 }
 
 fn id_list_value<T: Serialize>(
@@ -3128,5 +3229,52 @@ mod tests {
         let request = cli.request().unwrap();
         assert_eq!(request.name, "midi-note.clear");
         assert_eq!(request.params, json!({"clipId":"midi-clip:1"}));
+    }
+
+    #[test]
+    fn session_apply_reads_control_commands_and_phrase_preview_keeps_preview_options() {
+        let path = std::env::temp_dir().join(format!(
+            "riffra-cli-session-apply-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            br#"{"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+
+{"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}}"#,
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "session",
+            "apply",
+            "--file",
+            path.to_str().unwrap(),
+            "--include-created-ids",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "session.apply");
+        assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(request.params["operations"][0]["command"], "track.add");
+        assert_eq!(request.params["includeCreatedIds"], true);
+
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "phrase",
+            "preview",
+            "--clip-id",
+            "midi-clip:1",
+            "--phrase-json",
+            r#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]} "#,
+            "--include-notes",
+        ])
+        .unwrap();
+        let request = cli.request().unwrap();
+        assert_eq!(request.name, "music.phrase.preview");
+        assert_eq!(request.params["includeNotes"], true);
+        assert_eq!(request.params["clipId"], "midi-clip:1");
+        let _ = std::fs::remove_file(path);
     }
 }
