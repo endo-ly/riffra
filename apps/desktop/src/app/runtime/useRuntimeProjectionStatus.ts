@@ -17,12 +17,8 @@ const genericProjectionFailure = 'Audio preparation failed. Retry to prepare aud
 const preservedProjectionFailure =
   'Audio preparation failed. The previous playback state remains available.';
 
-function isDeterministicProjectionFailure(status: RuntimeProjectionStatus): boolean {
-  return status.state === 'failed' && status.lastErrorCode === 'timeline';
-}
-
 function projectionFailureMessage(status: RuntimeProjectionStatus): string {
-  if (isDeterministicProjectionFailure(status) && status.lastError) {
+  if (status.lastError) {
     return `Audio preparation failed: ${status.lastError}`;
   }
   return status.activeProjectionSequence !== null

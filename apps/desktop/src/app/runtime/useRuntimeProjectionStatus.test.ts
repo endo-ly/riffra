@@ -46,13 +46,11 @@ describe('useRuntimeProjectionStatus', () => {
 
     await waitFor(() => {
       expect(result.current.status).toEqual(failed);
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      );
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected');
     });
   });
 
-  it('surfaces deterministic timeline preparation details', async () => {
+  it('surfaces native projection preparation details', async () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
     const detail =
@@ -132,9 +130,7 @@ describe('useRuntimeProjectionStatus', () => {
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
     await waitFor(() =>
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      ),
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
     );
 
     await act(async () => {
@@ -159,9 +155,7 @@ describe('useRuntimeProjectionStatus', () => {
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
     await waitFor(() =>
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      ),
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
     );
 
     const queued = status({ operationId: 3, targetProjectionSequence: 3 });

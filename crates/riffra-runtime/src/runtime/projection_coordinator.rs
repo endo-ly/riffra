@@ -68,6 +68,8 @@ struct ProjectionState {
     active_projection: Option<ActiveProjection>,
     stop_requested: bool,
     audio_environment_revision: u64,
+    status_canonical: bool,
+    published_status: RuntimeProjectionStatus,
     status: RuntimeProjectionStatus,
 }
 
@@ -89,6 +91,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         status_hook: ProjectionStatusHook,
     ) -> Result<Self, RuntimeError> {
         let generation = driver.runtime_generation();
+        let initial_status = RuntimeProjectionStatus {
+            runtime_generation: generation,
+            audio_environment_revision: 0,
+            ..RuntimeProjectionStatus::default()
+        };
         let state = Arc::new((
             Mutex::new(ProjectionState {
                 next_operation_id: 0,
@@ -99,11 +106,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 active_projection: None,
                 stop_requested: false,
                 audio_environment_revision: 0,
-                status: RuntimeProjectionStatus {
-                    runtime_generation: generation,
-                    audio_environment_revision: 0,
-                    ..RuntimeProjectionStatus::default()
-                },
+                status_canonical: true,
+                published_status: initial_status.clone(),
+                status: initial_status,
             }),
             Condvar::new(),
         ));
@@ -160,6 +165,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         {
             state.desired_key = None;
             state.latest_target = None;
+            state.status_canonical = true;
             state.status.state = RuntimeProjectionState::Idle;
             state.status.last_error = None;
             state.status.last_error_code = None;
@@ -211,6 +217,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     let target = state.latest_target.as_mut().expect("target was checked");
                     target.snapshot = snapshot;
                     target.canonical = true;
+                    state.status_canonical = true;
                 }
                 return SubmissionResult::FollowingExisting { operation_id, key };
             }
@@ -226,6 +233,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let operation_id = state.next_operation_id;
         let queued_at_ms = now_ms();
         state.desired_key = Some(key);
+        state.status_canonical = canonical;
         state.latest_target = Some(RuntimeTarget {
             operation_id,
             key,
@@ -261,10 +269,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             last_error: None,
             last_error_code: None,
         };
-        let status = state.status.clone();
         wake.notify_one();
         drop(state);
-        (self.status_hook)(status);
+        if canonical {
+            publish_current_status(&self.state, &self.status_hook);
+        }
         SubmissionResult::Accepted { operation_id, key }
     }
 
@@ -290,7 +299,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             .lock()
             .expect("runtime projection lock poisoned");
         observe_generation(&mut state, generation);
-        state.status.clone()
+        if state.status_canonical {
+            state.published_status = state.status.clone();
+            state.published_status.clone()
+        } else {
+            state.published_status.clone()
+        }
     }
 
     pub(crate) fn is_ready_for(&self, key: ProjectionKey) -> bool {
@@ -419,10 +433,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.last_error = Some(message);
         state.status.last_error_code = Some("runtime".into());
         state.status.completed_at_ms = Some(now_ms());
-        let status = state.status.clone();
+        let publish_status = state.status_canonical;
         wake.notify_all();
         drop(state);
-        (self.status_hook)(status);
+        if publish_status {
+            publish_current_status(&self.state, &self.status_hook);
+        }
     }
 
     /// Advances the native audio environment identity and invalidates every
@@ -462,10 +478,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.last_error = None;
         state.status.last_error_code = None;
         let audio_environment_revision = state.audio_environment_revision;
-        let status = state.status.clone();
+        let publish_status = state.status_canonical;
         wake.notify_all();
         drop(state);
-        (self.status_hook)(status);
+        if publish_status {
+            publish_current_status(&self.state, &self.status_hook);
+        }
         audio_environment_revision
     }
 
@@ -473,7 +491,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     /// preparing or committing another native graph.
     pub(crate) fn adopt_canonical_without_projection(&self, key: ProjectionKey) {
         let generation = self.driver.runtime_generation();
-        let status = {
+        let adopted = {
             let (lock, wake) = &*self.state;
             let mut state = lock.lock().expect("runtime projection lock poisoned");
             observe_generation(&mut state, generation);
@@ -484,6 +502,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .unwrap_or(key);
             let adopted = try_adopt_canonical_key(&mut state, generation, candidate);
             if adopted {
+                state.status_canonical = true;
                 state.deferred_canonical_key = None;
             } else if (state.latest_target.is_some() || state.running_operation_id.is_some())
                 && state
@@ -495,13 +514,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
 
             if adopted {
                 wake.notify_all();
-                Some(state.status.clone())
+                true
             } else {
-                None
+                false
             }
         };
-        if let Some(status) = status {
-            (self.status_hook)(status);
+        if adopted {
+            publish_current_status(&self.state, &self.status_hook);
         }
     }
 
@@ -540,12 +559,14 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             });
             state.deferred_canonical_key = None;
             state.desired_key = Some(key);
+            state.status_canonical = true;
             state.status.active_projection_sequence = Some(key.sequence);
             state.status.active_session_revision = Some(key.session_revision);
             state.status.active_audio_environment_revision =
                 Some(active.audio_environment_revision);
             state.status.last_error = None;
             state.status.last_error_code = None;
+            state.published_status = state.status.clone();
             let status = state.status.clone();
             wake.notify_all();
             status
@@ -918,8 +939,15 @@ fn publish_current_status(
     state: &Arc<(Mutex<ProjectionState>, Condvar)>,
     status_hook: &ProjectionStatusHook,
 ) {
-    let Ok(status) = state.0.lock().map(|state| state.status.clone()) else {
-        return;
+    let status = {
+        let Ok(mut guard) = state.0.lock() else {
+            return;
+        };
+        if !guard.status_canonical {
+            return;
+        }
+        guard.published_status = guard.status.clone();
+        guard.published_status.clone()
     };
     status_hook(status);
 }
@@ -1200,10 +1228,17 @@ mod tests {
         let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
         let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
 
-        coordinator
+        let candidate = coordinator
             .submit_with_canonical_deadline(snapshot(10), key(1, 10), None, false)
             .unwrap();
-        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .unwrap();
 
         coordinator
             .commit_candidate_as_canonical(key(1, 10))
@@ -1214,6 +1249,71 @@ mod tests {
         assert_eq!(status.active_projection_sequence, Some(1));
         assert!(coordinator.is_ready_for(key(1, 10)));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn does_not_publish_candidate_status_before_canonical_promotion() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let status_sink = Arc::clone(&statuses);
+        let coordinator = ProjectionCoordinator::new_with_status_hook(
+            Arc::clone(&driver),
+            Arc::new(move |status| status_sink.lock().unwrap().push(status)),
+        )
+        .unwrap();
+
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(10), key(1, 10), None, false)
+            .unwrap();
+        coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+
+        assert!(statuses.lock().unwrap().is_empty());
+        assert_eq!(coordinator.status().active_session_revision, None);
+
+        coordinator
+            .commit_candidate_as_canonical(key(1, 10))
+            .unwrap();
+
+        assert_eq!(statuses.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_failed_candidate_does_not_block_the_next_canonical_projection() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        coordinator.submit_nonblocking(snapshot(10), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+
+        driver.failed_prepare_count.store(1, Ordering::Release);
+        let failed = coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
+            .unwrap();
+        assert!(
+            coordinator
+                .wait_for_operation(
+                    failed.operation_id,
+                    failed.key,
+                    Instant::now() + Duration::from_secs(1),
+                    Duration::from_secs(1),
+                )
+                .is_err()
+        );
+
+        let status = coordinator.status();
+        assert_eq!(status.active_session_revision, Some(10));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+
+        coordinator.submit_nonblocking(snapshot(12), key(3, 12));
+        wait_until(|| coordinator.status().active_session_revision == Some(12));
+
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 12]);
     }
 
     #[test]
