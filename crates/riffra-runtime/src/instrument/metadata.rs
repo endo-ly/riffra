@@ -70,7 +70,7 @@ struct InstrumentDefinitionProjection {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 struct SourceInstrumentMetadata {
     name: String,
     #[serde(default)]
@@ -88,14 +88,14 @@ struct SourceInstrumentMetadata {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 struct InstrumentRecommendedRangeSource {
     min_midi: u8,
     max_midi: u8,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 struct InstrumentPreviewDefinitionSource {
     tempo_bpm: f64,
     ticks_per_beat: u16,
@@ -105,14 +105,14 @@ struct InstrumentPreviewDefinitionSource {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 struct InstrumentPreviewTimeSignatureSource {
     numerator: u8,
     denominator: u8,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
 struct InstrumentPreviewNoteSource {
     tick: u64,
     duration_ticks: u64,
@@ -396,6 +396,24 @@ mod tests {
         assert_eq!(metadata.tags, ["Sub", "Warm"]);
         assert_eq!(metadata.recommended_range.unwrap().max_midi, 60);
         assert_eq!(metadata.preview.unwrap().time_signature.numerator, 4);
+    }
+
+    #[test]
+    fn ignores_unknown_sonalloy_metadata_fields() {
+        let metadata = read_definition_metadata(
+            r#"{
+                "metadata": {
+                    "name": "User Bass",
+                    "category": "Bass",
+                    "future_field": {"value": 1}
+                }
+            }"#,
+            ID,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.name, "User Bass");
+        assert_eq!(metadata.category.as_deref(), Some("Bass"));
     }
 
     #[test]

@@ -965,6 +965,7 @@ impl HostState {
                 let params: InstrumentPreviewParams = decode(params)?;
                 let preview = resolve_instrument_preview(
                     &self.data_root,
+                    &self.binaries.sonalloy,
                     self.built_in_instruments.as_ref(),
                     &params.instrument_id,
                 )?;
@@ -2055,6 +2056,7 @@ struct ResolvedInstrumentPreview {
 
 fn resolve_instrument_preview(
     data_root: &std::path::Path,
+    sonalloy: &std::path::Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
     instrument_id: &str,
 ) -> Result<ResolvedInstrumentPreview, ProtocolError> {
@@ -2069,7 +2071,7 @@ fn resolve_instrument_preview(
         });
     }
     if instrument_id.starts_with("user:") {
-        let instrument = UserInstrumentStore::new(data_root, std::path::Path::new(""))
+        let instrument = UserInstrumentStore::new(data_root, sonalloy)
             .resolve(instrument_id)
             .map_err(command_error)?;
         let preview = instrument.preview.ok_or_else(|| {
@@ -2518,13 +2520,15 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+        let sonalloy = data_root.join("sonalloy");
         let catalog = BuiltInInstrumentCatalog::load(&builtin_root).unwrap();
 
-        let builtin = resolve_instrument_preview(&data_root, &catalog, "builtin:01-bass").unwrap();
+        let builtin =
+            resolve_instrument_preview(&data_root, &sonalloy, &catalog, "builtin:01-bass").unwrap();
         assert_eq!(builtin.definition_base_dir, builtin_package);
         assert_eq!(builtin.preview.tempo_bpm, 120.0);
 
-        let user = resolve_instrument_preview(&data_root, &catalog, &user_id).unwrap();
+        let user = resolve_instrument_preview(&data_root, &sonalloy, &catalog, &user_id).unwrap();
         assert_eq!(user.definition_base_dir, user_package);
         assert_eq!(user.definition_json, user_definition);
         assert_eq!(user.preview.tempo_bpm, 100.0);
@@ -2560,13 +2564,15 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+        let sonalloy = data_root.join("sonalloy");
         let catalog =
             BuiltInInstrumentCatalog::load(crate::test_support::prepare_built_in_resource_root(
                 &data_root.join("built-in-instruments"),
             ))
             .unwrap();
 
-        let error = resolve_instrument_preview(&data_root, &catalog, &user_id).unwrap_err();
+        let error =
+            resolve_instrument_preview(&data_root, &sonalloy, &catalog, &user_id).unwrap_err();
         assert!(error.message.contains(&user_id));
         assert!(error.message.contains("does not have a preview"));
 
