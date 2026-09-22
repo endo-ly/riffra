@@ -379,16 +379,16 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     ),
                 });
             }
+            if let Some((failed_operation_id, error)) = state.terminal_error.as_ref()
+                && *failed_operation_id == operation_id
+            {
+                return Err(error.clone());
+            }
             let generation = self.driver.runtime_generation();
             let requested_projection_is_active = state
                 .active_projection
                 .is_some_and(|active| active.runtime_generation == generation && active.key == key);
             if state.running_operation_id.is_none() && state.latest_target.is_none() {
-                if let Some((failed_operation_id, error)) = state.terminal_error.as_ref()
-                    && *failed_operation_id == operation_id
-                {
-                    return Err(error.clone());
-                }
                 if state.status.state == RuntimeProjectionState::Active
                     && requested_projection_is_active
                 {
@@ -1129,6 +1129,7 @@ mod tests {
         pending: Mutex<Option<u64>>,
         prepare_delay: Duration,
         prepare_started: AtomicU64,
+        prepare_finished: AtomicU64,
         discarded: AtomicU64,
         busy_prepare_count: AtomicU64,
         failed_prepare_count: AtomicU64,
@@ -1144,6 +1145,7 @@ mod tests {
                 pending: Mutex::new(None),
                 prepare_delay,
                 prepare_started: AtomicU64::new(0),
+                prepare_finished: AtomicU64::new(0),
                 discarded: AtomicU64::new(0),
                 busy_prepare_count: AtomicU64::new(0),
                 failed_prepare_count: AtomicU64::new(0),
@@ -1167,6 +1169,7 @@ mod tests {
                 self.generation.fetch_add(1, Ordering::AcqRel);
             }
             thread::sleep(self.prepare_delay);
+            self.prepare_finished.fetch_add(1, Ordering::Release);
             let mut busy_count = self.busy_prepare_count.load(Ordering::Acquire);
             while busy_count > 0 {
                 match self.busy_prepare_count.compare_exchange(
@@ -1444,7 +1447,7 @@ mod tests {
 
     #[test]
     fn generation_change_while_the_projection_is_queued_fails_the_waiter_without_a_timeout() {
-        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(100)));
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(400)));
         let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
         coordinator.submit_nonblocking(snapshot(10), key(1, 10));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -1459,8 +1462,8 @@ mod tests {
             .wait_for_operation(
                 candidate.operation_id,
                 candidate.key,
-                Instant::now() + Duration::from_secs(1),
-                Duration::from_secs(1),
+                Instant::now() + Duration::from_millis(100),
+                Duration::from_millis(100),
             )
             .expect_err("the discarded queued projection should fail");
 
@@ -1471,6 +1474,7 @@ mod tests {
                 actual: 2,
             }
         );
+        assert_eq!(driver.prepare_finished.load(Ordering::Acquire), 0);
         assert_ne!(coordinator.status().state, RuntimeProjectionState::Failed);
         assert!(driver.loaded.lock().unwrap().is_empty());
     }
