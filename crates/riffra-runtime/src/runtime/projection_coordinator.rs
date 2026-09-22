@@ -376,6 +376,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .active_projection
                 .is_some_and(|active| active.runtime_generation == generation && active.key == key);
             if state.running_operation_id.is_none() && state.latest_target.is_none() {
+                if let Some((failed_operation_id, error)) = state.terminal_error.as_ref()
+                    && *failed_operation_id == operation_id
+                {
+                    return Err(error.clone());
+                }
                 if state.status.state == RuntimeProjectionState::Active
                     && requested_projection_is_active
                 {
@@ -383,20 +388,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 }
                 match state.status.state {
                     RuntimeProjectionState::Failed => {
-                        return Err(state
-                            .terminal_error
-                            .as_ref()
-                            .filter(|(failed_operation_id, _)| *failed_operation_id == operation_id)
-                            .map(|(_, error)| error.clone())
-                            .unwrap_or_else(|| {
-                                RuntimeError::NativeRejected(
-                                    state
-                                        .status
-                                        .last_error
-                                        .clone()
-                                        .unwrap_or_else(|| "Runtime projection failed.".into()),
-                                )
-                            }));
+                        return Err(RuntimeError::NativeRejected(
+                            state
+                                .status
+                                .last_error
+                                .clone()
+                                .unwrap_or_else(|| "Runtime projection failed.".into()),
+                        ));
                     }
                     RuntimeProjectionState::Active => {
                         return Err(RuntimeError::Internal(format!(
@@ -870,6 +868,9 @@ fn worker_loop<D: ProjectionDriver>(
                 }
                 Err(error) => {
                     let current_operation = state.status.operation_id == target.operation_id;
+                    if current_operation {
+                        state.terminal_error = Some((target.operation_id, error.clone()));
+                    }
                     if current_operation && identity_is_current {
                         state.status.state = RuntimeProjectionState::Failed;
                         state.status.runtime_generation = current_generation;
@@ -879,7 +880,6 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_audio_environment_revision = None;
                         state.status.last_error = Some(error.to_string());
                         state.status.last_error_code = Some(runtime_error_code(&error));
-                        state.terminal_error = Some((target.operation_id, error.clone()));
                     }
                     false
                 }
@@ -1062,7 +1062,7 @@ fn try_adopt_canonical_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread;
 
     struct FakeProjectionDriver {
@@ -1075,6 +1075,7 @@ mod tests {
         busy_prepare_count: AtomicU64,
         failed_prepare_count: AtomicU64,
         wait_for_idle_count: AtomicU64,
+        bump_generation_during_prepare: AtomicBool,
     }
 
     impl FakeProjectionDriver {
@@ -1089,6 +1090,7 @@ mod tests {
                 busy_prepare_count: AtomicU64::new(0),
                 failed_prepare_count: AtomicU64::new(0),
                 wait_for_idle_count: AtomicU64::new(0),
+                bump_generation_during_prepare: AtomicBool::new(false),
             }
         }
     }
@@ -1100,6 +1102,12 @@ mod tests {
             _timeout: Duration,
         ) -> Result<(), RuntimeError> {
             self.prepare_started.fetch_add(1, Ordering::Release);
+            if self
+                .bump_generation_during_prepare
+                .swap(false, Ordering::AcqRel)
+            {
+                self.generation.fetch_add(1, Ordering::AcqRel);
+            }
             thread::sleep(self.prepare_delay);
             let mut busy_count = self.busy_prepare_count.load(Ordering::Acquire);
             while busy_count > 0 {
@@ -1334,6 +1342,43 @@ mod tests {
         wait_until(|| coordinator.status().active_session_revision == Some(12));
 
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 12]);
+    }
+
+    #[test]
+    fn generation_change_during_candidate_prepare_fails_the_waiter_without_a_timeout() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        driver
+            .bump_generation_during_prepare
+            .store(true, Ordering::Release);
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
+            .unwrap();
+        let error = coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect_err("the stale candidate projection should fail");
+
+        assert_eq!(
+            error,
+            RuntimeError::GenerationChanged {
+                expected: 1,
+                actual: 2,
+            }
+        );
+        let status = coordinator.status();
+        assert_ne!(status.state, RuntimeProjectionState::Failed);
+        assert_eq!(status.active_session_revision, None);
+        assert_ne!(
+            coordinator.state.0.lock().unwrap().status.state,
+            RuntimeProjectionState::Failed
+        );
+        assert!(driver.loaded.lock().unwrap().is_empty());
     }
 
     #[test]

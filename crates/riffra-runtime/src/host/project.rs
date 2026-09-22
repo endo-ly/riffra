@@ -267,14 +267,17 @@ fn activate_project_inner(
                 apply_project_runtime_transition(state, &activated.canonical, project_id)
         {
             let message = format!(
-                "{}; active Project audio could not be restored: {}",
-                error.message, restore_error.message
+                "{} failed: {}; active Project audio could not be restored: {}",
+                operation.label(),
+                error.message,
+                restore_error.message
             );
             return Err(super::audio::graph_failed(message.clone()).with_details(
                 serde_json::json!({
                     "domain": "audioRuntime",
                     "kind": "graphFailed",
                     "message": message,
+                    "operation": operation.command(),
                     "projectSwitch": {
                         "projectId": project_id,
                         "canonicalProjectId": project_id,
