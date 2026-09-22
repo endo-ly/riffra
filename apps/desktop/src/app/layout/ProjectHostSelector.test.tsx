@@ -143,6 +143,22 @@ describe('ProjectHostSelector', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps the selector open when Project creation fails', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderSelector(embedded, {
+      onCreateProject,
+      projectError: 'Project creation failed: disk full',
+    });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: '+ New Project' }));
+
+    await waitFor(() => expect(onCreateProject).toHaveBeenCalledOnce());
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('Project creation failed: disk full')).toBeInTheDocument();
+  });
+
   it('closes the selector after Host switching succeeds', async () => {
     const onSwitch = vi.fn().mockResolvedValue({} as HostConnectionBootstrap);
     const user = userEvent.setup();
