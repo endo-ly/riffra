@@ -92,7 +92,13 @@ describe('useProject', () => {
       projectState: defaultProjectState(),
     };
     const message = 'Project opening failed: audio definition schema is unsupported.';
-    api.setFailure('openProject', new NativeCommandError({ message }));
+    api.setFailure(
+      'openProject',
+      new NativeCommandError({
+        message,
+        details: { kind: 'projectSwitchFailed', operation: 'project.open' },
+      }),
+    );
     const { result } = renderHook(() => {
       const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
       return useProject(api, { boot, setBoot, hostGeneration: 0 });
@@ -105,6 +111,25 @@ describe('useProject', () => {
     });
 
     expect(result.current.projectError).toBe(message);
+  });
+
+  it('keeps the operation context for an ordinary native project error', async () => {
+    const api = new FakeNativeApi();
+    const initialBoot: BootstrapState = {
+      ...api.bootstrapState,
+      projectState: defaultProjectState(),
+    };
+    api.setFailure('createProject', new NativeCommandError({ message: 'disk full' }));
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+
+    await act(async () => {
+      await expect(result.current.createProject()).resolves.toBeNull();
+    });
+
+    expect(result.current.projectError).toBe('Project creation failed: disk full');
   });
 
   it('imports a package as a new active Project without replacing the existing entry', async () => {

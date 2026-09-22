@@ -252,7 +252,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         )
           return null;
         const message =
-          error instanceof NativeCommandError
+          error instanceof NativeCommandError && error.isProjectSwitchFailure
             ? error.message
             : `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
         setProjectError(message);

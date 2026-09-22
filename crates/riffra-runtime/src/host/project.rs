@@ -59,13 +59,13 @@ pub(super) fn dispatch(
                 .project_store
                 .create(params.name)
                 .map_err(|error| command_error(error.to_string()))?;
-            activate_project(state, &summary.project_id)
+            activate_project(state, &summary.project_id, ProjectOperation::Create)
         }
         "project.open" => {
             let params: ProjectOpenParams = decode(params)?;
             ensure_switch_allowed(state)?;
             state.flush_plugin_persistence()?;
-            activate_project(state, &params.project_id)
+            activate_project(state, &params.project_id, ProjectOperation::Open)
         }
         "project.rename" => {
             let params: ProjectRenameParams = decode(params)?;
@@ -99,12 +99,37 @@ pub(super) fn dispatch(
                 .project_store
                 .create_from_session(&session)
                 .map_err(|error| command_error(error.to_string()))?;
-            activate_project(state, &summary.project_id)
+            activate_project(state, &summary.project_id, ProjectOperation::Import)
         }
         _ => Err(ProtocolError::new(
             ErrorCode::InvalidRequest,
             format!("unknown project command: {command}"),
         )),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProjectOperation {
+    Create,
+    Open,
+    Import,
+}
+
+impl ProjectOperation {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Create => "Project creation",
+            Self::Open => "Project opening",
+            Self::Import => "Project import",
+        }
+    }
+
+    const fn command(self) -> &'static str {
+        match self {
+            Self::Create => "project.create",
+            Self::Open => "project.open",
+            Self::Import => "project.import",
+        }
     }
 }
 
@@ -123,16 +148,18 @@ fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
 fn activate_project(
     state: &HostState,
     project_id: &str,
+    operation: ProjectOperation,
 ) -> Result<(&'static str, Value, u64), ProtocolError> {
     if state.core.safe_mode() {
-        return activate_project_inner(state, project_id);
+        return activate_project_inner(state, project_id, operation);
     }
-    state.run_audio_transition(|state| activate_project_inner(state, project_id))
+    state.run_audio_transition(|state| activate_project_inner(state, project_id, operation))
 }
 
 fn activate_project_inner(
     state: &HostState,
     project_id: &str,
+    operation: ProjectOperation,
 ) -> Result<(&'static str, Value, u64), ProtocolError> {
     let previous_project_id = state
         .project_store
@@ -161,6 +188,7 @@ fn activate_project_inner(
                 &previous_canonical,
                 project_id,
                 error,
+                operation,
             ));
         }
         if let Err(error) = state
@@ -180,6 +208,7 @@ fn activate_project_inner(
                 &previous_canonical,
                 project_id,
                 error,
+                operation,
             ));
         }
         Some(candidate_key)
@@ -196,6 +225,7 @@ fn activate_project_inner(
                 &previous_canonical,
                 project_id,
                 command_error(error),
+                operation,
             ));
         }
     };
@@ -225,10 +255,6 @@ fn activate_project_inner(
             activated.canonical.session.arrangement.revision,
             candidate_key.session_revision
         );
-        state.keep_plugin_persistence_project(project_id);
-        state
-            .event_hub
-            .set_plugin_project_id(Some(project_id.to_owned()));
         if let Err(error) = state
             .runtime
             .commit_candidate_as_canonical(candidate_key)
@@ -306,35 +332,45 @@ fn project_switch_failure(
     previous_canonical: &CanonicalState,
     failed_project_id: &str,
     failure: ProtocolError,
+    operation: ProjectOperation,
 ) -> ProtocolError {
     state
         .event_hub
         .set_plugin_project_id(Some(previous_project_id.to_owned()));
     state.keep_plugin_persistence_project(previous_project_id);
     let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
-    let retryable = project_switch_failure_is_retryable(&failure);
+    let retryable = project_switch_failure_retryability(&failure);
     match apply_project_runtime_transition(state, previous_canonical, previous_project_id) {
-        Ok(()) => ProtocolError::new(
-            ErrorCode::CommandFailed,
-            format!("Project opening failed: {}", failure.message),
-        )
-        .with_details(serde_json::json!({
-            "domain": "project",
-            "kind": "projectSwitchFailed",
-            "projectId": failed_project_id,
-            "restoredProjectId": previous_project_id,
-            "retryable": retryable,
-            "cause": cause,
-        })),
+        Ok(()) => {
+            let mut details = serde_json::json!({
+                "domain": "project",
+                "kind": "projectSwitchFailed",
+                "operation": operation.command(),
+                "projectId": failed_project_id,
+                "restoredProjectId": previous_project_id,
+                "cause": cause,
+            });
+            if let Some(retryable) = retryable {
+                details["retryable"] = Value::Bool(retryable);
+            }
+            ProtocolError::new(
+                ErrorCode::CommandFailed,
+                format!("{} failed: {}", operation.label(), failure.message),
+            )
+            .with_details(details)
+        }
         Err(restore_error) => {
             let message = format!(
-                "{}; previous Project audio could not be restored: {}",
-                failure.message, restore_error.message
+                "{} failed: {}; previous Project audio could not be restored: {}",
+                operation.label(),
+                failure.message,
+                restore_error.message,
             );
             super::audio::graph_failed(message.clone()).with_details(serde_json::json!({
                 "domain": "audioRuntime",
                 "kind": "graphFailed",
                 "message": message,
+                "operation": operation.command(),
                 "projectSwitch": {
                     "projectId": failed_project_id,
                     "restoredProjectId": previous_project_id,
@@ -392,9 +428,9 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
     }))
 }
 
-fn project_switch_failure_is_retryable(failure: &ProtocolError) -> bool {
+fn project_switch_failure_retryability(failure: &ProtocolError) -> Option<bool> {
     if failure.code == ErrorCode::RuntimeUnavailable {
-        return true;
+        return Some(true);
     }
     let kind = failure
         .details
@@ -414,6 +450,7 @@ fn project_switch_failure_is_retryable(failure: &ProtocolError) -> bool {
                 | "process"
         )
     )
+    .then_some(true)
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError> {
@@ -618,18 +655,23 @@ mod tests {
 
     #[test]
     fn project_switch_retryability_uses_the_structured_runtime_cause() {
-        let stale_definition = ProtocolError::new(ErrorCode::CommandFailed, "timeline failed")
-            .with_details(json!({
-                "cause": {"details": {"kind": "timeline"}}
-            }));
-        let transient_runtime =
-            ProtocolError::new(ErrorCode::CommandFailed, "projection timed out").with_details(
-                json!({
-                    "cause": {"details": {"kind": "projectionTimeout"}}
-                }),
-            );
+        let stale_definition = project_runtime_projection_error(crate::RuntimeError::Native {
+            kind: "timeline".into(),
+            message: "audio definition schema is unsupported".into(),
+            operation: "timeline.prepare".into(),
+            details: None,
+        });
+        let transient_runtime = project_runtime_projection_error(crate::RuntimeError::Native {
+            kind: "process".into(),
+            message: "audio process exited".into(),
+            operation: "timeline.prepare".into(),
+            details: None,
+        });
 
-        assert!(!project_switch_failure_is_retryable(&stale_definition));
-        assert!(project_switch_failure_is_retryable(&transient_runtime));
+        assert_eq!(project_switch_failure_retryability(&stale_definition), None);
+        assert_eq!(
+            project_switch_failure_retryability(&transient_runtime),
+            Some(true)
+        );
     }
 }

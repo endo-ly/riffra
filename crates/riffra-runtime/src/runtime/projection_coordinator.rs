@@ -71,6 +71,7 @@ struct ProjectionState {
     status_canonical: bool,
     published_status: RuntimeProjectionStatus,
     status: RuntimeProjectionStatus,
+    terminal_error: Option<(u64, RuntimeError)>,
 }
 
 pub(crate) struct ProjectionCoordinator<D: ProjectionDriver> {
@@ -109,6 +110,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 status_canonical: true,
                 published_status: initial_status.clone(),
                 status: initial_status,
+                terminal_error: None,
             }),
             Condvar::new(),
         ));
@@ -234,6 +236,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let queued_at_ms = now_ms();
         state.desired_key = Some(key);
         state.status_canonical = canonical;
+        state.terminal_error = None;
         state.latest_target = Some(RuntimeTarget {
             operation_id,
             key,
@@ -380,13 +383,20 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 }
                 match state.status.state {
                     RuntimeProjectionState::Failed => {
-                        return Err(RuntimeError::NativeRejected(
-                            state
-                                .status
-                                .last_error
-                                .clone()
-                                .unwrap_or_else(|| "Runtime projection failed.".into()),
-                        ));
+                        return Err(state
+                            .terminal_error
+                            .as_ref()
+                            .filter(|(failed_operation_id, _)| *failed_operation_id == operation_id)
+                            .map(|(_, error)| error.clone())
+                            .unwrap_or_else(|| {
+                                RuntimeError::NativeRejected(
+                                    state
+                                        .status
+                                        .last_error
+                                        .clone()
+                                        .unwrap_or_else(|| "Runtime projection failed.".into()),
+                                )
+                            }));
                     }
                     RuntimeProjectionState::Active => {
                         return Err(RuntimeError::Internal(format!(
@@ -834,6 +844,7 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.completed_at_ms = Some(completed_at_ms);
                         state.status.last_error = None;
                         state.status.last_error_code = None;
+                        state.terminal_error = None;
                         state.status.state = if state.latest_target.is_some() {
                             RuntimeProjectionState::Queued
                         } else if state.active_projection.is_some() {
@@ -868,6 +879,7 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.prepared_audio_environment_revision = None;
                         state.status.last_error = Some(error.to_string());
                         state.status.last_error_code = Some(runtime_error_code(&error));
+                        state.terminal_error = Some((target.operation_id, error.clone()));
                     }
                     false
                 }
@@ -983,6 +995,7 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) {
     state.status.audio_environment_revision = state.audio_environment_revision;
     state.status.last_error = None;
     state.status.last_error_code = None;
+    state.terminal_error = None;
     if state
         .latest_target
         .as_ref()
@@ -1295,15 +1308,22 @@ mod tests {
         let failed = coordinator
             .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
             .unwrap();
-        assert!(
-            coordinator
-                .wait_for_operation(
-                    failed.operation_id,
-                    failed.key,
-                    Instant::now() + Duration::from_secs(1),
-                    Duration::from_secs(1),
-                )
-                .is_err()
+        let error = coordinator
+            .wait_for_operation(
+                failed.operation_id,
+                failed.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect_err("the candidate projection should fail");
+        assert_eq!(
+            error,
+            RuntimeError::Native {
+                kind: "timeline".into(),
+                message: "VST failed to initialize".into(),
+                operation: "timeline.prepare".into(),
+                details: None,
+            }
         );
 
         let status = coordinator.status();

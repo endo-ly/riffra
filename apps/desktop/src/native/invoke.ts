@@ -37,6 +37,20 @@ export class NativeCommandError extends Error {
     const kind = (this.details as { kind?: unknown }).kind;
     return typeof kind === 'string' ? kind : undefined;
   }
+
+  get isProjectSwitchFailure(): boolean {
+    if (typeof this.details !== 'object' || this.details === null) return false;
+    const details = this.details as {
+      kind?: unknown;
+      projectSwitch?: unknown;
+    };
+    return (
+      details.kind === 'projectSwitchFailed' ||
+      (details.kind === 'graphFailed' &&
+        typeof details.projectSwitch === 'object' &&
+        details.projectSwitch !== null)
+    );
+  }
 }
 
 async function invokeNative<T>(command: string, args: Record<string, unknown>): Promise<T> {
