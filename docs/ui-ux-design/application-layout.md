@@ -36,6 +36,9 @@ Project / Host Selector はGlobal Control Barの左端に置き、現在のProje
 - Project切替中は現在の画面を保持し、`Opening...`を表示してProject-bound操作、Transport、録音を無効にする
 - Host切替中は現在の画面を保持し、`Connecting...`を表示してHost-bound操作を無効にする
 - Disconnectedは最後の接続先を再接続候補として表示し、`Reconnect`、`Local Desktop`、`Refresh`を提供する
+- Host Selectorを開いたときとHost接続状態が変わったときは候補一覧を更新する。常時ポーリングは行わない
+- Host切替に失敗した場合はpopoverを開いたままエラーを表示し、成功した場合だけ閉じる
+- Host接続後のbootstrapに失敗した場合は起動画面に理由と`Retry`を表示し、同じHostへの再試行を提供する
 - `Connect to Local Host...`はDesktopのfolder dialogでDataRootを選択し、そのHostの`host.json`へ接続する
 
 Hostの切替後はCanonical state、履歴、Runtime、Audio、Transport、Plugin、Recording、Library、Missing、Jobの表示を新Hostのbootstrap基準へ置き換える。最後に表示していたSessionを参照表示として残す場合も、Hostへ接続していない間は編集・再生・録音・Audio設定を実行できる状態にしない。

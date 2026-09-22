@@ -841,13 +841,23 @@ impl HostConnectionManager {
             .registry
             .discover()
             .map_err(|error| format!("Local Host discovery failed: {error}"))?;
-        discovered
-            .into_iter()
-            .filter(|host| {
-                Some(host.registration.instance_id.as_str()) != embedded_instance.as_deref()
-            })
-            .map(host_info)
-            .collect()
+        let mut hosts = Vec::new();
+        for discovery in discovered.into_iter().filter(|host| {
+            Some(host.registration.instance_id.as_str()) != embedded_instance.as_deref()
+        }) {
+            let instance_id = discovery.registration.instance_id.clone();
+            let pid = discovery.registration.pid;
+            match host_info(discovery) {
+                Ok(info) => hosts.push(info),
+                Err(error) => tracing::debug!(
+                    %instance_id,
+                    pid,
+                    %error,
+                    "Local Host info request failed; skipping Host"
+                ),
+            }
+        }
+        Ok(hosts)
     }
 
     /// Reports whether the currently connected Host is capturing input.
@@ -1399,7 +1409,10 @@ pub(crate) async fn reconnect_host(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_control::{LocalHostRegistration, now_ms, read_endpoint};
+    use riffra_control::{
+        CommandResult, ConnectionRole, ControlResponse, EndpointDescriptor, ErrorCode,
+        HelloRequest, HelloResponse, LocalHostRegistration, ProtocolError, now_ms, read_endpoint,
+    };
     use riffra_runtime::NoopHostEventSink;
     use std::time::Instant;
 
@@ -1535,6 +1548,52 @@ mod tests {
             .expect("the test registry should accept the Host");
     }
 
+    fn info_failing_host_server(descriptor: EndpointDescriptor) -> thread::JoinHandle<()> {
+        let mut listener =
+            riffra_control::transport::LocalControlListener::bind(descriptor.endpoint())
+                .expect("the fake Host endpoint should bind");
+        let instance_id = descriptor.instance_id;
+        let pid = descriptor.pid;
+        thread::spawn(move || {
+            for _ in 0..2 {
+                let mut stream = listener
+                    .accept()
+                    .expect("the fake Host should accept a client");
+                let hello: HelloRequest =
+                    riffra_control::transport::read_frame(&mut *stream).expect("hello request");
+                assert_eq!(hello.message_type, "hello");
+                assert_eq!(hello.role, ConnectionRole::Command);
+                riffra_control::transport::write_frame(
+                    &mut *stream,
+                    &HelloResponse::new(&instance_id, pid),
+                )
+                .expect("hello response");
+
+                let request: ControlRequest =
+                    riffra_control::transport::read_frame(&mut *stream).expect("control request");
+                let response = if request.command == "host.status" {
+                    ControlResponse::success(
+                        request.request_id,
+                        0,
+                        CommandResult {
+                            result_type: "hostStatus".into(),
+                            value: json!({"instanceId": instance_id.clone(), "pid": pid}),
+                        },
+                    )
+                } else {
+                    assert_eq!(request.command, "host.info");
+                    ControlResponse::failure(
+                        request.request_id,
+                        Some(0),
+                        ProtocolError::new(ErrorCode::HostUnavailable, "Host info is unavailable"),
+                    )
+                };
+                riffra_control::transport::write_frame(&mut *stream, &response)
+                    .expect("control response");
+            }
+        })
+    }
+
     fn host_status_ok(root: &Path) -> bool {
         LocalHostClient::connect_data_root(root)
             .and_then(|client| {
@@ -1651,6 +1710,45 @@ mod tests {
         manager.shutdown();
         cleanup(&[
             manager.settings.data_root.clone(),
+            manager.registry.root().to_path_buf(),
+        ]);
+    }
+
+    #[test]
+    fn a_failed_host_info_request_does_not_hide_other_hosts() {
+        let (manager, _outlet) = test_manager("partial-list");
+        let host_a = standalone_host("partial-list-a");
+        register_host(&manager, &host_a);
+
+        let fake_instance_id = new_instance_id();
+        let fake_descriptor = EndpointDescriptor::new(fake_instance_id.clone(), std::process::id());
+        let fake_server = info_failing_host_server(fake_descriptor.clone());
+        let fake_root = temp_root("partial-list-b");
+        manager
+            .registry
+            .register(&LocalHostRegistration::from_descriptor(
+                &fake_root,
+                &fake_descriptor,
+                now_ms().saturating_add(1),
+            ))
+            .expect("the failing Host should be registered");
+
+        let hosts = manager
+            .list_local_hosts()
+            .expect("one Host info failure should not fail discovery");
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].instance_id, host_a.identity().instance_id);
+
+        fake_server
+            .join()
+            .expect("the fake Host server should stop");
+        manager.shutdown();
+        host_a.shutdown();
+        cleanup(&[
+            manager.settings.data_root.clone(),
+            host_a.data_root().to_path_buf(),
+            fake_root,
             manager.registry.root().to_path_buf(),
         ]);
     }

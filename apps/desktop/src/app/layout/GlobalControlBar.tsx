@@ -9,6 +9,7 @@ import type {
   LocalHostInfo,
   ProjectState,
 } from '@/model/domain';
+import type { HostConnectionBootstrap } from '@/native/native-api';
 import { AudioMonitor } from '@/features/audio/AudioMonitor';
 import type { AudioMonitorApi } from '@/features/audio/audio-api';
 import { TransportControls } from '@/features/transport/TransportControls';
@@ -47,7 +48,7 @@ interface GlobalControlBarProps {
   hostSwitching: boolean;
   hostConnectionError: string | null;
   onRefresh: () => Promise<unknown>;
-  onSwitchHost: (target: HostTarget) => Promise<unknown>;
+  onSwitchHost: (target: HostTarget) => Promise<HostConnectionBootstrap | null>;
   onReconnectHost: () => Promise<unknown>;
   hostConnected: boolean;
   projectState: ProjectState | null;

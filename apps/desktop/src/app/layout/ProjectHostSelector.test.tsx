@@ -5,7 +5,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
+import type { HostConnectionBootstrap } from '@/native/native-api';
 import { defaultProjectState } from '@/native/browser-defaults';
+import { openHostDataRoot } from '@/native/dialog';
 import { ProjectHostSelector } from './ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
@@ -53,7 +55,8 @@ function renderSelector(state: HostConnectionState = embedded, overrides = {}) {
 
 describe('ProjectHostSelector', () => {
   it('shows the Project, its actions, and verified local Host candidates', () => {
-    renderSelector();
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    renderSelector(embedded, { onRefresh });
 
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
@@ -63,6 +66,7 @@ describe('ProjectHostSelector', () => {
     expect(screen.getByRole('menuitem', { name: 'Export Project…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
   it('routes the external package action through Import Project', async () => {
@@ -89,6 +93,51 @@ describe('ProjectHostSelector', () => {
 
     expect(onRenameProject).toHaveBeenCalledOnce();
     expect(onRenameProject).toHaveBeenCalledWith('My Project');
+  });
+
+  it('keeps the selector open when Host switching fails', async () => {
+    const onSwitch = vi.fn().mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
+
+    await waitFor(() =>
+      expect(onSwitch).toHaveBeenCalledWith({ type: 'registration', instanceId: 'host-a' }),
+    );
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('Host switch failed')).toBeInTheDocument();
+  });
+
+  it('closes the selector after Host switching succeeds', async () => {
+    const onSwitch = vi.fn().mockResolvedValue({} as HostConnectionBootstrap);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onSwitch });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
+  it('keeps the selector open when a selected local Host cannot be connected', async () => {
+    vi.mocked(openHostDataRoot).mockResolvedValueOnce('D:\\Music\\offline-host');
+    const onSwitch = vi.fn().mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Connect to Local Host…' }));
+
+    await waitFor(() =>
+      expect(onSwitch).toHaveBeenCalledWith({
+        type: 'dataRoot',
+        dataRoot: 'D:\\Music\\offline-host',
+      }),
+    );
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {

@@ -35,6 +35,24 @@ describe('App native boundary', () => {
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('shows a Bootstrap failure and returns to the app after Retry', async () => {
+    const api = new FakeNativeApi({
+      failures: { bootstrap: new Error('Host bootstrap failed') },
+    });
+    render(<App api={api} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Host bootstrap failed'),
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+
+    api.setFailure('bootstrap', null);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
+    expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(2);
+  });
+
   it('keeps Browser and Properties mounted in the left column', async () => {
     const api = new FakeNativeApi();
     await renderApp(api);

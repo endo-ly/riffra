@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { HostConnectionState, HostTarget, LocalHostInfo, ProjectState } from '@/model/domain';
+import type { HostConnectionBootstrap } from '@/native/native-api';
 import { openHostDataRoot } from '@/native/dialog';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
@@ -10,7 +11,7 @@ interface ProjectHostSelectorProps {
   switching: boolean;
   error: string | null;
   onRefresh: () => Promise<unknown>;
-  onSwitch: (target: HostTarget) => Promise<unknown>;
+  onSwitch: (target: HostTarget) => Promise<HostConnectionBootstrap | null>;
   onReconnect: () => Promise<unknown>;
   onExportProject?: () => void;
   onImportProject?: () => void;
@@ -29,6 +30,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   const [refreshing, setRefreshing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const { onRefresh, onSwitch } = props;
 
   const hostLabel = getHostLabel(props.state, props.hosts);
   const activeProject = props.projectState?.projects.find(
@@ -72,9 +74,19 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
     void props.onRenameProject(name);
   };
 
-  const refreshSelector = () => {
+  const refreshSelector = useCallback(() => {
     setRefreshing(true);
-    void Promise.resolve(props.onRefresh()).finally(() => setRefreshing(false));
+    void Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
+  }, [onRefresh]);
+
+  useEffect(() => {
+    if (open) refreshSelector();
+  }, [open, refreshSelector]);
+
+  const switchHost = (target: HostTarget) => {
+    void onSwitch(target).then((result) => {
+      if (result) setOpen(false);
+    });
   };
 
   return (
@@ -211,10 +223,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             role="menuitem"
             className={styles.hostItem}
             disabled={props.switching || props.projectSwitching || props.state.mode === 'embedded'}
-            onClick={() => {
-              void props.onSwitch({ type: 'embedded' });
-              setOpen(false);
-            }}
+            onClick={() => switchHost({ type: 'embedded' })}
           >
             <span className={styles.hostDot} data-mode="embedded" />
             <span>
@@ -233,10 +242,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                 props.projectSwitching ||
                 host.instanceId === props.state.instanceId
               }
-              onClick={() => {
-                void props.onSwitch({ type: 'registration', instanceId: host.instanceId });
-                setOpen(false);
-              }}
+              onClick={() => switchHost({ type: 'registration', instanceId: host.instanceId })}
             >
               <span className={styles.hostDot} data-mode="attached" />
               <span>
@@ -267,10 +273,9 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             onClick={() => {
               void openHostDataRoot()
                 .then((dataRoot) => {
-                  if (dataRoot) void props.onSwitch({ type: 'dataRoot', dataRoot });
+                  if (dataRoot) switchHost({ type: 'dataRoot', dataRoot });
                 })
                 .catch(() => undefined);
-              setOpen(false);
             }}
           >
             Connect to Local Host…
