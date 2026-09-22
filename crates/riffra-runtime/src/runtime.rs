@@ -159,6 +159,13 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.projection.adopt_canonical_without_projection(key);
     }
 
+    pub(crate) fn commit_candidate_as_canonical(
+        &self,
+        key: ProjectionKey,
+    ) -> Result<(), RuntimeError> {
+        self.projection.commit_candidate_as_canonical(key)
+    }
+
     pub fn status(&self) -> RuntimeProjectionStatus {
         if let Ok(mut failure) = self.transport_failure.lock()
             && let Some(message) = failure.take()

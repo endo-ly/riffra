@@ -7,6 +7,7 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
+  ProjectActivationResult,
   ProjectState,
 } from '@/model/domain';
 import type { HostConnectionBootstrap } from '@/native/native-api';
@@ -54,8 +55,8 @@ interface GlobalControlBarProps {
   projectState: ProjectState | null;
   projectSwitching: boolean;
   projectError: string | null;
-  onCreateProject: (name?: string) => Promise<unknown>;
-  onOpenProject: (projectId: string) => Promise<unknown>;
+  onCreateProject: (name?: string) => Promise<ProjectActivationResult | null>;
+  onOpenProject: (projectId: string) => Promise<ProjectActivationResult | null>;
   onRenameProject: (name: string) => Promise<unknown>;
 }
 

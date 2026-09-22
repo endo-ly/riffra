@@ -4,7 +4,11 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultProjectState, defaultSession } from '@/native/browser-defaults';
-import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
+import {
+  NativeCommandError,
+  setHostConnectionAvailability,
+  setHostGeneration,
+} from '@/native/invoke';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { BootstrapState, ProjectActivationResult } from '@/model/domain';
 import { openProjectPackage, saveProjectPackage } from '@/native/dialog';
@@ -79,6 +83,53 @@ describe('useProject', () => {
     });
     expect(result.current.projectSwitching).toBe(false);
     expect(result.current.session?.projectName).toBe('Next');
+  });
+
+  it('does not prefix a native project switch error twice', async () => {
+    const api = new FakeNativeApi();
+    const initialBoot: BootstrapState = {
+      ...api.bootstrapState,
+      projectState: defaultProjectState(),
+    };
+    const message = 'Project opening failed: audio definition schema is unsupported.';
+    api.setFailure(
+      'openProject',
+      new NativeCommandError({
+        message,
+        details: { kind: 'projectSwitchFailed', operation: 'project.open' },
+      }),
+    );
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.openProject('01900000-0000-7000-8000-000000000002'),
+      ).resolves.toBeNull();
+    });
+
+    expect(result.current.projectError).toBe(message);
+  });
+
+  it('keeps the operation context for an ordinary native project error', async () => {
+    const api = new FakeNativeApi();
+    const initialBoot: BootstrapState = {
+      ...api.bootstrapState,
+      projectState: defaultProjectState(),
+    };
+    api.setFailure('createProject', new NativeCommandError({ message: 'disk full' }));
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+
+    await act(async () => {
+      await expect(result.current.createProject()).resolves.toBeNull();
+    });
+
+    expect(result.current.projectError).toBe('Project creation failed: disk full');
   });
 
   it('imports a package as a new active Project without replacing the existing entry', async () => {

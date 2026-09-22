@@ -1713,7 +1713,7 @@ fn runtime_unavailable(message: impl Into<String>) -> ProtocolError {
     ProtocolError::new(ErrorCode::RuntimeUnavailable, message)
 }
 
-fn runtime_error(error: RuntimeError) -> ProtocolError {
+pub(super) fn runtime_error(error: RuntimeError) -> ProtocolError {
     match error {
         RuntimeError::RuntimeUnavailable(message) => {
             ProtocolError::new(ErrorCode::RuntimeUnavailable, message).with_details(

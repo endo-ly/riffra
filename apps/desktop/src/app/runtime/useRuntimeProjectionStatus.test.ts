@@ -46,10 +46,27 @@ describe('useRuntimeProjectionStatus', () => {
 
     await waitFor(() => {
       expect(result.current.status).toEqual(failed);
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      );
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected');
     });
+  });
+
+  it('surfaces native projection preparation details', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const detail =
+      'native runtime rejected operation `timeline`: schema_version: unsupported schema_version 5, expected 6.';
+
+    act(() =>
+      api.emitRuntimeProjectionStatus(
+        status({
+          state: 'failed',
+          lastError: detail,
+          lastErrorCode: 'timeline',
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(result.current.failure).toBe(`Audio preparation failed: ${detail}`));
   });
 
   it('does not let an initial status fetch overwrite a newer event', async () => {
@@ -113,9 +130,7 @@ describe('useRuntimeProjectionStatus', () => {
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
     await waitFor(() =>
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      ),
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
     );
 
     await act(async () => {
@@ -140,9 +155,7 @@ describe('useRuntimeProjectionStatus', () => {
     const { result } = renderHook(() => useRuntimeProjectionStatus(api));
 
     await waitFor(() =>
-      expect(result.current.failure).toBe(
-        'Audio preparation failed. The previous playback state remains available.',
-      ),
+      expect(result.current.failure).toBe('Audio preparation failed: native rejected'),
     );
 
     const queued = status({ operationId: 3, targetProjectionSequence: 3 });

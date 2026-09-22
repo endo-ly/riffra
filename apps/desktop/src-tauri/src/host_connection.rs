@@ -1860,7 +1860,13 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let state = manager.state();
-            if state.mode == HostConnectionMode::Disconnected {
+            let invalidated = outlet.events().iter().any(|event| {
+                matches!(
+                    event,
+                    RecordedEvent::Invalidated { generation } if *generation == state.generation
+                )
+            });
+            if state.mode == HostConnectionMode::Disconnected && invalidated {
                 assert_eq!(
                     state.instance_id.as_deref(),
                     Some(host.identity().instance_id.as_str())
@@ -1870,10 +1876,6 @@ mod tests {
                     Some(host.data_root().to_string_lossy().as_ref())
                 );
                 assert!(state.reason.is_some());
-                assert!(outlet.events().iter().any(|event| matches!(
-                    event,
-                    RecordedEvent::Invalidated { generation } if *generation == state.generation
-                )));
                 break;
             }
             assert!(

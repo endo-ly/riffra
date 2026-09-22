@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { HostConnectionState, HostTarget, LocalHostInfo, ProjectState } from '@/model/domain';
+import type {
+  HostConnectionState,
+  HostTarget,
+  LocalHostInfo,
+  ProjectActivationResult,
+  ProjectState,
+} from '@/model/domain';
 import type { HostConnectionBootstrap } from '@/native/native-api';
 import { openHostDataRoot } from '@/native/dialog';
 import { Icon } from '@/shared/ui/primitives';
@@ -18,8 +24,8 @@ interface ProjectHostSelectorProps {
   projectState?: ProjectState | null;
   projectSwitching?: boolean;
   projectError?: string | null;
-  onCreateProject?: (name?: string) => Promise<unknown>;
-  onOpenProject?: (projectId: string) => Promise<unknown>;
+  onCreateProject?: (name?: string) => Promise<ProjectActivationResult | null>;
+  onOpenProject?: (projectId: string) => Promise<ProjectActivationResult | null>;
   onRenameProject?: (name: string) => Promise<unknown>;
 }
 
@@ -141,8 +147,14 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                       project.projectId === props.projectState?.activeProjectId
                     }
                     onClick={() => {
-                      void props.onOpenProject?.(project.projectId);
-                      setOpen(false);
+                      const operation = props.onOpenProject?.(project.projectId);
+                      if (!operation) {
+                        setOpen(false);
+                        return;
+                      }
+                      void operation.then((result) => {
+                        if (result) setOpen(false);
+                      });
                     }}
                   >
                     <span aria-hidden="true">
@@ -163,8 +175,14 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                   props.switching || props.projectSwitching || props.state.mode === 'disconnected'
                 }
                 onClick={() => {
-                  void props.onCreateProject?.();
-                  setOpen(false);
+                  const operation = props.onCreateProject?.();
+                  if (!operation) {
+                    setOpen(false);
+                    return;
+                  }
+                  void operation.then((result) => {
+                    if (result) setOpen(false);
+                  });
                 }}
               >
                 + New Project

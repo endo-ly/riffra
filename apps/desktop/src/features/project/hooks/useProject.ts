@@ -15,6 +15,7 @@ import {
   getHostGeneration,
   isNativeRuntime,
   logNativeError,
+  NativeCommandError,
 } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
@@ -250,7 +251,10 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
           getProjectEpoch() !== projectEpochAtRequest
         )
           return null;
-        const message = `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+        const message =
+          error instanceof NativeCommandError && error.isProjectSwitchFailure
+            ? error.message
+            : `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
         setProjectError(message);
         return null;
       } finally {
