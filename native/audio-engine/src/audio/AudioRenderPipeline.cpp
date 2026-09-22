@@ -97,11 +97,11 @@ int AudioRenderPipeline::getBlockSize() const noexcept {
     return activeBlockSize.load(std::memory_order_acquire);
 }
 
-bool AudioRenderPipeline::startBuiltInPreview(const juce::String& definitionJson,
-                                              const juce::String& definitionBaseDir,
-                                              InstrumentPreviewSpec spec, juce::String& error) {
-    return previewEngine.startBuiltInPreview(definitionJson, definitionBaseDir, std::move(spec),
-                                             getSampleRate(), getBlockSize(), error);
+bool AudioRenderPipeline::startInstrumentPreview(const juce::String& definitionJson,
+                                                 const juce::String& definitionBaseDir,
+                                                 InstrumentPreviewSpec spec, juce::String& error) {
+    return previewEngine.startInstrumentPreview(definitionJson, definitionBaseDir, std::move(spec),
+                                                getSampleRate(), getBlockSize(), error);
 }
 
 void AudioRenderPipeline::silenceAndCommit(float* const* outputChannelData,

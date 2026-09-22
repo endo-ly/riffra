@@ -1,6 +1,9 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
+use crate::instrument::{
+    BuiltInInstrumentCatalog, InstrumentPreviewDefinition, UserInstrumentStore,
+};
 
 impl HostState {
     fn response(
@@ -960,22 +963,19 @@ impl HostState {
                     return Err(runtime_unavailable("Safe Mode blocks instrument preview"));
                 }
                 let params: InstrumentPreviewParams = decode(params)?;
-                let preset_id = params
-                    .instrument_id
-                    .strip_prefix("builtin:")
-                    .filter(|preset_id| !preset_id.is_empty())
-                    .ok_or_else(|| command_error("User Instruments do not provide previews"))?;
-                let definition = self
-                    .built_in_instruments
-                    .resolve(preset_id)
-                    .map_err(command_error)?;
+                let preview = resolve_instrument_preview(
+                    &self.data_root,
+                    &self.binaries.sonalloy,
+                    self.built_in_instruments.as_ref(),
+                    &params.instrument_id,
+                )?;
                 let status = self
                     .core
                     .audio()
-                    .preview_built_in_instrument(
-                        &definition.definition_json,
-                        &definition.base_dir,
-                        &definition.summary.preview,
+                    .preview_instrument(
+                        &preview.definition_json,
+                        &preview.definition_base_dir,
+                        &preview.preview,
                     )
                     .map_err(audio_error)?;
                 Ok((
@@ -988,7 +988,7 @@ impl HostState {
                 let status = self
                     .core
                     .audio()
-                    .stop_built_in_instrument_preview()
+                    .stop_instrument_preview()
                     .map_err(audio_error)?;
                 Ok((
                     "audioStatus",
@@ -2047,6 +2047,49 @@ fn serialize_error(error: serde_json::Error) -> ProtocolError {
     command_error(error.to_string())
 }
 
+#[derive(Debug)]
+struct ResolvedInstrumentPreview {
+    definition_json: String,
+    definition_base_dir: PathBuf,
+    preview: InstrumentPreviewDefinition,
+}
+
+fn resolve_instrument_preview(
+    data_root: &std::path::Path,
+    sonalloy: &std::path::Path,
+    built_in_instruments: &BuiltInInstrumentCatalog,
+    instrument_id: &str,
+) -> Result<ResolvedInstrumentPreview, ProtocolError> {
+    if let Some(preset_id) = instrument_id.strip_prefix("builtin:") {
+        let definition = built_in_instruments
+            .resolve(preset_id)
+            .map_err(command_error)?;
+        return Ok(ResolvedInstrumentPreview {
+            definition_json: definition.definition_json.clone(),
+            definition_base_dir: definition.base_dir.clone(),
+            preview: definition.summary.preview.clone(),
+        });
+    }
+    if instrument_id.starts_with("user:") {
+        let instrument = UserInstrumentStore::new(data_root, sonalloy)
+            .resolve(instrument_id)
+            .map_err(command_error)?;
+        let preview = instrument.preview.ok_or_else(|| {
+            command_error(format!(
+                "instrument '{instrument_id}' does not have a preview"
+            ))
+        })?;
+        return Ok(ResolvedInstrumentPreview {
+            definition_json: instrument.definition_json,
+            definition_base_dir: instrument.package_root,
+            preview,
+        });
+    }
+    Err(command_error(format!(
+        "instrument preview requires a builtin: or user: instrument ID: {instrument_id}"
+    )))
+}
+
 fn requires_command_gate(command: &str) -> bool {
     command == "runtime.projection.retry"
         || crate::dispatcher::command_requires_project_id(command)
@@ -2441,6 +2484,99 @@ mod tests {
         ] {
             assert!(!super::requires_command_gate(command), "{command}");
         }
+    }
+
+    #[test]
+    fn resolves_builtin_and_user_previews_with_their_resource_base_directories() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-preview-resolution-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let builtin_root = data_root.join("built-in-instruments");
+        let builtin_package = builtin_root.join("01-bass");
+        std::fs::create_dir_all(&builtin_package).unwrap();
+        std::fs::write(builtin_package.join("definition.json"), br#"{}"#).unwrap();
+        std::fs::write(
+            builtin_root.join("manifest.json"),
+            br#"{"sourceRelease":"vtest","presets":[{"id":"01-bass","name":"Bass","author":"Riffra","description":"Low","category":"Bass","tags":["Low"],"recommendedRange":{"minMidi":36,"maxMidi":84},"preview":{"tempoBpm":120,"ticksPerBeat":480,"timeSignature":{"numerator":4,"denominator":4},"lengthTicks":1920,"notes":[{"tick":0,"durationTicks":480,"note":48,"velocity":100}]},"definitionPath":"01-bass/definition.json","resourceBasePath":"01-bass"}]}"#,
+        )
+        .unwrap();
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let user_package = data_root.join("instruments/user").join(&user_uuid);
+        std::fs::create_dir_all(&user_package).unwrap();
+        let user_definition = r#"{"metadata":{"name":"Glass Current","preview":{"tempo_bpm":100,"ticks_per_beat":480,"time_signature":{"numerator":4,"denominator":4},"length_ticks":1920,"notes":[{"tick":0,"duration_ticks":480,"note":60,"velocity":96}]}}}"#;
+        std::fs::write(user_package.join("definition.json"), user_definition).unwrap();
+        std::fs::write(
+            user_package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id.clone(),
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let sonalloy = data_root.join("sonalloy");
+        let catalog = BuiltInInstrumentCatalog::load(&builtin_root).unwrap();
+
+        let builtin =
+            resolve_instrument_preview(&data_root, &sonalloy, &catalog, "builtin:01-bass").unwrap();
+        assert_eq!(builtin.definition_base_dir, builtin_package);
+        assert_eq!(builtin.preview.tempo_bpm, 120.0);
+
+        let user = resolve_instrument_preview(&data_root, &sonalloy, &catalog, &user_id).unwrap();
+        assert_eq!(user.definition_base_dir, user_package);
+        assert_eq!(user.definition_json, user_definition);
+        assert_eq!(user.preview.tempo_bpm, 100.0);
+
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn rejects_user_preview_requests_without_a_preview() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-preview-missing-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let package = data_root.join("instruments/user").join(&user_uuid);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("definition.json"),
+            br#"{"metadata":{"name":"Haze Chord"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id.clone(),
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let sonalloy = data_root.join("sonalloy");
+        let catalog =
+            BuiltInInstrumentCatalog::load(crate::test_support::prepare_built_in_resource_root(
+                &data_root.join("built-in-instruments"),
+            ))
+            .unwrap();
+
+        let error =
+            resolve_instrument_preview(&data_root, &sonalloy, &catalog, &user_id).unwrap_err();
+        assert!(error.message.contains(&user_id));
+        assert!(error.message.contains("does not have a preview"));
+
+        let _ = std::fs::remove_dir_all(data_root);
     }
 
     #[test]

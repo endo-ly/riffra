@@ -421,22 +421,23 @@ fn read_user_item_with_preferences(
     user_tags: Vec<String>,
     collection_ids: Vec<i64>,
 ) -> InstrumentLibraryItem {
+    let tags = merge_tags(&instrument.tags, &user_tags);
     InstrumentLibraryItem {
         id: instrument.manifest.instrument_id,
         preset_id: None,
         origin: InstrumentOrigin::User,
-        name: instrument.manifest.name,
-        author: instrument.manifest.author,
-        description: instrument.manifest.description,
-        default_category: None,
-        category: category_override,
-        default_tags: Vec::new(),
-        tags: user_tags.clone(),
+        name: instrument.name,
+        author: instrument.author,
+        description: instrument.description,
+        default_category: instrument.category.clone(),
+        category: category_override.or(instrument.category),
+        default_tags: instrument.tags.clone(),
+        tags,
         user_tags,
         favorite,
         collection_ids,
-        recommended_range: None,
-        preview: None,
+        recommended_range: instrument.recommended_range,
+        preview: instrument.preview,
     }
 }
 
@@ -716,15 +717,16 @@ mod tests {
         let instrument_id = format!("user:{uuid}");
         let package = root.0.join("instruments/user").join(&uuid);
         fs::create_dir_all(&package).unwrap();
-        fs::write(package.join("definition.json"), r#"{"schemaVersion":1}"#).unwrap();
+        fs::write(
+            package.join("definition.json"),
+            r#"{"metadata":{"name":"User Piano","author":"Composer","description":"A user package","category":"Keys","tags":["warm"],"recommended_range":{"min_midi":36,"max_midi":96},"preview":{"tempo_bpm":100,"ticks_per_beat":480,"time_signature":{"numerator":4,"denominator":4},"length_ticks":1920,"notes":[{"tick":0,"duration_ticks":480,"note":48,"velocity":100}]}}}"#,
+        )
+        .unwrap();
         fs::write(
             package.join(".riffra-instrument.json"),
             serde_json::to_vec(&crate::instrument::UserInstrumentManifest {
                 format_version: 1,
                 instrument_id: instrument_id.clone(),
-                name: "User Piano".into(),
-                author: Some("Composer".into()),
-                description: Some("A user package".into()),
                 definition_path: "definition.json".into(),
                 created_at_ms: 1,
                 updated_at_ms: 1,
@@ -737,11 +739,16 @@ mod tests {
         let user = listed.iter().find(|item| item.id == instrument_id).unwrap();
         assert_eq!(user.origin, InstrumentOrigin::User);
         assert_eq!(user.name, "User Piano");
-        assert!(user.preview.is_none());
+        assert_eq!(user.author.as_deref(), Some("Composer"));
+        assert_eq!(user.default_category.as_deref(), Some("Keys"));
+        assert_eq!(user.default_tags, ["warm"]);
+        assert_eq!(user.recommended_range.as_ref().unwrap().min_midi, 36);
+        assert_eq!(user.recommended_range.as_ref().unwrap().max_midi, 96);
+        assert_eq!(user.preview.as_ref().unwrap().tempo_bpm, 100.0);
 
         set_favorite(&root.0, &catalog, &instrument_id, true).unwrap();
         set_category_override(&root.0, &catalog, &instrument_id, Some("Keys".into())).unwrap();
-        set_user_tags(&root.0, &catalog, &instrument_id, vec!["Warm".into()]).unwrap();
+        set_user_tags(&root.0, &catalog, &instrument_id, vec!["Cool".into()]).unwrap();
         let collection = create_collection(&root.0, "My Instruments".into()).unwrap();
         set_collection_membership(&root.0, &catalog, collection.id, &instrument_id, true).unwrap();
 
@@ -752,8 +759,8 @@ mod tests {
             .unwrap();
         assert!(user.favorite);
         assert_eq!(user.category.as_deref(), Some("Keys"));
-        assert_eq!(user.user_tags, ["Warm"]);
+        assert_eq!(user.user_tags, ["Cool"]);
         assert_eq!(user.collection_ids, [collection.id]);
-        assert_eq!(user.tags, ["Warm"]);
+        assert_eq!(user.tags, ["warm", "Cool"]);
     }
 }

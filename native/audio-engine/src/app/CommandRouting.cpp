@@ -30,9 +30,8 @@ constexpr std::array<std::string_view, 5> kMidiCommands{"enableMidiListening",
                                                         "sendTrackMidi", "panicTrackMidi"};
 constexpr std::array<std::string_view, 1> kTrackMixCommands{"setTrackMix"};
 constexpr std::array<std::string_view, 7> kPreviewCommands{
-    "startTakeComparison", "switchTakeComparisonVariant", "stopTakeComparison",
-    "previewSample",       "previewBuiltInInstrument",    "stopBuiltInInstrumentPreview",
-    "stopPreview"};
+    "startTakeComparison", "switchTakeComparisonVariant", "stopTakeComparison", "previewSample",
+    "previewInstrument",   "stopInstrumentPreview",       "stopPreview"};
 constexpr std::array<std::string_view, 2> kDeviceCommands{"recoverAudioDevice", "setAudioDriver"};
 constexpr std::array<std::string_view, 2> kRecordingCommands{"startArrangeRecording",
                                                              "stopArrangeRecording"};

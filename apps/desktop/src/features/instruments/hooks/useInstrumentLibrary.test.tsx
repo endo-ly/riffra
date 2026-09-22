@@ -24,7 +24,7 @@ describe('useInstrumentLibrary', () => {
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.items).toHaveLength(3);
+    expect(result.current.items).toHaveLength(5);
 
     await act(async () => {
       await result.current.toggleFavorite(result.current.items[0]);
@@ -39,7 +39,10 @@ describe('useInstrumentLibrary', () => {
         favoritesOnly: false,
       });
     });
-    expect(result.current.visibleItems.map((item) => item.name)).toEqual(['Warm Poly Pad']);
+    expect(result.current.visibleItems.map((item) => item.name)).toEqual([
+      'Warm Poly Pad',
+      'Glass Current',
+    ]);
 
     rerender({ query: 'drums', hostGeneration: 1 });
     expect(result.current.visibleItems.map((item) => item.name)).toEqual([]);
@@ -63,7 +66,7 @@ describe('useInstrumentLibrary', () => {
     await act(async () => {
       await result.current.preview(result.current.items[0]);
     });
-    expect(api.calls).not.toContain('previewBuiltInInstrument');
+    expect(api.calls).not.toContain('previewInstrument');
 
     rerender({ hostGeneration: 2, safeMode: false });
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -74,6 +77,34 @@ describe('useInstrumentLibrary', () => {
       collectionId: null,
       favoritesOnly: false,
     });
+  });
+
+  it('previews a user instrument only when its definition includes a preview', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useLibraryHarness(api));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const previewable = result.current.items.find(
+      (item) => item.origin === 'user' && item.preview !== null,
+    );
+    const unavailable = result.current.items.find(
+      (item) => item.origin === 'user' && item.preview === null,
+    );
+    expect(previewable).toBeDefined();
+    expect(unavailable).toBeDefined();
+
+    await act(async () => {
+      await result.current.preview(previewable!);
+    });
+    expect(api.calls).toContain('previewInstrument');
+    expect(result.current.previewingId).toBe(previewable!.id);
+
+    const previewCalls = api.calls.filter((call) => call === 'previewInstrument');
+    await act(async () => {
+      await result.current.preview(unavailable!);
+    });
+    expect(api.calls.filter((call) => call === 'previewInstrument')).toEqual(previewCalls);
+    expect(result.current.previewingId).toBe(previewable!.id);
   });
 
   it('clears the preview state when native playback finishes naturally', async () => {
@@ -87,7 +118,7 @@ describe('useInstrumentLibrary', () => {
     expect(result.current.previewingId).toBe(result.current.items[0].id);
 
     act(() => {
-      api.emitAudioStatus({ ...api.audio, previewing: true, builtInPreviewing: false });
+      api.emitAudioStatus({ ...api.audio, previewing: true, instrumentPreviewing: false });
     });
 
     await waitFor(() => expect(result.current.previewingId).toBeNull());
@@ -111,29 +142,29 @@ describe('useInstrumentLibrary', () => {
     const pendingStart = new Promise<AudioStatus>((resolve) => {
       resolveStart = resolve;
     });
-    api.setResponse('previewBuiltInInstrument', () => pendingStart);
+    api.setResponse('previewInstrument', () => pendingStart);
 
     let request: Promise<void> | undefined;
     act(() => {
       request = result.current.preview(second);
     });
     await waitFor(() => {
-      expect(api.calls.filter((call) => call === 'previewBuiltInInstrument')).toHaveLength(2);
+      expect(api.calls.filter((call) => call === 'previewInstrument')).toHaveLength(2);
       expect(result.current.previewPendingId).toBe(second.id);
     });
 
     await act(async () => {
       await result.current.preview(second);
     });
-    expect(api.calls.filter((call) => call === 'previewBuiltInInstrument')).toHaveLength(2);
+    expect(api.calls.filter((call) => call === 'previewInstrument')).toHaveLength(2);
 
     act(() => {
-      api.emitAudioStatus({ ...api.audio, previewing: true, builtInPreviewing: false });
+      api.emitAudioStatus({ ...api.audio, previewing: true, instrumentPreviewing: false });
     });
     expect(result.current.previewingId).toBe(first.id);
 
     act(() => {
-      resolveStart({ ...api.audio, previewing: true, builtInPreviewing: true });
+      resolveStart({ ...api.audio, previewing: true, instrumentPreviewing: true });
     });
     await act(async () => {
       await request;
@@ -154,13 +185,13 @@ describe('useInstrumentLibrary', () => {
     await act(async () => {
       await result.current.preview(first);
     });
-    api.setResponse('previewBuiltInInstrument', () =>
+    api.setResponse('previewInstrument', () =>
       Promise.resolve(
         fakeAudioStatus({
           previewing: true,
-          builtInPreviewing: true,
+          instrumentPreviewing: true,
           message:
-            'Preview built-in instrument failed: replacement preview failed. Audio state was not changed. Saved data is safe.',
+            'Preview instrument failed: replacement preview failed. Audio state was not changed. Saved data is safe.',
         }),
       ),
     );

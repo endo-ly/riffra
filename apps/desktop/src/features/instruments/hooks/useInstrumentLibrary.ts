@@ -18,7 +18,7 @@ interface UseInstrumentLibraryOptions {
 }
 
 type InstrumentLibraryFeatureApi = InstrumentLibraryApi &
-  Pick<AudioApi, 'previewBuiltInInstrument' | 'stopBuiltInInstrumentPreview'> &
+  Pick<AudioApi, 'previewInstrument' | 'stopInstrumentPreview'> &
   Pick<NativeEventApi, 'onAudioStatus'>;
 
 /** Owns the shared instrument Browser state and its persisted preferences. */
@@ -36,8 +36,8 @@ export function useInstrumentLibrary(
     renameInstrumentCollection,
     deleteInstrumentCollection,
     setInstrumentCollectionMembership,
-    previewBuiltInInstrument,
-    stopBuiltInInstrumentPreview,
+    previewInstrument,
+    stopInstrumentPreview,
   } = api;
   const [items, setItems] = useState<InstrumentLibraryItem[]>([]);
   const [collections, setCollections] = useState<InstrumentCollection[]>([]);
@@ -53,7 +53,7 @@ export function useInstrumentLibrary(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const currentHostGeneration = useRef(hostGeneration);
-  const nativeBuiltInPreviewing = useRef(false);
+  const nativeInstrumentPreviewing = useRef(false);
   const previewPendingIdRef = useRef<string | null>(null);
   const previewRequestRef = useRef(0);
   currentHostGeneration.current = hostGeneration;
@@ -105,16 +105,16 @@ export function useInstrumentLibrary(
   }, [hostGeneration, reload]);
 
   useEffect(() => {
-    nativeBuiltInPreviewing.current = false;
+    nativeInstrumentPreviewing.current = false;
     const requestGeneration = hostGeneration;
     return api.onAudioStatus((status) => {
       if (currentHostGeneration.current !== requestGeneration) return;
-      if (status.builtInPreviewing) {
-        nativeBuiltInPreviewing.current = true;
+      if (status.instrumentPreviewing) {
+        nativeInstrumentPreviewing.current = true;
         return;
       }
-      if (!nativeBuiltInPreviewing.current) return;
-      nativeBuiltInPreviewing.current = false;
+      if (!nativeInstrumentPreviewing.current) return;
+      nativeInstrumentPreviewing.current = false;
       if (previewPendingIdRef.current !== null) return;
       setPreviewingId(null);
     });
@@ -235,7 +235,7 @@ export function useInstrumentLibrary(
   const preview = useCallback(
     async (item: InstrumentLibraryItem) => {
       if (safeMode) return;
-      if (item.origin !== 'builtIn' || item.preview === null) return;
+      if (item.preview === null) return;
       if (previewPendingIdRef.current !== null) return;
       const requestGeneration = hostGeneration;
       const requestId = ++previewRequestRef.current;
@@ -247,14 +247,14 @@ export function useInstrumentLibrary(
 
       if (previewingId === item.id) {
         try {
-          const next = await stopBuiltInInstrumentPreview();
+          const next = await stopInstrumentPreview();
           if (isCurrentRequest()) {
-            nativeBuiltInPreviewing.current = next.builtInPreviewing;
-            setPreviewingId(next.builtInPreviewing ? item.id : null);
+            nativeInstrumentPreviewing.current = next.instrumentPreviewing;
+            setPreviewingId(next.instrumentPreviewing ? item.id : null);
             setAudio(next);
           }
         } catch (cause) {
-          if (isCurrentRequest()) logNativeError('stopBuiltInInstrumentPreview')(cause);
+          if (isCurrentRequest()) logNativeError('stopInstrumentPreview')(cause);
         } finally {
           if (isCurrentRequest()) {
             previewPendingIdRef.current = null;
@@ -264,13 +264,13 @@ export function useInstrumentLibrary(
         return;
       }
       try {
-        const next = await previewBuiltInInstrument(item.id);
+        const next = await previewInstrument(item.id);
         if (isCurrentRequest()) {
-          nativeBuiltInPreviewing.current = next.builtInPreviewing;
+          nativeInstrumentPreviewing.current = next.instrumentPreviewing;
           if (!audioCommandSucceeded(next)) {
-            if (!next.builtInPreviewing) setPreviewingId(null);
+            if (!next.instrumentPreviewing) setPreviewingId(null);
             setError(next.message);
-          } else if (next.builtInPreviewing) {
+          } else if (next.instrumentPreviewing) {
             setPreviewingId(item.id);
           } else {
             setPreviewingId(null);
@@ -279,9 +279,9 @@ export function useInstrumentLibrary(
         }
       } catch (cause) {
         if (isCurrentRequest()) {
-          if (!nativeBuiltInPreviewing.current) setPreviewingId(null);
+          if (!nativeInstrumentPreviewing.current) setPreviewingId(null);
           setError(cause instanceof Error ? cause.message : String(cause));
-          logNativeError('previewBuiltInInstrument')(cause);
+          logNativeError('previewInstrument')(cause);
         }
       } finally {
         if (isCurrentRequest()) {
@@ -290,14 +290,7 @@ export function useInstrumentLibrary(
         }
       }
     },
-    [
-      hostGeneration,
-      previewBuiltInInstrument,
-      previewingId,
-      safeMode,
-      setAudio,
-      stopBuiltInInstrumentPreview,
-    ],
+    [hostGeneration, previewInstrument, previewingId, safeMode, setAudio, stopInstrumentPreview],
   );
 
   const selected = items.find((item) => item.id === selectedId) ?? null;

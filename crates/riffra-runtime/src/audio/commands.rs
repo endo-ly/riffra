@@ -439,7 +439,7 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn preview_built_in_instrument(
+    pub fn preview_instrument(
         &self,
         definition_json: &str,
         definition_base_dir: &Path,
@@ -447,12 +447,12 @@ impl AudioSupervisor {
     ) -> NativeAudioResult<AudioStatus> {
         self.send_command(
             serde_json::json!({
-                "type": "previewBuiltInInstrument",
+                "type": "previewInstrument",
                 "definitionJson": definition_json,
                 "definitionBaseDir": definition_base_dir.to_string_lossy(),
                 "preview": preview,
             }),
-            "Built-in instrument preview started through the realtime runtime.",
+            "Instrument preview started through the realtime runtime.",
         )
     }
 
@@ -463,10 +463,10 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn stop_built_in_instrument_preview(&self) -> NativeAudioResult<AudioStatus> {
+    pub fn stop_instrument_preview(&self) -> NativeAudioResult<AudioStatus> {
         self.send_command(
-            serde_json::json!({"type": "stopBuiltInInstrumentPreview"}),
-            "Built-in instrument preview stopped; other previews remain active.",
+            serde_json::json!({"type": "stopInstrumentPreview"}),
+            "Instrument preview stopped; other previews remain active.",
         )
     }
 

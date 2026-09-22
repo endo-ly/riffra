@@ -51,7 +51,7 @@ TEST(InstrumentPreviewSessionTest, CalculatesBarPositionForCompoundMeters) {
     EXPECT_NEAR(barPosition, 1.0, 1.0e-12);
 }
 
-TEST(InstrumentPreviewSessionTest, RendersPreparedBuiltInNoteEvents) {
+TEST(InstrumentPreviewSessionTest, RendersPreparedInstrumentNoteEvents) {
     const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
@@ -133,7 +133,7 @@ TEST(InstrumentPreviewSessionTest, RejectsInvalidPreviewNumeratorAndNoteOrder) {
     EXPECT_FALSE(error.isEmpty());
 }
 
-TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
+TEST(PreviewEngineTest, StopsInstrumentPreviewWithoutStoppingTakeComparison) {
     const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
@@ -144,10 +144,10 @@ TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
     ASSERT_TRUE(
         engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, true, error, 1))
         << error.toStdString();
-    ASSERT_TRUE(engine.startBuiltInPreview(definition.loadFileAsString(), preset.getFullPathName(),
-                                           makeSpec(), 48'000.0, 256, error))
+    ASSERT_TRUE(engine.startInstrumentPreview(
+        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
         << error.toStdString();
-    EXPECT_TRUE(engine.isBuiltInPreviewing());
+    EXPECT_TRUE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
 
     juce::AudioBuffer<float> output(2, 256);
@@ -156,9 +156,9 @@ TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
                               output.getNumSamples(), 48'000.0));
     EXPECT_GT(maximumMagnitude(output), 0.0f);
 
-    engine.stopBuiltInPreview();
+    engine.stopInstrumentPreview();
 
-    EXPECT_FALSE(engine.isBuiltInPreviewing());
+    EXPECT_FALSE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
     output.clear();
     ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
@@ -172,7 +172,7 @@ TEST(PreviewEngineTest, StopsBuiltInPreviewWithoutStoppingTakeComparison) {
     EXPECT_FALSE(engine.isPreviewing());
 }
 
-TEST(PreviewEngineTest, NaturalBuiltInPreviewFinishLeavesTakeComparisonActive) {
+TEST(PreviewEngineTest, NaturalInstrumentPreviewFinishLeavesTakeComparisonActive) {
     const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
@@ -183,23 +183,23 @@ TEST(PreviewEngineTest, NaturalBuiltInPreviewFinishLeavesTakeComparisonActive) {
     ASSERT_TRUE(
         engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, true, error, 1))
         << error.toStdString();
-    ASSERT_TRUE(engine.startBuiltInPreview(definition.loadFileAsString(), preset.getFullPathName(),
-                                           makeSpec(), 48'000.0, 256, error))
+    ASSERT_TRUE(engine.startInstrumentPreview(
+        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
         << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
-    for (int block = 0; block < 4096 && engine.isBuiltInPreviewing(); ++block) {
+    for (int block = 0; block < 4096 && engine.isInstrumentPreviewing(); ++block) {
         output.clear();
         ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
                                   output.getNumSamples(), 48'000.0));
     }
 
-    EXPECT_FALSE(engine.isBuiltInPreviewing());
+    EXPECT_FALSE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
     engine.stopPreview();
 }
 
-TEST(PreviewEngineTest, BuiltInPreviewLeavesTakeComparisonVoiceIndependent) {
+TEST(PreviewEngineTest, InstrumentPreviewLeavesTakeComparisonVoiceIndependent) {
     const auto preset = test::builtInPresetDirectory("BASS-001");
     const auto definition = preset.getChildFile("definition.json");
     ASSERT_TRUE(definition.existsAsFile());
@@ -210,13 +210,13 @@ TEST(PreviewEngineTest, BuiltInPreviewLeavesTakeComparisonVoiceIndependent) {
     ASSERT_TRUE(
         engine.startPreview(comparison, 0, comparison.getNumSamples(), 1.0f, false, error, 1))
         << error.toStdString();
-    ASSERT_TRUE(engine.startBuiltInPreview(definition.loadFileAsString(), preset.getFullPathName(),
-                                           makeSpec(), 48'000.0, 256, error))
+    ASSERT_TRUE(engine.startInstrumentPreview(
+        definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
         << error.toStdString();
-    EXPECT_TRUE(engine.isBuiltInPreviewing());
+    EXPECT_TRUE(engine.isInstrumentPreviewing());
 
     engine.stopPreviewForKey(1);
-    EXPECT_TRUE(engine.isBuiltInPreviewing());
+    EXPECT_TRUE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
 
     engine.stopPreview();

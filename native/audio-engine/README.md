@@ -118,7 +118,7 @@ native/audio-engine/
 | デバイス・安全        | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
 | トラック / プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |
 | 録音                  | `startArrangeRecording`、`stopArrangeRecording`                                                                                   |
-| プレビュー            | `previewSample`、`previewBuiltInInstrument`、`stopPreview`、`stopPreviewForKey`                                                   |
+| プレビュー            | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`stopPreviewForKey`                                 |
 | テイク比較            | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                        |
 | MIDI                  | `enableMidiListening`、`disableMidiListening`、`sendTrackMidi`、`panicTrackMidi`                                                  |
 

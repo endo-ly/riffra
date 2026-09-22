@@ -34,7 +34,7 @@ PreviewEngine::~PreviewEngine() = default;
 PreviewEngine::PreviewControlGuard::PreviewControlGuard(PreviewEngine& ownerIn) noexcept
     : owner(ownerIn) {
     while (owner.previewBusy.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
-    owner.retireFinishedBuiltInState();
+    owner.retireFinishedInstrumentState();
     owner.cleanupDeferredState();
 }
 
@@ -66,18 +66,18 @@ void PreviewEngine::publishState(std::unique_ptr<PreviewState> next) {
     pendingPreviewState.store(state, std::memory_order_release);
 }
 
-void PreviewEngine::retireFinishedBuiltInState() {
+void PreviewEngine::retireFinishedInstrumentState() {
     auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    if (state == nullptr || state->builtInSession == nullptr ||
-        !state->builtInSession->isFinished())
+    if (state == nullptr || state->instrumentSession == nullptr ||
+        !state->instrumentSession->isFinished())
         return;
-    const auto* session = state->builtInSession;
-    if (audioBuiltInSession.load(std::memory_order_acquire) == session ||
-        audioBuiltInPendingSession.load(std::memory_order_acquire) == session)
+    const auto* session = state->instrumentSession;
+    if (audioInstrumentSession.load(std::memory_order_acquire) == session ||
+        audioInstrumentPendingSession.load(std::memory_order_acquire) == session)
         return;
     auto next = std::make_unique<PreviewState>(*state);
-    next->builtInSession = nullptr;
-    next->builtInBuffer = nullptr;
+    next->instrumentSession = nullptr;
+    next->instrumentBuffer = nullptr;
     publishState(std::move(next));
 }
 
@@ -103,10 +103,11 @@ void PreviewEngine::cleanupDeferredState() noexcept {
     };
     const auto* pending = pendingPreviewState.load(std::memory_order_acquire);
     const auto* audio = audioPreviewState.load(std::memory_order_acquire);
-    const auto* builtIn = audioBuiltInSession.load(std::memory_order_acquire);
-    const auto* pendingBuiltIn = audioBuiltInPendingSession.load(std::memory_order_acquire);
-    const auto* builtInBuffer = audioBuiltInBuffer.load(std::memory_order_acquire);
-    const auto* pendingBuiltInBuffer = audioBuiltInPendingBuffer.load(std::memory_order_acquire);
+    const auto* instrument = audioInstrumentSession.load(std::memory_order_acquire);
+    const auto* pendingInstrument = audioInstrumentPendingSession.load(std::memory_order_acquire);
+    const auto* instrumentBuffer = audioInstrumentBuffer.load(std::memory_order_acquire);
+    const auto* pendingInstrumentBuffer =
+        audioInstrumentPendingBuffer.load(std::memory_order_acquire);
     const auto stateIsNeeded = [this, pending, audio](const PreviewState* candidate) {
         if (candidate == pending || candidate == audio) return true;
         for (const auto& state : audioVoiceStates)
@@ -138,37 +139,37 @@ void PreviewEngine::cleanupDeferredState() noexcept {
                        }),
         previewBuffers.end());
 
-    const auto sessionIsNeeded = [this, builtIn,
-                                  pendingBuiltIn](const InstrumentPreviewSession* candidate) {
-        if (candidate == builtIn || candidate == pendingBuiltIn) return true;
+    const auto sessionIsNeeded = [this, instrument,
+                                  pendingInstrument](const InstrumentPreviewSession* candidate) {
+        if (candidate == instrument || candidate == pendingInstrument) return true;
         for (const auto& state : previewStates)
-            if (state->builtInSession == candidate) return true;
+            if (state->instrumentSession == candidate) return true;
         return false;
     };
-    builtInSessions.erase(
-        std::remove_if(builtInSessions.begin(), builtInSessions.end(),
+    instrumentSessions.erase(
+        std::remove_if(instrumentSessions.begin(), instrumentSessions.end(),
                        [this, &sessionIsNeeded,
                         &shouldReclaim](const std::unique_ptr<InstrumentPreviewSession>& session) {
-                           return shouldReclaim(retiredBuiltInSessions, session.get(),
+                           return shouldReclaim(retiredInstrumentSessions, session.get(),
                                                 sessionIsNeeded(session.get()));
                        }),
-        builtInSessions.end());
+        instrumentSessions.end());
 
-    const auto builtInBufferIsNeeded =
-        [this, builtInBuffer, pendingBuiltInBuffer](const juce::AudioBuffer<float>* candidate) {
-            if (candidate == builtInBuffer || candidate == pendingBuiltInBuffer) return true;
-            for (const auto& state : previewStates)
-                if (state->builtInBuffer == candidate) return true;
-            return false;
-        };
-    builtInBuffers.erase(
-        std::remove_if(builtInBuffers.begin(), builtInBuffers.end(),
-                       [this, &builtInBufferIsNeeded,
+    const auto instrumentBufferIsNeeded = [this, instrumentBuffer, pendingInstrumentBuffer](
+                                              const juce::AudioBuffer<float>* candidate) {
+        if (candidate == instrumentBuffer || candidate == pendingInstrumentBuffer) return true;
+        for (const auto& state : previewStates)
+            if (state->instrumentBuffer == candidate) return true;
+        return false;
+    };
+    instrumentBuffers.erase(
+        std::remove_if(instrumentBuffers.begin(), instrumentBuffers.end(),
+                       [this, &instrumentBufferIsNeeded,
                         &shouldReclaim](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
-                           return shouldReclaim(retiredBuiltInBuffers, buffer.get(),
-                                                builtInBufferIsNeeded(buffer.get()));
+                           return shouldReclaim(retiredInstrumentBuffers, buffer.get(),
+                                                instrumentBufferIsNeeded(buffer.get()));
                        }),
-        builtInBuffers.end());
+        instrumentBuffers.end());
 }
 
 bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int startSample,
@@ -189,9 +190,9 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
     auto next =
         std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
     if (voiceKey < 0) {
-        next->builtInSession = nullptr;
-        next->builtInBuffer = nullptr;
-        builtInStopRequested.store(true, std::memory_order_release);
+        next->instrumentSession = nullptr;
+        next->instrumentBuffer = nullptr;
+        instrumentStopRequested.store(true, std::memory_order_release);
     }
 
     std::size_t targetIndex = kPreviewVoiceCount;
@@ -237,10 +238,10 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
     return true;
 }
 
-bool PreviewEngine::startBuiltInPreview(const juce::String& definitionJson,
-                                        const juce::String& definitionBaseDir,
-                                        InstrumentPreviewSpec spec, const double sampleRate,
-                                        const int blockSize, juce::String& error) {
+bool PreviewEngine::startInstrumentPreview(const juce::String& definitionJson,
+                                           const juce::String& definitionBaseDir,
+                                           InstrumentPreviewSpec spec, const double sampleRate,
+                                           const int blockSize, juce::String& error) {
     auto session = InstrumentPreviewSession::create(definitionJson, definitionBaseDir,
                                                     std::move(spec), sampleRate, blockSize, error);
     if (session == nullptr) return false;
@@ -256,25 +257,25 @@ bool PreviewEngine::startBuiltInPreview(const juce::String& definitionJson,
         voice.loop = false;
         voice.revision = ++previewSequence;
     }
-    builtInSessions.push_back(std::move(session));
-    auto builtInBuffer = std::make_unique<juce::AudioBuffer<float>>();
-    builtInBuffer->setSize(2, std::max(1, blockSize), false, true, true);
-    auto* builtInBufferPtr = builtInBuffer.get();
-    builtInBuffers.push_back(std::move(builtInBuffer));
-    next->builtInSession = builtInSessions.back().get();
-    next->builtInBuffer = builtInBufferPtr;
-    builtInStopRequested.store(false, std::memory_order_release);
+    instrumentSessions.push_back(std::move(session));
+    auto instrumentBuffer = std::make_unique<juce::AudioBuffer<float>>();
+    instrumentBuffer->setSize(2, std::max(1, blockSize), false, true, true);
+    auto* instrumentBufferPtr = instrumentBuffer.get();
+    instrumentBuffers.push_back(std::move(instrumentBuffer));
+    next->instrumentSession = instrumentSessions.back().get();
+    next->instrumentBuffer = instrumentBufferPtr;
+    instrumentStopRequested.store(false, std::memory_order_release);
     publishState(std::move(next));
     return true;
 }
 
-void PreviewEngine::stopBuiltInPreview() noexcept {
+void PreviewEngine::stopInstrumentPreview() noexcept {
     const PreviewControlGuard lock(*this);
     auto next =
         std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
-    next->builtInSession = nullptr;
-    next->builtInBuffer = nullptr;
-    builtInStopRequested.store(true, std::memory_order_release);
+    next->instrumentSession = nullptr;
+    next->instrumentBuffer = nullptr;
+    instrumentStopRequested.store(true, std::memory_order_release);
     publishState(std::move(next));
 }
 
@@ -282,8 +283,8 @@ void PreviewEngine::stopPreview() noexcept {
     const PreviewControlGuard lock(*this);
     auto next =
         std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
-    next->builtInSession = nullptr;
-    next->builtInBuffer = nullptr;
+    next->instrumentSession = nullptr;
+    next->instrumentBuffer = nullptr;
     for (auto& voice : next->voices) {
         voice.active = false;
         voice.key = -1;
@@ -291,7 +292,7 @@ void PreviewEngine::stopPreview() noexcept {
         voice.loop = false;
         voice.revision = ++previewSequence;
     }
-    builtInStopRequested.store(true, std::memory_order_release);
+    instrumentStopRequested.store(true, std::memory_order_release);
     publishState(std::move(next));
 }
 
@@ -386,17 +387,17 @@ void PreviewEngine::stopSynthNote(const int note) noexcept {
 
 void PreviewEngine::allNotesOff() noexcept {
     const PreviewControlGuard lock(*this);
-    if (pendingPreviewState.load(std::memory_order_acquire)->builtInSession != nullptr)
-        builtInStopRequested.store(true, std::memory_order_release);
+    if (pendingPreviewState.load(std::memory_order_acquire)->instrumentSession != nullptr)
+        instrumentStopRequested.store(true, std::memory_order_release);
     for (auto& control : synthControl) control.releasing.store(true, std::memory_order_release);
 }
 
 bool PreviewEngine::isPreviewing() const noexcept {
     const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
     const auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    if (state != nullptr && state->builtInSession != nullptr &&
-        !state->builtInSession->isFinished() &&
-        !builtInStopRequested.load(std::memory_order_acquire))
+    if (state != nullptr && state->instrumentSession != nullptr &&
+        !state->instrumentSession->isFinished() &&
+        !instrumentStopRequested.load(std::memory_order_acquire))
         return true;
     if (state != nullptr)
         for (const auto& voice : state->voices)
@@ -409,12 +410,12 @@ bool PreviewEngine::isPreviewing() const noexcept {
     return false;
 }
 
-bool PreviewEngine::isBuiltInPreviewing() const noexcept {
+bool PreviewEngine::isInstrumentPreviewing() const noexcept {
     const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
     const auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    return state != nullptr && state->builtInSession != nullptr &&
-           !state->builtInSession->isFinished() &&
-           !builtInStopRequested.load(std::memory_order_acquire);
+    return state != nullptr && state->instrumentSession != nullptr &&
+           !state->instrumentSession->isFinished() &&
+           !instrumentStopRequested.load(std::memory_order_acquire);
 }
 
 void PreviewEngine::prepare() noexcept { (void)lookupSine(0.0f); }
@@ -493,38 +494,39 @@ void PreviewEngine::applyPreviewState(PreviewState& state, const double sampleRa
             if (voice.state != VoiceState::inactive)
                 audioVoiceStates[index].store(voice.sourceState, std::memory_order_release);
         }
-        const auto desired = state.builtInSession;
-        const auto desiredBuffer = state.builtInBuffer;
-        const auto current = audioBuiltInSession.load(std::memory_order_acquire);
+        const auto desired = state.instrumentSession;
+        const auto desiredBuffer = state.instrumentBuffer;
+        const auto current = audioInstrumentSession.load(std::memory_order_acquire);
         if (desired != current) {
             if (current != nullptr) {
                 current->allNotesOff();
-                pendingBuiltInSession = desired;
-                audioBuiltInPendingSession.store(desired, std::memory_order_release);
-                audioBuiltInPendingBuffer.store(desiredBuffer, std::memory_order_release);
-                builtInFadeAnchor[0] = builtInLastOutput[0];
-                builtInFadeAnchor[1] = builtInLastOutput[1];
-                builtInState = BuiltInState::fadingOut;
-                builtInFadeStep = builtInGain / static_cast<float>(fadeFrames(sampleRate));
+                pendingInstrumentSession = desired;
+                audioInstrumentPendingSession.store(desired, std::memory_order_release);
+                audioInstrumentPendingBuffer.store(desiredBuffer, std::memory_order_release);
+                instrumentFadeAnchor[0] = instrumentLastOutput[0];
+                instrumentFadeAnchor[1] = instrumentLastOutput[1];
+                instrumentState = InstrumentState::fadingOut;
+                instrumentFadeStep = instrumentGain / static_cast<float>(fadeFrames(sampleRate));
             } else if (desired != nullptr) {
-                audioBuiltInSession.store(desired, std::memory_order_release);
-                audioBuiltInPendingSession.store(nullptr, std::memory_order_release);
-                audioBuiltInBuffer.store(desiredBuffer, std::memory_order_release);
-                audioBuiltInPendingBuffer.store(nullptr, std::memory_order_release);
-                builtInGain = 0.0f;
-                builtInFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
-                builtInState = BuiltInState::fadingIn;
+                audioInstrumentSession.store(desired, std::memory_order_release);
+                audioInstrumentPendingSession.store(nullptr, std::memory_order_release);
+                audioInstrumentBuffer.store(desiredBuffer, std::memory_order_release);
+                audioInstrumentPendingBuffer.store(nullptr, std::memory_order_release);
+                instrumentGain = 0.0f;
+                instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
+                instrumentState = InstrumentState::fadingIn;
             }
         }
     }
-    if (builtInStopRequested.exchange(false, std::memory_order_acq_rel)) {
-        if (auto* session = audioBuiltInSession.load(std::memory_order_acquire); session != nullptr)
+    if (instrumentStopRequested.exchange(false, std::memory_order_acq_rel)) {
+        if (auto* session = audioInstrumentSession.load(std::memory_order_acquire);
+            session != nullptr)
             session->allNotesOff();
-        if (audioBuiltInSession.load(std::memory_order_acquire) != nullptr) {
-            builtInFadeAnchor[0] = builtInLastOutput[0];
-            builtInFadeAnchor[1] = builtInLastOutput[1];
-            builtInState = BuiltInState::fadingOut;
-            builtInFadeStep = builtInGain / static_cast<float>(fadeFrames(sampleRate));
+        if (audioInstrumentSession.load(std::memory_order_acquire) != nullptr) {
+            instrumentFadeAnchor[0] = instrumentLastOutput[0];
+            instrumentFadeAnchor[1] = instrumentLastOutput[1];
+            instrumentState = InstrumentState::fadingOut;
+            instrumentFadeStep = instrumentGain / static_cast<float>(fadeFrames(sampleRate));
         }
     }
 }
@@ -566,24 +568,26 @@ void PreviewEngine::mixPreview(float* const* outputChannelData, const int numOut
     }
 }
 
-void PreviewEngine::mixBuiltInPreview(float* const* outputChannelData, const int numOutputChannels,
-                                      const int numSamples, const double sampleRate) noexcept {
-    auto* session = audioBuiltInSession.load(std::memory_order_acquire);
-    auto* buffer = audioBuiltInBuffer.load(std::memory_order_acquire);
+void PreviewEngine::mixInstrumentPreview(float* const* outputChannelData,
+                                         const int numOutputChannels, const int numSamples,
+                                         const double sampleRate) noexcept {
+    auto* session = audioInstrumentSession.load(std::memory_order_acquire);
+    auto* buffer = audioInstrumentBuffer.load(std::memory_order_acquire);
     if (session == nullptr || buffer == nullptr || numSamples <= 0 ||
         numSamples > buffer->getNumSamples())
         return;
     buffer->clear(0, numSamples);
     session->process(buffer->getArrayOfWritePointers(), buffer->getNumChannels(), numSamples,
                      sampleRate);
-    const auto naturalFinish = session->isFinished() && builtInState != BuiltInState::fadingOut;
-    const auto fadingOut = builtInState == BuiltInState::fadingOut;
-    const auto direction = builtInState == BuiltInState::fadingIn    ? builtInFadeStep
-                           : builtInState == BuiltInState::fadingOut ? -builtInFadeStep
-                                                                     : 0.0f;
+    const auto naturalFinish =
+        session->isFinished() && instrumentState != InstrumentState::fadingOut;
+    const auto fadingOut = instrumentState == InstrumentState::fadingOut;
+    const auto direction = instrumentState == InstrumentState::fadingIn    ? instrumentFadeStep
+                           : instrumentState == InstrumentState::fadingOut ? -instrumentFadeStep
+                                                                           : 0.0f;
     const auto endpointFrames = std::min(numSamples, fadeFrames(sampleRate));
     for (int sample = 0; sample < numSamples; ++sample) {
-        auto gain = juce::jlimit(0.0f, 1.0f, builtInGain + direction * sample);
+        auto gain = juce::jlimit(0.0f, 1.0f, instrumentGain + direction * sample);
         if (naturalFinish && sample >= numSamples - endpointFrames) {
             const auto progress = static_cast<float>(sample - (numSamples - endpointFrames)) /
                                   static_cast<float>(std::max(1, endpointFrames));
@@ -598,31 +602,35 @@ void PreviewEngine::mixBuiltInPreview(float* const* outputChannelData, const int
                 const auto progress = juce::jlimit(
                     0.0f, 1.0f,
                     static_cast<float>(sample) / static_cast<float>(fadeFrames(sampleRate)));
-                source = builtInFadeAnchor[sourceChannel] * (1.0f - progress) + source * progress;
+                source =
+                    instrumentFadeAnchor[sourceChannel] * (1.0f - progress) + source * progress;
             }
             output[sample] += source * gain;
-            builtInLastOutput[sourceChannel] = source * gain;
+            instrumentLastOutput[sourceChannel] = source * gain;
         }
     }
-    builtInGain = juce::jlimit(0.0f, 1.0f, builtInGain + direction * numSamples);
-    if (naturalFinish || (builtInState == BuiltInState::fadingOut && builtInGain <= 0.0f)) {
-        audioBuiltInSession.store(nullptr, std::memory_order_release);
-        audioBuiltInBuffer.store(nullptr, std::memory_order_release);
-        builtInState = BuiltInState::inactive;
-        builtInGain = 0.0f;
-        const auto* next = audioBuiltInPendingSession.exchange(nullptr, std::memory_order_acq_rel);
-        auto* nextBuffer = audioBuiltInPendingBuffer.exchange(nullptr, std::memory_order_acq_rel);
-        pendingBuiltInSession = nullptr;
+    instrumentGain = juce::jlimit(0.0f, 1.0f, instrumentGain + direction * numSamples);
+    if (naturalFinish ||
+        (instrumentState == InstrumentState::fadingOut && instrumentGain <= 0.0f)) {
+        audioInstrumentSession.store(nullptr, std::memory_order_release);
+        audioInstrumentBuffer.store(nullptr, std::memory_order_release);
+        instrumentState = InstrumentState::inactive;
+        instrumentGain = 0.0f;
+        const auto* next =
+            audioInstrumentPendingSession.exchange(nullptr, std::memory_order_acq_rel);
+        auto* nextBuffer =
+            audioInstrumentPendingBuffer.exchange(nullptr, std::memory_order_acq_rel);
+        pendingInstrumentSession = nullptr;
         if (next != nullptr) {
-            audioBuiltInSession.store(const_cast<InstrumentPreviewSession*>(next),
-                                      std::memory_order_release);
-            audioBuiltInBuffer.store(nextBuffer, std::memory_order_release);
-            builtInState = BuiltInState::fadingIn;
-            builtInFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
+            audioInstrumentSession.store(const_cast<InstrumentPreviewSession*>(next),
+                                         std::memory_order_release);
+            audioInstrumentBuffer.store(nextBuffer, std::memory_order_release);
+            instrumentState = InstrumentState::fadingIn;
+            instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
         }
-    } else if (builtInState == BuiltInState::fadingIn && builtInGain >= 1.0f) {
-        builtInGain = 1.0f;
-        builtInState = BuiltInState::playing;
+    } else if (instrumentState == InstrumentState::fadingIn && instrumentGain >= 1.0f) {
+        instrumentGain = 1.0f;
+        instrumentState = InstrumentState::playing;
     }
 }
 
@@ -688,7 +696,7 @@ bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputC
     const PreviewAudioGuard previewRead(*this);
     auto* state = pendingPreviewState.load(std::memory_order_acquire);
     if (state != nullptr) applyPreviewState(*state, sampleRate);
-    mixBuiltInPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
+    mixInstrumentPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixSynth(outputChannelData, numOutputChannels, numSamples, sampleRate);
     return true;
