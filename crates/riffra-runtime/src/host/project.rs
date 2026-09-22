@@ -342,10 +342,9 @@ fn project_switch_failure(
         .set_plugin_project_id(Some(previous_project_id.to_owned()));
     state.keep_plugin_persistence_project(previous_project_id);
     let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
-    let retryable = project_switch_failure_retryability(&failure);
     match apply_project_runtime_transition(state, previous_canonical, previous_project_id) {
         Ok(()) => {
-            let mut details = serde_json::json!({
+            let details = serde_json::json!({
                 "domain": "project",
                 "kind": "projectSwitchFailed",
                 "operation": operation.command(),
@@ -353,9 +352,6 @@ fn project_switch_failure(
                 "restoredProjectId": previous_project_id,
                 "cause": cause,
             });
-            if let Some(retryable) = retryable {
-                details["retryable"] = Value::Bool(retryable);
-            }
             ProtocolError::new(
                 ErrorCode::CommandFailed,
                 format!("{} failed: {}", operation.label(), failure.message),
@@ -429,31 +425,6 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
         "message": message,
         "cause": serde_json::to_value(cause).unwrap_or(Value::Null),
     }))
-}
-
-fn project_switch_failure_retryability(failure: &ProtocolError) -> Option<bool> {
-    if failure.code == ErrorCode::RuntimeUnavailable {
-        return Some(true);
-    }
-    let kind = failure
-        .details
-        .as_ref()
-        .and_then(|details| details.get("cause"))
-        .and_then(|cause| cause.get("details"))
-        .and_then(|details| details.get("kind"))
-        .and_then(Value::as_str);
-    matches!(
-        kind,
-        Some(
-            "generationChanged"
-                | "projectionTimeout"
-                | "timeout"
-                | "transportLost"
-                | "runtimeUnavailable"
-                | "process"
-        )
-    )
-    .then_some(true)
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError> {
@@ -654,27 +625,5 @@ mod tests {
         host.shutdown();
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
-    }
-
-    #[test]
-    fn project_switch_retryability_uses_the_structured_runtime_cause() {
-        let stale_definition = project_runtime_projection_error(crate::RuntimeError::Native {
-            kind: "timeline".into(),
-            message: "audio definition schema is unsupported".into(),
-            operation: "timeline.prepare".into(),
-            details: None,
-        });
-        let transient_runtime = project_runtime_projection_error(crate::RuntimeError::Native {
-            kind: "process".into(),
-            message: "audio process exited".into(),
-            operation: "timeline.prepare".into(),
-            details: None,
-        });
-
-        assert_eq!(project_switch_failure_retryability(&stale_definition), None);
-        assert_eq!(
-            project_switch_failure_retryability(&transient_runtime),
-            Some(true)
-        );
     }
 }
