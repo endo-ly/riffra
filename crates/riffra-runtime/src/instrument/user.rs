@@ -9,21 +9,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
+use super::metadata::{
+    InstrumentPreviewDefinition, InstrumentRecommendedRange, read_definition_metadata,
+};
+
 const USER_INSTRUMENTS_DIRECTORY: &str = "instruments/user";
 const PROJECT_INSTRUMENTS_DIRECTORY: &str = "project-instruments";
 const MANIFEST_FILE_NAME: &str = ".riffra-instrument.json";
 const DEFINITION_FILE_NAME: &str = "definition.json";
 const MANIFEST_FORMAT_VERSION: u32 = 1;
 
-/// Riffra-owned metadata stored beside a User Instrument package.
+/// Riffra-owned package metadata stored beside a User Instrument definition.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UserInstrumentManifest {
     pub format_version: u32,
     pub instrument_id: String,
-    pub name: String,
-    pub author: Option<String>,
-    pub description: Option<String>,
     pub definition_path: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -35,6 +36,13 @@ pub struct ResolvedUserInstrument {
     pub manifest: UserInstrumentManifest,
     pub package_root: PathBuf,
     pub definition_json: String,
+    pub name: String,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub recommended_range: Option<InstrumentRecommendedRange>,
+    pub preview: Option<InstrumentPreviewDefinition>,
 }
 
 /// A Project-owned package snapshot created while applying a User Instrument.
@@ -113,7 +121,7 @@ impl UserInstrumentStore {
         let package_root = definition_path
             .parent()
             .ok_or_else(|| "instrument definition has no package root".to_string())?;
-        let inspection = self.inspect(&definition_path)?;
+        self.inspect(&definition_path)?;
         let (instrument_id, created_at_ms) = match instrument_id {
             Some(instrument_id) => {
                 let instrument_id = normalize_user_instrument_id(instrument_id)?;
@@ -122,13 +130,13 @@ impl UserInstrumentStore {
             }
             None => (format!("user:{}", new_instance_id()), now_ms()),
         };
+        let definition_json = fs::read_to_string(&definition_path)
+            .map_err(|error| format!("user instrument definition could not be read: {error}"))?;
+        read_definition_metadata(&definition_json, &instrument_id)?;
         let destination = self.user_root().join(user_directory_name(&instrument_id)?);
         let manifest = UserInstrumentManifest {
             format_version: MANIFEST_FORMAT_VERSION,
             instrument_id: instrument_id.clone(),
-            name: inspection.name,
-            author: inspection.author,
-            description: inspection.description,
             definition_path: DEFINITION_FILE_NAME.into(),
             created_at_ms,
             updated_at_ms: now_ms(),
@@ -223,7 +231,7 @@ impl UserInstrumentStore {
         self.data_root.join(PROJECT_INSTRUMENTS_DIRECTORY)
     }
 
-    fn inspect(&self, definition_path: &Path) -> Result<InspectMetadata, String> {
+    fn inspect(&self, definition_path: &Path) -> Result<(), String> {
         if self.sonalloy.as_os_str().is_empty() {
             return Err("bundled Sonalloy binary path is not configured".into());
         }
@@ -241,6 +249,7 @@ impl UserInstrumentStore {
         report
             .metadata
             .ok_or_else(|| "Sonalloy inspect JSON did not contain metadata".into())
+            .map(|_| ())
     }
 
     fn resolve_directory(&self, package_root: &Path) -> Result<ResolvedUserInstrument, String> {
@@ -269,10 +278,18 @@ impl UserInstrumentStore {
         require_regular_file(&definition_path, "user instrument definition")?;
         let definition_json = fs::read_to_string(&definition_path)
             .map_err(|error| format!("user instrument definition could not be read: {error}"))?;
+        let metadata = read_definition_metadata(&definition_json, &manifest.instrument_id)?;
         Ok(ResolvedUserInstrument {
             manifest,
             package_root: package_root.to_path_buf(),
             definition_json,
+            name: metadata.name,
+            author: metadata.author,
+            description: metadata.description,
+            category: metadata.category,
+            tags: metadata.tags,
+            recommended_range: metadata.recommended_range,
+            preview: metadata.preview,
         })
     }
 
@@ -301,14 +318,7 @@ impl UserInstrumentStore {
 #[derive(Debug, Deserialize)]
 struct InspectReport {
     #[serde(default)]
-    metadata: Option<InspectMetadata>,
-}
-
-#[derive(Debug, Deserialize)]
-struct InspectMetadata {
-    name: String,
-    author: Option<String>,
-    description: Option<String>,
+    metadata: Option<serde_json::Value>,
 }
 
 fn read_manifest(package_root: &Path) -> Result<UserInstrumentManifest, String> {

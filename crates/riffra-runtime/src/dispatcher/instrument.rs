@@ -107,7 +107,7 @@ fn apply<A>(
             .map_err(DispatchError::CommandFailed)?;
         let instrument = match riffra_core::TrackInstrument::user_snapshot(
             device_id.clone(),
-            user.manifest.name,
+            user.name,
             params.instrument_id.clone(),
             project_snapshot.snapshot_id.clone(),
             project_snapshot.definition_json,

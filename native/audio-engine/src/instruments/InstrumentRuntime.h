@@ -19,7 +19,7 @@ struct InstrumentProcessContext final {
     bool playing = false;
 };
 
-/// Runtime interface shared by VST3 and Riffra built-in instruments.
+/// Runtime interface shared by VST3 and Riffra Sonalloy instruments.
 class InstrumentRuntime {
 public:
     virtual ~InstrumentRuntime() = default;

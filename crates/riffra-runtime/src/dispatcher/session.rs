@@ -446,7 +446,7 @@ mod tests {
         fs::create_dir_all(package.join("samples")).unwrap();
         fs::write(
             package.join("definition.json"),
-            r#"{"version":1,"sample":"samples/attack.wav"}"#,
+            r#"{"metadata":{"name":"User Piano"},"version":1,"sample":"samples/attack.wav"}"#,
         )
         .unwrap();
         fs::write(package.join("samples/attack.wav"), b"v1").unwrap();
@@ -455,9 +455,6 @@ mod tests {
             serde_json::json!({
                 "formatVersion": 1,
                 "instrumentId": user_id,
-                "name": "User Piano",
-                "author": null,
-                "description": null,
                 "definitionPath": "definition.json",
                 "createdAtMs": 1,
                 "updatedAtMs": 1
@@ -490,7 +487,7 @@ mod tests {
         );
         assert_eq!(
             first_instrument["source"]["definitionJson"],
-            r#"{"version":1,"sample":"samples/attack.wav"}"#
+            r#"{"metadata":{"name":"User Piano"},"version":1,"sample":"samples/attack.wav"}"#
         );
         let first_snapshot = first_instrument["source"]["resource"]["snapshotId"]
             .as_str()
@@ -514,7 +511,7 @@ mod tests {
 
         fs::write(
             package.join("definition.json"),
-            r#"{"version":2,"sample":"samples/attack.wav"}"#,
+            r#"{"metadata":{"name":"User Piano"},"version":2,"sample":"samples/attack.wav"}"#,
         )
         .unwrap();
         fs::write(package.join("samples/attack.wav"), b"v2").unwrap();
@@ -538,11 +535,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             tracks[0]["instrument"]["source"]["definitionJson"],
-            r#"{"version":1,"sample":"samples/attack.wav"}"#
+            r#"{"metadata":{"name":"User Piano"},"version":1,"sample":"samples/attack.wav"}"#
         );
         assert_eq!(
             tracks[1]["instrument"]["source"]["definitionJson"],
-            r#"{"version":2,"sample":"samples/attack.wav"}"#
+            r#"{"metadata":{"name":"User Piano"},"version":2,"sample":"samples/attack.wav"}"#
         );
         assert_ne!(
             tracks[0]["instrument"]["source"]["resource"]["snapshotId"],

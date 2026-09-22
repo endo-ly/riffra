@@ -13,7 +13,7 @@
 
 namespace riffra {
 
-/// Runs a compiled Riffra built-in instrument through the pinned C API.
+/// Runs a compiled Riffra Sonalloy instrument through the pinned C API.
 class SonalloyInstrumentRuntime final : public InstrumentRuntime {
 public:
     [[nodiscard]] static std::unique_ptr<SonalloyInstrumentRuntime> create(
@@ -40,7 +40,7 @@ public:
     [[nodiscard]] int latencySamples() const noexcept override;
     [[nodiscard]] int tailSamples() const noexcept override;
     void setBypassed(bool shouldBypass) noexcept override;
-    [[nodiscard]] const char* typeName() const noexcept override { return "Built-in"; }
+    [[nodiscard]] const char* typeName() const noexcept override { return "Sonalloy"; }
 
     [[nodiscard]] std::uint32_t faultCode() const noexcept override;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;

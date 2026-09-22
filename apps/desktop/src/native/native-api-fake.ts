@@ -99,7 +99,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     invalidSamples: 0,
     feedbackSuspected: false,
     previewing: false,
-    builtInPreviewing: false,
+    instrumentPreviewing: false,
     muteReasons: 0,
     diagnostics: {
       callbackCount: 0,
@@ -374,11 +374,11 @@ export class FakeNativeApi implements NativeApi {
   previewAsset(...args: Parameters<NativeApi['previewAsset']>) {
     return this.command('previewAsset', args);
   }
-  previewBuiltInInstrument(...args: Parameters<NativeApi['previewBuiltInInstrument']>) {
-    return this.command('previewBuiltInInstrument', args);
+  previewInstrument(...args: Parameters<NativeApi['previewInstrument']>) {
+    return this.command('previewInstrument', args);
   }
-  stopBuiltInInstrumentPreview(...args: Parameters<NativeApi['stopBuiltInInstrumentPreview']>) {
-    return this.command('stopBuiltInInstrumentPreview', args);
+  stopInstrumentPreview(...args: Parameters<NativeApi['stopInstrumentPreview']>) {
+    return this.command('stopInstrumentPreview', args);
   }
   stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
     return this.command('stopPreview', args);
@@ -877,16 +877,16 @@ export class FakeNativeApi implements NativeApi {
         this.replaceInstrument(updated);
         return Promise.resolve(updated);
       }
-      case 'previewBuiltInInstrument':
-        this.audio = { ...this.audio, previewing: true, builtInPreviewing: true };
+      case 'previewInstrument':
+        this.audio = { ...this.audio, previewing: true, instrumentPreviewing: true };
         this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
-      case 'stopBuiltInInstrumentPreview':
-        this.audio = { ...this.audio, builtInPreviewing: false };
+      case 'stopInstrumentPreview':
+        this.audio = { ...this.audio, instrumentPreviewing: false };
         this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'stopPreview':
-        this.audio = { ...this.audio, previewing: false, builtInPreviewing: false };
+        this.audio = { ...this.audio, previewing: false, instrumentPreviewing: false };
         this.emitAudioStatus(this.audio);
         return Promise.resolve(this.audio);
       case 'getHostConnectionState':
@@ -1257,6 +1257,46 @@ function defaultInstrumentLibraryItems(): InstrumentLibraryItem[] {
         lengthTicks: 1920,
         notes: [{ tick: 0, durationTicks: 120, note: 36, velocity: 110 }],
       },
+    },
+    {
+      id: 'user:01900000-0000-7000-8000-000000000004',
+      presetId: null,
+      origin: 'user',
+      name: 'Glass Current',
+      author: 'Composer',
+      description: 'A bright user instrument for melodic sketches.',
+      defaultCategory: 'Keys',
+      category: 'Keys',
+      defaultTags: ['glass', 'bright'],
+      userTags: [],
+      tags: ['glass', 'bright'],
+      favorite: false,
+      collectionIds: [],
+      recommendedRange: { minMidi: 48, maxMidi: 84 },
+      preview: {
+        tempoBpm: 100,
+        ticksPerBeat: 480,
+        timeSignature: { numerator: 4, denominator: 4 },
+        lengthTicks: 1920,
+        notes: [{ tick: 0, durationTicks: 480, note: 60, velocity: 96 }],
+      },
+    },
+    {
+      id: 'user:01900000-0000-7000-8000-000000000005',
+      presetId: null,
+      origin: 'user',
+      name: 'Haze Chord',
+      author: null,
+      description: 'A user instrument without a preview definition.',
+      defaultCategory: null,
+      category: null,
+      defaultTags: [],
+      userTags: [],
+      tags: [],
+      favorite: false,
+      collectionIds: [],
+      recommendedRange: null,
+      preview: null,
     },
   ];
 }

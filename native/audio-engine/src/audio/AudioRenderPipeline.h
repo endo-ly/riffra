@@ -119,10 +119,10 @@ public:
         return previewEngine.startPreview(buffer, startSample, endSample, gain, loop, error,
                                           voiceKey);
     }
-    bool startBuiltInPreview(const juce::String& definitionJson,
-                             const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
-                             juce::String& error);
-    void stopBuiltInPreview() noexcept { previewEngine.stopBuiltInPreview(); }
+    bool startInstrumentPreview(const juce::String& definitionJson,
+                                const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
+                                juce::String& error);
+    void stopInstrumentPreview() noexcept { previewEngine.stopInstrumentPreview(); }
     void stopPreview() noexcept { previewEngine.stopPreview(); }
     void stopPreviewForKey(int voiceKey) noexcept { previewEngine.stopPreviewForKey(voiceKey); }
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -134,8 +134,8 @@ public:
     }
     void stopSynthNote(int note) noexcept { previewEngine.stopSynthNote(note); }
     void allNotesOff() noexcept { previewEngine.allNotesOff(); }
-    [[nodiscard]] bool isBuiltInPreviewing() const noexcept {
-        return previewEngine.isBuiltInPreviewing();
+    [[nodiscard]] bool isInstrumentPreviewing() const noexcept {
+        return previewEngine.isInstrumentPreviewing();
     }
 
     // Audio thread only. The processing order is the contract of the engine.

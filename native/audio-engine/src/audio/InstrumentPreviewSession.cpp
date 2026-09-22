@@ -22,19 +22,19 @@ std::unique_ptr<InstrumentPreviewSession> InstrumentPreviewSession::create(
                                                    spec.lengthTicks) ||
         !instrument_preview::isValidNumerator(spec.timeSignature.numerator) ||
         !instrument_preview::isValidDenominator(spec.timeSignature.denominator)) {
-        error = "Built-in instrument preview specification is invalid.";
+        error = "Instrument preview specification is invalid.";
         return nullptr;
     }
     if (spec.notes.size() < instrument_preview::kMinimumNoteCount ||
         spec.notes.size() > instrument_preview::kMaximumNoteCount) {
-        error = "Built-in instrument preview contains an invalid number of notes.";
+        error = "Instrument preview contains an invalid number of notes.";
         return nullptr;
     }
     std::uint64_t previousTick = 0;
     bool hasPreviousTick = false;
     for (const auto& note : spec.notes) {
         if (hasPreviousTick && note.tick < previousTick) {
-            error = "Built-in instrument preview notes are not sorted by tick.";
+            error = "Instrument preview notes are not sorted by tick.";
             return nullptr;
         }
         previousTick = note.tick;
@@ -43,7 +43,7 @@ std::unique_ptr<InstrumentPreviewSession> InstrumentPreviewSession::create(
             note.tick >= spec.lengthTicks || note.tick > spec.lengthTicks - note.durationTicks ||
             note.note > instrument_preview::kMaximumMidiValue || note.velocity == 0 ||
             note.velocity > instrument_preview::kMaximumMidiValue) {
-            error = "Built-in instrument preview contains an invalid note.";
+            error = "Instrument preview contains an invalid note.";
             return nullptr;
         }
     }

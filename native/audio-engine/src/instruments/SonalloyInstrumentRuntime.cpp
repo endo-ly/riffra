@@ -63,7 +63,7 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
     const double sampleRate, const int blockSize, juce::String& error) {
     if (definitionJson.isEmpty() || definitionBaseDir.isEmpty() || !std::isfinite(sampleRate) ||
         sampleRate <= 0.0 || blockSize <= 0) {
-        error = "Built-in instrument definition or process specification is invalid.";
+        error = "Instrument definition or process specification is invalid.";
         return nullptr;
     }
     SonalloyDefinitionInfo definitionInfo{};
@@ -78,9 +78,7 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
         return nullptr;
     }
     if (!acceptsRequiredInputChannels(definitionInfo.required_input_channels)) {
-        error =
-            "This built-in instrument requires an audio input route that Riffra does not support "
-            "yet.";
+        error = "This instrument requires an audio input route that Riffra does not support yet.";
         return nullptr;
     }
 
@@ -108,18 +106,17 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
     auto runtimeResult = sonalloy_runtime_create(compiled.get(), &runtimeRaw);
     RuntimePtr runtime(runtimeRaw);
     if (runtimeResult != SONALLOY_OK || runtime == nullptr) {
-        error = "Built-in instrument runtime creation failed: " + resultName(runtimeResult) + ".";
+        error = "Instrument runtime creation failed: " + resultName(runtimeResult) + ".";
         return nullptr;
     }
     runtimeResult = sonalloy_runtime_prepare(runtime.get(), spec);
     if (runtimeResult != SONALLOY_OK) {
-        error =
-            "Built-in instrument runtime preparation failed: " + resultName(runtimeResult) + ".";
+        error = "Instrument runtime preparation failed: " + resultName(runtimeResult) + ".";
         return nullptr;
     }
     runtimeResult = sonalloy_runtime_activate(runtime.get());
     if (runtimeResult != SONALLOY_OK) {
-        error = "Built-in instrument runtime activation failed: " + resultName(runtimeResult) + ".";
+        error = "Instrument runtime activation failed: " + resultName(runtimeResult) + ".";
         return nullptr;
     }
     return std::unique_ptr<SonalloyInstrumentRuntime>(
@@ -128,8 +125,7 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
 
 juce::String SonalloyInstrumentRuntime::diagnosticsSummary(
     const SonalloyDiagnostics* const diagnostics, const SonalloyResult result) {
-    juce::String summary =
-        "Built-in instrument definition compilation failed: " + resultName(result);
+    juce::String summary = "Instrument definition compilation failed: " + resultName(result);
     if (diagnostics == nullptr) return summary + ".";
     const auto count = std::min<std::uint32_t>(sonalloy_diagnostics_count(diagnostics), 8);
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -380,7 +376,7 @@ bool SonalloyInstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) no
 bool SonalloyInstrumentRuntime::prepareTimelineMidiCapacity(const std::size_t eventCapacity,
                                                             juce::String& error) noexcept {
     if (eventCapacity <= kMaximumTimelineEventsPerBlock) return true;
-    error = "Timeline MIDI requires more events per block than the built-in instrument supports.";
+    error = "Timeline MIDI requires more events per block than the instrument supports.";
     return false;
 }
 

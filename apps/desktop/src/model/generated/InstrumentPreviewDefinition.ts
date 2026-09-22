@@ -3,6 +3,6 @@ import type { InstrumentPreviewNote } from "./InstrumentPreviewNote";
 import type { InstrumentPreviewTimeSignature } from "./InstrumentPreviewTimeSignature";
 
 /**
- * The deterministic MIDI pattern used for built-in instrument previews.
+ * The deterministic MIDI pattern used for an instrument preview.
  */
 export type InstrumentPreviewDefinition = { tempoBpm: number, ticksPerBeat: number, timeSignature: InstrumentPreviewTimeSignature, lengthTicks: number, notes: Array<InstrumentPreviewNote>, };

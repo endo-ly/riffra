@@ -1,21 +1,11 @@
+use super::metadata::{
+    InstrumentMetadata, InstrumentPreviewDefinition, InstrumentRecommendedRange,
+    validate_instrument_metadata,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-
-const MIN_PREVIEW_TEMPO_BPM: f64 = 30.0;
-const MAX_PREVIEW_TEMPO_BPM: f64 = 300.0;
-const MIN_PREVIEW_TICKS_PER_BEAT: u16 = 1;
-const MAX_PREVIEW_TICKS_PER_BEAT: u16 = 32_767;
-const MAX_PREVIEW_NUMERATOR: u8 = 32;
-const MAX_PREVIEW_DENOMINATOR: u8 = 128;
-const MIN_PREVIEW_NOTES: usize = 1;
-const MAX_PREVIEW_NOTES: usize = 32;
-const MAX_PREVIEW_DURATION_SECONDS: f64 = 10.0;
-const MAX_MIDI_NOTE: u8 = 127;
-const MAX_CATEGORY_CHARS: usize = 64;
-const MAX_TAG_COUNT: usize = 12;
-const MAX_TAG_CHARS: usize = 32;
 
 /// Metadata presented to clients for one built-in instrument.
 #[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
@@ -29,43 +19,6 @@ pub struct BuiltInInstrumentSummary {
     pub tags: Vec<String>,
     pub recommended_range: InstrumentRecommendedRange,
     pub preview: InstrumentPreviewDefinition,
-}
-
-/// The MIDI range in which an instrument is intended to be used.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentRecommendedRange {
-    pub min_midi: u8,
-    pub max_midi: u8,
-}
-
-/// The deterministic MIDI pattern used for built-in instrument previews.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentPreviewDefinition {
-    pub tempo_bpm: f64,
-    pub ticks_per_beat: u16,
-    pub time_signature: InstrumentPreviewTimeSignature,
-    pub length_ticks: u64,
-    pub notes: Vec<InstrumentPreviewNote>,
-}
-
-/// The meter used by an instrument preview.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentPreviewTimeSignature {
-    pub numerator: u8,
-    pub denominator: u8,
-}
-
-/// One MIDI note in an instrument preview.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentPreviewNote {
-    pub tick: u64,
-    pub duration_ticks: u64,
-    pub note: u8,
-    pub velocity: u8,
 }
 
 /// A resolved built-in instrument definition retained by the Host.
@@ -161,16 +114,31 @@ impl BuiltInInstrumentCatalog {
             }
             let author = normalize_optional_text(preset.author);
             let description = normalize_optional_text(preset.description);
-            validate_manifest_text(&preset.category, MAX_CATEGORY_CHARS, "category", &id)?;
-            let category = preset.category;
-            let tags = validate_tags(preset.tags, &id)?;
-            validate_summary_metadata(
-                &id,
-                &category,
-                &tags,
-                &preset.recommended_range,
-                &preset.preview,
-            )?;
+            let metadata = InstrumentMetadata {
+                name,
+                author,
+                description,
+                category: Some(preset.category),
+                tags: preset.tags,
+                recommended_range: Some(preset.recommended_range),
+                preview: Some(preset.preview),
+            };
+            validate_instrument_metadata(&id, &metadata)?;
+            if metadata.tags.is_empty() {
+                return Err(format!("built-in instrument preset '{id}' has no tags"));
+            }
+            let category = metadata
+                .category
+                .clone()
+                .expect("built-in manifest category is required");
+            let recommended_range = metadata
+                .recommended_range
+                .clone()
+                .expect("built-in manifest recommended range is required");
+            let preview = metadata
+                .preview
+                .clone()
+                .expect("built-in manifest preview is required");
             let definition_path =
                 resolve_bundle_path(&root, &preset.definition_path, "definitionPath")?;
             let base_dir =
@@ -198,13 +166,13 @@ impl BuiltInInstrumentCatalog {
                 BuiltInInstrumentDefinition {
                     summary: BuiltInInstrumentSummary {
                         id,
-                        name,
-                        author,
-                        description,
+                        name: metadata.name,
+                        author: metadata.author,
+                        description: metadata.description,
                         category,
-                        tags,
-                        recommended_range: preset.recommended_range,
-                        preview: preset.preview,
+                        tags: metadata.tags,
+                        recommended_range,
+                        preview,
                     },
                     definition_json,
                     base_dir,
@@ -252,133 +220,6 @@ impl BuiltInInstrumentCatalog {
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_owned()))
-}
-
-fn validate_manifest_text(
-    value: &str,
-    maximum_chars: usize,
-    field: &str,
-    id: &str,
-) -> Result<(), String> {
-    if value.is_empty()
-        || value.trim() != value
-        || value.chars().count() > maximum_chars
-        || value.chars().any(|character| character.is_control())
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid {field}"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_tags(tags: Vec<String>, id: &str) -> Result<Vec<String>, String> {
-    if tags.is_empty() {
-        return Err(format!("built-in instrument preset '{id}' has no tags"));
-    }
-    if tags.len() > MAX_TAG_COUNT {
-        return Err(format!(
-            "built-in instrument preset '{id}' has too many tags"
-        ));
-    }
-    let mut seen = BTreeSet::new();
-    for tag in &tags {
-        validate_manifest_text(tag, MAX_TAG_CHARS, "tag", id)?;
-        if !seen.insert(tag.to_ascii_lowercase()) {
-            return Err(format!(
-                "built-in instrument preset '{id}' has duplicate tags"
-            ));
-        }
-    }
-    Ok(tags)
-}
-
-fn validate_summary_metadata(
-    id: &str,
-    category: &str,
-    tags: &[String],
-    range: &InstrumentRecommendedRange,
-    preview: &InstrumentPreviewDefinition,
-) -> Result<(), String> {
-    if category.is_empty() {
-        return Err(format!("built-in instrument preset '{id}' has no category"));
-    }
-    if tags.is_empty() {
-        return Err(format!("built-in instrument preset '{id}' has no tags"));
-    }
-    if range.min_midi > MAX_MIDI_NOTE
-        || range.max_midi > MAX_MIDI_NOTE
-        || range.min_midi > range.max_midi
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid recommended MIDI range"
-        ));
-    }
-    if !preview.tempo_bpm.is_finite()
-        || preview.tempo_bpm < MIN_PREVIEW_TEMPO_BPM
-        || preview.tempo_bpm > MAX_PREVIEW_TEMPO_BPM
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid preview tempo"
-        ));
-    }
-    if preview.ticks_per_beat < MIN_PREVIEW_TICKS_PER_BEAT
-        || preview.ticks_per_beat > MAX_PREVIEW_TICKS_PER_BEAT
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid preview ticks-per-beat value"
-        ));
-    }
-    if preview.time_signature.numerator == 0
-        || preview.time_signature.numerator > MAX_PREVIEW_NUMERATOR
-        || !is_valid_preview_denominator(preview.time_signature.denominator)
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid preview time signature"
-        ));
-    }
-    if preview.length_ticks == 0 || preview_duration_seconds(preview) > MAX_PREVIEW_DURATION_SECONDS
-    {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid preview length"
-        ));
-    }
-    if !(MIN_PREVIEW_NOTES..=MAX_PREVIEW_NOTES).contains(&preview.notes.len()) {
-        return Err(format!(
-            "built-in instrument preset '{id}' has an invalid preview note count"
-        ));
-    }
-    let mut previous_tick = None;
-    for note in &preview.notes {
-        if previous_tick.is_some_and(|previous| note.tick < previous) {
-            return Err(format!(
-                "built-in instrument preset '{id}' has unsorted preview notes"
-            ));
-        }
-        previous_tick = Some(note.tick);
-        if note.duration_ticks == 0
-            || note.tick >= preview.length_ticks
-            || note.duration_ticks > preview.length_ticks - note.tick
-            || note.note < range.min_midi
-            || note.note > range.max_midi
-            || note.velocity == 0
-            || note.note > MAX_MIDI_NOTE
-            || note.velocity > MAX_MIDI_NOTE
-        {
-            return Err(format!(
-                "built-in instrument preset '{id}' has an invalid preview note"
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn is_valid_preview_denominator(value: u8) -> bool {
-    value > 0 && value <= MAX_PREVIEW_DENOMINATOR && (value & (value - 1)) == 0
-}
-
-fn preview_duration_seconds(preview: &InstrumentPreviewDefinition) -> f64 {
-    preview.length_ticks as f64 * 60.0 / (preview.ticks_per_beat as f64 * preview.tempo_bpm)
 }
 
 fn resolve_bundle_path(root: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
@@ -677,50 +518,50 @@ mod tests {
 
         let mut preset = base();
         preset["preview"]["notes"][0]["note"] = serde_json::json!(85);
-        assert_rejected(preset, "invalid preview note");
+        assert_rejected(preset, "invalid note");
 
         let mut preset = base();
         preset["category"] = serde_json::json!(" Test");
-        assert_rejected(preset, "invalid category");
+        assert_rejected(preset, "category has invalid text");
 
         let mut preset = base();
         preset["category"] = serde_json::json!("x".repeat(65));
-        assert_rejected(preset, "invalid category");
+        assert_rejected(preset, "category has invalid text");
 
         let mut preset = base();
         preset["category"] = serde_json::json!("Test\n");
-        assert_rejected(preset, "invalid category");
+        assert_rejected(preset, "category has invalid text");
 
         let mut preset = base();
         preset["tags"] = serde_json::Value::Array(vec![serde_json::json!("tag"); 13]);
-        assert_rejected(preset, "too many tags");
+        assert_rejected(preset, "must contain at most 12 items");
 
         let mut preset = base();
         preset["tags"] = serde_json::json!([" tag"]);
-        assert_rejected(preset, "invalid tag");
+        assert_rejected(preset, "tag has invalid text");
 
         let mut preset = base();
         preset["tags"] = serde_json::json!(["x".repeat(33)]);
-        assert_rejected(preset, "invalid tag");
+        assert_rejected(preset, "tag has invalid text");
 
         let mut preset = base();
         preset["tags"] = serde_json::json!(["tag\n"]);
-        assert_rejected(preset, "invalid tag");
+        assert_rejected(preset, "tag has invalid text");
 
         let mut preset = base();
         preset["tags"] = serde_json::json!(["Test", "test"]);
-        assert_rejected(preset, "duplicate tags");
+        assert_rejected(preset, "must not duplicate another tag");
 
         let mut preset = base();
         preset["preview"]["timeSignature"]["numerator"] = serde_json::json!(33);
-        assert_rejected(preset, "invalid preview time signature");
+        assert_rejected(preset, "has invalid numerator or denominator");
 
         let mut preset = base();
         preset["preview"]["notes"] = serde_json::json!([
             {"tick": 480, "durationTicks": 240, "note": 48, "velocity": 100},
             {"tick": 0, "durationTicks": 240, "note": 52, "velocity": 100}
         ]);
-        assert_rejected(preset, "unsorted preview notes");
+        assert_rejected(preset, "must be ordered by non-decreasing tick");
     }
 
     #[test]
@@ -737,39 +578,39 @@ mod tests {
 
         let mut preset = base();
         preset["recommendedRange"]["maxMidi"] = serde_json::json!(128);
-        assert_rejected(preset, "invalid recommended MIDI range");
+        assert_rejected(preset, "must contain MIDI notes from 0 to 127");
 
         let mut preset = base();
         preset["preview"]["tempoBpm"] = serde_json::json!(29.9);
-        assert_rejected(preset, "invalid preview tempo");
+        assert_rejected(preset, "must be finite and between 30 and 300 BPM");
 
         let mut preset = base();
         preset["preview"]["tempoBpm"] = serde_json::json!(300.1);
-        assert_rejected(preset, "invalid preview tempo");
+        assert_rejected(preset, "must be finite and between 30 and 300 BPM");
 
         let mut preset = base();
         preset["preview"]["ticksPerBeat"] = serde_json::json!(32_768);
-        assert_rejected(preset, "invalid preview ticks-per-beat");
+        assert_rejected(preset, "must be between 1 and 32767");
 
         let mut preset = base();
         preset["preview"]["timeSignature"]["denominator"] = serde_json::json!(3);
-        assert_rejected(preset, "invalid preview time signature");
+        assert_rejected(preset, "has invalid numerator or denominator");
 
         let mut preset = base();
         preset["preview"]["lengthTicks"] = serde_json::json!(9_601);
-        assert_rejected(preset, "invalid preview length");
+        assert_rejected(preset, "must describe at most 10 seconds of music");
 
         let mut preset = base();
         preset["preview"]["notes"] = serde_json::json!([]);
-        assert_rejected(preset, "invalid preview note count");
+        assert_rejected(preset, "must contain between 1 and 32 notes");
 
         let mut preset = base();
         let note = preset["preview"]["notes"][0].clone();
         preset["preview"]["notes"] = serde_json::Value::Array(vec![note; 33]);
-        assert_rejected(preset, "invalid preview note count");
+        assert_rejected(preset, "must contain between 1 and 32 notes");
 
         let mut preset = base();
         preset["preview"]["notes"][0]["velocity"] = serde_json::json!(128);
-        assert_rejected(preset, "invalid preview note");
+        assert_rejected(preset, "invalid note");
     }
 }

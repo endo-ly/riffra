@@ -25,10 +25,10 @@ public:
     // callback boundary.
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
                       bool loop, juce::String& error, int voiceKey = -1);
-    bool startBuiltInPreview(const juce::String& definitionJson,
-                             const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
-                             double sampleRate, int blockSize, juce::String& error);
-    void stopBuiltInPreview() noexcept;
+    bool startInstrumentPreview(const juce::String& definitionJson,
+                                const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
+                                double sampleRate, int blockSize, juce::String& error);
+    void stopInstrumentPreview() noexcept;
     void stopPreview() noexcept;
     void stopPreviewForKey(int voiceKey) noexcept;
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -37,7 +37,7 @@ public:
     void stopSynthNote(int note) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isPreviewing() const noexcept;
-    [[nodiscard]] bool isBuiltInPreviewing() const noexcept;
+    [[nodiscard]] bool isInstrumentPreviewing() const noexcept;
 
     // Device lifecycle/control side only.
     void prepare() noexcept;
@@ -95,8 +95,8 @@ private:
 
     struct PreviewState final {
         std::array<PreviewVoiceConfig, kPreviewVoiceCount> voices;
-        InstrumentPreviewSession* builtInSession = nullptr;
-        juce::AudioBuffer<float>* builtInBuffer = nullptr;
+        InstrumentPreviewSession* instrumentSession = nullptr;
+        juce::AudioBuffer<float>* instrumentBuffer = nullptr;
     };
 
     struct PreviewVoiceRuntime final {
@@ -138,7 +138,7 @@ private:
 
     static float lookupSine(float phase) noexcept;
     void publishState(std::unique_ptr<PreviewState> next);
-    void retireFinishedBuiltInState();
+    void retireFinishedInstrumentState();
     void cleanupDeferredState() noexcept;
     void applyPreviewState(PreviewState& state, double sampleRate) noexcept;
     void configureVoice(PreviewVoiceRuntime& voice, PreviewState* sourceState,
@@ -147,8 +147,8 @@ private:
     void finishVoiceFade(PreviewVoiceRuntime& voice, std::size_t index, double sampleRate) noexcept;
     void mixPreview(float* const* outputChannelData, int numOutputChannels, int numSamples,
                     double sampleRate) noexcept;
-    void mixBuiltInPreview(float* const* outputChannelData, int numOutputChannels, int numSamples,
-                           double sampleRate) noexcept;
+    void mixInstrumentPreview(float* const* outputChannelData, int numOutputChannels,
+                              int numSamples, double sampleRate) noexcept;
     void syncSynthVoices() noexcept;
     void mixSynth(float* const* outputChannelData, int numOutputChannels, int numSamples,
                   double sampleRate) noexcept;
@@ -168,30 +168,30 @@ private:
     std::array<std::atomic<int>, kPreviewVoiceCount> audioVoiceCursors{};
     std::vector<std::unique_ptr<PreviewState>> previewStates;
     std::vector<std::unique_ptr<juce::AudioBuffer<float>>> previewBuffers;
-    std::vector<std::unique_ptr<InstrumentPreviewSession>> builtInSessions;
-    std::vector<std::unique_ptr<juce::AudioBuffer<float>>> builtInBuffers;
+    std::vector<std::unique_ptr<InstrumentPreviewSession>> instrumentSessions;
+    std::vector<std::unique_ptr<juce::AudioBuffer<float>>> instrumentBuffers;
     // A pointer is first marked with the active reader generation and can only
     // be destroyed after that generation becomes the drained generation.
     std::unordered_map<const PreviewState*, std::uint32_t> retiredPreviewStates;
     std::unordered_map<const juce::AudioBuffer<float>*, std::uint32_t> retiredPreviewBuffers;
-    std::unordered_map<const InstrumentPreviewSession*, std::uint32_t> retiredBuiltInSessions;
-    std::unordered_map<const juce::AudioBuffer<float>*, std::uint32_t> retiredBuiltInBuffers;
+    std::unordered_map<const InstrumentPreviewSession*, std::uint32_t> retiredInstrumentSessions;
+    std::unordered_map<const juce::AudioBuffer<float>*, std::uint32_t> retiredInstrumentBuffers;
 
     std::array<PreviewVoiceRuntime, kPreviewVoiceCount> previewVoices;
     std::uint64_t previewSequence = 0;
 
-    std::atomic<InstrumentPreviewSession*> audioBuiltInSession{nullptr};
-    std::atomic<InstrumentPreviewSession*> audioBuiltInPendingSession{nullptr};
-    std::atomic<juce::AudioBuffer<float>*> audioBuiltInBuffer{nullptr};
-    std::atomic<juce::AudioBuffer<float>*> audioBuiltInPendingBuffer{nullptr};
-    std::atomic<bool> builtInStopRequested{false};
-    InstrumentPreviewSession* pendingBuiltInSession = nullptr;
-    enum class BuiltInState { inactive, fadingIn, playing, fadingOut };
-    BuiltInState builtInState = BuiltInState::inactive;
-    float builtInGain = 0.0f;
-    float builtInFadeStep = 0.0f;
-    float builtInFadeAnchor[2] = {0.0f, 0.0f};
-    float builtInLastOutput[2] = {0.0f, 0.0f};
+    std::atomic<InstrumentPreviewSession*> audioInstrumentSession{nullptr};
+    std::atomic<InstrumentPreviewSession*> audioInstrumentPendingSession{nullptr};
+    std::atomic<juce::AudioBuffer<float>*> audioInstrumentBuffer{nullptr};
+    std::atomic<juce::AudioBuffer<float>*> audioInstrumentPendingBuffer{nullptr};
+    std::atomic<bool> instrumentStopRequested{false};
+    InstrumentPreviewSession* pendingInstrumentSession = nullptr;
+    enum class InstrumentState { inactive, fadingIn, playing, fadingOut };
+    InstrumentState instrumentState = InstrumentState::inactive;
+    float instrumentGain = 0.0f;
+    float instrumentFadeStep = 0.0f;
+    float instrumentFadeAnchor[2] = {0.0f, 0.0f};
+    float instrumentLastOutput[2] = {0.0f, 0.0f};
 
     std::array<SynthControlState, kSynthVoiceCount> synthControl;
     std::array<SynthVoice, kSynthVoiceCount> synthVoices;

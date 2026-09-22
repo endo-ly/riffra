@@ -235,7 +235,7 @@ pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, NativeCo
 }
 
 #[tauri::command]
-pub(crate) async fn preview_built_in_instrument(
+pub(crate) async fn preview_instrument(
     instrument_id: String,
     app: AppHandle,
 ) -> Result<AudioStatus, NativeCommandError> {
@@ -249,7 +249,7 @@ pub(crate) async fn preview_built_in_instrument(
 }
 
 #[tauri::command]
-pub(crate) async fn stop_built_in_instrument_preview(
+pub(crate) async fn stop_instrument_preview(
     app: AppHandle,
 ) -> Result<AudioStatus, NativeCommandError> {
     run_blocking(app, |state| {

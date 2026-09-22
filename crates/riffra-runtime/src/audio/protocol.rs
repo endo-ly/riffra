@@ -53,7 +53,7 @@ struct NativeStatus {
     feedback_suspected: Option<bool>,
     previewing: Option<bool>,
     #[serde(default)]
-    built_in_previewing: bool,
+    instrument_previewing: bool,
     message: Option<String>,
 }
 
@@ -69,7 +69,7 @@ struct NativeMeters {
     mute_reasons: Option<u32>,
     feedback_suspected: Option<bool>,
     previewing: Option<bool>,
-    built_in_previewing: Option<bool>,
+    instrument_previewing: Option<bool>,
     pre_limiter_peak: Option<f64>,
     limiter_gain_reduction_db: Option<f64>,
     hard_clip_samples: Option<u64>,
@@ -305,7 +305,7 @@ fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
         invalid_samples: native.invalid_samples.unwrap_or_default(),
         feedback_suspected: native.feedback_suspected.unwrap_or(false),
         previewing: native.previewing.unwrap_or(false),
-        built_in_previewing: native.built_in_previewing,
+        instrument_previewing: native.instrument_previewing,
         mute_reasons,
         diagnostics: native
             .diagnostics
@@ -501,10 +501,10 @@ pub(super) fn handle_native_stdout(
                     current.previewing = previewing;
                     status_changed = true;
                 }
-                if let Some(built_in_previewing) = meters.built_in_previewing
-                    && current.built_in_previewing != built_in_previewing
+                if let Some(instrument_previewing) = meters.instrument_previewing
+                    && current.instrument_previewing != instrument_previewing
                 {
-                    current.built_in_previewing = built_in_previewing;
+                    current.instrument_previewing = instrument_previewing;
                     status_changed = true;
                 }
                 if let Some(mute_reasons) = meters.mute_reasons {
@@ -626,7 +626,7 @@ mod tests {
             invalid_samples: 0,
             feedback_suspected: false,
             previewing: false,
-            built_in_previewing: false,
+            instrument_previewing: false,
             mute_reasons: 0,
             diagnostics: Default::default(),
             message: "ready".into(),
@@ -703,35 +703,35 @@ mod tests {
 
         let finished = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":2,"projectId":"project:test","previewing":false,"builtInPreviewing":false}"#,
+            br#"{"type":"audioMeters","requestId":2,"projectId":"project:test","previewing":false,"instrumentPreviewing":false}"#,
         )
         .expect("preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
         assert!(!status.lock().unwrap().previewing);
-        assert!(!status.lock().unwrap().built_in_previewing);
+        assert!(!status.lock().unwrap().instrument_previewing);
 
         let status = test_status();
         let started = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":3,"projectId":"project:test","previewing":true,"builtInPreviewing":true}"#,
+            br#"{"type":"audioMeters","requestId":3,"projectId":"project:test","previewing":true,"instrumentPreviewing":true}"#,
         )
         .expect("built-in preview start meter reply");
         assert!(matches!(started.event, NativeEvent::AudioStatus));
         {
             let current = status.lock().unwrap();
             assert!(current.previewing);
-            assert!(current.built_in_previewing);
+            assert!(current.instrument_previewing);
         }
         let finished = handle_native_stdout(
             &status,
-            br#"{"type":"audioMeters","requestId":4,"projectId":"project:test","previewing":true,"builtInPreviewing":false}"#,
+            br#"{"type":"audioMeters","requestId":4,"projectId":"project:test","previewing":true,"instrumentPreviewing":false}"#,
         )
         .expect("built-in preview finish meter reply");
         assert!(matches!(finished.event, NativeEvent::AudioStatus));
         {
             let current = status.lock().unwrap();
             assert!(current.previewing);
-            assert!(!current.built_in_previewing);
+            assert!(!current.instrument_previewing);
         }
 
         let status = test_status();

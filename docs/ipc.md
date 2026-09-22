@@ -132,7 +132,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | ライブラリ         | `search_library`、`related_library_assets`、`update_library_asset`                                                                                                                                                                                                                   |
 | Instrument Library | `list_instruments`、`set_instrument_favorite`、`set_instrument_category_override`、`set_instrument_user_tags`、`list_instrument_collections`、`create_instrument_collection`、`rename_instrument_collection`、`delete_instrument_collection`、`set_instrument_collection_membership` |
-| プレビュー         | `preview_asset`、`preview_built_in_instrument`、`stop_preview`                                                                                                                                                                                                                       |
+| プレビュー         | `preview_asset`、`preview_instrument`、`stop_preview`、`stop_instrument_preview`                                                                                                                                                                                                     |
 | 解析               | `analyze_asset`（同期）                                                                                                                                                                                                                                                              |
 | レンダー           | `render_timeline`                                                                                                                                                                                                                                                                    |
 
@@ -211,7 +211,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`setMasterGainDb` |
 | トラック/プラグイン | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`openTrackPluginEditor`                                                      |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`                                                                                   |
-| プレビュー          | `previewSample`、`previewBuiltInInstrument`、`stopPreview`、`stopPreviewForKey`                                                   |
+| プレビュー          | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`stopPreviewForKey`                                 |
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                        |
 | MIDI                | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`、`sendTrackMidi`、`panicTrackMidi`                             |
 | トランスポート準備  | `setTransportStarting`                                                                                                            |

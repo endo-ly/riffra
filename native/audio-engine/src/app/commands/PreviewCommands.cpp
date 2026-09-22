@@ -52,7 +52,7 @@ bool readPreviewNumber(const juce::var& object, const char* const propertyName, 
 
 bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce::String& error) {
     if (!value.isObject()) {
-        error = "Built-in instrument preview must contain an object preview definition.";
+        error = "Instrument preview must contain an object preview definition.";
         return false;
     }
 
@@ -68,7 +68,7 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
         !instrument_preview::isValidTicksPerBeat(static_cast<std::uint16_t>(ticksPerBeat)) ||
         !instrument_preview::isWithinDurationLimit(
             tempoBpm, static_cast<std::uint16_t>(ticksPerBeat), lengthTicks)) {
-        error = "Built-in instrument preview has an invalid tempo or length.";
+        error = "Instrument preview has an invalid tempo or length.";
         return false;
     }
 
@@ -82,14 +82,14 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
         !readPreviewInteger(timeSignature, "denominator", std::numeric_limits<std::uint8_t>::max(),
                             denominator) ||
         !instrument_preview::isValidDenominator(static_cast<std::uint8_t>(denominator))) {
-        error = "Built-in instrument preview has an invalid time signature.";
+        error = "Instrument preview has an invalid time signature.";
         return false;
     }
 
     const auto notes = value.getProperty("notes", {});
     if (!notes.isArray() || notes.size() < instrument_preview::kMinimumNoteCount ||
         notes.size() > instrument_preview::kMaximumNoteCount) {
-        error = "Built-in instrument preview notes are invalid.";
+        error = "Instrument preview notes are invalid.";
         return false;
     }
 
@@ -104,7 +104,7 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
     bool hasPreviousTick = false;
     for (const auto& noteValue : *notes.getArray()) {
         if (!noteValue.isObject()) {
-            error = "Built-in instrument preview contains an invalid note.";
+            error = "Instrument preview contains an invalid note.";
             return false;
         }
         std::uint64_t tick = 0;
@@ -120,7 +120,7 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
             tick >= lengthTicks || durationTicks > lengthTicks ||
             tick > lengthTicks - durationTicks || velocity == 0 ||
             (hasPreviousTick && tick < previousTick)) {
-            error = "Built-in instrument preview contains an invalid note.";
+            error = "Instrument preview contains an invalid note.";
             return false;
         }
         previousTick = tick;
@@ -132,7 +132,7 @@ bool parsePreviewSpec(const juce::var& value, InstrumentPreviewSpec& spec, juce:
     return true;
 }
 
-struct BuiltInPreviewResult final {
+struct InstrumentPreviewResult final {
     bool success = false;
     juce::String error;
 };
@@ -294,7 +294,7 @@ CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) 
         return {};
     }
 
-    if (type == "previewBuiltInInstrument") {
+    if (type == "previewInstrument") {
         if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
             writeJson(makeError("timelineBusy",
                                 "The Arrangement Graph is still loading a VST3. Preview "
@@ -308,31 +308,31 @@ CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) 
         if (definitionJson.isEmpty() || definitionBaseDir.isEmpty() ||
             !parsePreviewSpec(command.getProperty("preview", {}), spec, previewError)) {
             if (previewError.isEmpty())
-                previewError = "Built-in instrument preview definition is unavailable.";
+                previewError = "Instrument preview definition is unavailable.";
             writeJson(makeError("preview", previewError));
             return {};
         }
 
         constexpr auto preparationTimeout = std::chrono::seconds(45);
-        const auto result = std::make_shared<BuiltInPreviewResult>();
+        const auto result = std::make_shared<InstrumentPreviewResult>();
         const auto completion = std::make_shared<std::promise<void>>();
         auto completed = completion->get_future();
         const auto submitted = context.runtimeLifecycle.submit(
             [this, definitionJson, definitionBaseDir, spec = std::move(spec), result,
              completion]() mutable {
                 try {
-                    result->success = context.pipeline.startBuiltInPreview(
+                    result->success = context.pipeline.startInstrumentPreview(
                         definitionJson, definitionBaseDir, std::move(spec), result->error);
                     if (!result->success && result->error.isEmpty())
-                        result->error = "Built-in instrument preview could not be prepared.";
+                        result->error = "Instrument preview could not be prepared.";
                 } catch (...) {
-                    result->error = "Built-in instrument preview could not be prepared.";
+                    result->error = "Instrument preview could not be prepared.";
                 }
                 completion->set_value();
             },
             preparationTimeout);
         if (!submitted || completed.wait_for(preparationTimeout) != std::future_status::ready) {
-            writeJson(makeError("preview", "Built-in instrument preview preparation timed out."));
+            writeJson(makeError("preview", "Instrument preview preparation timed out."));
             return {};
         }
         if (!result->success) {
@@ -354,8 +354,8 @@ CommandResult AudioCommandDispatcher::dispatchPreview(const juce::var& command) 
         return {};
     }
 
-    if (type == "stopBuiltInInstrumentPreview") {
-        context.pipeline.stopBuiltInPreview();
+    if (type == "stopInstrumentPreview") {
+        context.pipeline.stopInstrumentPreview();
         writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
                                                     context.pipeline, &context.midiInputs.monitor(),
                                                     {}, &context.timelineEngine));

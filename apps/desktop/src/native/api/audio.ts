@@ -60,19 +60,19 @@ export async function previewAsset(
   }
 }
 
-export async function previewBuiltInInstrument(instrumentId: string): Promise<AudioStatus> {
+export async function previewInstrument(instrumentId: string): Promise<AudioStatus> {
   try {
-    return await invokeHost<AudioStatus>('preview_built_in_instrument', { instrumentId });
+    return await invokeHost<AudioStatus>('preview_instrument', { instrumentId });
   } catch (error) {
-    return await audioCommandError('Preview built-in instrument', error);
+    return await audioCommandError('Preview instrument', error);
   }
 }
 
-export async function stopBuiltInInstrumentPreview(): Promise<AudioStatus> {
+export async function stopInstrumentPreview(): Promise<AudioStatus> {
   try {
-    return await invokeHost<AudioStatus>('stop_built_in_instrument_preview');
+    return await invokeHost<AudioStatus>('stop_instrument_preview');
   } catch (error) {
-    return await audioCommandError('Stop built-in instrument preview', error);
+    return await audioCommandError('Stop instrument preview', error);
   }
 }
 

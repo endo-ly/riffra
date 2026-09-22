@@ -397,7 +397,7 @@ TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
     auto runtime = SonalloyInstrumentRuntime::create(
         "{", test::builtInPresetDirectory("BASS-001").getFullPathName(), 48'000.0, 256, error);
     EXPECT_EQ(runtime, nullptr);
-    EXPECT_NE(error.indexOf("Built-in instrument definition compilation failed"), -1);
+    EXPECT_NE(error.indexOf("Instrument definition compilation failed"), -1);
     EXPECT_FALSE(error.isEmpty());
 }
 

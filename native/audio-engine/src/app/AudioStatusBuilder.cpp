@@ -42,7 +42,7 @@ juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
                         static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
     status->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
     status->setProperty("previewing", pipeline.isPreviewing());
-    status->setProperty("builtInPreviewing", pipeline.isBuiltInPreviewing());
+    status->setProperty("instrumentPreviewing", pipeline.isInstrumentPreviewing());
     if (midi != nullptr) {
         status->setProperty("midiInputActive", midi->isActive());
         status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
@@ -180,7 +180,7 @@ juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
     meters->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
     meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
     meters->setProperty("previewing", pipeline.isPreviewing());
-    meters->setProperty("builtInPreviewing", pipeline.isBuiltInPreviewing());
+    meters->setProperty("instrumentPreviewing", pipeline.isInstrumentPreviewing());
     meters->setProperty("droppedTelemetryFrames",
                         static_cast<juce::int64>(droppedTelemetryCount()));
     meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));
