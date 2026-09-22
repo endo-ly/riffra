@@ -134,26 +134,95 @@ fn activate_project_inner(
     state: &HostState,
     project_id: &str,
 ) -> Result<(&'static str, Value, u64), ProtocolError> {
-    let previous = state
+    let previous_project_id = state
         .project_store
         .active_project_id()
         .map_err(|error| command_error(error.to_string()))?;
+    let previous_canonical = state
+        .canonical()
+        .map_err(|error| command_error(error.to_string()))?;
     let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
-    crate::library::index::refresh(
-        &state.data_root,
-        &prepared.storage,
-        &prepared.loaded.session,
-    );
     state.event_hub.set_plugin_project_id(None);
+
+    let candidate_key = if state.core.safe_mode() {
+        None
+    } else {
+        let candidate_key =
+            project_projection_key(previous_canonical.sequence, &prepared.loaded.session);
+        if let Err(error) = apply_project_runtime_candidate(
+            state,
+            project_id,
+            &prepared.loaded.session,
+            candidate_key,
+        ) {
+            return Err(project_switch_failure(
+                state,
+                &previous_project_id,
+                &previous_canonical,
+                project_id,
+                error,
+            ));
+        }
+        if let Err(error) = state
+            .core
+            .audio()
+            .set_master_gain_db(prepared.loaded.session.settings.master_db)
+            .map(|_| ())
+            .map_err(|error| {
+                super::audio::graph_failed(format!(
+                    "Project master gain could not be applied: {error}"
+                ))
+            })
+        {
+            return Err(project_switch_failure(
+                state,
+                &previous_project_id,
+                &previous_canonical,
+                project_id,
+                error,
+            ));
+        }
+        if let Err(error) = state
+            .runtime
+            .commit_candidate_as_canonical(candidate_key)
+            .map_err(|error| {
+                super::audio::graph_failed(format!(
+                    "Project runtime candidate could not be committed: {error}"
+                ))
+            })
+        {
+            return Err(project_switch_failure(
+                state,
+                &previous_project_id,
+                &previous_canonical,
+                project_id,
+                error,
+            ));
+        }
+        Some(candidate_key)
+    };
+
     let activated = match projects::activate(&state.project_store, prepared, |session| {
         state.core.activate_session(session)
     }) {
         Ok(activated) => activated,
         Err(error) => {
-            state.event_hub.set_plugin_project_id(Some(previous));
-            return Err(command_error(error));
+            return Err(project_switch_failure(
+                state,
+                &previous_project_id,
+                &previous_canonical,
+                project_id,
+                command_error(error),
+            ));
         }
     };
+    if let Some(candidate_key) = candidate_key {
+        debug_assert_eq!(activated.canonical.sequence, candidate_key.sequence);
+        debug_assert_eq!(
+            activated.canonical.session.arrangement.revision,
+            candidate_key.session_revision
+        );
+    }
     state
         .core
         .set_recovered_from_generation(activated.loaded.recovered_from_generation);
@@ -161,17 +230,100 @@ fn activate_project_inner(
     state
         .event_hub
         .set_plugin_project_id(Some(project_id.to_owned()));
+    crate::library::index::refresh(
+        &state.data_root,
+        &activated.storage,
+        &activated.loaded.session,
+    );
     let activation = projects::result(activated);
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
-    apply_project_runtime_transition(state, &activation.canonical, project_id)?;
     let sequence = activation.canonical.sequence;
     Ok((
         "projectActivation",
         serde_json::to_value(activation).map_err(serialize_error)?,
         sequence,
     ))
+}
+
+fn project_projection_key(
+    sequence: u64,
+    session: &riffra_core::CreativeSession,
+) -> riffra_core::ProjectionKey {
+    riffra_core::ProjectionKey {
+        sequence: sequence.saturating_add(1),
+        session_revision: session.arrangement.revision,
+    }
+}
+
+fn apply_project_runtime_candidate(
+    state: &HostState,
+    project_id: &str,
+    session: &riffra_core::CreativeSession,
+    key: riffra_core::ProjectionKey,
+) -> Result<(), ProtocolError> {
+    state
+        .runtime
+        .apply_candidate_and_wait(
+            runtime_timeline_snapshot(
+                &state.data_root,
+                state.built_in_instruments.as_ref(),
+                project_id,
+                session,
+            ),
+            key,
+            PROJECT_RUNTIME_TIMEOUT,
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            super::audio::graph_failed(format!("Project runtime projection failed: {error}"))
+        })
+}
+
+fn project_switch_failure(
+    state: &HostState,
+    previous_project_id: &str,
+    previous_canonical: &CanonicalState,
+    failed_project_id: &str,
+    failure: ProtocolError,
+) -> ProtocolError {
+    state
+        .event_hub
+        .set_plugin_project_id(Some(previous_project_id.to_owned()));
+    state.keep_plugin_persistence_project(previous_project_id);
+    let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
+    match apply_project_runtime_transition(state, previous_canonical, previous_project_id) {
+        Ok(()) => ProtocolError::new(
+            ErrorCode::CommandFailed,
+            format!("Project opening failed: {}", failure.message),
+        )
+        .with_details(serde_json::json!({
+            "domain": "project",
+            "kind": "projectSwitchFailed",
+            "projectId": failed_project_id,
+            "restoredProjectId": previous_project_id,
+            "retryable": false,
+            "cause": cause,
+        })),
+        Err(restore_error) => {
+            let message = format!(
+                "{}; previous Project audio could not be restored: {}",
+                failure.message, restore_error.message
+            );
+            super::audio::graph_failed(message.clone()).with_details(serde_json::json!({
+                "domain": "audioRuntime",
+                "kind": "graphFailed",
+                "message": message,
+                "projectSwitch": {
+                    "projectId": failed_project_id,
+                    "restoredProjectId": previous_project_id,
+                },
+                "cause": cause,
+                "restoreError": serde_json::to_value(restore_error).unwrap_or(Value::Null),
+            }))
+        }
+    }
 }
 
 pub(super) fn apply_project_runtime_transition(

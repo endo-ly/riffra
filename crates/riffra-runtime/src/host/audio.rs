@@ -342,13 +342,11 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
 }
 
 pub(super) fn graph_failed(error: String) -> ProtocolError {
-    ProtocolError::new(ErrorCode::CommandFailed, "audio graph restoration failed").with_details(
-        serde_json::json!({
-            "domain": "audioRuntime",
-            "kind": "graphFailed",
-            "message": error,
-        }),
-    )
+    ProtocolError::new(ErrorCode::CommandFailed, error.clone()).with_details(serde_json::json!({
+        "domain": "audioRuntime",
+        "kind": "graphFailed",
+        "message": error,
+    }))
 }
 
 fn is_graph_failed(error: &ProtocolError) -> bool {

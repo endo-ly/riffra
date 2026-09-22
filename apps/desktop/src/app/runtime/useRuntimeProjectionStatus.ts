@@ -17,6 +17,19 @@ const genericProjectionFailure = 'Audio preparation failed. Retry to prepare aud
 const preservedProjectionFailure =
   'Audio preparation failed. The previous playback state remains available.';
 
+function isDeterministicProjectionFailure(status: RuntimeProjectionStatus): boolean {
+  return status.state === 'failed' && status.lastErrorCode === 'timeline';
+}
+
+function projectionFailureMessage(status: RuntimeProjectionStatus): string {
+  if (isDeterministicProjectionFailure(status) && status.lastError) {
+    return `Audio preparation failed: ${status.lastError}`;
+  }
+  return status.activeProjectionSequence !== null
+    ? preservedProjectionFailure
+    : genericProjectionFailure;
+}
+
 const initialRuntimeProjectionStatus: RuntimeProjectionStatus = {
   state: 'idle',
   operationId: 0,
@@ -56,12 +69,7 @@ function reduceRuntimeProjectionStatus(
     : next;
   return {
     status,
-    failure:
-      status.state === 'failed'
-        ? status.activeProjectionSequence !== null
-          ? preservedProjectionFailure
-          : genericProjectionFailure
-        : null,
+    failure: status.state === 'failed' ? projectionFailureMessage(status) : null,
   };
 }
 

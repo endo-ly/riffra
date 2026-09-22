@@ -504,6 +504,55 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             (self.status_hook)(status);
         }
     }
+
+    /// Promotes a successfully prepared candidate without preparing it again.
+    pub(crate) fn commit_candidate_as_canonical(
+        &self,
+        key: ProjectionKey,
+    ) -> Result<(), RuntimeError> {
+        let generation = self.driver.runtime_generation();
+        let status = {
+            let (lock, wake) = &*self.state;
+            let mut state = lock.lock().map_err(|_| {
+                RuntimeError::Internal("runtime projection lock was poisoned".into())
+            })?;
+            observe_generation(&mut state, generation);
+            let active = state.active_projection.ok_or_else(|| {
+                RuntimeError::Internal("prepared runtime candidate is not active".into())
+            })?;
+            if state.status.state != RuntimeProjectionState::Active
+                || state.latest_target.is_some()
+                || state.running_operation_id.is_some()
+                || active.runtime_generation != generation
+                || active.audio_environment_revision != state.audio_environment_revision
+                || active.key != key
+            {
+                return Err(RuntimeError::Internal(
+                    "prepared runtime candidate is no longer available".into(),
+                ));
+            }
+            if active.canonical {
+                return Ok(());
+            }
+            state.active_projection = Some(ActiveProjection {
+                canonical: true,
+                ..active
+            });
+            state.deferred_canonical_key = None;
+            state.desired_key = Some(key);
+            state.status.active_projection_sequence = Some(key.sequence);
+            state.status.active_session_revision = Some(key.session_revision);
+            state.status.active_audio_environment_revision =
+                Some(active.audio_environment_revision);
+            state.status.last_error = None;
+            state.status.last_error_code = None;
+            let status = state.status.clone();
+            wake.notify_all();
+            status
+        };
+        (self.status_hook)(status);
+        Ok(())
+    }
 }
 
 impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
@@ -1143,6 +1192,27 @@ mod tests {
         assert_eq!(status.active_session_revision, Some(10));
         assert_eq!(status.active_projection_sequence, Some(1));
         assert_eq!(status.last_error_code.as_deref(), Some("timeline"));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn commits_a_prepared_candidate_without_repreparing_it() {
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+
+        coordinator
+            .submit_with_canonical_deadline(snapshot(10), key(1, 10), None, false)
+            .unwrap();
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+
+        coordinator
+            .commit_candidate_as_canonical(key(1, 10))
+            .unwrap();
+
+        let status = coordinator.status();
+        assert_eq!(status.state, RuntimeProjectionState::Active);
+        assert_eq!(status.active_projection_sequence, Some(1));
+        assert!(coordinator.is_ready_for(key(1, 10)));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
     }
 

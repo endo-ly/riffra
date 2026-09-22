@@ -52,6 +52,25 @@ describe('useRuntimeProjectionStatus', () => {
     });
   });
 
+  it('surfaces deterministic timeline preparation details', async () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => useRuntimeProjectionStatus(api));
+    const detail =
+      'native runtime rejected operation `timeline`: schema_version: unsupported schema_version 5, expected 6.';
+
+    act(() =>
+      api.emitRuntimeProjectionStatus(
+        status({
+          state: 'failed',
+          lastError: detail,
+          lastErrorCode: 'timeline',
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(result.current.failure).toBe(`Audio preparation failed: ${detail}`));
+  });
+
   it('does not let an initial status fetch overwrite a newer event', async () => {
     const api = new FakeNativeApi();
     let resolveInitial!: (value: RuntimeProjectionStatus) => void;

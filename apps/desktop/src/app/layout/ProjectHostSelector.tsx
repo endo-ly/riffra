@@ -141,8 +141,14 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
                       project.projectId === props.projectState?.activeProjectId
                     }
                     onClick={() => {
-                      void props.onOpenProject?.(project.projectId);
-                      setOpen(false);
+                      const operation = props.onOpenProject?.(project.projectId);
+                      if (!operation) {
+                        setOpen(false);
+                        return;
+                      }
+                      void operation.then((result) => {
+                        if (result) setOpen(false);
+                      });
                     }}
                   >
                     <span aria-hidden="true">

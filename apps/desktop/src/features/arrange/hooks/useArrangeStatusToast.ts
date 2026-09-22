@@ -32,6 +32,8 @@ export function useArrangeStatusToast({
   const playbackOutOfSync =
     runtimeProjectionStatus.state === 'failed' &&
     runtimeProjectionStatus.lastErrorCode !== 'timelineBusy';
+  const retryableProjectionFailure =
+    playbackOutOfSync && runtimeProjectionStatus.lastErrorCode !== 'timeline';
   const unavailableClipCount = unavailableClipIds.length;
   const missingDeviceCount = missingDeviceIds.length;
   const statusMessage = projectionLoading
@@ -54,7 +56,7 @@ export function useArrangeStatusToast({
     showToast('arrange.status', statusMessage, {
       kind: playbackOutOfSync ? 'error' : 'info',
       persistent: statusPersistent,
-      ...(playbackOutOfSync && !runtimeProjectionRetrying
+      ...(retryableProjectionFailure && !runtimeProjectionRetrying
         ? { action: { label: 'Retry', onClick: () => void onRetryRuntimeProjection() } }
         : {}),
     });
@@ -62,6 +64,7 @@ export function useArrangeStatusToast({
   }, [
     onRetryRuntimeProjection,
     playbackOutOfSync,
+    retryableProjectionFailure,
     runtimeProjectionRetrying,
     statusMessage,
     statusPersistent,

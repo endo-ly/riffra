@@ -1284,6 +1284,30 @@ describe('WorkspaceArrange', () => {
     expect(retryCount).toBe(1);
   });
 
+  it('shows deterministic timeline details without a retry action', async () => {
+    const api = new FakeNativeApi();
+    const detail =
+      'native runtime rejected operation `timeline`: schema_version: unsupported schema_version 5, expected 6.';
+    const runtimeProjectionStatus: RuntimeProjectionStatus = {
+      ...api.runtimeProjection,
+      state: 'failed',
+      operationId: 2,
+      lastError: detail,
+      lastErrorCode: 'timeline',
+    };
+
+    render(
+      <Harness
+        api={api}
+        runtimeProjectionStatus={runtimeProjectionStatus}
+        runtimeProjectionFailure={`Audio preparation failed: ${detail}`}
+      />,
+    );
+
+    expect(await screen.findByText(`Audio preparation failed: ${detail}`)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('shows projection loading without presenting a retry action', async () => {
     const api = new FakeNativeApi();
     const runtimeProjectionStatus: RuntimeProjectionStatus = {

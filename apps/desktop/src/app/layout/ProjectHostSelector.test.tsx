@@ -110,6 +110,39 @@ describe('ProjectHostSelector', () => {
     expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
+  it('keeps the selector open when Project switching fails', async () => {
+    const onOpenProject = vi.fn().mockResolvedValue(null);
+    const projectState = {
+      ...defaultProjectState(),
+      projects: [
+        ...defaultProjectState().projects,
+        {
+          projectId: '01900000-0000-7000-8000-000000000002',
+          name: 'Unreadable Project',
+          updatedAtMs: 1,
+          error: null,
+        },
+      ],
+    };
+    const user = userEvent.setup();
+    renderSelector(embedded, {
+      onOpenProject,
+      projectState,
+      projectError: 'Project opening failed: audio definition schema is unsupported.',
+    });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Unreadable Project' }));
+
+    await waitFor(() =>
+      expect(onOpenProject).toHaveBeenCalledWith(projectState.projects[1].projectId),
+    );
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(
+      screen.getByText('Project opening failed: audio definition schema is unsupported.'),
+    ).toBeInTheDocument();
+  });
+
   it('closes the selector after Host switching succeeds', async () => {
     const onSwitch = vi.fn().mockResolvedValue({} as HostConnectionBootstrap);
     const user = userEvent.setup();
