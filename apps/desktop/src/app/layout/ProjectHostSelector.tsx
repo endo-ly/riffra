@@ -273,10 +273,9 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             onClick={() => {
               void openHostDataRoot()
                 .then((dataRoot) => {
-                  if (dataRoot) void props.onSwitch({ type: 'dataRoot', dataRoot });
+                  if (dataRoot) switchHost({ type: 'dataRoot', dataRoot });
                 })
                 .catch(() => undefined);
-              setOpen(false);
             }}
           >
             Connect to Local Host…

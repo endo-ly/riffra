@@ -82,6 +82,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
           }
         })
         .catch((error: unknown) => {
+          logNativeError('bootstrap')(error);
           if (
             activeBootstrapGeneration.current === requestGeneration &&
             getHostGeneration() === requestGeneration

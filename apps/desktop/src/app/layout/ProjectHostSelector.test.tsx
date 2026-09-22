@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostConnectionState, LocalHostInfo } from '@/model/domain';
 import type { HostConnectionBootstrap } from '@/native/native-api';
 import { defaultProjectState } from '@/native/browser-defaults';
+import { openHostDataRoot } from '@/native/dialog';
 import { ProjectHostSelector } from './ProjectHostSelector';
 
 vi.mock('@/native/dialog', () => ({
@@ -118,6 +119,25 @@ describe('ProjectHostSelector', () => {
     await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
 
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
+  it('keeps the selector open when a selected local Host cannot be connected', async () => {
+    vi.mocked(openHostDataRoot).mockResolvedValueOnce('D:\\Music\\offline-host');
+    const onSwitch = vi.fn().mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    await user.click(screen.getByRole('menuitem', { name: 'Connect to Local Host…' }));
+
+    await waitFor(() =>
+      expect(onSwitch).toHaveBeenCalledWith({
+        type: 'dataRoot',
+        dataRoot: 'D:\\Music\\offline-host',
+      }),
+    );
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {
