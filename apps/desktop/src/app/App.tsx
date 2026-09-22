@@ -92,6 +92,9 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     reconnectHost,
     hostConnected,
     boot,
+    bootstrapError,
+    bootstrapLoading,
+    retryBootstrap,
     session,
     audio,
     setAudio,
@@ -246,11 +249,23 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         <div className={styles.bootHostSelector}>{sessionSelector}</div>
         <span className={shellStyles.logoMark}>R</span>
         <strong>Riffra</strong>
-        <small>
-          {hostConnected
-            ? 'Loading the connected Host…'
-            : 'Host disconnected — reconnect to continue'}
-        </small>
+        {hostConnected && bootstrapError ? (
+          <>
+            <small>Could not load the connected Host</small>
+            <p role="alert">{bootstrapError}</p>
+            <button type="button" disabled={bootstrapLoading} onClick={() => void retryBootstrap()}>
+              Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <small>
+              {hostConnected
+                ? 'Loading the connected Host…'
+                : (hostConnectionState.reason ?? 'Host disconnected — reconnect to continue')}
+            </small>
+          </>
+        )}
       </div>
     );
 

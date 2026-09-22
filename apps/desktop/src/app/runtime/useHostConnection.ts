@@ -71,18 +71,16 @@ export function useHostConnection(
         setHostConnectionAvailability(event.state.mode !== 'disconnected');
         setState(event.state);
         setError(event.state.mode === 'disconnected' ? event.state.reason : null);
-        if (event.state.mode !== 'disconnected') {
-          void api
-            .listLocalHosts()
-            .then((nextHosts) => {
-              if (serial === refreshSerial.current) setHosts(nextHosts);
-            })
-            .catch((nextError) => {
-              if (serial === refreshSerial.current) {
-                setError(nextError instanceof Error ? nextError.message : String(nextError));
-              }
-            });
-        }
+        void api
+          .listLocalHosts()
+          .then((nextHosts) => {
+            if (serial === refreshSerial.current) setHosts(nextHosts);
+          })
+          .catch((nextError) => {
+            if (serial === refreshSerial.current) {
+              setError(nextError instanceof Error ? nextError.message : String(nextError));
+            }
+          });
       })
       .then((stop) => {
         if (disposed) stop();

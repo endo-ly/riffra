@@ -34,6 +34,9 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   );
   const {
     boot,
+    bootstrapError,
+    bootstrapLoading,
+    retryBootstrap,
     audio,
     setAudio,
     runtimeStarted,
@@ -272,6 +275,9 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     reconnectHost: hostConnection.reconnect,
     hostConnected: hostReady,
     boot,
+    bootstrapError,
+    bootstrapLoading,
+    retryBootstrap,
     session,
     applyCanonicalState,
     audio,

@@ -346,6 +346,7 @@ stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing:
 - Desktop は要求ごとに command 接続を開くため、長時間要求の実行中も Transport 操作や緊急ミュートを並行処理できる。応答にはタイムアウトを設ける
 - イベント配信では meter や transport status など最新値で足りる通知を上書き集約する。重要通知は必ず配送し、待ち行列が溢れても接続を維持する
 - 初期同期はイベント接続の確立後に `host.bootstrap` を取得する。一覧表示は軽量な `host.info` を使い、`host.bootstrap` は接続確定時のみ使う
+- Host一覧はRegistryの探索に成功したHostを基準とし、個別の`host.info`取得に失敗したHostを除外して他のHostの表示を継続する。Registry探索自体の失敗は一覧全体のエラーとする
 - 切替は新接続と bootstrap の準備後に現 Host を交換し、世代を更新して旧 Host 由来の遅延を破棄する。切替は録音の完了後に行う。終了時は Disconnected とし、最終 DataRoot と instanceId を保持して再接続する。Project 切替は Host 切替と独立し、同一 Host 内の Active Project のみ変更する
 
 ### 8.1 起動とフレーミング
