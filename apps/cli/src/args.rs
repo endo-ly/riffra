@@ -20,7 +20,7 @@ fn is_false(value: &bool) -> bool {
 Use --data-root for standalone project access against a project directory, or --attach to \
 send commands to a running Riffra Host. Use --host when more than one Host is running to pick \
 the target instance, and --expected-sequence as an optimistic concurrency check that a one-shot \
-mutation runs only against a project state at the given sequence.\n\n\
+command runs only against a project state at the given sequence.\n\n\
 Use --interactive to read JSON Lines requests from stdin and return one JSON response per request."
 )]
 pub struct Cli {
@@ -36,7 +36,7 @@ pub struct Cli {
     /// Route commands to a running Riffra Host instead of opening the project directory directly.
     #[arg(long)]
     pub attach: bool,
-    /// Require a specific canonical sequence for a one-shot mutation so it only succeeds when the project state matches; reported as a conflict failure otherwise.
+    /// Require a specific sequence for a one-shot command so it only runs when the project state is at that sequence; reported as a conflict failure otherwise.
     #[arg(long)]
     pub expected_sequence: Option<u64>,
     #[command(subcommand)]
@@ -123,7 +123,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Import audio, preview Assets, and stop previews.
+    /// Import MIDI files, preview Assets, and stop previews.
     Asset {
         #[command(subcommand)]
         command: AssetCommand,
@@ -209,9 +209,9 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: JobCommand,
     },
-    /// Revert the most recent mutation; requires --interactive because history is process-local.
+    /// Revert the most recent mutation; requires --interactive in standalone mode because history is process-local, and works as a one-shot command with --attach.
     Undo,
-    /// Reapply the most recently reverted mutation; requires --interactive because history is process-local.
+    /// Reapply the most recently reverted mutation; requires --interactive in standalone mode because history is process-local, and works as a one-shot command with --attach.
     Redo,
 }
 
@@ -243,15 +243,14 @@ pub enum SessionCommand {
     Inspect(SessionInspectArgs),
     /// Apply a batch of operations from a JSON Lines file as one atomic mutation.
     ///
-    /// # Long about
-    ///
     /// The file is UTF-8 JSON Lines. Empty lines are ignored. Each non-empty line is one operation
     /// holding `command` and `params`. `requestId` and `expectedSequence` must not appear inside
     /// an operation. A file with zero operations fails.
     ///
-    /// All operations are applied to a candidate project first and committed once only when every
-    /// operation succeeds. If any operation fails, earlier successes in the same batch are not
-    /// kept. `--expected-sequence` is the precondition for the batch as a whole.
+    /// The batch is atomic: the project changes only when every operation succeeds, and one
+    /// failing operation leaves the project unchanged. Later operations observe the changes of
+    /// earlier ones, so a Track or Clip created earlier in the batch can be referenced by name.
+    /// `--expected-sequence` acts as the sequence precondition for the batch as a whole.
     ///
     /// Batch operations may resolve `trackName` instead of `trackId`, and `clipName` instead of
     /// `clipId`. Specifying both forms fails. Zero matches or multiple matches fail. `clipName`
@@ -514,7 +513,11 @@ pub enum AudioClipCommand {
     Split(ClipSplitArgs),
     /// Duplicate one Audio Clip under a new identity.
     Duplicate(ClipIdArg),
-    /// Create a crossfade between two adjacent Audio Clips on the same Track.
+    /// Create an equal-power crossfade across the time overlap of two Audio Clips on the same Track.
+    ///
+    /// The two Clips must be different, live on the same Track, and overlap in time. The earlier
+    /// Clip fades out and the later Clip fades in across the overlap; the two ids may be given in
+    /// either order.
     Crossfade(AudioClipCrossfadeArgs),
 }
 
@@ -543,8 +546,8 @@ pub struct AudioClipUpdateArgs {
     /// Id of the Audio Clip to update.
     #[arg(long)]
     pub clip_id: String,
-    /// JSON object patch; when present it replaces all individual field flags. Allowed fields: name, trackId, startTick, timelineDuration, sourceRange, gainDb, pan, fadeIn, fadeOut, fadeShape, loopEnabled, muted.
-    #[arg(long)]
+    /// JSON object patch with the allowed fields name, trackId, startTick, timelineDuration, sourceRange, gainDb, pan, fadeIn, fadeOut, fadeShape, loopEnabled, and muted; mutually exclusive with the individual field flags.
+    #[arg(long, conflicts_with_all = ["name", "track_id", "start_tick", "gain_db", "pan", "loop_enabled", "muted"])]
     pub patch: Option<String>,
     /// New display name.
     #[arg(long)]
@@ -624,10 +627,10 @@ pub struct ClipIdArg {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioClipCrossfadeArgs {
-    /// Id of the earlier Clip in the crossfade pair.
+    /// Id of one Clip in the crossfade pair.
     #[arg(long)]
     pub first_clip_id: String,
-    /// Id of the later Clip in the crossfade pair.
+    /// Id of the other Clip in the crossfade pair; the two ids may be given in either order.
     #[arg(long)]
     pub second_clip_id: String,
 }
@@ -694,8 +697,8 @@ pub struct MidiClipUpdateArgs {
     /// Id of the MIDI Clip to update.
     #[arg(long)]
     pub clip_id: String,
-    /// JSON object patch; when present it replaces all individual field flags. Allowed fields: name, trackId, startTick, durationTicks, notes, events, muted, loopEnabled.
-    #[arg(long)]
+    /// JSON object patch with the allowed fields name, trackId, startTick, durationTicks, notes, events, muted, and loopEnabled; mutually exclusive with the individual field flags.
+    #[arg(long, conflicts_with_all = ["name", "track_id", "start_tick", "duration_ticks", "muted", "loop_enabled"])]
     pub patch: Option<String>,
     /// New display name.
     #[arg(long)]
@@ -948,7 +951,7 @@ pub struct MusicalPhrasePreviewArgs {
     /// MIDI channel number in the inclusive range 1..=16 used when resolving Notes; defaults to 1 when omitted.
     #[arg(long)]
     pub channel: Option<u8>,
-    /// Include the fully resolved raw MIDI Notes in the preview response.
+    /// Include the fully resolved Notes in the preview response, using musical pitch, position, and duration notation.
     #[arg(long)]
     pub include_notes: bool,
 }
@@ -998,8 +1001,9 @@ pub struct MusicalMidiClipResizeArgs {
 pub enum MusicNoteCommand {
     /// List Notes in a half-open musical range, returning any Note whose interval overlaps the range.
     ///
-    /// Exactly one of --clip-id or --track-id is required; supplying both or neither fails. When
-    /// --track-id is used, --start and --end are required. The range is the half-open interval
+    /// Exactly one of --clip-id or --track-id is required; supplying both or neither fails. A
+    /// range is optional with --clip-id, but --start and --end must be provided together, and
+    /// both are required with --track-id. The range is the half-open interval
     /// [start, end): a Note is returned when its own interval overlaps the range, even if its
     /// start lies outside it. Results are grouped per Clip for Track scope. Note ids appear only
     /// with --include-ids; raw MIDI and tick values appear only with --raw.
@@ -1014,8 +1018,9 @@ pub enum MusicNoteCommand {
     Remove(MusicalNoteRemoveArgs),
     /// Transform Notes whose start lies in a half-open musical range in one atomic mutation.
     ///
-    /// Exactly one of --clip-id or --track-id is required; supplying both or neither fails. When
-    /// --track-id is used, --start and --end are required. Selection uses each Note's start
+    /// Exactly one of --clip-id or --track-id is required; supplying both or neither fails. A
+    /// range is optional with --clip-id, but --start and --end must be provided together, and
+    /// both are required with --track-id. Selection uses each Note's start
     /// position inside [start, end): a Note that merely overlaps the range without starting in it
     /// is not selected. --pitch and --channel filter on pre-transform values. --timing-offset is a
     /// signed whole-note fraction such as +1/48 or -1/48. --velocity-offset results clamp to
@@ -1052,11 +1057,11 @@ pub struct MusicalNoteListArgs {
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
-    /// Half-open range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; required with --track-id.
+    /// Half-open range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --end, and both are required with --track-id.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
-    /// Half-open range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; required with --track-id.
+    /// Half-open range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and both are required with --track-id.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
@@ -1134,11 +1139,11 @@ pub struct MusicalNoteTransformArgs {
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
-    /// Half-open selection range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; selects Notes whose start lies in the range; required with --track-id.
+    /// Half-open selection range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; selects Notes whose start lies in the range; must be provided together with --end, and both are required with --track-id.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
-    /// Half-open selection range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; required with --track-id.
+    /// Half-open selection range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and both are required with --track-id.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
@@ -1718,7 +1723,7 @@ pub struct DeviceBypassArgs {
     /// Id of the device to bypass or unbypass.
     #[arg(long)]
     pub device_id: String,
-    /// Bypass state; defaults to true when the flag is present without a value and false when omitted.
+    /// Bypass state: true bypasses the device, false re-enables it; defaults to false when omitted.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bypassed: Option<bool>,
@@ -1800,7 +1805,7 @@ pub enum RuntimeCommand {
 pub enum RuntimeProjectionCommand {
     /// Report the current runtime projection status; requires a running Riffra Host accessed with --attach.
     Get,
-    /// Resubmit the canonical state to the runtime projection; requires --attach and is unavailable in Safe Mode, which keeps the runtime projection offline.
+    /// Resubmit the current project state to the audio runtime; requires --attach and is unavailable in Safe Mode, which keeps the runtime projection offline.
     Retry,
 }
 
@@ -2120,7 +2125,7 @@ pub enum PluginPresetCommand {
 pub enum PluginStateCommand {
     /// Read a plugin device's full state and write it to an output file; requires a running Riffra Host accessed with --attach.
     Save(PluginStateSaveArgs),
-    /// Load a plugin device's full state from a JSON file.
+    /// Load a plugin device's full state from a JSON file; requires a running Riffra Host accessed with --attach.
     Load(PluginStateLoadArgs),
 }
 
@@ -3154,6 +3159,47 @@ mod tests {
 
         Cli::command().debug_assert();
         assert_help(&Cli::command(), "riffra");
+    }
+
+    #[test]
+    fn clip_update_patch_conflicts_with_field_flags() {
+        let audio = Cli::try_parse_from([
+            "riffra",
+            "audio-clip",
+            "update",
+            "--clip-id",
+            "clip:1",
+            "--patch",
+            "{}",
+            "--name",
+            "renamed",
+        ]);
+        assert!(audio.is_err(), "--patch must reject individual field flags");
+
+        let midi = Cli::try_parse_from([
+            "riffra",
+            "midi-clip",
+            "update",
+            "--clip-id",
+            "clip:1",
+            "--patch",
+            "{}",
+            "--name",
+            "renamed",
+        ]);
+        assert!(midi.is_err(), "--patch must reject individual field flags");
+
+        let fields_only = Cli::try_parse_from([
+            "riffra",
+            "audio-clip",
+            "update",
+            "--clip-id",
+            "clip:1",
+            "--name",
+            "renamed",
+        ])
+        .expect("field flags alone must parse");
+        assert!(fields_only.request().is_ok());
     }
 
     #[test]
