@@ -205,6 +205,81 @@ fn assert_runtime_unavailable(output: Output, operation: &str) {
     );
 }
 
+fn structured_failure_json(output: Output, operation: &str) -> Value {
+    assert!(
+        !output.status.success(),
+        "{operation} unexpectedly succeeded: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "{operation} did not return structured failure JSON ({error}): stdout={}, stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+#[test]
+fn standalone_one_shot_failure_returns_structured_json() {
+    let data_root = TestDataRoot::new();
+    let resource_root = prepare_safe_mode_resource_root(&data_root.path);
+    let output = standalone(
+        &data_root.path,
+        Some(&resource_root),
+        &["track", "remove", "--track-id", "track:missing"],
+    );
+    let body = structured_failure_json(output, "standalone track.remove");
+    assert_eq!(body["requestId"], "one-shot");
+    assert_eq!(body["ok"], false);
+    assert!(body["error"]["code"].is_string());
+    assert!(body["error"]["message"].is_string());
+}
+
+#[test]
+fn attached_one_shot_conflict_returns_structured_json() {
+    let mut host = RunningHost::start(true);
+    let data_root_string = host.data_root().to_string_lossy().into_owned();
+    let hosts = success_json(host_list(), "host list");
+    let instance_id = hosts
+        .as_array()
+        .expect("host list should return an array")
+        .iter()
+        .find(|entry| {
+            entry.get("dataRoot").and_then(Value::as_str) == Some(data_root_string.as_str())
+        })
+        .and_then(|entry| entry.get("instanceId").and_then(Value::as_str))
+        .expect("the started Host should be discoverable")
+        .to_owned();
+
+    let output = attached(
+        &instance_id,
+        &[
+            "--expected-sequence",
+            "999",
+            "track",
+            "add",
+            "--name",
+            "Conflict",
+            "--kind",
+            "instrument",
+        ],
+    );
+    let body = structured_failure_json(output, "attached track.add conflict");
+    assert_eq!(body["requestId"], "one-shot");
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"]["code"], "conflict");
+    assert!(body["error"]["details"]["expectedSequence"].is_number());
+    assert!(body["error"]["details"]["currentSequence"].is_number());
+
+    let shutdown = success_json(
+        attached(&instance_id, &["host", "shutdown"]),
+        "host.shutdown",
+    );
+    assert_eq!(shutdown["result"]["type"], "ok");
+    host.wait_for_shutdown();
+}
+
 #[test]
 fn headless_host_process_covers_lifecycle_and_mode_contracts() {
     let safe_mode = match std::env::var("RIFFRA_HEADLESS_SAFE_MODE").as_deref() {
