@@ -11,6 +11,16 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn finite_f64(value: &str) -> Result<f64, String> {
+    let parsed: f64 = value
+        .parse()
+        .map_err(|error| format!("`{value}` is not a number ({error})"))?;
+    if !parsed.is_finite() {
+        return Err(format!("`{value}` is not a finite number"));
+    }
+    Ok(parsed)
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "riffra",
@@ -293,11 +303,11 @@ pub struct SessionApplyArgs {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInspectArgs {
-    /// Optional half-open range start on the arrangement as a musical position in bar:beat or bar:beat+fraction notation.
+    /// Optional half-open range start on the arrangement as a musical position in bar:beat or bar:beat+fraction notation; must be provided together with --end, and --end must be after --start.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
-    /// Optional half-open range end on the arrangement as a musical position in bar:beat or bar:beat+fraction notation.
+    /// Optional half-open range end on the arrangement as a musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and must be after --start.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
@@ -321,15 +331,14 @@ pub struct SessionSettingsArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
     /// Master gain in dB; non-finite values are rejected and the value is clamped to -90..=0.
-    #[arg(long)]
+    #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[arg(allow_hyphen_values = true)]
     pub master_db: Option<f64>,
     /// Enable or disable loop playback.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loop_enabled: Option<bool>,
-    /// Count-in length in beats before recording or playback starts.
+    /// Count-in length in beats before recording or playback starts; values above 8 are clamped to 8.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count_in_beats: Option<u8>,
@@ -401,14 +410,12 @@ pub struct TrackUpdateArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Track gain in dB; non-finite values are rejected and the value is clamped to -90..=24.
-    #[arg(long)]
+    #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[arg(allow_hyphen_values = true)]
     pub gain_db: Option<f64>,
-    /// Track stereo pan; values are clamped to -1.0 (left) through 1.0 (right).
-    #[arg(long)]
+    /// Track stereo pan; non-finite values are rejected and values are clamped to -1.0 (left) through 1.0 (right).
+    #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[arg(allow_hyphen_values = true)]
     pub pan: Option<f64>,
     /// Mute or unmute this Track; a muted Track is silent regardless of automation.
     #[arg(long)]
@@ -530,11 +537,11 @@ pub struct AudioClipAddAssetArgs {
     /// Display name for the new Audio Clip.
     #[arg(long)]
     pub name: String,
-    /// Absolute arrangement start position in timeline ticks; the project timebase defines ticks per beat.
+    /// Absolute arrangement start position in timeline ticks; omit to append the Clip after the last existing Audio Clip.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_tick: Option<u64>,
-    /// Destination Track id; omit to place the Clip on its default Track.
+    /// Destination Track id; omit to use the first existing audio Track, creating one named `Audio 1` when no audio Track exists.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
@@ -559,12 +566,10 @@ pub struct AudioClipUpdateArgs {
     #[arg(long)]
     pub start_tick: Option<u64>,
     /// Clip gain in dB; non-finite values are rejected and the value is clamped to -90..=24.
-    #[arg(long)]
-    #[arg(allow_hyphen_values = true)]
+    #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     pub gain_db: Option<f64>,
-    /// Clip stereo pan; values are clamped to -1.0 (left) through 1.0 (right).
-    #[arg(long)]
-    #[arg(allow_hyphen_values = true)]
+    /// Clip stereo pan; non-finite values are rejected and values are clamped to -1.0 (left) through 1.0 (right).
+    #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     pub pan: Option<f64>,
     /// Loop or unloop this Clip's source material.
     #[arg(long)]
@@ -683,10 +688,10 @@ pub struct MidiClipAddAssetArgs {
     /// Display name for the new MIDI Clip.
     #[arg(long)]
     pub name: String,
-    /// Absolute arrangement start position in timeline ticks; omit to use the Asset default.
+    /// Absolute arrangement start position in timeline ticks; omit to place the Clip at arrangement tick 0.
     #[arg(long)]
     pub start_tick: Option<u64>,
-    /// Destination instrument Track id; omit to place the Clip on its default Track.
+    /// Destination instrument Track id; omit to use the first existing instrument Track, creating one named `Instrument 1` when no instrument Track exists.
     #[arg(long)]
     pub track_id: Option<String>,
 }
@@ -3200,6 +3205,73 @@ mod tests {
         ])
         .expect("field flags alone must parse");
         assert!(fields_only.request().is_ok());
+    }
+
+    #[test]
+    fn float_options_reject_non_finite_values() {
+        for arguments in [
+            vec![
+                "riffra",
+                "session",
+                "settings",
+                "update",
+                "--master-db",
+                "NaN",
+            ],
+            vec![
+                "riffra",
+                "track",
+                "update",
+                "--track-id",
+                "track:1",
+                "--gain-db",
+                "inf",
+            ],
+            vec![
+                "riffra",
+                "track",
+                "update",
+                "--track-id",
+                "track:1",
+                "--pan",
+                "-inf",
+            ],
+            vec![
+                "riffra",
+                "audio-clip",
+                "update",
+                "--clip-id",
+                "clip:1",
+                "--gain-db",
+                "Infinity",
+            ],
+            vec![
+                "riffra",
+                "audio-clip",
+                "update",
+                "--clip-id",
+                "clip:1",
+                "--pan",
+                "NaN",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(arguments).is_err(),
+                "non-finite float values must be rejected"
+            );
+        }
+
+        let finite = Cli::try_parse_from([
+            "riffra",
+            "track",
+            "update",
+            "--track-id",
+            "track:1",
+            "--gain-db",
+            "-3.5",
+        ])
+        .expect("finite float values must parse");
+        assert!(finite.request().is_ok());
     }
 
     #[test]
