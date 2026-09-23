@@ -1436,15 +1436,15 @@ pub enum TimebaseCommand {
 #[derive(Debug, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimebaseArgs {
-    /// Tempo in beats per minute; must be within 20.0..=400.0.
-    #[arg(long)]
+    /// Tempo in beats per minute; non-finite values are rejected and the value must be within 20.0..=400.0.
+    #[arg(long, value_parser = finite_f64)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bpm: Option<f64>,
-    /// Time signature numerator, such as 4 in 4/4; must be a positive value the notation supports.
+    /// Time signature numerator, such as 4 in 4/4; must be within 1..=255.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_signature_numerator: Option<u8>,
-    /// Time signature denominator, such as 4 in 4/4; must be a positive value the notation supports.
+    /// Time signature denominator, such as 4 in 4/4; must be one of 1, 2, 4, 8, 16, or 32.
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_signature_denominator: Option<u8>,
@@ -3254,6 +3254,7 @@ mod tests {
                 "--pan",
                 "NaN",
             ],
+            vec!["riffra", "timebase", "update", "--bpm", "NaN"],
         ] {
             assert!(
                 Cli::try_parse_from(arguments).is_err(),
