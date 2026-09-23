@@ -19,6 +19,25 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+/// One-shot run outcome: a Riffra command failure is emitted as structured JSON on stdout,
+/// while a local CLI failure stays on stderr as plain text.
+enum RunFailure {
+    Protocol(Box<ControlResponse>),
+    Local(String),
+}
+
+impl From<String> for RunFailure {
+    fn from(message: String) -> Self {
+        Self::Local(message)
+    }
+}
+
+impl From<&str> for RunFailure {
+    fn from(message: &str) -> Self {
+        Self::Local(message.to_owned())
+    }
+}
+
 fn main() {
     let cli = Cli::parse_from(instrument::prepare_cli_args(std::env::args_os()));
     if let Some(command) = instrument::passthrough_command(&cli) {
@@ -46,13 +65,22 @@ fn main() {
         }
         return;
     }
-    if let Err(error) = run(cli) {
-        eprintln!("riffra: {error}");
-        std::process::exit(1);
+    match run(cli) {
+        Ok(()) => {}
+        Err(RunFailure::Protocol(response)) => {
+            if let Err(error) = write_response(&response) {
+                eprintln!("riffra: {error}");
+            }
+            std::process::exit(1);
+        }
+        Err(RunFailure::Local(message)) => {
+            eprintln!("riffra: {message}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> Result<(), RunFailure> {
     if cli.interactive && cli.command.is_some() {
         return Err("--interactive cannot be combined with a one-shot command".into());
     }
@@ -92,7 +120,7 @@ fn run(cli: Cli) -> Result<(), String> {
         if expected_sequence.is_some() {
             return Err("host list cannot be combined with --expected-sequence".into());
         }
-        return list_hosts();
+        return list_hosts().map_err(RunFailure::Local);
     }
     if let Some(CliCommand::Serve(args)) = cli.command.as_ref() {
         if attach {
@@ -110,7 +138,8 @@ fn run(cli: Cli) -> Result<(), String> {
         return serve::run(
             data_root.ok_or_else(|| "--data-root is required for serve".to_string())?,
             args.clone(),
-        );
+        )
+        .map_err(RunFailure::Local);
     }
     if let Some((job_id, timeout_ms)) = job_wait {
         if !attach {
@@ -128,12 +157,9 @@ fn run(cli: Cli) -> Result<(), String> {
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
         let response = attached.wait_for_job(&job_id, timeout_ms)?;
         if response.ok {
-            return write_response(&response);
+            return write_response(&response).map_err(RunFailure::Local);
         }
-        let error = response
-            .error
-            .ok_or_else(|| "Riffra Host returned an invalid failure response".to_string())?;
-        return Err(format!("{}: {}", error.code, error.message));
+        return Err(RunFailure::Protocol(Box::new(response)));
     }
     let request = if interactive {
         if expected_sequence.is_some() {
@@ -155,7 +181,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         let attached = AttachedBackend::from_discovery(select_host(host_id.as_deref())?);
         if interactive {
-            return attached.run_interactive();
+            return attached.run_interactive().map_err(RunFailure::Local);
         }
         let request = ControlRequest::new(
             "one-shot",
@@ -168,15 +194,15 @@ fn run(cli: Cli) -> Result<(), String> {
             save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
         let response = compact_agent_response(&request.command, response, None);
         if let Some((json, _)) = audio_diagnostics_options {
-            return write_audio_diagnostics(&response, json);
+            if !response.ok {
+                return Err(RunFailure::Protocol(Box::new(response)));
+            }
+            return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
         }
         if response.ok {
-            return write_response(&response);
+            return write_response(&response).map_err(RunFailure::Local);
         }
-        let error = response
-            .error
-            .ok_or_else(|| "Riffra Host returned an invalid failure response".to_string())?;
-        return Err(format!("{}: {}", error.code, error.message));
+        return Err(RunFailure::Protocol(Box::new(response)));
     }
 
     if host_id.is_some() {
@@ -186,16 +212,23 @@ fn run(cli: Cli) -> Result<(), String> {
     let built_in_instruments_root = resources::built_in_instruments_root()?;
     let dispatcher = Dispatcher::open(data_root, built_in_instruments_root)?;
     if interactive {
-        return run_interactive(&dispatcher);
+        return run_interactive(&dispatcher).map_err(RunFailure::Local);
     }
     let request = ControlRequest::new(
         "one-shot",
         request.expect("one-shot request is present"),
         expected_sequence,
     );
-    let dispatched = dispatcher
-        .dispatch_request(request.clone())
-        .map_err(|error| error.to_string())?;
+    let dispatched = match dispatcher.dispatch_request(request.clone()) {
+        Ok(dispatched) => dispatched,
+        Err(error) => {
+            let response = annotate_batch_error(
+                ControlResponse::failure(request.request_id, None, error.protocol_error()),
+                batch_operation_lines.as_deref(),
+            );
+            return Err(RunFailure::Protocol(Box::new(response)));
+        }
+    };
     let response = ControlResponse::success(
         request.request_id.clone(),
         dispatched.sequence,
@@ -207,13 +240,17 @@ fn run(cli: Cli) -> Result<(), String> {
     let response = annotate_batch_error(response, batch_operation_lines.as_deref());
     let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
     if let Some((json, _)) = audio_diagnostics_options {
-        return write_audio_diagnostics(&response, json);
+        if !response.ok {
+            return Err(RunFailure::Protocol(Box::new(response)));
+        }
+        return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
     }
     write_response(&compact_agent_response(
         &request.command,
         response,
         Some(serde_json::to_value(dispatched.created_entity_ids).expect("entity ids serialize")),
     ))
+    .map_err(RunFailure::Local)
 }
 
 fn annotate_batch_error(
