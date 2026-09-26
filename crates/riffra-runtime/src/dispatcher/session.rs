@@ -771,14 +771,6 @@ mod tests {
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
-        let plugin_paths = ["existing", "first", "second"]
-            .map(|name| root.join("VST3").join(format!("{name}.vst3")));
-        let catalog_entries = plugin_paths
-            .iter()
-            .cloned()
-            .map(|path| (path, crate::plugins::PluginRole::Effect))
-            .collect::<Vec<_>>();
-        crate::test_support::write_validated_plugin_catalog(&root, &catalog_entries);
         let track = dispatcher
             .dispatch(request(
                 "track.add",
@@ -790,7 +782,7 @@ mod tests {
         dispatcher
             .dispatch(request(
                 "effect.add",
-                json!({"trackId":track_id,"pluginPath":plugin_paths[0].display().to_string()}),
+                json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
             ))
             .unwrap();
         let existing_id = dispatcher
@@ -811,8 +803,8 @@ mod tests {
                 json!({
                     "includeCreatedIds": true,
                     "operations": [
-                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_paths[1].display().to_string()}},
-                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_paths[2].display().to_string()}}
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"first.vst3"}},
+                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"second.vst3"}}
                     ]
                 }),
             ))

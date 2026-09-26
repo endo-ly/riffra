@@ -308,6 +308,7 @@ pub struct HostDispatcher<'a, A> {
     sonalloy: PathBuf,
     built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     allow_runtime_commands: bool,
+    validate_plugin_roles: bool,
 }
 
 /// Standalone dispatcher type retained as the CLI's editing entry point.
@@ -369,6 +370,7 @@ impl HostDispatcher<'static, ()> {
             sonalloy,
             built_in_instruments,
             allow_runtime_commands: false,
+            validate_plugin_roles: false,
         })
     }
 }
@@ -390,6 +392,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             sonalloy: self.sonalloy.clone(),
             built_in_instruments: Arc::clone(&self.built_in_instruments),
             allow_runtime_commands: false,
+            validate_plugin_roles: self.validate_plugin_roles,
         }
     }
 
@@ -421,6 +424,7 @@ impl<'a, A> HostDispatcher<'a, A> {
             sonalloy: sonalloy.to_path_buf(),
             built_in_instruments: Arc::clone(built_in_instruments),
             allow_runtime_commands: true,
+            validate_plugin_roles: true,
         }
     }
 
@@ -992,7 +996,7 @@ fn parse_automation_parameter(value: &str) -> Result<AutomationParameter, Dispat
 
 #[cfg(test)]
 mod tests {
-    use super::Dispatcher;
+    use super::{Dispatcher, HostDispatcher};
     use riffra_control::{ControlCommand, ErrorCode};
     use riffra_host::now_ms;
     use serde_json::{Value, json};
@@ -1171,6 +1175,81 @@ mod tests {
         assert_eq!(
             metronome.projection_effect,
             super::CanonicalMutationEffect::ProjectArrangement
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn borrowed_session_apply_enforces_plugin_roles() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-batch-role-{}", now_ms()));
+        let built_in_root = crate::test_support::prepare_built_in_resource_root(&root);
+        let built_in_instruments = std::sync::Arc::new(
+            crate::instrument::BuiltInInstrumentCatalog::load(built_in_root).unwrap(),
+        );
+        let project_store = riffra_host::ProjectStore::new(&root);
+        let loaded = project_store.initialize().unwrap().loaded;
+        let storage = project_store.active_session_store().unwrap();
+        let core = riffra_core::AppCore::new(
+            root.clone(),
+            loaded.session,
+            (),
+            loaded.recovered_from_generation,
+            false,
+        );
+        let sonalloy = std::path::PathBuf::new();
+        let plugin_path = root.join("VST3/Synth.vst3");
+        fs::create_dir_all(&plugin_path).unwrap();
+        crate::plugins::save(
+            &root,
+            &crate::plugins::ScanReport {
+                root: root.to_string_lossy().into_owned(),
+                started_at_ms: 0,
+                finished_at_ms: 0,
+                plugins: vec![crate::plugins::PluginEntry {
+                    id: "vst3-synth".into(),
+                    name: "Synth".into(),
+                    vendor: None,
+                    version: None,
+                    format: crate::plugins::PluginFormat::Vst3,
+                    role: Some(crate::plugins::PluginRole::Instrument),
+                    path: plugin_path.to_string_lossy().into_owned(),
+                    bundle: true,
+                    modified_at_ms: None,
+                    scan_state: crate::plugins::PluginScanState::Validated,
+                }],
+                issues: Vec::new(),
+            },
+        )
+        .unwrap();
+        let dispatcher = HostDispatcher::borrowed(
+            &core,
+            &storage,
+            &project_store,
+            &root,
+            &sonalloy,
+            &built_in_instruments,
+        );
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+
+        let error = dispatcher
+            .dispatch(request(
+                "session.apply",
+                json!({"operations":[{"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_path.display().to_string()}}]}),
+            ))
+            .unwrap_err();
+        assert!(
+            error.protocol_error().details.unwrap()["cause"]
+                .as_str()
+                .unwrap()
+                .contains("role Instrument")
         );
 
         let _ = fs::remove_dir_all(root);

@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(crate) fn plugin_device_role(
+fn plugin_device_role(
     session: &riffra_core::CreativeSession,
     device_id: &str,
 ) -> Option<crate::plugins::PluginRole> {
