@@ -141,6 +141,7 @@ private:
     std::atomic<int> preparedBlockSize{0};
     std::atomic<int> pluginInputChannels{0};
     std::atomic<int> pluginOutputChannels{0};
+    std::atomic<bool> pluginIsInstrument{false};
     std::atomic<int> cachedProgramCount{0};
     std::atomic<bool> cachedHasEditor{false};
     std::atomic<bool> loaded{false};

@@ -620,8 +620,8 @@ public:
         const auto first = makeInstrumentSnapshot("track:state", "instrument:state");
         if (!engine.loadSnapshot(first, formats, 48'000.0, 32, error)) return false;
         InstrumentTrace trace;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                48'000.0, 32, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (rack == nullptr) return false;
         auto* rackPointer = rack.get();
         if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:state", std::move(rack)))
@@ -697,8 +697,8 @@ public:
                 makeInstrumentSnapshot("track:editor-instrument", "instrument:editor"), formats,
                 48'000.0, 32, error))
             return false;
-        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
-                                                32, error);
+        auto rack = PluginRackTestPeer::installInstrument(std::make_unique<StateTestProcessor>(),
+                                                          48'000.0, 32, error);
         if (rack == nullptr) return false;
         auto* rackPointer = rack.get();
         {
@@ -737,8 +737,8 @@ public:
                 48'000.0, 32, error))
             return false;
 
-        auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), 48'000.0,
-                                                32, error);
+        auto rack = PluginRackTestPeer::installInstrument(std::make_unique<StateTestProcessor>(),
+                                                          48'000.0, 32, error);
         if (rack == nullptr) return false;
         auto* rackPointer = rack.get();
         {
@@ -806,7 +806,7 @@ public:
             return false;
 
         InstrumentTrace trace;
-        auto instrumentRack = PluginRackTestPeer::install(
+        auto instrumentRack = PluginRackTestPeer::installInstrument(
             std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (instrumentRack == nullptr) return false;
         {
@@ -874,8 +874,8 @@ public:
         if (!engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) return false;
 
         InstrumentTrace trace;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                48'000.0, 32, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (rack == nullptr || !rack->prepareTimelineMidiCapacity(2, error)) return false;
         if (!TimelineEngineTestPeer::installTrackInstrument(engine, "track:pdc", std::move(rack)))
             return false;
@@ -909,8 +909,8 @@ public:
             return false;
 
         InstrumentTrace trace;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                48'000.0, 32, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (rack == nullptr) return false;
         {
             const juce::SpinLock::ScopedLockType lock(engine.timelineLock);

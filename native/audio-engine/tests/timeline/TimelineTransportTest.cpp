@@ -15,8 +15,8 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
                                     kBlockSamples, error))
         << error.toStdString();
     InstrumentTrace trace;
-    auto instrument = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                  48'000.0, kBlockSamples, error);
+    auto instrument = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, kBlockSamples, error);
     ASSERT_NE(instrument, nullptr) << error.toStdString();
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live-fade",
                                                                std::move(instrument)));
@@ -78,7 +78,7 @@ TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     ASSERT_TRUE(
         engine.loadSnapshot(makeInstrumentSnapshot("track:tail"), formats, 48'000.0, 32, error));
     InstrumentTrace instrumentTrace;
-    auto instrument = PluginRackTestPeer::install(
+    auto instrument = PluginRackTestPeer::installInstrument(
         std::make_unique<TestInstrumentProcessor>(instrumentTrace), 48'000.0, 32, error);
     ASSERT_NE(instrument, nullptr) << error.toStdString();
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:tail",

@@ -211,6 +211,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     preparedBlockSize.store(blockSize, std::memory_order_release);
     pluginInputChannels.store(inputChannels, std::memory_order_release);
     pluginOutputChannels.store(outputChannels, std::memory_order_release);
+    pluginIsInstrument.store(description->isInstrument, std::memory_order_release);
     cachedProgramCount.store(candidateProgramCount, std::memory_order_release);
     cachedHasEditor.store(candidateHasEditor, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
@@ -309,6 +310,7 @@ void PluginRack::clear() noexcept {
     loaded.store(false, std::memory_order_release);
     pluginInputChannels.store(0, std::memory_order_release);
     pluginOutputChannels.store(0, std::memory_order_release);
+    pluginIsInstrument.store(false, std::memory_order_release);
     cachedProgramCount.store(0, std::memory_order_release);
     cachedHasEditor.store(false, std::memory_order_release);
     bypassed.store(false, std::memory_order_release);
@@ -393,7 +395,7 @@ bool PluginRack::isLoaded() const noexcept { return loaded.load(std::memory_orde
 
 bool PluginRack::isInstrument() const noexcept {
     return loaded.load(std::memory_order_acquire) &&
-           pluginInputChannels.load(std::memory_order_acquire) == 0;
+           pluginIsInstrument.load(std::memory_order_acquire);
 }
 
 int PluginRack::latencySamples() const noexcept {

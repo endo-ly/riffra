@@ -6,6 +6,7 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "plugins/PluginRack.h"
@@ -84,9 +85,13 @@ struct InstrumentTrace final {
 
 class TestInstrumentProcessor final : public juce::AudioProcessor {
 public:
-    explicit TestInstrumentProcessor(InstrumentTrace& processorTrace)
+    explicit TestInstrumentProcessor(InstrumentTrace& processorTrace, bool withAudioInput = false)
         : AudioProcessor(
-              BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+              withAudioInput
+                  ? BusesProperties()
+                        .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                        .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+                  : BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
           trace(processorTrace) {}
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
@@ -94,7 +99,9 @@ public:
     }
     void releaseResources() override { trace.released = true; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
-        return layout.getMainInputChannelSet() == juce::AudioChannelSet::disabled() &&
+        return layout.getMainInputChannelSet() == (getBusCount(true) > 0
+                                                       ? juce::AudioChannelSet::stereo()
+                                                       : juce::AudioChannelSet::disabled()) &&
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
@@ -238,7 +245,7 @@ class PluginRackTestPeer final {
 public:
     static std::unique_ptr<PluginRack> install(std::unique_ptr<juce::AudioProcessor> processor,
                                                double sampleRate, int blockSize,
-                                               juce::String& error) {
+                                               juce::String& error, bool isInstrument = false) {
         if (processor == nullptr) {
             error = "Test processor was null.";
             return {};
@@ -261,6 +268,7 @@ public:
                                         std::memory_order_release);
         rack->pluginOutputChannels.store(processor->getMainBusNumOutputChannels(),
                                          std::memory_order_release);
+        rack->pluginIsInstrument.store(isInstrument, std::memory_order_release);
         rack->cachedProgramCount.store(std::max(0, processor->getNumPrograms()),
                                        std::memory_order_release);
         rack->cachedHasEditor.store(processor->hasEditor(), std::memory_order_release);
@@ -269,6 +277,12 @@ public:
         rack->loaded.store(true, std::memory_order_release);
         rack->loadCount.store(1, std::memory_order_release);
         return rack;
+    }
+
+    static std::unique_ptr<PluginRack> installInstrument(
+        std::unique_ptr<juce::AudioProcessor> processor, double sampleRate, int blockSize,
+        juce::String& error) {
+        return install(std::move(processor), sampleRate, blockSize, error, true);
     }
 };
 
