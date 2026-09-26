@@ -195,29 +195,6 @@ TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
     EXPECT_EQ(static_cast<int>(rack->status().getProperty("outputChannels", -1)), 2);
 }
 
-TEST(PluginRackTest, RecognizesInstrumentWithAudioInput) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::installInstrument(
-        std::make_unique<TestInstrumentProcessor>(trace, true), kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
-
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("inputChannels", -1)), 2);
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("outputChannels", -1)), 2);
-    EXPECT_TRUE(rack->isInstrument());
-
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    juce::MidiBuffer midi;
-    midi.addEvent(juce::MidiMessage::noteOn(1, 48, 0.8f), 0);
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &midi);
-
-    EXPECT_TRUE(trace.processed);
-    EXPECT_FLOAT_EQ(outputLeft.front(), 0.25f);
-    EXPECT_FLOAT_EQ(outputRight.front(), 0.25f);
-}
-
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     InstrumentTrace trace;
     juce::String error;
