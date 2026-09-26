@@ -197,6 +197,12 @@ pub(super) fn dispatch<A>(
         "missing.replace-plugin" => {
             let params: MissingPluginReplaceParams = decode(request.params)?;
             let path = Path::new(&params.new_path);
+            if !path.exists() {
+                return Err(DispatchError::CommandFailed(format!(
+                    "replacement VST3 path does not exist: {}",
+                    path.display()
+                )));
+            }
             let name = plugin_name(path);
             let snapshot = dispatcher.core.snapshot()?;
             let instrument = snapshot
