@@ -86,8 +86,8 @@ struct InstrumentTrace final {
 class TestInstrumentProcessor final : public juce::AudioProcessor {
 public:
     explicit TestInstrumentProcessor(InstrumentTrace& processorTrace)
-        : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(),
-                                                       true)),
+        : AudioProcessor(
+              BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
           trace(processorTrace) {}
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {

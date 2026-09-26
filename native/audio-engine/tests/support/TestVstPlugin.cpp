@@ -5,9 +5,7 @@ public:
     RiffraTestProcessor()
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)
-          ) {
-    }
+                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {}
 
     void prepareToPlay(double, int) override {}
     void releaseResources() override {}
