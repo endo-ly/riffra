@@ -35,6 +35,18 @@ const plugins = [
     modifiedAtMs: null,
     scanState: 'validated' as const,
   },
+  {
+    id: 'plugin:reverb',
+    name: 'External Reverb',
+    vendor: 'Example Vendor',
+    version: null,
+    format: 'VST3' as const,
+    role: 'effect' as const,
+    path: 'C:\\Plugins\\ExternalReverb.vst3',
+    bundle: true,
+    modifiedAtMs: null,
+    scanState: 'validated' as const,
+  },
 ];
 
 function renderPicker() {
@@ -66,6 +78,9 @@ describe('InstrumentPicker', () => {
     expect(
       screen.getByRole('button', { name: 'External Keys — Example Vendor' }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'External Reverb — Example Vendor' }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Sonalloy/i)).not.toBeInTheDocument();
   });
 

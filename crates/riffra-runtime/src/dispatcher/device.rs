@@ -1,5 +1,7 @@
 //! device command family.
 
+use crate::plugins::{self, PluginRole};
+
 use super::*;
 
 pub(super) fn handles(command: &str) -> bool {
@@ -33,6 +35,12 @@ pub(super) fn dispatch<A>(
     Ok(match request.name.as_str() {
         "instrument.vst3.set" => {
             let params: PluginPathParams = decode(request.params)?;
+            let (name, validated_path) = plugins::validated_plugin(
+                &dispatcher.data_root,
+                Path::new(&params.plugin_path),
+                PluginRole::Instrument,
+            )
+            .map_err(DispatchError::CommandFailed)?;
             let snapshot = dispatcher.core.snapshot()?;
             let track = snapshot
                 .session
@@ -49,8 +57,8 @@ pub(super) fn dispatch<A>(
             let creates_device = track.instrument.is_none();
             let instrument = riffra_core::TrackInstrument::vst3(
                 id.clone(),
-                plugin_name(&params.plugin_path),
-                params.plugin_path,
+                name,
+                validated_path.to_string_lossy().into_owned(),
             )
             .map_err(DispatchError::CommandFailed)?;
             let mut result = dispatcher.session(
@@ -75,14 +83,20 @@ pub(super) fn dispatch<A>(
         }
         "effect.add" => {
             let params: PluginPathParams = decode(request.params)?;
+            let (name, validated_path) = plugins::validated_plugin(
+                &dispatcher.data_root,
+                Path::new(&params.plugin_path),
+                PluginRole::Effect,
+            )
+            .map_err(DispatchError::CommandFailed)?;
             dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .add_track_effect_with_created_ids(
                         &params.track_id,
-                        plugin_name(&params.plugin_path),
-                        params.plugin_path,
+                        name,
+                        validated_path.to_string_lossy().into_owned(),
                     )?,
                 CanonicalMutationEffect::ProjectArrangement,
             )
@@ -184,14 +198,18 @@ pub(super) fn dispatch<A>(
         }
         "missing.replace-plugin" => {
             let params: MissingPluginReplaceParams = decode(request.params)?;
-            let path = Path::new(&params.new_path);
-            if !path.exists() {
-                return Err(DispatchError::CommandFailed(format!(
-                    "replacement VST3 path does not exist: {}",
-                    path.display()
-                )));
-            }
             let snapshot = dispatcher.core.snapshot()?;
+            let role =
+                crate::session::adapter::plugin_device_role(&snapshot.session, &params.device_id)
+                    .ok_or_else(|| {
+                    DispatchError::CommandFailed(format!(
+                        "track plugin device is not registered: {}",
+                        params.device_id
+                    ))
+                })?;
+            let (name, path) =
+                plugins::validated_plugin(&dispatcher.data_root, Path::new(&params.new_path), role)
+                    .map_err(DispatchError::CommandFailed)?;
             let instrument = snapshot
                 .session
                 .arrangement
@@ -204,11 +222,6 @@ pub(super) fn dispatch<A>(
                         .filter(|instrument| instrument.id == params.device_id)
                 })
                 .cloned();
-            let name = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("Plugin")
-                .to_owned();
             if instrument.is_some() {
                 let replacement = riffra_core::TrackInstrument::vst3(
                     params.device_id.clone(),
@@ -276,15 +289,6 @@ pub(crate) struct DeviceBypassParams {
 pub(crate) struct PluginPathParams {
     pub(crate) track_id: String,
     pub(crate) plugin_path: String,
-}
-
-fn plugin_name(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned()
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,4 +364,107 @@ pub(crate) struct DeviceIdParams {
 pub(crate) struct MissingPluginReplaceParams {
     pub(crate) device_id: String,
     pub(crate) new_path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dispatcher::Dispatcher;
+    use crate::plugins::PluginRole;
+    use riffra_control::ControlCommand;
+    use riffra_host::now_ms;
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn standalone_dispatcher_enforces_plugin_roles_at_device_boundaries() {
+        let root =
+            std::env::temp_dir().join(format!("riffra-dispatcher-plugin-roles-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let instrument_path = root.join("VST3/Synth.vst3");
+        let effect_path = root.join("VST3/Reverb.vst3");
+        crate::test_support::write_validated_plugin_catalog(
+            &root,
+            &[
+                (instrument_path.clone(), PluginRole::Instrument),
+                (effect_path.clone(), PluginRole::Effect),
+            ],
+        );
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(request(
+                "instrument.vst3.set",
+                json!({"trackId":track_id,"pluginPath":instrument_path.display().to_string()}),
+            ))
+            .unwrap();
+        dispatcher
+            .dispatch(request(
+                "effect.add",
+                json!({"trackId":track_id,"pluginPath":effect_path.display().to_string()}),
+            ))
+            .unwrap();
+
+        let session = dispatcher.core.canonical_state().unwrap().session;
+        let track = &session.arrangement.tracks[0];
+        let instrument_id = track.instrument.as_ref().unwrap().id.clone();
+        let effect_id = track
+            .rack
+            .devices
+            .iter()
+            .find(|device| device.kind == riffra_core::DeviceKind::Plugin)
+            .unwrap()
+            .id
+            .clone();
+
+        let error = dispatcher
+            .dispatch(request(
+                "instrument.vst3.set",
+                json!({"trackId":track_id,"pluginPath":effect_path.display().to_string()}),
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("role Effect"));
+
+        let error = dispatcher
+            .dispatch(request(
+                "effect.add",
+                json!({"trackId":track_id,"pluginPath":instrument_path.display().to_string()}),
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("role Instrument"));
+
+        let error = dispatcher
+            .dispatch(request(
+                "missing.replace-plugin",
+                json!({"deviceId":instrument_id,"newPath":effect_path.display().to_string()}),
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("role Effect"));
+
+        let error = dispatcher
+            .dispatch(request(
+                "missing.replace-plugin",
+                json!({"deviceId":effect_id,"newPath":instrument_path.display().to_string()}),
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("role Instrument"));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

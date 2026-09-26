@@ -410,12 +410,17 @@ mod tests {
             .unwrap();
         let session: riffra_core::CreativeSession = serde_json::from_value(added.value).unwrap();
         let track_id = session.arrangement.tracks[0].id.clone();
+        let plugin_path = root.join("VST3/Synth.vst3");
+        crate::test_support::write_validated_plugin_catalog(
+            &root,
+            &[(plugin_path.clone(), crate::plugins::PluginRole::Instrument)],
+        );
         let instrument = dispatcher
             .dispatch(request(
                 "instrument.vst3.set",
                 json!({
                     "trackId": track_id,
-                    "pluginPath": "C:\\Plugins\\Synth.vst3"
+                    "pluginPath": plugin_path.to_string_lossy()
                 }),
             ))
             .unwrap();

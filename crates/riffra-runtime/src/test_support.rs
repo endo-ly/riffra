@@ -29,3 +29,43 @@ pub(crate) fn empty_built_in_catalog() -> &'static BuiltInInstrumentCatalog {
         BuiltInInstrumentCatalog::load(root).unwrap()
     })
 }
+
+#[cfg(test)]
+pub(crate) fn write_validated_plugin_catalog(
+    data_root: &Path,
+    plugins: &[(PathBuf, crate::plugins::PluginRole)],
+) {
+    use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanReport};
+
+    let entries = plugins
+        .iter()
+        .enumerate()
+        .map(|(index, (path, role))| {
+            fs::create_dir_all(path).unwrap();
+            PluginEntry {
+                id: format!("vst3-test-{index}"),
+                name: path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Test Plugin")
+                    .to_owned(),
+                vendor: None,
+                version: None,
+                format: PluginFormat::Vst3,
+                role: Some(*role),
+                path: path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: None,
+                scan_state: PluginScanState::Validated,
+            }
+        })
+        .collect();
+    let report = ScanReport {
+        root: data_root.to_string_lossy().into_owned(),
+        started_at_ms: 0,
+        finished_at_ms: 0,
+        plugins: entries,
+        issues: Vec::new(),
+    };
+    crate::plugins::save(data_root, &report).unwrap();
+}

@@ -1,4 +1,4 @@
-use crate::plugins::{PluginEntry, PluginScanState, ScanReport};
+use crate::plugins::{PluginEntry, PluginRole, PluginScanState, ScanReport};
 use serde::Deserialize;
 use std::{
     fs::{self, File},
@@ -18,6 +18,7 @@ struct StoredPlugin {
     name: String,
     path: PathBuf,
     scan_state: String,
+    role: Option<PluginRole>,
 }
 
 pub fn save(data_root: &Path, report: &ScanReport) -> io::Result<()> {
@@ -100,6 +101,7 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
 pub fn validated_plugin(
     data_root: &Path,
     requested_path: &Path,
+    expected_role: PluginRole,
 ) -> Result<(String, PathBuf), String> {
     let catalog_path = data_root.join("plugins/catalog.json");
     let payload = fs::read(&catalog_path)
@@ -127,6 +129,18 @@ pub fn validated_plugin(
             plugin.scan_state,
             requested_path.display()
         ));
+    }
+    if plugin.role != Some(expected_role) {
+        return Err(match plugin.role {
+            Some(role) => format!(
+                "The requested VST3 has role {role:?}, but this device requires {expected_role:?}: {}",
+                requested_path.display()
+            ),
+            None => format!(
+                "The requested VST3 has no validated role. Scan VST3 plugins before adding it: {}",
+                requested_path.display()
+            ),
+        });
     }
     Ok((plugin.name, plugin.path))
 }
@@ -207,15 +221,69 @@ mod tests {
         assert_eq!(plugins.len(), 1);
         assert_eq!(plugins[0].id, report.plugins[0].id);
         assert_eq!(plugins[0].scan_state, PluginScanState::Validated);
-        let (name, resolved_path) = validated_plugin(&root, &plugin_path).unwrap();
+        let (name, resolved_path) =
+            validated_plugin(&root, &plugin_path, PluginRole::Effect).unwrap();
         assert_eq!(name, "Amp");
         assert_eq!(resolved_path, plugin_path);
+
+        let error = validated_plugin(&root, &plugin_path, PluginRole::Instrument).unwrap_err();
+        assert!(error.contains("role Effect"));
 
         let mut quarantined = report;
         quarantined.plugins[0].scan_state = PluginScanState::Quarantined;
         save(&root, &quarantined).unwrap();
-        let error = validated_plugin(&root, &plugin_path).unwrap_err();
+        let error = validated_plugin(&root, &plugin_path, PluginRole::Effect).unwrap_err();
         assert!(error.contains("not validated"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn does_not_reuse_successful_cache_entries_without_a_role() {
+        let root = test_root();
+        let plugin_path = root.join("VST3/Amp.vst3");
+        fs::create_dir_all(&plugin_path).unwrap();
+        let cached = ScanReport {
+            root: root.to_string_lossy().into_owned(),
+            started_at_ms: 1,
+            finished_at_ms: 2,
+            plugins: vec![PluginEntry {
+                id: "vst3-amp".into(),
+                name: "Amp (old catalog)".into(),
+                vendor: Some("Vendor".into()),
+                version: Some("1.0".into()),
+                format: PluginFormat::Vst3,
+                role: None,
+                path: plugin_path.to_string_lossy().into_owned(),
+                bundle: true,
+                modified_at_ms: Some(1),
+                scan_state: PluginScanState::Validated,
+            }],
+            issues: vec![],
+        };
+        let mut old_catalog = serde_json::to_value(cached.clone()).unwrap();
+        old_catalog["plugins"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("role");
+        let catalog_path = root.join("plugins/catalog.json");
+        fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
+        fs::write(&catalog_path, serde_json::to_vec(&old_catalog).unwrap()).unwrap();
+        let error = validated_plugin(&root, &plugin_path, PluginRole::Instrument).unwrap_err();
+        assert!(error.contains("no validated role"));
+
+        let mut discovered = cached;
+        discovered.plugins[0].name = "Amp".into();
+        discovered.plugins[0].vendor = None;
+        discovered.plugins[0].version = None;
+        discovered.plugins[0].role = None;
+        discovered.plugins[0].scan_state = PluginScanState::Discovered;
+        reuse_cached_scan_results(&root, &mut discovered);
+
+        assert_eq!(discovered.plugins[0].name, "Amp");
+        assert_eq!(
+            discovered.plugins[0].scan_state,
+            PluginScanState::Discovered
+        );
         let _ = fs::remove_dir_all(root);
     }
 
