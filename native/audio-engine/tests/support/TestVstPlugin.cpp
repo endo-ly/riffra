@@ -4,26 +4,15 @@ class RiffraTestProcessor final : public juce::AudioProcessor {
 public:
     RiffraTestProcessor()
         : AudioProcessor(BusesProperties()
-#if JucePlugin_IsSynth
-                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)
-#else
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)
-#endif
-          ) {
-    }
+                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {}
 
     void prepareToPlay(double, int) override {}
     void releaseResources() override {}
 
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override {
-#if JucePlugin_IsSynth
-        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled() &&
-               layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
-#else
         return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
                layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
-#endif
     }
 
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {

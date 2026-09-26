@@ -25,6 +25,7 @@ TEST(PluginRackTest, ConfiguresStereoProcessor) {
     ASSERT_NE(rack, nullptr) << error;
     EXPECT_EQ(static_cast<int>(rack->status().getProperty("inputChannels", -1)), 2);
     EXPECT_EQ(static_cast<int>(rack->status().getProperty("outputChannels", -1)), 2);
+    EXPECT_FALSE(rack->isInstrument());
 }
 
 TEST(PluginRackTest, PreparesProcessorBeforeProcessing) {
@@ -185,8 +186,8 @@ TEST(PluginRackTest, ReleasesProcessorWhenCleared) {
 TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
     InstrumentTrace trace;
     juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
 
     EXPECT_TRUE(rack->isInstrument());
@@ -197,8 +198,8 @@ TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     InstrumentTrace trace;
     juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
 
     std::array<float, kBlockSize> outputLeft{};
@@ -225,8 +226,8 @@ TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock) {
     // Arrange
     InstrumentTrace trace;
     juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
     std::array<float, kBlockSize> outputLeft{};
     std::array<float, kBlockSize> outputRight{};
@@ -246,8 +247,8 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
     {
         InstrumentTrace trace;
         juce::String error;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                kSampleRate, kBlockSize, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
         ASSERT_NE(rack, nullptr) << error;
         ASSERT_TRUE(rack->prepareTimelineMidiCapacity(257, error)) << error;
 
@@ -269,8 +270,8 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
     {
         InstrumentTrace trace;
         juce::String error;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                kSampleRate, kBlockSize, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
         ASSERT_NE(rack, nullptr) << error;
 
         std::array<std::uint8_t, 257> raw{};
@@ -292,8 +293,8 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
     {
         InstrumentTrace trace;
         juce::String error;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                kSampleRate, kBlockSize, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
         ASSERT_NE(rack, nullptr) << error;
 
         for (int index = 0; index < 257; ++index) {
@@ -308,8 +309,8 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
     {
         InstrumentTrace trace;
         juce::String error;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                kSampleRate, kBlockSize, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
         ASSERT_NE(rack, nullptr) << error;
 
         std::array<std::uint8_t, 256> raw{};
@@ -331,8 +332,8 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
     {
         InstrumentTrace trace;
         juce::String error;
-        auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                                kSampleRate, kBlockSize, error);
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
         ASSERT_NE(rack, nullptr) << error;
         std::array<float, kBlockSize> outputLeft{};
         std::array<float, kBlockSize> outputRight{};
@@ -353,8 +354,8 @@ TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
     // Arrange
     InstrumentTrace trace;
     juce::String error;
-    auto rack = PluginRackTestPeer::install(std::make_unique<TestInstrumentProcessor>(trace),
-                                            kSampleRate, kBlockSize, error);
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
     std::array<float, kBlockSize> outputLeft{};
     std::array<float, kBlockSize> outputRight{};

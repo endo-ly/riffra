@@ -16,7 +16,7 @@ std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
         return nullptr;
     }
     if (!rack->isInstrument()) {
-        error = "The selected VST3 does not provide an instrument output.";
+        error = "The selected VST3 is not an instrument.";
         return nullptr;
     }
     if (!rack->applyPersistedState(persistedState, error)) return nullptr;
