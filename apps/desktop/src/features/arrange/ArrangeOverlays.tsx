@@ -68,6 +68,7 @@ export function ArrangeOverlays(props: ArrangeOverlaysProps) {
           <PluginPicker
             api={props.api}
             plugins={props.plugins}
+            role="effect"
             title="Add Effect"
             onSelect={(plugin) => {
               const { trackId } = pluginPicker;

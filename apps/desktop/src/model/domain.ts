@@ -61,6 +61,7 @@ export type {
   MissingDependency,
   MonitoringState,
   PluginEntry,
+  PluginRole,
   ProjectExport,
   ProjectActivationResult,
   ProjectRecoveryState,

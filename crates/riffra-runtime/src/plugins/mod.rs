@@ -33,6 +33,16 @@ pub enum PluginScanState {
     Quarantined,
 }
 
+/// The role a VST3 plug-in can serve in Riffra's signal graph.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginRole {
+    /// Generates audio from MIDI events on an instrument track.
+    Instrument,
+    /// Processes audio in a track's effect chain.
+    Effect,
+}
+
 impl PluginScanState {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -52,6 +62,8 @@ pub struct PluginEntry {
     pub vendor: Option<String>,
     pub version: Option<String>,
     pub format: PluginFormat,
+    /// The plug-in role reported by the VST3 scanner, when available.
+    pub role: Option<PluginRole>,
     pub path: String,
     pub bundle: bool,
     pub modified_at_ms: Option<u64>,
@@ -194,6 +206,7 @@ fn plugin_entry(root: &Path, path: &Path, bundle: bool) -> PluginEntry {
         vendor,
         version: None,
         format: PluginFormat::Vst3,
+        role: None,
         path: path_string,
         bundle,
         modified_at_ms: path

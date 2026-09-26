@@ -2,6 +2,28 @@
 
 use super::*;
 
+fn plugin_device_role(
+    session: &riffra_core::CreativeSession,
+    device_id: &str,
+) -> Option<crate::plugins::PluginRole> {
+    session.arrangement.tracks.iter().find_map(|track| {
+        if track
+            .instrument
+            .as_ref()
+            .is_some_and(|instrument| instrument.id == device_id)
+        {
+            return Some(crate::plugins::PluginRole::Instrument);
+        }
+
+        track
+            .rack
+            .devices
+            .iter()
+            .any(|device| device.id == device_id && device.kind == riffra_core::DeviceKind::Plugin)
+            .then_some(crate::plugins::PluginRole::Effect)
+    })
+}
+
 fn repair_previous_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     original_error: String,
@@ -155,7 +177,11 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.",
         ));
     }
-    let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
+    let (name, validated_path) = plugins::validated_plugin(
+        context.data_root,
+        Path::new(path),
+        crate::plugins::PluginRole::Instrument,
+    )?;
     let snapshot = current_session(context)?;
     let existing_id = snapshot
         .arrangement
@@ -280,7 +306,11 @@ pub(crate) fn add_track_effect_with_expected_sequence(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect effects.",
         ));
     }
-    let (name, validated_path) = plugins::validated_plugin(context.data_root, Path::new(path))?;
+    let (name, validated_path) = plugins::validated_plugin(
+        context.data_root,
+        Path::new(path),
+        crate::plugins::PluginRole::Effect,
+    )?;
     let (prepared, device_id) = context
         .core
         .application(&context.storage)
@@ -600,19 +630,21 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
     expected_sequence: Option<u64>,
 ) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
     let path = Path::new(new_path.trim());
-    if !path.exists() {
-        return Err("Replacement VST3 path does not exist.".into());
-    }
-    let name = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned();
+    let session = current_session(context).map_err(AdapterError::command)?;
+    let role = plugin_device_role(&session, device_id).ok_or_else(|| {
+        AdapterError::command(format!(
+            "Track plugin device is not registered: {device_id}"
+        ))
+    })?;
+    let (name, validated_path) = plugins::validated_plugin(context.data_root, path, role)?;
     let prepared = context
         .core
         .application(&context.storage)
-        .prepare_track_plugin_replacement(device_id, name, path.to_string_lossy().into_owned())
+        .prepare_track_plugin_replacement(
+            device_id,
+            name,
+            validated_path.to_string_lossy().into_owned(),
+        )
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {
         Some(sequence) => prepared.with_expected_sequence(sequence),

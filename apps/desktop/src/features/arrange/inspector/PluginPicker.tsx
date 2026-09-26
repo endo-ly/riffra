@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { PluginEntry } from '@/model/domain';
+import type { PluginEntry, PluginRole } from '@/model/domain';
 import type { JobApi } from '@/native/native-api';
 import styles from '../WorkspaceArrangeOverlay.module.css';
 
 interface PluginPickerProps {
   api?: Pick<JobApi, 'scanVst3Folder'>;
   title?: string;
+  role: PluginRole;
   plugins?: PluginEntry[];
   onSelect: (plugin: PluginEntry) => void;
   onClose: () => void;
@@ -63,13 +64,15 @@ export function PluginPicker(props: PluginPickerProps) {
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return plugins;
     return plugins.filter(
       (plugin) =>
-        plugin.name.toLowerCase().includes(trimmed) ||
-        (plugin.vendor ?? '').toLowerCase().includes(trimmed),
+        plugin.role === props.role &&
+        (!trimmed ||
+          plugin.name.toLowerCase().includes(trimmed) ||
+          (plugin.vendor ?? '').toLowerCase().includes(trimmed)),
     );
-  }, [plugins, query]);
+  }, [plugins, props.role, query]);
+  const roleLabel = props.role === 'instrument' ? 'instrument' : 'effect';
 
   return (
     <div
@@ -102,7 +105,9 @@ export function PluginPicker(props: PluginPickerProps) {
           {error && <p className={styles.pluginPickerError}>{error}</p>}
           {!loading && !error && filtered.length === 0 && (
             <p className={styles.pluginPickerEmpty}>
-              {query.trim() ? 'No plugins match your search.' : 'No VST3 plugins found.'}
+              {query.trim()
+                ? 'No VST3 ' + roleLabel + 's match your search.'
+                : 'No VST3 ' + roleLabel + 's found.'}
             </p>
           )}
           {filtered.map((plugin) => (

@@ -1,5 +1,7 @@
 //! device command family.
 
+use crate::plugins::{self, PluginRole};
+
 use super::*;
 
 pub(super) fn handles(command: &str) -> bool {
@@ -33,6 +35,11 @@ pub(super) fn dispatch<A>(
     Ok(match request.name.as_str() {
         "instrument.vst3.set" => {
             let params: PluginPathParams = decode(request.params)?;
+            let (name, plugin_path) = plugin_for_slot(
+                dispatcher,
+                Path::new(&params.plugin_path),
+                PluginRole::Instrument,
+            )?;
             let snapshot = dispatcher.core.snapshot()?;
             let track = snapshot
                 .session
@@ -49,8 +56,8 @@ pub(super) fn dispatch<A>(
             let creates_device = track.instrument.is_none();
             let instrument = riffra_core::TrackInstrument::vst3(
                 id.clone(),
-                plugin_name(&params.plugin_path),
-                params.plugin_path,
+                name,
+                plugin_path.to_string_lossy().into_owned(),
             )
             .map_err(DispatchError::CommandFailed)?;
             let mut result = dispatcher.session(
@@ -75,14 +82,19 @@ pub(super) fn dispatch<A>(
         }
         "effect.add" => {
             let params: PluginPathParams = decode(request.params)?;
+            let (name, plugin_path) = plugin_for_slot(
+                dispatcher,
+                Path::new(&params.plugin_path),
+                PluginRole::Effect,
+            )?;
             dispatcher.application_mutation(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .add_track_effect_with_created_ids(
                         &params.track_id,
-                        plugin_name(&params.plugin_path),
-                        params.plugin_path,
+                        name,
+                        plugin_path.to_string_lossy().into_owned(),
                     )?,
                 CanonicalMutationEffect::ProjectArrangement,
             )
@@ -191,6 +203,7 @@ pub(super) fn dispatch<A>(
                     path.display()
                 )));
             }
+            let name = plugin_name(path);
             let snapshot = dispatcher.core.snapshot()?;
             let instrument = snapshot
                 .session
@@ -204,11 +217,6 @@ pub(super) fn dispatch<A>(
                         .filter(|instrument| instrument.id == params.device_id)
                 })
                 .cloned();
-            let name = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("Plugin")
-                .to_owned();
             if instrument.is_some() {
                 let replacement = riffra_core::TrackInstrument::vst3(
                     params.device_id.clone(),
@@ -249,6 +257,27 @@ pub(super) fn dispatch<A>(
     })
 }
 
+fn plugin_for_slot<A>(
+    dispatcher: &HostDispatcher<'_, A>,
+    path: &Path,
+    expected_role: PluginRole,
+) -> Result<(String, std::path::PathBuf), DispatchError> {
+    if dispatcher.validate_plugin_roles {
+        plugins::validated_plugin(&dispatcher.data_root, path, expected_role)
+            .map_err(DispatchError::CommandFailed)
+    } else {
+        Ok((plugin_name(path), path.to_path_buf()))
+    }
+}
+
+fn plugin_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Plugin")
+        .to_owned()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EffectRemoveParams {
@@ -276,15 +305,6 @@ pub(crate) struct DeviceBypassParams {
 pub(crate) struct PluginPathParams {
     pub(crate) track_id: String,
     pub(crate) plugin_path: String,
-}
-
-fn plugin_name(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Plugin")
-        .to_owned()
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,4 +380,69 @@ pub(crate) struct DeviceIdParams {
 pub(crate) struct MissingPluginReplaceParams {
     pub(crate) device_id: String,
     pub(crate) new_path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dispatcher::Dispatcher;
+    use riffra_control::ControlCommand;
+    use riffra_host::now_ms;
+    use serde_json::{Value, json};
+    use std::fs;
+
+    fn request(command: &str, params: Value) -> ControlCommand {
+        ControlCommand {
+            name: command.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn standalone_dispatcher_stores_plugin_paths_without_catalog_or_plugin_files() {
+        let root = std::env::temp_dir().join(format!("riffra-dispatcher-plugins-{}", now_ms()));
+        let dispatcher = Dispatcher::open(
+            root.clone(),
+            crate::test_support::prepare_built_in_resource_root(&root),
+        )
+        .unwrap();
+        let instrument_path = r"C:\Plugins\Synth.vst3";
+        let effect_path = r"C:\Plugins\Reverb.vst3";
+        let track = dispatcher
+            .dispatch(request(
+                "track.add",
+                json!({"name":"Lead","kind":"instrument"}),
+            ))
+            .unwrap();
+        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let track_id = session.arrangement.tracks[0].id.clone();
+        dispatcher
+            .dispatch(request(
+                "instrument.vst3.set",
+                json!({"trackId":track_id,"pluginPath":instrument_path}),
+            ))
+            .unwrap();
+        dispatcher
+            .dispatch(request(
+                "effect.add",
+                json!({"trackId":track_id,"pluginPath":effect_path}),
+            ))
+            .unwrap();
+
+        let session = dispatcher.core.canonical_state().unwrap().session;
+        let track = &session.arrangement.tracks[0];
+        let instrument = track.instrument.as_ref().unwrap();
+        assert!(matches!(
+            &instrument.source,
+            riffra_core::TrackInstrumentSource::Vst3 { path, .. } if path == instrument_path
+        ));
+        let effect = track
+            .rack
+            .devices
+            .iter()
+            .find(|device| device.kind == riffra_core::DeviceKind::Plugin)
+            .unwrap();
+        assert_eq!(effect.path.as_deref(), Some(effect_path));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

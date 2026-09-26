@@ -72,13 +72,13 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
   );
   const filteredPlugins = useMemo(
     () =>
-      trimmedQuery
-        ? plugins.filter(
-            (plugin) =>
-              plugin.name.toLowerCase().includes(trimmedQuery) ||
-              (plugin.vendor ?? '').toLowerCase().includes(trimmedQuery),
-          )
-        : plugins,
+      plugins.filter(
+        (plugin) =>
+          plugin.role === 'instrument' &&
+          (!trimmedQuery ||
+            plugin.name.toLowerCase().includes(trimmedQuery) ||
+            (plugin.vendor ?? '').toLowerCase().includes(trimmedQuery)),
+      ),
     [plugins, trimmedQuery],
   );
 
@@ -126,12 +126,14 @@ export function InstrumentPicker(props: InstrumentPickerProps) {
             <p className={styles.pluginPickerEmpty}>No instruments match your search.</p>
           )}
 
-          <strong>External Plugins</strong>
-          {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 plugins...</p>}
+          <strong>External Instruments</strong>
+          {loading && <p className={styles.pluginPickerEmpty}>Scanning VST3 instruments...</p>}
           {error && <p className={styles.pluginPickerError}>{error}</p>}
           {!loading && !error && !filteredPlugins.length && (
             <p className={styles.pluginPickerEmpty}>
-              {trimmedQuery ? 'No plugins match your search.' : 'No VST3 plugins found.'}
+              {trimmedQuery
+                ? 'No external instruments match your search.'
+                : 'No VST3 instruments found.'}
             </p>
           )}
           {filteredPlugins.map((plugin) => (

@@ -462,6 +462,7 @@ export function TrackInspector(props: TrackInspectorProps) {
               <PluginPicker
                 api={props.api}
                 plugins={props.plugins}
+                role="instrument"
                 title="Replace Plugin"
                 onSelect={(plugin) => {
                   runOperation(props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path));
