@@ -1,4 +1,4 @@
-use crate::plugins::{PluginScanState, ScanIssue, ScanReport};
+use crate::plugins::{PluginRole, PluginScanState, ScanIssue, ScanReport};
 use serde::Deserialize;
 use std::io::Read;
 use std::path::Path;
@@ -34,6 +34,7 @@ struct PluginMetadata {
     name: String,
     vendor: Option<String>,
     version: Option<String>,
+    is_instrument: bool,
 }
 
 /// Validates every discovered plugin through the isolated scanner process.
@@ -72,6 +73,11 @@ pub fn validate_report_with_cancel(
                 plugin.name = metadata.name;
                 plugin.vendor = metadata.vendor.filter(|value| !value.trim().is_empty());
                 plugin.version = metadata.version.filter(|value| !value.trim().is_empty());
+                plugin.role = Some(if metadata.is_instrument {
+                    PluginRole::Instrument
+                } else {
+                    PluginRole::Effect
+                });
                 plugin.scan_state = PluginScanState::Validated;
             }
             ValidationOutcome::Failed(message) => {
@@ -159,7 +165,9 @@ fn interpret_result(stdout: &[u8], stderr: &[u8], succeeded: bool) -> Validation
     if let Some(envelope) = envelope {
         if envelope.message_type == "pluginScanResult"
             && succeeded
-            && let Some(plugin) = envelope.plugins.and_then(|mut plugins| plugins.pop())
+            && let Some(plugin) = envelope
+                .plugins
+                .and_then(|plugins| plugins.into_iter().next())
         {
             if envelope.load_tested == Some(false) {
                 return ValidationOutcome::Quarantined(format!(
@@ -197,7 +205,7 @@ mod tests {
 
     #[test]
     fn interprets_successful_scanner_output() {
-        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Amp","vendor":"Vendor","version":"1.2"}],"loadTested":true}"#;
+        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Amp","vendor":"Vendor","version":"1.2","isInstrument":true}],"loadTested":true}"#;
         assert!(matches!(
             interpret_result(output, b"", true),
             ValidationOutcome::Validated(_)
@@ -207,7 +215,7 @@ mod tests {
     #[test]
     fn quarantines_a_plugin_that_cannot_be_loaded() {
         let output =
-            br#"{"type":"pluginScanResult","plugins":[{"name":"Heavy"}],"loadTested":false}"#;
+            br#"{"type":"pluginScanResult","plugins":[{"name":"Heavy","isInstrument":false}],"loadTested":false}"#;
         assert!(matches!(
             interpret_result(output, b"", true),
             ValidationOutcome::Quarantined(_)

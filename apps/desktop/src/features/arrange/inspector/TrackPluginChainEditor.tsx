@@ -31,6 +31,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
         <PluginPicker
           api={props.api}
           plugins={props.plugins}
+          role="effect"
           title={replaceTarget ? 'Replace Plugin' : 'Add Effect'}
           onSelect={(plugin) => {
             if (replaceTarget) {

@@ -29,6 +29,7 @@ const plugins = [
     vendor: 'Example Vendor',
     version: null,
     format: 'VST3' as const,
+    role: 'instrument' as const,
     path: 'C:\\Plugins\\ExternalKeys.vst3',
     bundle: true,
     modifiedAtMs: null,
@@ -61,7 +62,7 @@ describe('InstrumentPicker', () => {
     expect(
       screen.getByRole('button', { name: 'User Piano — A user instrument.' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('External Plugins')).toBeInTheDocument();
+    expect(screen.getByText('External Instruments')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'External Keys — Example Vendor' }),
     ).toBeInTheDocument();

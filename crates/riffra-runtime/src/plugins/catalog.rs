@@ -81,12 +81,18 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
                 && plugin.modified_at_ms.is_some()
                 && candidate.modified_at_ms == plugin.modified_at_ms
                 && candidate.scan_state != PluginScanState::Discovered
+                && (candidate.role.is_some()
+                    || matches!(
+                        candidate.scan_state,
+                        PluginScanState::Failed | PluginScanState::Quarantined
+                    ))
         }) else {
             continue;
         };
         plugin.name = previous.name.clone();
         plugin.vendor = previous.vendor.clone();
         plugin.version = previous.version.clone();
+        plugin.role = previous.role;
         plugin.scan_state = previous.scan_state;
     }
 }
@@ -128,7 +134,7 @@ pub fn validated_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanReport};
+    use crate::plugins::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -154,6 +160,7 @@ mod tests {
                 vendor: None,
                 version: None,
                 format: PluginFormat::Vst3,
+                role: Some(PluginRole::Effect),
                 path: "C:\\VST3\\Test.vst3".into(),
                 bundle: true,
                 modified_at_ms: None,
@@ -186,6 +193,7 @@ mod tests {
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
                 format: PluginFormat::Vst3,
+                role: Some(PluginRole::Effect),
                 path: plugin_path.to_string_lossy().into_owned(),
                 bundle: true,
                 modified_at_ms: None,
@@ -226,6 +234,7 @@ mod tests {
                 vendor: Some("Vendor".into()),
                 version: Some("1.0".into()),
                 format: PluginFormat::Vst3,
+                role: Some(PluginRole::Instrument),
                 path: plugin_path.to_string_lossy().into_owned(),
                 bundle: true,
                 modified_at_ms: Some(1),

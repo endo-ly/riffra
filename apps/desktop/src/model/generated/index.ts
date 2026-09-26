@@ -73,6 +73,7 @@ export type { MusicalNoteName } from './MusicalNoteName';
 export type { PluginEntry } from './PluginEntry';
 export type { PluginFormat } from './PluginFormat';
 export type { PluginPresetInfo } from './PluginPresetInfo';
+export type { PluginRole } from './PluginRole';
 export type { PluginScanState } from './PluginScanState';
 export type { PluginStateSnapshot } from './PluginStateSnapshot';
 export type { ProjectActivationResult } from './ProjectActivationResult';

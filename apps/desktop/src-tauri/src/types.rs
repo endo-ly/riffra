@@ -16,7 +16,9 @@ use crate::model::{
     RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
     RuntimeProjectionStatus, SessionAudioPair,
 };
-use crate::plugins::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
+use crate::plugins::{
+    PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanIssue, ScanReport,
+};
 use crate::recording::{
     DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
@@ -136,6 +138,7 @@ fn export_types() {
     MissingDependency::export_all(&cfg).expect("MissingDependency bindings");
     PluginEntry::export_all(&cfg).expect("PluginEntry bindings");
     PluginFormat::export_all(&cfg).expect("PluginFormat bindings");
+    PluginRole::export_all(&cfg).expect("PluginRole bindings");
     PluginScanState::export_all(&cfg).expect("PluginScanState bindings");
     ProjectExport::export_all(&cfg).expect("ProjectExport bindings");
     RenderOptions::export_all(&cfg).expect("RenderOptions bindings");
