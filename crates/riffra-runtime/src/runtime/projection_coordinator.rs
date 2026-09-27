@@ -93,6 +93,7 @@ pub(super) enum CanonicalSubmit {
 struct ProjectionState {
     next_operation_id: u64,
     latest_target: Option<RuntimeTarget>,
+    queued_after_deferred_canonical: Option<RuntimeTarget>,
     deferred_canonical_projection: Option<DeferredCanonicalProjection>,
     completed_deferred_canonical: Option<DeferredCanonicalProjection>,
     latest_canonical_key: Option<ProjectionKey>,
@@ -135,6 +136,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             Mutex::new(ProjectionState {
                 next_operation_id: 0,
                 latest_target: None,
+                queued_after_deferred_canonical: None,
                 deferred_canonical_projection: None,
                 completed_deferred_canonical: None,
                 latest_canonical_key: None,
@@ -228,6 +230,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         {
             state.desired_key = None;
             state.latest_target = None;
+            state.queued_after_deferred_canonical = None;
             state.status_operation_canonical = true;
             state.status.state = RuntimeProjectionState::Idle;
             state.status.last_error = None;
@@ -268,11 +271,33 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .as_ref()
                 .filter(|target| target.key == key)
                 .map(|target| target.operation_id);
+            let existing_operation_id = existing_operation_id.or_else(|| {
+                state
+                    .queued_after_deferred_canonical
+                    .as_ref()
+                    .filter(|target| target.key == key)
+                    .map(|target| target.operation_id)
+            });
             if let Some(operation_id) = existing_operation_id {
                 if canonical {
-                    let target = state.latest_target.as_mut().expect("target was checked");
-                    target.projection = projection;
-                    target.canonical = true;
+                    if state
+                        .latest_target
+                        .as_ref()
+                        .is_some_and(|target| target.operation_id == operation_id)
+                    {
+                        let target = state.latest_target.as_mut().expect("target was checked");
+                        target.projection = projection;
+                        target.canonical = true;
+                        state.queued_after_deferred_canonical = None;
+                    } else {
+                        let target = state
+                            .queued_after_deferred_canonical
+                            .as_mut()
+                            .expect("queued target was checked");
+                        target.projection = projection;
+                        target.canonical = true;
+                        state.latest_target = state.queued_after_deferred_canonical.take();
+                    }
                     state.status_operation_canonical = true;
                     state.latest_canonical_key = Some(key);
                 }
@@ -301,7 +326,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             state.latest_canonical_key = Some(key);
         }
         state.terminal_error = None;
-        state.latest_target = Some(RuntimeTarget {
+        let target = RuntimeTarget {
             operation_id,
             key,
             runtime_generation: generation,
@@ -309,7 +334,19 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             projection,
             canonical,
             deadline,
-        });
+        };
+        let deferred_pending_target = !canonical
+            && state.deferred_canonical_projection.is_some_and(|deferred| {
+                state.latest_target.as_ref().is_some_and(|pending| {
+                    pending.operation_id == deferred.operation_id && pending.canonical
+                })
+            });
+        if deferred_pending_target {
+            state.queued_after_deferred_canonical = Some(target);
+        } else {
+            state.queued_after_deferred_canonical = None;
+            state.latest_target = Some(target);
+        }
         state.status = RuntimeProjectionStatus {
             state: RuntimeProjectionState::Queued,
             operation_id,
@@ -552,6 +589,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             self.state.1.notify_all();
         }
         state.latest_target.is_none()
+            && state.queued_after_deferred_canonical.is_none()
             && state.running_operation_id.is_none()
             && state
                 .active_projection
@@ -575,7 +613,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         if observe_generation(&mut state, generation) {
             self.state.1.notify_all();
         }
-        if state.latest_target.is_none() && state.running_operation_id.is_none() {
+        if state.latest_target.is_none()
+            && state.queued_after_deferred_canonical.is_none()
+            && state.running_operation_id.is_none()
+        {
             return false;
         }
         // While an operation runs, the worker has taken the target and
@@ -584,6 +625,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             .latest_target
             .as_ref()
             .is_some_and(|target| target.key == key)
+            || state
+                .queued_after_deferred_canonical
+                .as_ref()
+                .is_some_and(|target| target.key == key)
             || state.latest_target.is_none() && state.desired_key == Some(key);
         targeted
             || state
@@ -639,7 +684,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 .active_projection
                 .as_ref()
                 .is_some_and(|active| active.runtime_generation == generation && active.key == key);
-            if state.running_operation_id.is_none() && state.latest_target.is_none() {
+            if state.running_operation_id.is_none()
+                && state.latest_target.is_none()
+                && state.queued_after_deferred_canonical.is_none()
+            {
                 if state.status.state == RuntimeProjectionState::Active
                     && requested_projection_is_active
                 {
@@ -732,6 +780,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 audio_environment_cancelled(target.operation_id),
             ));
         }
+        if let Some(target) = state.queued_after_deferred_canonical.take() {
+            state.terminal_error = Some((
+                target.operation_id,
+                audio_environment_cancelled(target.operation_id),
+            ));
+        }
+        state.queued_after_deferred_canonical = None;
         state.deferred_canonical_projection = None;
         state.completed_deferred_canonical = None;
         state.desired_key = None;
@@ -786,6 +841,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             })?;
             if state.status.state != RuntimeProjectionState::Active
                 || state.latest_target.is_some()
+                || state.queued_after_deferred_canonical.is_some()
                 || state.running_operation_id.is_some()
                 || active.runtime_generation != generation
                 || active.audio_environment_revision != state.audio_environment_revision
@@ -832,6 +888,7 @@ impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
         if let Ok(mut state) = self.state.0.lock() {
             state.stop_requested = true;
             state.latest_target = None;
+            state.queued_after_deferred_canonical = None;
             self.state.1.notify_one();
         }
         self.driver.force_shutdown();
@@ -880,6 +937,12 @@ fn worker_loop<D: ProjectionDriver>(
                     return;
                 }
                 if let Some(target) = state.latest_target.take() {
+                    if state
+                        .deferred_canonical_projection
+                        .is_some_and(|deferred| deferred.operation_id == target.operation_id)
+                    {
+                        state.latest_target = state.queued_after_deferred_canonical.take();
+                    }
                     state.running_operation_id = Some(target.operation_id);
                     state.running_target = Some(target.clone());
                     if state.status.operation_id == target.operation_id {
@@ -1272,7 +1335,15 @@ fn requeue_after_timeline_busy(
         return false;
     }
 
-    if state.status.operation_id == target.operation_id && state.latest_target.is_none() {
+    let is_deferred_source = state
+        .deferred_canonical_projection
+        .is_some_and(|deferred| deferred.operation_id == target.operation_id);
+    if is_deferred_source {
+        if let Some(queued_target) = state.latest_target.take() {
+            state.queued_after_deferred_canonical = Some(queued_target);
+        }
+        state.latest_target = Some(target.clone());
+    } else if state.status.operation_id == target.operation_id && state.latest_target.is_none() {
         state.latest_target = Some(target.clone());
         state.status.state = RuntimeProjectionState::Queued;
         state.status.target_projection_sequence = Some(target.key.sequence);
@@ -1355,6 +1426,19 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) -> bool {
         .is_some_and(|target| target.runtime_generation != generation)
     {
         let target = state.latest_target.take().expect("target was checked");
+        state.terminal_error = Some((
+            target.operation_id,
+            RuntimeError::GenerationChanged {
+                expected: target.runtime_generation,
+                actual: generation,
+            },
+        ));
+        state.desired_key = None;
+        state.status.target_projection_sequence = None;
+        state.status.target_session_revision = None;
+        state.status.target_audio_environment_revision = None;
+    }
+    if let Some(target) = state.queued_after_deferred_canonical.take() {
         state.terminal_error = Some((
             target.operation_id,
             RuntimeError::GenerationChanged {
@@ -1523,8 +1607,8 @@ mod tests {
     use riffra_core::{CreativeSession, Track};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
-    use std::sync::Barrier;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Barrier, mpsc};
     use std::thread;
 
     struct FakeProjectionDriver {
@@ -2309,6 +2393,137 @@ mod tests {
         assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 20]);
         assert!(coordinator.is_ready_for(key(3, 30)));
+    }
+
+    #[test]
+    fn preserves_a_pending_canonical_reference_when_a_candidate_is_queued_after_it() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::ZERO));
+        let coordinator = Arc::new(ProjectionCoordinator::new(Arc::clone(&driver)).unwrap());
+        submit_canonical(&coordinator, snapshot(10), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+
+        let prepare_barrier = Arc::new(Barrier::new(2));
+        *driver.prepare_barrier.lock().unwrap() = Some(Arc::clone(&prepare_barrier));
+        let running = coordinator
+            .submit_with_canonical_deadline(snapshot(15), key(2, 15), None, false)
+            .unwrap();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
+
+        let pending_projection = snapshot(20);
+        let pending = coordinator
+            .submit_with_canonical_deadline(Arc::clone(&pending_projection), key(3, 20), None, true)
+            .unwrap();
+        let canonical_key = key(4, 21);
+        let CanonicalSubmit::Deferred(deferred) = coordinator
+            .submit_canonical_with_deadline(
+                reidentify(&pending_projection, canonical_key.session_revision),
+                canonical_key,
+                None,
+            )
+            .unwrap()
+        else {
+            panic!("a matching pending canonical graph must defer its canonical key");
+        };
+        let candidate_key = key(5, 30);
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(30), candidate_key, None, false)
+            .unwrap();
+
+        let (canonical_sender, canonical_receiver) = mpsc::channel();
+        let canonical_waiter_coordinator = Arc::clone(&coordinator);
+        thread::spawn(move || {
+            canonical_sender
+                .send(canonical_waiter_coordinator.wait_for_operation(
+                    deferred.operation_id,
+                    deferred.key,
+                    Instant::now() + Duration::from_secs(5),
+                    Duration::from_secs(5),
+                ))
+                .unwrap();
+        });
+        let (candidate_sender, candidate_receiver) = mpsc::channel();
+        let candidate_waiter_coordinator = Arc::clone(&coordinator);
+        thread::spawn(move || {
+            candidate_sender
+                .send(candidate_waiter_coordinator.wait_for_operation(
+                    candidate.operation_id,
+                    candidate.key,
+                    Instant::now() + Duration::from_secs(2),
+                    Duration::from_secs(2),
+                ))
+                .unwrap();
+        });
+
+        let pending_reference_is_preserved = {
+            let state = coordinator.state.0.lock().unwrap();
+            deferred.operation_id == pending.operation_id
+                && state
+                    .running_target
+                    .as_ref()
+                    .is_some_and(|target| target.operation_id == running.operation_id)
+                && state.latest_target.as_ref().is_some_and(|target| {
+                    target.operation_id == pending.operation_id && target.canonical
+                })
+                && state
+                    .queued_after_deferred_canonical
+                    .as_ref()
+                    .is_some_and(|target| {
+                        target.operation_id == candidate.operation_id && !target.canonical
+                    })
+                && state.deferred_canonical_projection.is_some_and(|deferred| {
+                    deferred.operation_id == pending.operation_id
+                        && deferred.reference_key == pending.key
+                        && deferred.key == canonical_key
+                })
+        };
+
+        // Act
+        prepare_barrier.wait();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 3);
+        let pending_source_is_running = {
+            let state = coordinator.state.0.lock().unwrap();
+            state.running_target.as_ref().is_some_and(|target| {
+                target.operation_id == pending.operation_id && target.canonical
+            }) && state.latest_target.as_ref().is_some_and(|target| {
+                target.operation_id == candidate.operation_id && !target.canonical
+            })
+        };
+        prepare_barrier.wait();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 4);
+        let canonical_result = canonical_receiver
+            .recv_timeout(Duration::from_secs(4))
+            .expect("the deferred canonical waiter must finish before the candidate")
+            .unwrap();
+        let active_while_candidate_prepares = {
+            let state = coordinator.state.0.lock().unwrap();
+            state.active_projection.as_ref().is_some_and(|active| {
+                active.canonical
+                    && active.key == canonical_key
+                    && active.projection.snapshot.revision == 20
+            })
+        };
+        let candidate_is_still_waiting = matches!(
+            candidate_receiver.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        prepare_barrier.wait();
+
+        // Assert
+        assert!(pending_reference_is_preserved);
+        assert!(pending_source_is_running);
+        assert_eq!(canonical_result.active_projection_sequence, Some(4));
+        assert!(active_while_candidate_prepares);
+        assert!(candidate_is_still_waiting);
+        let candidate_result = candidate_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the queued candidate should complete after the canonical source")
+            .unwrap();
+        assert_eq!(candidate_result.active_projection_sequence, Some(5));
+        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 4);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 20, 30]);
+        assert_eq!(driver.discarded.load(Ordering::Acquire), 1);
+        assert!(coordinator.is_ready_for(candidate_key));
     }
 
     #[test]
