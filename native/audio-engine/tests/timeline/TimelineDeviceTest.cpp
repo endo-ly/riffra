@@ -4,10 +4,10 @@
 #include <chrono>
 #include <memory>
 
+#include "TimelineTestSupport.h"
 #include "app/AudioCommandDispatcher.h"
 #include "device/AudioDeviceController.h"
 #include "midi/MidiInputService.h"
-#include "TimelineTestSupport.h"
 
 namespace riffra {
 
