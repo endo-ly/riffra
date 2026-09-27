@@ -109,9 +109,16 @@ struct ProjectionState {
     terminal_error: Option<(u64, RuntimeError)>,
 }
 
+/// Keeps worker scheduling separate from operation completion waiters.
+struct ProjectionCoordinatorSync {
+    state: Mutex<ProjectionState>,
+    worker_wake: Condvar,
+    operation_wake: Condvar,
+}
+
 pub(crate) struct ProjectionCoordinator<D: ProjectionDriver> {
     driver: Arc<D>,
-    state: Arc<(Mutex<ProjectionState>, Condvar)>,
+    state: Arc<ProjectionCoordinatorSync>,
     worker: Mutex<Option<JoinHandle<()>>>,
     status_hook: ProjectionStatusHook,
 }
@@ -132,8 +139,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             audio_environment_revision: 0,
             ..RuntimeProjectionStatus::default()
         };
-        let state = Arc::new((
-            Mutex::new(ProjectionState {
+        let state = Arc::new(ProjectionCoordinatorSync {
+            state: Mutex::new(ProjectionState {
                 next_operation_id: 0,
                 latest_target: None,
                 queued_after_deferred_canonical: None,
@@ -151,8 +158,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 status: initial_status,
                 terminal_error: None,
             }),
-            Condvar::new(),
-        ));
+            worker_wake: Condvar::new(),
+            operation_wake: Condvar::new(),
+        });
         let worker_state = Arc::clone(&state);
         let worker_driver = Arc::clone(&driver);
         let worker_status = Arc::clone(&status_hook);
@@ -179,15 +187,17 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         deadline: Option<Instant>,
         canonical: bool,
     ) -> SubmissionResult {
-        let (lock, wake) = &*self.state;
-        let mut state = lock.lock().expect("runtime projection lock poisoned");
+        let mut state = self
+            .state
+            .state
+            .lock()
+            .expect("runtime projection lock poisoned");
         let generation = self.driver.runtime_generation();
         if observe_generation(&mut state, generation) {
-            wake.notify_all();
+            self.state.operation_wake.notify_all();
         }
         let (result, publish_status) = self.enqueue_locked(
             &mut state,
-            wake,
             ProjectionSubmission {
                 projection,
                 key,
@@ -206,7 +216,6 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     fn enqueue_locked(
         &self,
         state: &mut ProjectionState,
-        wake: &Condvar,
         submission: ProjectionSubmission,
         generation: u64,
     ) -> (SubmissionResult, bool) {
@@ -382,7 +391,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             last_error: None,
             last_error_code: None,
         };
-        wake.notify_one();
+        self.state.worker_wake.notify_one();
+        self.state.operation_wake.notify_all();
         (SubmissionResult::Accepted { operation_id, key }, canonical)
     }
 
@@ -406,13 +416,13 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         key: ProjectionKey,
         deadline: Option<Instant>,
     ) -> Result<CanonicalSubmit, RuntimeError> {
-        let (lock, wake) = &*self.state;
-        let mut state = lock
-            .lock()
-            .map_err(|_| RuntimeError::Internal("runtime projection lock was poisoned".into()))?;
+        let mut state =
+            self.state.state.lock().map_err(|_| {
+                RuntimeError::Internal("runtime projection lock was poisoned".into())
+            })?;
         let generation = self.driver.runtime_generation();
         if observe_generation(&mut state, generation) {
-            wake.notify_all();
+            self.state.operation_wake.notify_all();
         }
         if let Some(desired) = state.latest_canonical_key
             && key.sequence < desired.sequence
@@ -498,7 +508,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     state.deferred_canonical_projection = Some(deferred);
                     state.completed_deferred_canonical = None;
                     state.latest_canonical_key = Some(deferred.key);
-                    wake.notify_all();
+                    self.state.operation_wake.notify_all();
                     drop(state);
                     publish_current_status(&self.state, &self.status_hook);
                     return Ok(CanonicalSubmit::Deferred(ProjectionOperation {
@@ -519,7 +529,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                         state.status = status.clone();
                     }
                     state.published_status = status.clone();
-                    wake.notify_all();
+                    self.state.operation_wake.notify_all();
                     drop(state);
                     (self.status_hook)(status);
                     return Ok(CanonicalSubmit::Adopted);
@@ -529,7 +539,6 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
 
         let (submitted, publish_status) = self.enqueue_locked(
             &mut state,
-            wake,
             ProjectionSubmission {
                 projection,
                 key,
@@ -554,11 +563,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let (status, status_changed) = {
             let mut state = self
                 .state
-                .0
+                .state
                 .lock()
                 .expect("runtime projection lock poisoned");
             if observe_generation(&mut state, generation) {
-                self.state.1.notify_all();
+                self.state.operation_wake.notify_all();
             }
             if state.status_operation_canonical {
                 state.published_status = state.status.clone();
@@ -582,11 +591,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let generation = self.driver.runtime_generation();
         let mut state = self
             .state
-            .0
+            .state
             .lock()
             .expect("runtime projection lock poisoned");
         if observe_generation(&mut state, generation) {
-            self.state.1.notify_all();
+            self.state.operation_wake.notify_all();
         }
         state.latest_target.is_none()
             && state.queued_after_deferred_canonical.is_none()
@@ -607,11 +616,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let generation = self.driver.runtime_generation();
         let mut state = self
             .state
-            .0
+            .state
             .lock()
             .expect("runtime projection lock poisoned");
         if observe_generation(&mut state, generation) {
-            self.state.1.notify_all();
+            self.state.operation_wake.notify_all();
         }
         if state.latest_target.is_none()
             && state.queued_after_deferred_canonical.is_none()
@@ -643,14 +652,14 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         deadline: Instant,
         timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        let (lock, wake) = &*self.state;
-        let mut state = lock
-            .lock()
-            .map_err(|_| RuntimeError::Internal("Runtime Projection lock was poisoned.".into()))?;
+        let mut state =
+            self.state.state.lock().map_err(|_| {
+                RuntimeError::Internal("Runtime Projection lock was poisoned.".into())
+            })?;
         loop {
             let generation = self.driver.runtime_generation();
             if observe_generation(&mut state, generation) {
-                wake.notify_all();
+                self.state.operation_wake.notify_all();
             }
             if let Some((failed_operation_id, error)) = state.terminal_error.as_ref()
                 && *failed_operation_id == operation_id
@@ -721,9 +730,15 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     ),
                 });
             }
-            let (next_state, wait_result) = wake.wait_timeout(state, remaining).map_err(|_| {
-                RuntimeError::Internal("Runtime Projection condition variable was poisoned.".into())
-            })?;
+            let (next_state, wait_result) = self
+                .state
+                .operation_wake
+                .wait_timeout(state, remaining)
+                .map_err(|_| {
+                    RuntimeError::Internal(
+                        "Runtime Projection condition variable was poisoned.".into(),
+                    )
+                })?;
             state = next_state;
             if wait_result.timed_out() {
                 return Err(RuntimeError::Timeout {
@@ -737,12 +752,15 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     }
 
     pub(crate) fn notify(&self) {
-        self.state.1.notify_all();
+        self.state.operation_wake.notify_all();
     }
 
     pub(crate) fn mark_failed(&self, message: String) {
-        let (lock, wake) = &*self.state;
-        let mut state = lock.lock().expect("runtime projection lock poisoned");
+        let mut state = self
+            .state
+            .state
+            .lock()
+            .expect("runtime projection lock poisoned");
         state.status.state = RuntimeProjectionState::Failed;
         state.status.running_operation_id = state.running_operation_id;
         state.status.last_error = Some(message.clone());
@@ -760,7 +778,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         status.last_error_code = Some("runtime".into());
         status.completed_at_ms = Some(completed_at_ms);
         state.published_status = status.clone();
-        wake.notify_all();
+        self.state.operation_wake.notify_all();
         drop(state);
         (self.status_hook)(status);
     }
@@ -770,8 +788,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     /// already preparing may finish, but its result is discarded by the
     /// identity check before it can be committed as active.
     pub(crate) fn advance_audio_environment(&self) -> u64 {
-        let (lock, wake) = &*self.state;
-        let mut state = lock.lock().expect("runtime projection lock poisoned");
+        let mut state = self
+            .state
+            .state
+            .lock()
+            .expect("runtime projection lock poisoned");
         let generation = self.driver.runtime_generation();
         observe_generation(&mut state, generation);
         if let Some(target) = state.latest_target.take() {
@@ -816,7 +837,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.last_error = None;
         state.status.last_error_code = None;
         let audio_environment_revision = state.audio_environment_revision;
-        wake.notify_all();
+        self.state.operation_wake.notify_all();
         drop(state);
         publish_current_status(&self.state, &self.status_hook);
         audio_environment_revision
@@ -829,12 +850,11 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     ) -> Result<(), RuntimeError> {
         let generation = self.driver.runtime_generation();
         let status = {
-            let (lock, wake) = &*self.state;
-            let mut state = lock.lock().map_err(|_| {
+            let mut state = self.state.state.lock().map_err(|_| {
                 RuntimeError::Internal("runtime projection lock was poisoned".into())
             })?;
             if observe_generation(&mut state, generation) {
-                wake.notify_all();
+                self.state.operation_wake.notify_all();
             }
             let active = state.active_projection.clone().ok_or_else(|| {
                 RuntimeError::Internal("prepared runtime candidate is not active".into())
@@ -875,7 +895,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             state.status.last_error_code = None;
             state.published_status = state.status.clone();
             let status = state.status.clone();
-            wake.notify_all();
+            self.state.operation_wake.notify_all();
             status
         };
         (self.status_hook)(status);
@@ -885,11 +905,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
 
 impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.state.0.lock() {
+        if let Ok(mut state) = self.state.state.lock() {
             state.stop_requested = true;
             state.latest_target = None;
             state.queued_after_deferred_canonical = None;
-            self.state.1.notify_one();
+            self.state.worker_wake.notify_one();
+            self.state.operation_wake.notify_all();
         }
         self.driver.force_shutdown();
         // A third-party VST may be inside native code while the application is
@@ -925,13 +946,12 @@ fn same_projected_graph(left: &ProjectedTimeline, right: &ProjectedTimeline) -> 
 
 fn worker_loop<D: ProjectionDriver>(
     driver: Arc<D>,
-    state: Arc<(Mutex<ProjectionState>, Condvar)>,
+    sync: Arc<ProjectionCoordinatorSync>,
     status_hook: ProjectionStatusHook,
 ) {
     loop {
         let target = {
-            let (lock, wake) = &*state;
-            let mut state = lock.lock().expect("runtime projection lock poisoned");
+            let mut state = sync.state.lock().expect("runtime projection lock poisoned");
             loop {
                 if state.stop_requested {
                     return;
@@ -954,12 +974,13 @@ fn worker_loop<D: ProjectionDriver>(
                     }
                     break target;
                 }
-                state = wake
+                state = sync
+                    .worker_wake
                     .wait(state)
                     .expect("runtime projection condition variable poisoned");
             }
         };
-        publish_current_status(&state, &status_hook);
+        publish_current_status(&sync, &status_hook);
 
         let operation_started_at = Instant::now();
         let generation = driver.runtime_generation();
@@ -968,7 +989,7 @@ fn worker_loop<D: ProjectionDriver>(
             Err(error) => Err(error),
         };
         {
-            let mut state = state.0.lock().expect("runtime projection lock poisoned");
+            let mut state = sync.state.lock().expect("runtime projection lock poisoned");
             state.status.last_native_response_at_ms = Some(now_ms());
             if result.is_ok() && state.status.operation_id == target.operation_id {
                 state.status.prepared_session_revision = Some(target.key.session_revision);
@@ -976,12 +997,12 @@ fn worker_loop<D: ProjectionDriver>(
                     Some(target.audio_environment_revision);
             }
         }
-        publish_current_status(&state, &status_hook);
+        publish_current_status(&sync, &status_hook);
 
         if result.is_ok() {
             let publish_result = {
                 let should_publish = {
-                    let state = state.0.lock().expect("runtime projection lock poisoned");
+                    let state = sync.state.lock().expect("runtime projection lock poisoned");
                     let deferred_canonical = state
                         .deferred_canonical_projection
                         .is_some_and(|deferred| deferred.operation_id == target.operation_id);
@@ -1025,7 +1046,7 @@ fn worker_loop<D: ProjectionDriver>(
                                 .unwrap_or(Duration::from_millis(1)),
                         );
                     }
-                    if let Ok(mut state) = state.0.lock() {
+                    if let Ok(mut state) = sync.state.lock() {
                         state.status.last_native_response_at_ms = Some(now_ms());
                         if result.is_err() {
                             state.status.discarded_preparation_count =
@@ -1041,8 +1062,7 @@ fn worker_loop<D: ProjectionDriver>(
                         remaining_timeout(target.deadline, Duration::from_secs(3))
                             .unwrap_or(Duration::from_millis(1)),
                     );
-                    let (lock, wake) = &*state;
-                    if let Ok(mut state) = lock.lock() {
+                    if let Ok(mut state) = sync.state.lock() {
                         state.status.last_native_response_at_ms = Some(now_ms());
                         state.status.discarded_preparation_count =
                             state.status.discarded_preparation_count.saturating_add(1);
@@ -1084,9 +1104,9 @@ fn worker_loop<D: ProjectionDriver>(
                         state.running_operation_id = None;
                         state.running_target = None;
                         state.status.running_operation_id = None;
-                        wake.notify_one();
+                        sync.operation_wake.notify_all();
                     }
-                    publish_current_status(&state, &status_hook);
+                    publish_current_status(&sync, &status_hook);
                     continue;
                 }
             }
@@ -1098,8 +1118,8 @@ fn worker_loop<D: ProjectionDriver>(
             let wait_result = remaining_timeout(target.deadline, TIMELINE_PREPARE_TIMEOUT)
                 .and_then(|timeout| driver.wait_for_timeline_idle(timeout));
             match wait_result {
-                Ok(()) if requeue_after_timeline_busy(&state, &target) => {
-                    publish_current_status(&state, &status_hook);
+                Ok(()) if requeue_after_timeline_busy(&sync, &target) => {
+                    publish_current_status(&sync, &status_hook);
                     continue;
                 }
                 Ok(()) => {
@@ -1113,10 +1133,10 @@ fn worker_loop<D: ProjectionDriver>(
 
         let current_generation = driver.runtime_generation();
         if current_generation != target.runtime_generation
-            && let Ok(mut guard) = state.0.lock()
+            && let Ok(mut guard) = sync.state.lock()
         {
             observe_generation(&mut guard, current_generation);
-            state.1.notify_all();
+            sync.operation_wake.notify_all();
         }
         let result = if generation == current_generation {
             result
@@ -1140,7 +1160,7 @@ fn worker_loop<D: ProjectionDriver>(
         }
         let completed_at_ms = now_ms();
         let deferred_canonical_status = {
-            let mut state = state.0.lock().expect("runtime projection lock poisoned");
+            let mut state = sync.state.lock().expect("runtime projection lock poisoned");
             let identity_is_current = target.runtime_generation == current_generation
                 && target.audio_environment_revision == state.audio_environment_revision;
             state.running_operation_id = None;
@@ -1264,11 +1284,11 @@ fn worker_loop<D: ProjectionDriver>(
                 }
             }
         };
-        publish_current_status(&state, &status_hook);
+        publish_current_status(&sync, &status_hook);
         if let Some(status) = deferred_canonical_status {
             status_hook(status);
         }
-        state.1.notify_one();
+        sync.operation_wake.notify_all();
     }
 }
 
@@ -1320,18 +1340,17 @@ fn external_invalidation_error(
 }
 
 fn requeue_after_timeline_busy(
-    state: &Arc<(Mutex<ProjectionState>, Condvar)>,
+    sync: &Arc<ProjectionCoordinatorSync>,
     target: &RuntimeTarget,
 ) -> bool {
-    let (lock, wake) = &**state;
-    let Ok(mut state) = lock.lock() else {
+    let Ok(mut state) = sync.state.lock() else {
         return false;
     };
     if state.stop_requested {
         state.running_operation_id = None;
         state.running_target = None;
         state.status.running_operation_id = None;
-        wake.notify_all();
+        sync.operation_wake.notify_all();
         return false;
     }
 
@@ -1360,16 +1379,16 @@ fn requeue_after_timeline_busy(
     state.status.running_operation_id = None;
     state.status.prepared_session_revision = None;
     state.status.prepared_audio_environment_revision = None;
-    wake.notify_one();
+    sync.operation_wake.notify_all();
     true
 }
 
 fn publish_current_status(
-    state: &Arc<(Mutex<ProjectionState>, Condvar)>,
+    sync: &Arc<ProjectionCoordinatorSync>,
     status_hook: &ProjectionStatusHook,
 ) {
     let status = {
-        let Ok(mut guard) = state.0.lock() else {
+        let Ok(mut guard) = sync.state.lock() else {
             return;
         };
         if guard.status_operation_canonical {
@@ -1899,7 +1918,7 @@ mod tests {
         assert_eq!(adopted.target_projection_sequence, None);
         assert_eq!(adopted.target_session_revision, None);
         assert_eq!(
-            coordinator.state.0.lock().unwrap().running_operation_id,
+            coordinator.state.state.lock().unwrap().running_operation_id,
             Some(candidate.operation_id)
         );
 
@@ -1907,7 +1926,7 @@ mod tests {
             driver.prepare_finished.load(Ordering::Acquire) == 2
                 && coordinator
                     .state
-                    .0
+                    .state
                     .lock()
                     .unwrap()
                     .running_operation_id
@@ -1920,7 +1939,7 @@ mod tests {
         assert!(coordinator.is_ready_for(key(3, 12)));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
         assert_eq!(driver.discarded.load(Ordering::Acquire), 1);
-        let state = coordinator.state.0.lock().unwrap();
+        let state = coordinator.state.state.lock().unwrap();
         let active = state.active_projection.as_ref().unwrap();
         assert!(active.canonical);
         assert_eq!(active.key, key(3, 12));
@@ -2116,7 +2135,15 @@ mod tests {
         let candidate = coordinator
             .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
             .unwrap();
-        wait_until(|| coordinator.state.0.lock().unwrap().terminal_error.is_some());
+        wait_until(|| {
+            coordinator
+                .state
+                .state
+                .lock()
+                .unwrap()
+                .terminal_error
+                .is_some()
+        });
         driver.generation.store(3, Ordering::Release);
         let _ = coordinator.status();
         let error = coordinator
@@ -2139,7 +2166,7 @@ mod tests {
         assert_ne!(status.state, RuntimeProjectionState::Failed);
         assert_eq!(status.active_session_revision, None);
         assert_ne!(
-            coordinator.state.0.lock().unwrap().status.state,
+            coordinator.state.state.lock().unwrap().status.state,
             RuntimeProjectionState::Failed
         );
         assert!(driver.loaded.lock().unwrap().is_empty());
@@ -2456,7 +2483,7 @@ mod tests {
         });
 
         let pending_reference_is_preserved = {
-            let state = coordinator.state.0.lock().unwrap();
+            let state = coordinator.state.state.lock().unwrap();
             deferred.operation_id == pending.operation_id
                 && state
                     .running_target
@@ -2482,7 +2509,7 @@ mod tests {
         prepare_barrier.wait();
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 3);
         let pending_source_is_running = {
-            let state = coordinator.state.0.lock().unwrap();
+            let state = coordinator.state.state.lock().unwrap();
             state.running_target.as_ref().is_some_and(|target| {
                 target.operation_id == pending.operation_id && target.canonical
             }) && state.latest_target.as_ref().is_some_and(|target| {
@@ -2496,7 +2523,7 @@ mod tests {
             .expect("the deferred canonical waiter must finish before the candidate")
             .unwrap();
         let active_while_candidate_prepares = {
-            let state = coordinator.state.0.lock().unwrap();
+            let state = coordinator.state.state.lock().unwrap();
             state.active_projection.as_ref().is_some_and(|active| {
                 active.canonical
                     && active.key == canonical_key
@@ -2585,7 +2612,7 @@ mod tests {
         });
 
         let candidate_identity_is_preserved = {
-            let state = coordinator.state.0.lock().unwrap();
+            let state = coordinator.state.state.lock().unwrap();
             deferred.operation_id == running.operation_id
                 && state.status.operation_id == candidate.operation_id
                 && state.latest_target.as_ref().is_some_and(|target| {
@@ -2607,7 +2634,7 @@ mod tests {
             .expect("the canonical waiter should finish without waiting for the candidate");
         let status_while_candidate_prepares = coordinator.status();
         let active_before_candidate_finishes = {
-            let state = coordinator.state.0.lock().unwrap();
+            let state = coordinator.state.state.lock().unwrap();
             state.active_projection.as_ref().is_some_and(|active| {
                 active.canonical
                     && active.key == canonical_key
@@ -2651,14 +2678,14 @@ mod tests {
             driver.prepare_finished.load(Ordering::Acquire) == 3
                 && coordinator
                     .state
-                    .0
+                    .state
                     .lock()
                     .unwrap()
                     .running_operation_id
                     .is_none()
         });
         assert!(coordinator.is_ready_for(canonical_key));
-        let state = coordinator.state.0.lock().unwrap();
+        let state = coordinator.state.state.lock().unwrap();
         let active = state.active_projection.as_ref().unwrap();
         assert!(active.canonical);
         assert_eq!(active.key, canonical_key);
