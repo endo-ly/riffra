@@ -551,15 +551,12 @@ mod tests {
 
         // Act
         submit_canonical(&reconciler, snapshot(12), key(12, 12));
-        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
-
-        // Assert
-        assert!(
+        wait_until(|| {
             states
                 .lock()
                 .unwrap()
                 .contains(&RuntimeProjectionState::Failed)
-        );
+        });
     }
 
     #[test]

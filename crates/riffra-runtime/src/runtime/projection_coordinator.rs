@@ -81,13 +81,14 @@ struct ProjectionState {
     next_operation_id: u64,
     latest_target: Option<RuntimeTarget>,
     deferred_canonical_key: Option<ProjectionKey>,
+    latest_canonical_key: Option<ProjectionKey>,
     desired_key: Option<ProjectionKey>,
     running_operation_id: Option<u64>,
     running_target: Option<RuntimeTarget>,
     active_projection: Option<ActiveProjection>,
     stop_requested: bool,
     audio_environment_revision: u64,
-    status_canonical: bool,
+    status_operation_canonical: bool,
     published_status: RuntimeProjectionStatus,
     status: RuntimeProjectionStatus,
     terminal_error: Option<(u64, RuntimeError)>,
@@ -121,13 +122,14 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 next_operation_id: 0,
                 latest_target: None,
                 deferred_canonical_key: None,
+                latest_canonical_key: None,
                 desired_key: None,
                 running_operation_id: None,
                 running_target: None,
                 active_projection: None,
                 stop_requested: false,
                 audio_environment_revision: 0,
-                status_canonical: true,
+                status_operation_canonical: true,
                 published_status: initial_status.clone(),
                 status: initial_status,
                 terminal_error: None,
@@ -211,7 +213,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         {
             state.desired_key = None;
             state.latest_target = None;
-            state.status_canonical = true;
+            state.status_operation_canonical = true;
             state.status.state = RuntimeProjectionState::Idle;
             state.status.last_error = None;
             state.status.last_error_code = None;
@@ -231,8 +233,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             state.status.active_audio_environment_revision = None;
             state.status.active_diagnostics = None;
         }
-        if state.status_canonical
-            && let Some(desired) = state.desired_key
+        if let Some(desired) = state.latest_canonical_key
             && key.sequence < desired.sequence
         {
             return (
@@ -254,7 +255,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     let target = state.latest_target.as_mut().expect("target was checked");
                     target.projection = projection;
                     target.canonical = true;
-                    state.status_canonical = true;
+                    state.status_operation_canonical = true;
+                    state.latest_canonical_key = Some(key);
                 }
                 return (
                     SubmissionResult::FollowingExisting { operation_id, key },
@@ -276,7 +278,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let operation_id = state.next_operation_id;
         let queued_at_ms = now_ms();
         state.desired_key = Some(key);
-        state.status_canonical = canonical;
+        state.status_operation_canonical = canonical;
+        if canonical {
+            state.latest_canonical_key = Some(key);
+        }
         state.terminal_error = None;
         state.latest_target = Some(RuntimeTarget {
             operation_id,
@@ -354,8 +359,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         if observe_generation(&mut state, generation) {
             wake.notify_all();
         }
-        if state.status_canonical
-            && let Some(desired) = state.desired_key
+        if let Some(desired) = state.latest_canonical_key
             && key.sequence < desired.sequence
         {
             return Err(RuntimeError::Superseded {
@@ -421,7 +425,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                         .unwrap_or(key);
                     let operation_id = state.status.operation_id;
                     state.deferred_canonical_key = Some(deferred);
-                    state.status_canonical = true;
+                    state.latest_canonical_key = Some(deferred);
+                    state.status_operation_canonical = true;
                     wake.notify_all();
                     drop(state);
                     publish_current_status(&self.state, &self.status_hook);
@@ -437,14 +442,17 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                         ));
                     }
                     state.deferred_canonical_key = None;
-                    state.status_canonical = true;
-                    state.published_status = state.status.clone();
+                    let status = active_canonical_status(&state);
+                    if state.status_operation_canonical {
+                        state.status = status.clone();
+                    }
+                    state.published_status = status.clone();
+                    wake.notify_all();
+                    drop(state);
+                    (self.status_hook)(status);
+                    return Ok(CanonicalSubmit::Adopted);
                 }
             }
-            wake.notify_all();
-            drop(state);
-            publish_current_status(&self.state, &self.status_hook);
-            return Ok(CanonicalSubmit::Adopted);
         }
 
         let (submitted, publish_status) = self.enqueue_locked(
@@ -471,20 +479,31 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
 
     pub(crate) fn status(&self) -> RuntimeProjectionStatus {
         let generation = self.driver.runtime_generation();
-        let mut state = self
-            .state
-            .0
-            .lock()
-            .expect("runtime projection lock poisoned");
-        if observe_generation(&mut state, generation) {
-            self.state.1.notify_all();
+        let (status, status_changed) = {
+            let mut state = self
+                .state
+                .0
+                .lock()
+                .expect("runtime projection lock poisoned");
+            if observe_generation(&mut state, generation) {
+                self.state.1.notify_all();
+            }
+            if state.status_operation_canonical {
+                state.published_status = state.status.clone();
+                (state.published_status.clone(), None)
+            } else {
+                let status = canonical_projection_status(&state);
+                let status_changed =
+                    projection_environment_changed(&state.published_status, &status)
+                        .then(|| status.clone());
+                state.published_status = status.clone();
+                (status, status_changed)
+            }
+        };
+        if let Some(status) = status_changed {
+            (self.status_hook)(status);
         }
-        if state.status_canonical {
-            state.published_status = state.status.clone();
-            state.published_status.clone()
-        } else {
-            state.published_status.clone()
-        }
+        status
     }
 
     pub(crate) fn is_ready_for(&self, key: ProjectionKey) -> bool {
@@ -621,15 +640,24 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let mut state = lock.lock().expect("runtime projection lock poisoned");
         state.status.state = RuntimeProjectionState::Failed;
         state.status.running_operation_id = state.running_operation_id;
-        state.status.last_error = Some(message);
+        state.status.last_error = Some(message.clone());
         state.status.last_error_code = Some("runtime".into());
-        state.status.completed_at_ms = Some(now_ms());
-        let publish_status = state.status_canonical;
+        let completed_at_ms = now_ms();
+        state.status.completed_at_ms = Some(completed_at_ms);
+        let mut status = if state.status_operation_canonical {
+            state.status.clone()
+        } else {
+            canonical_projection_status(&state)
+        };
+        status.state = RuntimeProjectionState::Failed;
+        status.running_operation_id = None;
+        status.last_error = Some(message);
+        status.last_error_code = Some("runtime".into());
+        status.completed_at_ms = Some(completed_at_ms);
+        state.published_status = status.clone();
         wake.notify_all();
         drop(state);
-        if publish_status {
-            publish_current_status(&self.state, &self.status_hook);
-        }
+        (self.status_hook)(status);
     }
 
     /// Advances the native audio environment identity and invalidates every
@@ -675,12 +703,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         state.status.last_error = None;
         state.status.last_error_code = None;
         let audio_environment_revision = state.audio_environment_revision;
-        let publish_status = state.status_canonical;
         wake.notify_all();
         drop(state);
-        if publish_status {
-            publish_current_status(&self.state, &self.status_hook);
-        }
+        publish_current_status(&self.state, &self.status_hook);
         audio_environment_revision
     }
 
@@ -720,8 +745,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 ..active
             });
             state.deferred_canonical_key = None;
+            state.latest_canonical_key = Some(key);
             state.desired_key = Some(key);
-            state.status_canonical = true;
+            state.status_operation_canonical = true;
             state.status.active_projection_sequence = Some(key.sequence);
             state.status.active_session_revision = Some(key.session_revision);
             state.status.active_audio_environment_revision =
@@ -1183,11 +1209,17 @@ fn publish_current_status(
         let Ok(mut guard) = state.0.lock() else {
             return;
         };
-        if !guard.status_canonical {
-            return;
+        if guard.status_operation_canonical {
+            guard.published_status = guard.status.clone();
+            guard.published_status.clone()
+        } else {
+            let status = canonical_projection_status(&guard);
+            if !projection_environment_changed(&guard.published_status, &status) {
+                return;
+            }
+            guard.published_status = status.clone();
+            status
         }
-        guard.published_status = guard.status.clone();
-        guard.published_status.clone()
     };
     status_hook(status);
 }
@@ -1287,6 +1319,7 @@ fn try_adopt_canonical_key(
     }
 
     state.active_projection = Some(ActiveProjection { key, ..active });
+    state.latest_canonical_key = Some(key);
     state.desired_key = Some(key);
     state.status.active_projection_sequence = Some(key.sequence);
     state.status.active_session_revision = Some(key.session_revision);
@@ -1303,12 +1336,79 @@ fn try_adopt_canonical_key(
     true
 }
 
+fn active_canonical_status(state: &ProjectionState) -> RuntimeProjectionStatus {
+    let active = state
+        .active_projection
+        .as_ref()
+        .expect("canonical projection was adopted");
+    let mut status = canonical_projection_status(state);
+    status.state = RuntimeProjectionState::Active;
+    status.running_operation_id = None;
+    status.target_projection_sequence = None;
+    status.target_session_revision = None;
+    status.prepared_session_revision = None;
+    status.active_projection_sequence = Some(active.key.sequence);
+    status.active_session_revision = Some(active.key.session_revision);
+    status.runtime_generation = active.runtime_generation;
+    status.audio_environment_revision = state.audio_environment_revision;
+    status.target_audio_environment_revision = None;
+    status.prepared_audio_environment_revision = None;
+    status.active_audio_environment_revision = Some(active.audio_environment_revision);
+    status.active_diagnostics = Some(active.projection.diagnostics.clone());
+    status.queued_at_ms = None;
+    status.started_at_ms = None;
+    status.completed_at_ms = None;
+    status.last_native_response_at_ms = None;
+    status.discarded_preparation_count = 0;
+    status.last_error = None;
+    status.last_error_code = None;
+    status
+}
+
+fn canonical_projection_status(state: &ProjectionState) -> RuntimeProjectionStatus {
+    let mut status = state.published_status.clone();
+    let environment_changed = status.runtime_generation != state.status.runtime_generation
+        || status.audio_environment_revision != state.audio_environment_revision;
+    status.running_operation_id = None;
+    status.target_projection_sequence = None;
+    status.target_session_revision = None;
+    status.prepared_session_revision = None;
+    status.target_audio_environment_revision = None;
+    status.prepared_audio_environment_revision = None;
+    if environment_changed {
+        status.state = RuntimeProjectionState::Idle;
+        status.runtime_generation = state.status.runtime_generation;
+        status.audio_environment_revision = state.audio_environment_revision;
+        status.active_projection_sequence = None;
+        status.active_session_revision = None;
+        status.active_audio_environment_revision = None;
+        status.active_diagnostics = None;
+        status.queued_at_ms = None;
+        status.started_at_ms = None;
+        status.completed_at_ms = None;
+        status.last_native_response_at_ms = None;
+        status.discarded_preparation_count = 0;
+        status.last_error = None;
+        status.last_error_code = None;
+    }
+    status
+}
+
+fn projection_environment_changed(
+    previous: &RuntimeProjectionStatus,
+    current: &RuntimeProjectionStatus,
+) -> bool {
+    previous.runtime_generation != current.runtime_generation
+        || previous.audio_environment_revision != current.audio_environment_revision
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use riffra_core::{CreativeSession, Track};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
+    use std::sync::Barrier;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread;
 
@@ -1316,6 +1416,7 @@ mod tests {
         generation: AtomicU64,
         loaded: Mutex<Vec<u64>>,
         pending: Mutex<Option<u64>>,
+        prepare_barrier: Mutex<Option<Arc<Barrier>>>,
         prepare_delay: Duration,
         prepare_started: AtomicU64,
         prepare_finished: AtomicU64,
@@ -1332,6 +1433,7 @@ mod tests {
                 generation: AtomicU64::new(1),
                 loaded: Mutex::new(Vec::new()),
                 pending: Mutex::new(None),
+                prepare_barrier: Mutex::new(None),
                 prepare_delay,
                 prepare_started: AtomicU64::new(0),
                 prepare_finished: AtomicU64::new(0),
@@ -1356,6 +1458,9 @@ mod tests {
                 .swap(false, Ordering::AcqRel)
             {
                 self.generation.fetch_add(1, Ordering::AcqRel);
+            }
+            if let Some(barrier) = self.prepare_barrier.lock().unwrap().clone() {
+                barrier.wait();
             }
             thread::sleep(self.prepare_delay);
             self.prepare_finished.fetch_add(1, Ordering::Release);
@@ -1591,11 +1696,23 @@ mod tests {
         let adopted = coordinator.status();
         assert_eq!(adopted.active_projection_sequence, Some(3));
         assert_eq!(adopted.active_session_revision, Some(12));
-        assert_eq!(adopted.running_operation_id, Some(candidate.operation_id));
+        assert_eq!(adopted.running_operation_id, None);
+        assert_eq!(adopted.target_projection_sequence, None);
+        assert_eq!(adopted.target_session_revision, None);
+        assert_eq!(
+            coordinator.state.0.lock().unwrap().running_operation_id,
+            Some(candidate.operation_id)
+        );
 
         wait_until(|| {
             driver.prepare_finished.load(Ordering::Acquire) == 2
-                && coordinator.status().running_operation_id.is_none()
+                && coordinator
+                    .state
+                    .0
+                    .lock()
+                    .unwrap()
+                    .running_operation_id
+                    .is_none()
         });
 
         let completed = coordinator.status();
@@ -1609,6 +1726,84 @@ mod tests {
         assert!(active.canonical);
         assert_eq!(active.key, key(3, 12));
         assert_eq!(active.projection.snapshot.revision, 10);
+    }
+
+    #[test]
+    fn failed_candidate_after_active_canonical_adoption_only_fails_its_waiter() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::ZERO));
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let status_sink = Arc::clone(&statuses);
+        let coordinator = ProjectionCoordinator::new_with_status_hook(
+            Arc::clone(&driver),
+            Arc::new(move |status| status_sink.lock().unwrap().push(status)),
+        )
+        .unwrap();
+        let active = snapshot(10);
+        submit_canonical(&coordinator, Arc::clone(&active), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        wait_until(|| {
+            statuses
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|status| status.state == RuntimeProjectionState::Active)
+        });
+        statuses.lock().unwrap().clear();
+
+        let prepare_barrier = Arc::new(Barrier::new(2));
+        *driver.prepare_barrier.lock().unwrap() = Some(Arc::clone(&prepare_barrier));
+        driver.failed_prepare_count.store(1, Ordering::Release);
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
+            .unwrap();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
+
+        // Act
+        let result =
+            coordinator.submit_canonical_with_deadline(reidentify(&active, 12), key(3, 12), None);
+        let adopted = coordinator.status();
+        prepare_barrier.wait();
+        let error = coordinator
+            .wait_for_operation(
+                candidate.operation_id,
+                candidate.key,
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect_err("the candidate waiter should receive its prepare failure");
+
+        // Assert
+        assert!(matches!(result, Ok(CanonicalSubmit::Adopted)));
+        assert_eq!(adopted.state, RuntimeProjectionState::Active);
+        assert_eq!(adopted.active_projection_sequence, Some(3));
+        assert_eq!(adopted.active_session_revision, Some(12));
+        assert_eq!(adopted.running_operation_id, None);
+        assert_eq!(adopted.target_projection_sequence, None);
+        assert!(matches!(
+            error,
+            RuntimeError::Native { kind, .. } if kind == "timeline"
+        ));
+        let status = coordinator.status();
+        assert_eq!(status.state, RuntimeProjectionState::Active);
+        assert_eq!(status.active_projection_sequence, Some(3));
+        assert_eq!(status.active_session_revision, Some(12));
+        assert_eq!(status.running_operation_id, None);
+        assert_eq!(status.target_projection_sequence, None);
+        assert_eq!(status.last_error, None);
+        assert_eq!(status.last_error_code, None);
+        assert!(matches!(
+            coordinator.submit_canonical_with_deadline(snapshot(13), key(2, 13), None),
+            Err(RuntimeError::Superseded { .. })
+        ));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+        let published = statuses.lock().unwrap();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].state, RuntimeProjectionState::Active);
+        assert_eq!(published[0].active_projection_sequence, Some(3));
+        assert_eq!(published[0].active_session_revision, Some(12));
+        assert_eq!(published[0].running_operation_id, None);
+        assert_eq!(published[0].target_projection_sequence, None);
     }
 
     #[test]
