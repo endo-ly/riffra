@@ -79,7 +79,6 @@ pub(crate) struct RuntimeReconciler<D: RuntimeDriver> {
 #[derive(Clone, Debug)]
 pub(crate) enum CanonicalProjectionOutcome {
     Adopted,
-    Deferred,
     Queued,
     Failed {
         status: Box<RuntimeProjectionStatus>,
@@ -168,7 +167,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
             .submit_canonical_with_deadline(projection, key, None)
         {
             Ok(CanonicalSubmit::Adopted) => CanonicalProjectionOutcome::Adopted,
-            Ok(CanonicalSubmit::Deferred(_)) => CanonicalProjectionOutcome::Deferred,
+            Ok(CanonicalSubmit::Deferred(_)) => CanonicalProjectionOutcome::Adopted,
             Ok(CanonicalSubmit::Queued(_)) => CanonicalProjectionOutcome::Queued,
             Err(_) => CanonicalProjectionOutcome::Failed {
                 status: Box::new(self.status()),

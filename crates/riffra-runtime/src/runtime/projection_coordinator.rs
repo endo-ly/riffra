@@ -64,7 +64,7 @@ struct ActiveProjection {
 }
 
 #[derive(Debug)]
-pub(crate) enum CanonicalSubmit {
+pub(super) enum CanonicalSubmit {
     Adopted,
     Deferred(ProjectionOperation),
     Queued(ProjectionOperation),
@@ -359,7 +359,6 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             });
         }
 
-        let active_is_current = state.status.state == RuntimeProjectionState::Active;
         let reference = state
             .latest_target
             .as_ref()
@@ -382,8 +381,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             })
             .or_else(|| {
                 state.active_projection.as_ref().and_then(|active| {
-                    (active_is_current
-                        && active.canonical
+                    (active.canonical
                         && active.runtime_generation == generation
                         && active.audio_environment_revision == state.audio_environment_revision)
                         .then(|| Arc::clone(&active.projection))
@@ -1253,8 +1251,7 @@ fn try_adopt_canonical_key(
     let Some(active) = state.active_projection.clone() else {
         return false;
     };
-    if state.status.state != RuntimeProjectionState::Active
-        || state.latest_target.is_some()
+    if state.latest_target.is_some()
         || state.running_operation_id.is_some()
         || !active.canonical
         || active.runtime_generation != generation
@@ -1273,14 +1270,20 @@ fn try_adopt_canonical_key(
         .active_projection
         .as_ref()
         .map(|active| active.projection.diagnostics.clone());
+    state.status.state = RuntimeProjectionState::Active;
     state.status.runtime_generation = generation;
     state.status.audio_environment_revision = state.audio_environment_revision;
+    state.status.last_error = None;
+    state.status.last_error_code = None;
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riffra_core::{CreativeSession, Track};
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread;
 
@@ -1424,6 +1427,24 @@ mod tests {
         })
     }
 
+    fn project_session_for_test(session: &CreativeSession) -> Arc<ProjectedTimeline> {
+        let resources = crate::execution::ResolvedResources::for_projection(
+            PathBuf::new(),
+            HashMap::new(),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let (graph, diagnostics) = crate::execution::project_graph(session, &resources);
+        Arc::new(ProjectedTimeline {
+            snapshot: crate::execution::TimelineSnapshot {
+                project_id: "project:test".into(),
+                revision: session.arrangement.revision,
+                graph,
+            },
+            diagnostics,
+        })
+    }
+
     fn reidentify(projection: &Arc<ProjectedTimeline>, revision: u64) -> Arc<ProjectedTimeline> {
         let mut projection = projection.as_ref().clone();
         projection.snapshot.revision = revision;
@@ -1490,7 +1511,8 @@ mod tests {
     fn preserves_the_active_projection_when_a_new_prepare_fails() {
         let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
         let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
-        submit_canonical(&coordinator, snapshot(10), key(1, 10));
+        let original = snapshot(10);
+        submit_canonical(&coordinator, Arc::clone(&original), key(1, 10));
         wait_until(|| coordinator.status().active_session_revision == Some(10));
 
         driver.failed_prepare_count.store(1, Ordering::Release);
@@ -1502,6 +1524,46 @@ mod tests {
         assert_eq!(status.active_projection_sequence, Some(1));
         assert_eq!(status.last_error_code.as_deref(), Some("timeline"));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+
+        // Act
+        let result = coordinator
+            .submit_canonical_with_deadline(reidentify(&original, 12), key(3, 12), None)
+            .unwrap();
+
+        // Assert
+        assert!(matches!(result, CanonicalSubmit::Adopted));
+        let restored = coordinator.status();
+        assert_eq!(restored.state, RuntimeProjectionState::Active);
+        assert_eq!(restored.active_session_revision, Some(12));
+        assert_eq!(restored.active_projection_sequence, Some(3));
+        assert_eq!(restored.last_error, None);
+        assert_eq!(restored.last_error_code, None);
+        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn reuses_the_active_canonical_projection_while_a_candidate_is_preparing() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(80)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        let active = snapshot(10);
+        submit_canonical(&coordinator, Arc::clone(&active), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        coordinator
+            .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
+            .unwrap();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
+
+        // Act
+        let result = coordinator
+            .submit_canonical_with_deadline(reidentify(&active, 12), key(3, 12), None)
+            .unwrap();
+
+        // Assert
+        assert!(matches!(result, CanonicalSubmit::Deferred(_)));
+        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
+        assert!(coordinator.status().running_operation_id.is_some());
     }
 
     #[test]
@@ -1773,6 +1835,64 @@ mod tests {
             prepare_count
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+    }
+
+    #[test]
+    fn prepares_when_only_projection_diagnostics_change() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        let original = snapshot(10);
+        submit_canonical(&coordinator, Arc::clone(&original), key(1, 10));
+        wait_until(|| coordinator.status().active_projection_sequence == Some(1));
+        let mut changed = reidentify(&original, 11).as_ref().clone();
+        changed
+            .diagnostics
+            .missing_device_ids
+            .push("device:missing".into());
+
+        // Act
+        submit_canonical(&coordinator, Arc::new(changed), key(2, 11));
+
+        // Assert
+        wait_until(|| coordinator.status().active_projection_sequence == Some(2));
+        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 11]);
+    }
+
+    #[test]
+    fn reuses_projection_after_a_presentation_only_canonical_change() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:audio".into(), "Audio".into()));
+        let original = project_session_for_test(&session);
+        submit_canonical(&coordinator, Arc::clone(&original), key(1, 0));
+        wait_until(|| coordinator.status().active_projection_sequence == Some(1));
+        let prepare_count = driver.prepare_started.load(Ordering::Acquire);
+        session.arrangement.revision = 1;
+        session.arrangement.tracks[0].name = "Renamed".into();
+        session.arrangement.tracks[0].color = Some("#123456".into());
+        let presentation_only = project_session_for_test(&session);
+        assert_eq!(original.snapshot.graph, presentation_only.snapshot.graph);
+        assert_eq!(original.diagnostics, presentation_only.diagnostics);
+
+        // Act
+        let result = coordinator
+            .submit_canonical_with_deadline(presentation_only, key(2, 1), None)
+            .unwrap();
+
+        // Assert
+        assert!(matches!(result, CanonicalSubmit::Adopted));
+        assert_eq!(
+            driver.prepare_started.load(Ordering::Acquire),
+            prepare_count
+        );
+        assert_eq!(coordinator.status().active_projection_sequence, Some(2));
     }
 
     #[test]

@@ -313,7 +313,32 @@ mod tests {
     #[test]
     fn projects_execution_fields_and_ignores_presentation_metadata() {
         let mut session = CreativeSession::new(1);
+        session.arrangement.revision = 23;
+        session.arrangement.timebase = riffra_core::ProjectTimebase {
+            ppq: 960,
+            bpm: 123.5,
+            time_signature_numerator: 7,
+            time_signature_denominator: 8,
+        };
+        session.arrangement.loop_range = riffra_core::TimelineLoopRange {
+            enabled: true,
+            start_tick: riffra_core::TimelineTick(120),
+            end_tick: riffra_core::TimelineTick(3_840),
+        };
+        session.arrangement.punch_range = Some(riffra_core::TimelinePunchRange {
+            start_tick: riffra_core::TimelineTick(240),
+            end_tick: riffra_core::TimelineTick(1_920),
+        });
+        session.settings.master_db = -6.0;
+        session.settings.metronome_enabled = true;
+
         let mut audio = Track::audio("track:audio".into(), "Audio".into());
+        audio.gain_db = -3.0;
+        audio.pan = 0.25;
+        audio.muted = true;
+        audio.solo = true;
+        audio.armed = true;
+        audio.monitoring = MonitoringState::Auto;
         audio.audio_input = Some(AudioInputRoute { channel_index: 3 });
         audio
             .rack
@@ -324,6 +349,11 @@ mod tests {
             device_id: Some("midi:1".into()),
             channel: Some(2),
         };
+        instrument.gain_db = -4.0;
+        instrument.pan = -0.5;
+        instrument.muted = true;
+        instrument.armed = true;
+        instrument.monitoring = MonitoringState::On;
         instrument.instrument = Some(
             TrackInstrument::vst3(
                 "instrument:vst3".into(),
@@ -332,7 +362,51 @@ mod tests {
             )
             .unwrap(),
         );
-        session.arrangement.tracks = vec![audio, instrument];
+        let mut built_in = Track::instrument("track:internal".into(), "Internal".into());
+        built_in.instrument = Some(
+            TrackInstrument::built_in(
+                "instrument:internal".into(),
+                "Internal".into(),
+                "preset".into(),
+                "{\"schemaVersion\":1}".into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks = vec![audio, instrument, built_in];
+
+        let audio_asset_id = riffra_core::mint_asset_id();
+        let mut audio_clip = AudioClip::full_source(
+            "clip:audio".into(),
+            "Audio clip".into(),
+            "track:audio".into(),
+            audio_asset_id.clone(),
+            riffra_core::TimelineTick(480),
+            48_000,
+            96_000,
+        );
+        audio_clip.source_range = riffra_core::FrameRange {
+            start: 12,
+            end: 96_000,
+        };
+        audio_clip.timeline_duration = riffra_core::FrameDuration {
+            frames: 48_000,
+            sample_rate: 44_100,
+        };
+        audio_clip.fade_in = riffra_core::FrameDuration {
+            frames: 128,
+            sample_rate: 48_000,
+        };
+        audio_clip.fade_out = riffra_core::FrameDuration {
+            frames: 256,
+            sample_rate: 48_000,
+        };
+        audio_clip.fade_shape = FadeShape::Smooth;
+        audio_clip.gain_db = -2.0;
+        audio_clip.pan = 0.5;
+        audio_clip.take_variant = AudioTakeVariant::Processed;
+        audio_clip.loop_enabled = true;
+        audio_clip.muted = true;
+        session.arrangement.audio_clips.push(audio_clip);
         let mut midi = MidiClip {
             id: "clip:midi".into(),
             name: "MIDI".into(),
@@ -348,113 +422,246 @@ mod tests {
                 velocity: 100,
                 channel: 1,
             }],
-            events: vec![MidiEvent {
-                id: "event:ignored".into(),
-                kind: MidiEventKind::ControlChange,
-                tick: riffra_core::TimelineTick(480),
-                channel: 1,
-                data1: 7,
-                data2: 64,
-            }],
+            events: vec![
+                MidiEvent {
+                    id: "event:ignored".into(),
+                    kind: MidiEventKind::ControlChange,
+                    tick: riffra_core::TimelineTick(480),
+                    channel: 1,
+                    data1: 7,
+                    data2: 64,
+                },
+                MidiEvent {
+                    id: "event:pitch".into(),
+                    kind: MidiEventKind::PitchBend,
+                    tick: riffra_core::TimelineTick(600),
+                    channel: 2,
+                    data1: 1,
+                    data2: 2,
+                },
+                MidiEvent {
+                    id: "event:pressure".into(),
+                    kind: MidiEventKind::ChannelPressure,
+                    tick: riffra_core::TimelineTick(720),
+                    channel: 3,
+                    data1: 4,
+                    data2: 5,
+                },
+            ],
             muted: false,
             loop_enabled: false,
             recording_take_id: None,
         };
         session.arrangement.midi_clips.push(midi.clone());
-        session.arrangement.automation_lanes.push(AutomationLane {
-            id: "lane:volume".into(),
-            track_id: "track:audio".into(),
-            parameter: AutomationParameter::Volume,
-            points: vec![AutomationPoint {
-                id: "point:ignored".into(),
-                tick: riffra_core::TimelineTick(240),
-                value: -3.0,
-            }],
-        });
+        session.arrangement.automation_lanes = vec![
+            AutomationLane {
+                id: "lane:volume".into(),
+                track_id: "track:audio".into(),
+                parameter: AutomationParameter::Volume,
+                points: vec![AutomationPoint {
+                    id: "point:ignored".into(),
+                    tick: riffra_core::TimelineTick(240),
+                    value: -3.0,
+                }],
+            },
+            AutomationLane {
+                id: "lane:pan".into(),
+                track_id: "track:audio".into(),
+                parameter: AutomationParameter::Pan,
+                points: vec![AutomationPoint {
+                    id: "point:pan".into(),
+                    tick: riffra_core::TimelineTick(360),
+                    value: 0.75,
+                }],
+            },
+        ];
 
-        let first = project_graph(&session, &resources());
+        let projection_resources = ResolvedResources::for_projection(
+            PathBuf::from("data-root"),
+            HashMap::from([(audio_asset_id, PathBuf::from("audio/clip.wav"))]),
+            HashSet::from(["fx.vst3".to_owned(), "instrument.vst3".to_owned()]),
+            HashMap::from([("preset".to_owned(), PathBuf::from("builtins/preset"))]),
+        );
+        let first = project_graph(&session, &projection_resources);
         session.arrangement.tracks[0].name = "Renamed".into();
         session.arrangement.tracks[0].color = Some("#123456".into());
         midi.name = "Renamed MIDI".into();
         midi.notes[0].id = "note:changed".into();
         session.arrangement.midi_clips[0] = midi;
-        let second = project_graph(&session, &resources());
+        let second = project_graph(&session, &projection_resources);
 
         assert_eq!(first, second);
-        assert_eq!(first.0.tracks[0].effects.len(), 1);
+        let (graph, diagnostics) = first;
+        assert_eq!(diagnostics, ProjectionDiagnostics::default());
+        assert_eq!(graph.timebase.bpm, 123.5);
+        assert_eq!(graph.loop_range.start_tick, 120);
+        assert_eq!(graph.loop_range.end_tick, 3_840);
         assert_eq!(
-            first.0.tracks[0]
-                .audio_input
-                .as_ref()
-                .unwrap()
-                .channel_index,
+            graph.punch_range,
+            Some(GraphTickRange {
+                start_tick: 240,
+                end_tick: 1_920,
+            })
+        );
+        assert!(graph.metronome_enabled);
+        assert_eq!(graph.master_gain_db, -6.0);
+        assert_eq!(graph.tracks.len(), 3);
+        assert_eq!(graph.tracks[0].kind, GraphTrackKind::Audio);
+        assert_eq!(graph.tracks[0].gain_db, -3.0);
+        assert_eq!(graph.tracks[0].pan, 0.25);
+        assert!(graph.tracks[0].muted && graph.tracks[0].solo && graph.tracks[0].armed);
+        assert_eq!(graph.tracks[0].monitoring, GraphMonitoring::Auto);
+        assert_eq!(graph.tracks[0].effects.len(), 1);
+        assert_eq!(graph.tracks[0].audio_clips.len(), 1);
+        assert_eq!(graph.tracks[0].audio_clips[0].path, "audio/clip.wav");
+        assert_eq!(graph.tracks[0].audio_clips[0].source_start_frame, 12);
+        assert_eq!(graph.tracks[0].audio_clips[0].duration_sample_rate, 44_100);
+        assert_eq!(
+            graph.tracks[0].audio_clips[0].fade_shape,
+            GraphFadeShape::Smooth
+        );
+        assert_eq!(
+            graph.tracks[0].audio_clips[0].take_variant,
+            GraphTakeVariant::Processed
+        );
+        assert!(graph.tracks[0].audio_clips[0].loop_enabled);
+        assert!(graph.tracks[0].audio_clips[0].muted);
+        assert_eq!(
+            graph.tracks[0].audio_input.as_ref().unwrap().channel_index,
             3
         );
-        assert_eq!(first.0.tracks[0].volume_automation[0].value, -3.0);
-        assert_eq!(first.0.tracks[1].midi_clips[0].notes[0].note, 60);
-        assert_eq!(first.0.tracks[1].midi_clips[0].events[0].data2, 64);
+        assert_eq!(graph.tracks[0].volume_automation[0].value, -3.0);
+        assert_eq!(graph.tracks[0].pan_automation[0].value, 0.75);
+        assert_eq!(
+            graph.tracks[1].midi_input.device_id.as_deref(),
+            Some("midi:1")
+        );
+        assert_eq!(graph.tracks[1].midi_input.channel, Some(2));
+        assert_eq!(graph.tracks[1].midi_clips[0].notes[0].note, 60);
+        assert_eq!(graph.tracks[1].midi_clips[0].events[0].data2, 64);
+        assert_eq!(
+            graph.tracks[1].midi_clips[0].events[1].kind,
+            GraphMidiEventKind::PitchBend
+        );
+        assert_eq!(
+            graph.tracks[1].midi_clips[0].events[2].kind,
+            GraphMidiEventKind::ChannelPressure
+        );
+        assert!(matches!(
+            graph.tracks[1].instrument,
+            Some(GraphInstrument::Vst3 { .. })
+        ));
+        assert!(matches!(
+            graph.tracks[2].instrument,
+            Some(GraphInstrument::Internal { .. })
+        ));
     }
 
     #[test]
     fn excludes_unresolved_and_disabled_resources_with_ordered_diagnostics() {
-        let mut session = CreativeSession::new(1);
-        let mut instrument = Track::instrument("track:instrument".into(), "Keys".into());
-        instrument.instrument = Some(
-            TrackInstrument::built_in(
-                "instrument:missing".into(),
-                "Missing".into(),
-                "not-resolved".into(),
-                "{}".into(),
-            )
-            .unwrap(),
-        );
-        instrument.rack.devices = vec![
-            plugin_device("device:missing", "Missing", Some("missing.vst3"), false),
-            plugin_device("device:disabled", "Disabled", Some("absent.vst3"), true),
-        ];
-        instrument.rack.devices[1].disabled_placeholder = true;
-        session.arrangement.tracks.push(instrument);
-        let asset_id = riffra_core::mint_asset_id();
-        session.arrangement.audio_clips.push(AudioClip::full_source(
-            "clip:missing".into(),
-            "Missing".into(),
-            "track:instrument".into(),
-            asset_id,
-            riffra_core::TimelineTick(0),
-            48_000,
-            48_000,
-        ));
-        let mut disabled_vst =
-            Track::instrument("track:disabled-vst".into(), "Disabled VST".into());
-        disabled_vst.instrument = Some(
-            TrackInstrument::vst3(
-                "instrument:disabled".into(),
-                "Disabled".into(),
-                "absent.vst3".into(),
-            )
-            .unwrap(),
-        );
-        if let Some(TrackInstrumentSource::Vst3 {
-            disabled_placeholder,
-            ..
-        }) = disabled_vst
-            .instrument
-            .as_mut()
-            .map(|instrument| &mut instrument.source)
-        {
-            *disabled_placeholder = true;
+        #[derive(Clone, Copy)]
+        enum MissingDevice {
+            Plugin,
+            Vst3Instrument,
+            BuiltInPreset,
         }
-        session.arrangement.tracks.push(disabled_vst);
 
-        let (graph, diagnostics) = project_graph(&session, &resources());
+        let cases = [
+            ("plugin", MissingDevice::Plugin, "device:missing"),
+            (
+                "VST3 instrument",
+                MissingDevice::Vst3Instrument,
+                "instrument:missing-vst",
+            ),
+            (
+                "built-in preset",
+                MissingDevice::BuiltInPreset,
+                "instrument:missing-preset",
+            ),
+        ];
 
-        assert_eq!(graph.tracks[0].instrument, None);
-        assert!(graph.tracks[0].effects.is_empty());
-        assert_eq!(graph.tracks[1].instrument, None);
-        assert_eq!(diagnostics.unavailable_clip_ids, ["clip:missing"]);
-        assert_eq!(
-            diagnostics.missing_device_ids,
-            ["instrument:missing", "device:missing"]
-        );
+        for (label, missing_device, expected_id) in cases {
+            let mut session = CreativeSession::new(1);
+            let mut track = Track::instrument("track:instrument".into(), "Keys".into());
+            match missing_device {
+                MissingDevice::Plugin => track.rack.devices.push(plugin_device(
+                    "device:missing",
+                    "Missing",
+                    Some("missing.vst3"),
+                    false,
+                )),
+                MissingDevice::Vst3Instrument => {
+                    track.instrument = Some(
+                        TrackInstrument::vst3(
+                            "instrument:missing-vst".into(),
+                            "Missing VST".into(),
+                            "missing-instrument.vst3".into(),
+                        )
+                        .unwrap(),
+                    );
+                }
+                MissingDevice::BuiltInPreset => {
+                    track.instrument = Some(
+                        TrackInstrument::built_in(
+                            "instrument:missing-preset".into(),
+                            "Missing preset".into(),
+                            "not-resolved".into(),
+                            "{}".into(),
+                        )
+                        .unwrap(),
+                    );
+                }
+            }
+            track.rack.devices.push(plugin_device(
+                "device:disabled",
+                "Disabled",
+                Some("absent.vst3"),
+                true,
+            ));
+            session.arrangement.tracks.push(track);
+            let asset_id = riffra_core::mint_asset_id();
+            session.arrangement.audio_clips.push(AudioClip::full_source(
+                "clip:missing".into(),
+                "Missing".into(),
+                "track:instrument".into(),
+                asset_id,
+                riffra_core::TimelineTick(0),
+                48_000,
+                48_000,
+            ));
+            let mut disabled_vst =
+                Track::instrument("track:disabled-vst".into(), "Disabled VST".into());
+            disabled_vst.instrument = Some(
+                TrackInstrument::vst3(
+                    "instrument:disabled".into(),
+                    "Disabled".into(),
+                    "absent.vst3".into(),
+                )
+                .unwrap(),
+            );
+            if let Some(TrackInstrumentSource::Vst3 {
+                disabled_placeholder,
+                ..
+            }) = disabled_vst
+                .instrument
+                .as_mut()
+                .map(|instrument| &mut instrument.source)
+            {
+                *disabled_placeholder = true;
+            }
+            session.arrangement.tracks.push(disabled_vst);
+
+            let (graph, diagnostics) = project_graph(&session, &resources());
+
+            assert_eq!(graph.tracks[0].instrument, None, "{label}");
+            assert!(graph.tracks[0].effects.is_empty(), "{label}");
+            assert_eq!(graph.tracks[1].instrument, None, "{label}");
+            assert_eq!(
+                diagnostics.unavailable_clip_ids,
+                ["clip:missing"],
+                "{label}"
+            );
+            assert_eq!(diagnostics.missing_device_ids, [expected_id], "{label}");
+        }
     }
 }

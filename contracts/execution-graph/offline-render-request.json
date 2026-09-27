@@ -201,7 +201,10 @@
             "path": "plugins/fx.vst3",
             "state": {
               "stateData": "opaque-state",
-              "parameterValues": [0.25, 0.75],
+              "parameterValues": [
+                0.25,
+                0.75
+              ],
               "bypassed": false
             }
           }
@@ -212,7 +215,10 @@
           "path": "plugins/instrument.vst3",
           "state": {
             "stateData": null,
-            "parameterValues": [0.25, 0.75],
+            "parameterValues": [
+              0.25,
+              0.75
+            ],
             "bypassed": false
           }
         },

@@ -76,7 +76,7 @@ pub(crate) fn resolve(
 
 #[cfg(test)]
 impl ResolvedResources {
-    pub(super) fn for_projection(
+    pub(crate) fn for_projection(
         data_root: PathBuf,
         audio_paths: HashMap<riffra_core::AssetId, PathBuf>,
         existing_plugin_paths: HashSet<String>,

@@ -410,6 +410,14 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
+    src/app/AudioCommandDispatcher.cpp
+    src/app/commands/DeviceCommands.cpp
+    src/app/commands/TimelineCommands.cpp
+    src/app/commands/TrackDeviceCommands.cpp
+    src/app/commands/RecordingCommands.cpp
+    src/app/commands/PreviewCommands.cpp
+    src/app/commands/MidiCommands.cpp
+    src/app/commands/TrackMixCommands.cpp
     tests/contract/ExecutionGraphContractTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp

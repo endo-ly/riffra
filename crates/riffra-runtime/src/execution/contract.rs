@@ -1,6 +1,4 @@
 use serde::Serialize;
-use ts_rs::TS;
-
 /// A complete versioned timeline snapshot sent to the native audio engine.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,20 +225,6 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) sample_rate: u32,
     pub(crate) block_size: u32,
     pub(crate) normalize: bool,
-}
-
-/// Resources missing from an executable projection.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionDiagnostics {
-    pub unavailable_clip_ids: Vec<String>,
-    pub missing_device_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ProjectedTimeline {
-    pub(crate) snapshot: TimelineSnapshot,
-    pub(crate) diagnostics: ProjectionDiagnostics,
 }
 
 #[cfg(test)]

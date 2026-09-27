@@ -3206,4 +3206,54 @@ mod tests {
         drop(reopened);
         let _ = std::fs::remove_dir_all(data_root);
     }
+
+    #[test]
+    fn master_gain_set_commits_canonical_state_and_requests_projection() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-master-gain-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+                data_root.join("missing-sonalloy"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
+
+        // Act
+        let response = host.dispatch_control(
+            ControlRequest::new(
+                "master-gain-set",
+                ControlCommand::new("audio.master-gain.set", serde_json::json!({"gainDb": -9.0})),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
+
+        // Assert
+        assert!(response.ok);
+        let mutation: crate::model::ArrangementMutationResult =
+            serde_json::from_value(response.result.unwrap().value).unwrap();
+        assert_eq!(mutation.canonical.sequence, 1);
+        assert_eq!(mutation.canonical.session.settings.master_db, -9.0);
+        assert!(matches!(
+            mutation.projection,
+            crate::model::ArrangementProjectionOutcome::Queued
+                | crate::model::ArrangementProjectionOutcome::Failed { .. }
+        ));
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
 }

@@ -51,8 +51,7 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         key,
     );
     let projection = match outcome {
-        crate::runtime::CanonicalProjectionOutcome::Adopted
-        | crate::runtime::CanonicalProjectionOutcome::Deferred => {
+        crate::runtime::CanonicalProjectionOutcome::Adopted => {
             ArrangementProjectionOutcome::NotRequired
         }
         crate::runtime::CanonicalProjectionOutcome::Queued => ArrangementProjectionOutcome::Queued,
