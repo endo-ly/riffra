@@ -63,6 +63,13 @@ struct ActiveProjection {
     projection: Arc<ProjectedTimeline>,
 }
 
+#[derive(Clone, Copy)]
+enum CanonicalReferenceSource {
+    Pending,
+    Running,
+    Active,
+}
+
 #[derive(Debug)]
 pub(super) enum CanonicalSubmit {
     Adopted,
@@ -367,7 +374,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     && target.runtime_generation == generation
                     && target.audio_environment_revision == state.audio_environment_revision
             })
-            .map(|target| Arc::clone(&target.projection))
+            .map(|target| {
+                (
+                    CanonicalReferenceSource::Pending,
+                    Arc::clone(&target.projection),
+                )
+            })
             .or_else(|| {
                 state
                     .running_target
@@ -377,50 +389,62 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                             && target.runtime_generation == generation
                             && target.audio_environment_revision == state.audio_environment_revision
                     })
-                    .map(|target| Arc::clone(&target.projection))
+                    .map(|target| {
+                        (
+                            CanonicalReferenceSource::Running,
+                            Arc::clone(&target.projection),
+                        )
+                    })
             })
             .or_else(|| {
                 state.active_projection.as_ref().and_then(|active| {
                     (active.canonical
                         && active.runtime_generation == generation
                         && active.audio_environment_revision == state.audio_environment_revision)
-                        .then(|| Arc::clone(&active.projection))
+                        .then(|| {
+                            (
+                                CanonicalReferenceSource::Active,
+                                Arc::clone(&active.projection),
+                            )
+                        })
                 })
             });
 
-        if reference
-            .as_ref()
-            .is_some_and(|reference| same_projected_graph(reference, &projection))
+        if let Some((source, reference)) = reference
+            && same_projected_graph(&reference, &projection)
         {
-            let pending = state.latest_target.is_some() || state.running_operation_id.is_some();
-            let deferred = state
-                .deferred_canonical_key
-                .filter(|deferred| deferred.sequence >= key.sequence)
-                .unwrap_or(key);
-            let operation_id = state.status.operation_id;
-            if pending {
-                state.deferred_canonical_key = Some(deferred);
-                state.status_canonical = true;
-            } else if !try_adopt_canonical_key(&mut state, generation, deferred) {
-                return Err(RuntimeError::Internal(
-                    "matching active canonical projection could not be adopted".into(),
-                ));
-            } else {
-                state.deferred_canonical_key = None;
-                state.status_canonical = true;
-                state.published_status = state.status.clone();
+            match source {
+                CanonicalReferenceSource::Pending | CanonicalReferenceSource::Running => {
+                    let deferred = state
+                        .deferred_canonical_key
+                        .filter(|deferred| deferred.sequence >= key.sequence)
+                        .unwrap_or(key);
+                    let operation_id = state.status.operation_id;
+                    state.deferred_canonical_key = Some(deferred);
+                    state.status_canonical = true;
+                    wake.notify_all();
+                    drop(state);
+                    publish_current_status(&self.state, &self.status_hook);
+                    return Ok(CanonicalSubmit::Deferred(ProjectionOperation {
+                        operation_id,
+                        key: deferred,
+                    }));
+                }
+                CanonicalReferenceSource::Active => {
+                    if !try_adopt_canonical_key(&mut state, generation, key) {
+                        return Err(RuntimeError::Internal(
+                            "matching active canonical projection could not be adopted".into(),
+                        ));
+                    }
+                    state.deferred_canonical_key = None;
+                    state.status_canonical = true;
+                    state.published_status = state.status.clone();
+                }
             }
             wake.notify_all();
             drop(state);
             publish_current_status(&self.state, &self.status_hook);
-            return if pending {
-                Ok(CanonicalSubmit::Deferred(ProjectionOperation {
-                    operation_id,
-                    key: deferred,
-                }))
-            } else {
-                Ok(CanonicalSubmit::Adopted)
-            };
+            return Ok(CanonicalSubmit::Adopted);
         }
 
         let (submitted, publish_status) = self.enqueue_locked(
@@ -1225,6 +1249,9 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) -> bool {
 }
 
 fn try_adopt_deferred_canonical_key(state: &mut ProjectionState, generation: u64) -> bool {
+    if state.latest_target.is_some() || state.running_operation_id.is_some() {
+        return false;
+    }
     let Some(key) = state.deferred_canonical_key else {
         return false;
     };
@@ -1251,9 +1278,7 @@ fn try_adopt_canonical_key(
     let Some(active) = state.active_projection.clone() else {
         return false;
     };
-    if state.latest_target.is_some()
-        || state.running_operation_id.is_some()
-        || !active.canonical
+    if !active.canonical
         || active.runtime_generation != generation
         || active.audio_environment_revision != state.audio_environment_revision
         || key.sequence < active.key.sequence
@@ -1545,12 +1570,12 @@ mod tests {
     #[test]
     fn reuses_the_active_canonical_projection_while_a_candidate_is_preparing() {
         // Arrange
-        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(80)));
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(200)));
         let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
         let active = snapshot(10);
         submit_canonical(&coordinator, Arc::clone(&active), key(1, 10));
         wait_until(|| coordinator.status().active_session_revision == Some(10));
-        coordinator
+        let candidate = coordinator
             .submit_with_canonical_deadline(snapshot(11), key(2, 11), None, false)
             .unwrap();
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
@@ -1561,9 +1586,29 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(matches!(result, CanonicalSubmit::Deferred(_)));
+        assert!(matches!(result, CanonicalSubmit::Adopted));
         assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
-        assert!(coordinator.status().running_operation_id.is_some());
+        let adopted = coordinator.status();
+        assert_eq!(adopted.active_projection_sequence, Some(3));
+        assert_eq!(adopted.active_session_revision, Some(12));
+        assert_eq!(adopted.running_operation_id, Some(candidate.operation_id));
+
+        wait_until(|| {
+            driver.prepare_finished.load(Ordering::Acquire) == 2
+                && coordinator.status().running_operation_id.is_none()
+        });
+
+        let completed = coordinator.status();
+        assert_eq!(completed.active_projection_sequence, Some(3));
+        assert_eq!(completed.active_session_revision, Some(12));
+        assert!(coordinator.is_ready_for(key(3, 12)));
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+        assert_eq!(driver.discarded.load(Ordering::Acquire), 1);
+        let state = coordinator.state.0.lock().unwrap();
+        let active = state.active_projection.as_ref().unwrap();
+        assert!(active.canonical);
+        assert_eq!(active.key, key(3, 12));
+        assert_eq!(active.projection.snapshot.revision, 10);
     }
 
     #[test]

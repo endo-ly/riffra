@@ -24,7 +24,10 @@ pub(crate) fn resolve(
             continue;
         }
         if let Some(path) = asset::resolve_content_location(data_root, &clip.asset_id) {
-            audio_paths.insert(clip.asset_id.clone(), PathBuf::from(path));
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                audio_paths.insert(clip.asset_id.clone(), path);
+            }
         }
     }
 
@@ -122,9 +125,11 @@ mod tests {
     fn resolves_only_referenced_resources_that_exist() {
         let root = TempRoot::new();
         let audio = root.0.join("audio.wav");
+        let missing_audio = root.0.join("missing-audio.wav");
         let plugin = root.0.join("plugin.vst3");
         let preset_root = root.0.join("preset");
         fs::write(&audio, b"wave").unwrap();
+        fs::write(&missing_audio, b"wave").unwrap();
         fs::write(&plugin, b"plugin").unwrap();
         fs::create_dir_all(&preset_root).unwrap();
         let asset_id = asset::register(
@@ -135,6 +140,15 @@ mod tests {
             None,
         )
         .unwrap();
+        let missing_asset_id = asset::register(
+            &root.0,
+            riffra_core::AssetKind::Audio,
+            "missing audio",
+            missing_audio.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        fs::remove_file(&missing_audio).unwrap();
 
         let mut session = CreativeSession::new(1);
         let mut track = Track::instrument("track:instrument".into(), "Instrument".into());
@@ -172,11 +186,24 @@ mod tests {
                 48_000,
                 48_000,
             ));
+        session
+            .arrangement
+            .audio_clips
+            .push(riffra_core::AudioClip::full_source(
+                "clip:missing-audio".into(),
+                "Missing audio".into(),
+                "track:audio".into(),
+                missing_asset_id.clone(),
+                riffra_core::TimelineTick(0),
+                48_000,
+                48_000,
+            ));
 
         let catalog = test_catalog(&root.0, &preset_root);
         let resources = resolve(&root.0, &catalog, &session);
 
         assert_eq!(resources.audio_paths.get(&asset_id), Some(&audio));
+        assert!(!resources.audio_paths.contains_key(&missing_asset_id));
         assert!(
             resources
                 .existing_plugin_paths
