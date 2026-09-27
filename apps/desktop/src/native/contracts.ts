@@ -22,8 +22,6 @@ export interface TransportStatus {
   armedTrackIds: string[];
   clockGeneration: number;
   discontinuity: number;
-  unavailableClipIds: string[];
-  missingDeviceIds: string[];
   instrumentFaults: {
     trackId: string;
     faultCode: number;

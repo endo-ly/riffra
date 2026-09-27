@@ -10,6 +10,7 @@ mod audio;
 mod binaries;
 mod control;
 mod dispatcher;
+mod execution;
 mod host;
 pub mod instrument;
 pub mod jobs;
@@ -22,7 +23,6 @@ pub mod projects;
 pub mod recording;
 pub mod render;
 mod runtime;
-pub mod runtime_snapshot;
 pub mod session;
 mod startup;
 #[cfg(test)]
@@ -34,6 +34,7 @@ pub use audio::{
 };
 pub use binaries::RuntimeBinaries;
 pub use dispatcher::{DispatchError, DispatchResult, Dispatcher, command_requires_project_id};
+pub use execution::ProjectionDiagnostics;
 pub use host::{
     DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventHub, HostEventSink,
     HostEventSubscription, NoopHostEventSink, RecordingHostEventSink, SharedHostEventSink,
@@ -53,14 +54,12 @@ pub use model::{
     PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult, ProjectRecoveryState,
     ProjectState, ProjectSummary, RecordingFinalizationOutcome, RecordingStatus,
     RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
-    SessionAudioPair, TrackDeviceSummary, TrackInstrumentSummary, TrackInstrumentSummarySource,
-    TrackRackSummary, TrackSummary,
+    TrackDeviceSummary, TrackInstrumentSummary, TrackInstrumentSummarySource, TrackRackSummary,
+    TrackSummary,
 };
 pub use preferences::{
     AudioDriverConfig, AudioPreferences, AudioPreferencesStore, access_mode_for_driver,
     active_device_matches_preferences, load_or_default,
 };
-pub use runtime::{
-    ProjectionDriver, ProjectionStatusHook, RuntimeDriver, RuntimeError, RuntimeReconciler,
-    TIMELINE_PREPARE_TIMEOUT, TransportDriver,
-};
+pub use runtime::RuntimeError;
+pub(crate) use runtime::{RuntimeDriver, RuntimeReconciler};

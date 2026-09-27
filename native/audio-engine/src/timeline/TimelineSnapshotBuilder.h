@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TimelineEngine.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
 
@@ -11,8 +12,9 @@ public:
     explicit TimelineSnapshotBuilder(TimelineEngine& engine) noexcept;
 
     /// Validates and prepares a snapshot for later publication by the engine.
-    [[nodiscard]] bool build(const juce::var& snapshot, juce::AudioFormatManager& formats,
-                             double outputSampleRate, int maximumBlockSize,
+    [[nodiscard]] bool build(const TimelineSnapshotSpec& snapshot,
+                             juce::AudioFormatManager& formats, double outputSampleRate,
+                             int maximumBlockSize,
                              std::unique_ptr<TimelineEngine::PreparedTimeline>& prepared,
                              bool& monitorLiveInputState,
                              std::uint32_t& monitoringInputChannelsState,

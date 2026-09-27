@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Icon } from '@/shared/ui/primitives';
@@ -11,7 +11,6 @@ interface MixerMasterChannelStripProps {
   session: CreativeSession;
   api: Pick<ArrangeWorkspaceApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
-  setAudio: (audio: AudioStatus) => void;
   disabled?: boolean;
 }
 
@@ -42,7 +41,6 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
   const master = useMasterGainControl({
     session: props.session,
     applyCanonicalState: props.applyCanonicalState,
-    setAudio: props.setAudio,
     api: props.api,
     disabled: props.disabled,
   });

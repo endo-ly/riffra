@@ -35,6 +35,7 @@ const initialRuntimeProjectionStatus: RuntimeProjectionStatus = {
   preparedSessionRevision: null,
   activeProjectionSequence: null,
   activeSessionRevision: null,
+  activeDiagnostics: null,
   runtimeGeneration: 0,
   audioEnvironmentRevision: 0,
   targetAudioEnvironmentRevision: null,

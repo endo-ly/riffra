@@ -135,6 +135,11 @@ juce::String TimelineEngine::activeProjectId() const {
     return timeline != nullptr ? timeline->projectId : juce::String{};
 }
 
+float TimelineEngine::activeMasterGainDb() const noexcept {
+    const juce::SpinLock::ScopedLockType lock(timelineLock);
+    return timeline != nullptr ? timeline->masterGainDb : 0.0f;
+}
+
 TimelineEngine::ActiveProjectMeterIdentity TimelineEngine::activeProjectMeterIdentity() const {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) return {};
@@ -179,9 +184,10 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
     };
 }
 
-bool TimelineEngine::loadSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
-                                  const double outputSampleRate, const int maximumBlockSize,
-                                  juce::String& error, const bool commitImmediately) {
+bool TimelineEngine::loadSnapshot(const TimelineSnapshotSpec& snapshot,
+                                  juce::AudioFormatManager& formats, const double outputSampleRate,
+                                  const int maximumBlockSize, juce::String& error,
+                                  const bool commitImmediately) {
     std::unique_ptr<PreparedTimeline> prepared;
     bool monitorLiveInputState = false;
     std::uint32_t monitoringInputChannelsState = 0;
@@ -225,15 +231,13 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
             // native mutation may have changed the topology in the meantime.
             for (auto& candidateTrack : candidate->tracks) {
                 if (!candidateTrack->reuseRuntimeDevices) continue;
-                const auto existing =
-                    std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
-                                 [&candidateTrack](const auto& item) {
-                                     return item->id == candidateTrack->id &&
-                                            item->effectTopologySignature ==
-                                                candidateTrack->effectTopologySignature &&
-                                            item->instrumentTopologySignature ==
-                                                candidateTrack->instrumentTopologySignature;
-                                 });
+                const auto existing = std::find_if(
+                    timeline->tracks.begin(), timeline->tracks.end(),
+                    [&candidateTrack](const auto& item) {
+                        return item->id == candidateTrack->id &&
+                               sameEffectTopology(item->effects, candidateTrack->effects) &&
+                               sameInstrumentTopology(item->instrument, candidateTrack->instrument);
+                    });
                 if (existing == timeline->tracks.end()) {
                     error = "Timeline device runtime changed while the snapshot was prepared.";
                     pendingTimeline = std::move(candidate);
@@ -251,15 +255,13 @@ bool TimelineEngine::commitPreparedSnapshot(juce::String& error) noexcept {
             // lock.
             for (auto& candidateTrack : candidate->tracks) {
                 if (!candidateTrack->reuseRuntimeDevices) continue;
-                const auto existing =
-                    std::find_if(timeline->tracks.begin(), timeline->tracks.end(),
-                                 [&candidateTrack](const auto& item) {
-                                     return item->id == candidateTrack->id &&
-                                            item->effectTopologySignature ==
-                                                candidateTrack->effectTopologySignature &&
-                                            item->instrumentTopologySignature ==
-                                                candidateTrack->instrumentTopologySignature;
-                                 });
+                const auto existing = std::find_if(
+                    timeline->tracks.begin(), timeline->tracks.end(),
+                    [&candidateTrack](const auto& item) {
+                        return item->id == candidateTrack->id &&
+                               sameEffectTopology(item->effects, candidateTrack->effects) &&
+                               sameInstrumentTopology(item->instrument, candidateTrack->instrument);
+                    });
                 if (existing == timeline->tracks.end()) continue;
                 // The candidate owns the new canonical Track state. Transfer
                 // only the already-live device instances; moving the whole
@@ -376,8 +378,6 @@ juce::var TimelineEngine::status() const {
                         static_cast<int>(recordingPassOrdinal.load(std::memory_order_acquire)));
     object->setProperty("recordingCaptureErrors",
                         static_cast<juce::int64>(recordingCapture->captureErrors()));
-    object->setProperty("unavailableClipIds", juce::Array<juce::var>{});
-    object->setProperty("missingDeviceIds", juce::Array<juce::var>{});
     object->setProperty("instrumentFaults", juce::Array<juce::var>{});
     juce::Array<juce::var> armedTrackIds;
     juce::Array<juce::var> instrumentFaults;
@@ -394,8 +394,6 @@ juce::var TimelineEngine::status() const {
             timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate));
         object->setProperty("timelineTick", tick);
         object->setProperty("recordingCurrentTick", tick);
-        object->setProperty("unavailableClipIds", timeline->unavailableClipIds);
-        object->setProperty("missingDeviceIds", timeline->missingDeviceIds);
         for (const auto& track : timeline->tracks) {
             if (track == nullptr) continue;
             if (track->runtime != nullptr) {

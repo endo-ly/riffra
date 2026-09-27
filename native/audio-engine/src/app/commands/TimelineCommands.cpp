@@ -1,6 +1,7 @@
 #include <chrono>
 
 #include "../AudioCommandDispatcher.h"
+#include "contract/ExecutionGraphDecoder.h"
 #include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
@@ -37,9 +38,15 @@ CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command)
         return {};
     }
 
-    if (type == "loadTimelineSnapshot" || type == "prepareTimelineSnapshot") {
-        if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 1) {
+    if (type == "prepareTimelineSnapshot") {
+        if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 2) {
             writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));
+            return {};
+        }
+        TimelineSnapshotSpec snapshot;
+        juce::String contractError;
+        if (!decodeTimelineSnapshot(command.getProperty("snapshot", {}), snapshot, contractError)) {
+            writeJson(makeError("timelineContract", contractError, "runtime.timeline.prepare"));
             return {};
         }
         if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
@@ -48,27 +55,19 @@ CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command)
                                 "current runtime remains available."));
             return {};
         }
-        const auto commitImmediately = type == "loadTimelineSnapshot";
         auto* device = context.deviceController.manager().getCurrentAudioDevice();
         const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
-        const auto snapshot = command.getProperty("snapshot", {});
         const auto sampleRate = context.pipeline.getSampleRate();
         const auto requestId = currentRequestId();
         context.timelineOperationRunning.store(true, std::memory_order_release);
         const auto submitted = context.runtimeLifecycle.submit(
-            [&, snapshot, requestId, sampleRate, blockSize, commitImmediately] {
-                if (commitImmediately && context.trackPluginEditor != nullptr) {
-                    context.trackPluginEditor->close();
-                    context.trackPluginEditor.reset();
-                    context.trackPluginEditorTrackId.clear();
-                    context.trackPluginEditorDeviceId.clear();
-                }
+            [&, snapshot, requestId, sampleRate, blockSize] {
                 juce::String timelineError;
                 bool loaded = false;
                 try {
                     loaded = context.timelineEngine.loadSnapshot(snapshot, context.formatManager,
                                                                  sampleRate, blockSize,
-                                                                 timelineError, commitImmediately);
+                                                                 timelineError, false);
                 } catch (const std::exception& exception) {
                     timelineError = "Arrangement VST3 loading raised an exception: " +
                                     juce::String(exception.what());
@@ -81,13 +80,10 @@ CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command)
                 } else {
                     auto* ack = new juce::DynamicObject();
                     ack->setProperty("type", "timelineAck");
-                    ack->setProperty("revision", snapshot.getProperty("revision", 0));
+                    ack->setProperty("revision", static_cast<juce::int64>(snapshot.revision));
                     ack->setProperty(
                         "appliedAtAudioClockSample",
                         context.timelineEngine.status().getProperty("audioClockSample", 0));
-                    ack->setProperty(
-                        "unavailableClipIds",
-                        snapshot.getProperty("unavailableClipIds", juce::Array<juce::var>{}));
                     writeJson(juce::var(ack), requestId);
                 }
             },
@@ -128,6 +124,7 @@ CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command)
                     writeJson(makeError("timeline", timelineError), requestId);
                     return;
                 }
+                context.pipeline.setMasterGainDb(context.timelineEngine.activeMasterGainDb());
                 writeJson(context.timelineEngine.status(), requestId);
             },
             kTimelineVstLifecycleTimeout);

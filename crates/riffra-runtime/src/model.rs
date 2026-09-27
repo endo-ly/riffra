@@ -269,14 +269,6 @@ impl TrackInstrumentSummary {
     }
 }
 
-/// Canonical session and audio status returned by a coordinated operation.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionAudioPair {
-    pub canonical: CanonicalState,
-    pub audio: AudioStatus,
-}
-
 /// Coarse state of the native audio runtime.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -603,6 +595,7 @@ pub struct RuntimeProjectionStatus {
     pub target_audio_environment_revision: Option<u64>,
     pub prepared_audio_environment_revision: Option<u64>,
     pub active_audio_environment_revision: Option<u64>,
+    pub active_diagnostics: Option<crate::ProjectionDiagnostics>,
     pub queued_at_ms: Option<u64>,
     pub started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,

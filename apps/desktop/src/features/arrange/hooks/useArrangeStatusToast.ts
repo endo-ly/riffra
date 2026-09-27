@@ -8,8 +8,6 @@ interface UseArrangeStatusToastOptions {
   runtimeProjectionRetrying: boolean;
   onRetryRuntimeProjection: () => Promise<void>;
   editorMessage: string;
-  unavailableClipIds: string[];
-  missingDeviceIds: string[];
 }
 
 export function useArrangeStatusToast({
@@ -18,8 +16,6 @@ export function useArrangeStatusToast({
   runtimeProjectionRetrying,
   onRetryRuntimeProjection,
   editorMessage,
-  unavailableClipIds,
-  missingDeviceIds,
 }: UseArrangeStatusToastOptions) {
   // Runtime projection status, rather than Arrangement revision, is the source
   // of truth for playback health. Marker and other authoring-only edits still
@@ -32,8 +28,10 @@ export function useArrangeStatusToast({
   const playbackOutOfSync =
     runtimeProjectionStatus.state === 'failed' &&
     runtimeProjectionStatus.lastErrorCode !== 'timelineBusy';
-  const unavailableClipCount = unavailableClipIds.length;
-  const missingDeviceCount = missingDeviceIds.length;
+  const unavailableClipCount =
+    runtimeProjectionStatus.activeDiagnostics?.unavailableClipIds.length ?? 0;
+  const missingDeviceCount =
+    runtimeProjectionStatus.activeDiagnostics?.missingDeviceIds.length ?? 0;
   const statusMessage = projectionLoading
     ? runtimeProjectionRetrying
       ? 'Retrying audio preparation…'

@@ -1,4 +1,4 @@
-import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
 import { MixerTrackChannelStrip } from './MixerTrackChannelStrip';
@@ -10,7 +10,6 @@ interface MixerPanelProps {
   missingDeviceIds: readonly string[];
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
-  setAudio: (audio: AudioStatus) => void;
   onSelectTrack: (trackId: string) => void;
   onError?: (message: string) => void;
   disabled?: boolean;
@@ -65,7 +64,6 @@ export function MixerPanel(props: MixerPanelProps) {
         session={props.session}
         api={props.api}
         applyCanonicalState={props.applyCanonicalState}
-        setAudio={props.setAudio}
         disabled={props.disabled}
       />
     </div>

@@ -15,6 +15,7 @@
 #include "MidiScheduler.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
+#include "contract/ExecutionGraph.h"
 #include "instruments/InstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/ArrangementCaptureSink.h"
@@ -28,9 +29,7 @@ class TimelineSnapshotBuilder;
 
 /// Envelope multiplier for a normalized fade progress in [0, 1].
 ///
-/// Shapes mirror the Rust `FadeShape` contract: 0 linear, 1 equal power
-/// (half-sine), 2 smoothstep. Snapshot loading clamps stored values into
-/// that range before they reach playback.
+/// Applies the prepared fade shape to a normalized fade progress value.
 [[nodiscard]] float fadeEnvelope(float progress, int fadeShape) noexcept;
 
 class TimelineEngine final {
@@ -48,7 +47,7 @@ public:
     TimelineEngine(const TimelineEngine&) = delete;
     TimelineEngine& operator=(const TimelineEngine&) = delete;
 
-    bool loadSnapshot(const juce::var& snapshot, juce::AudioFormatManager& formats,
+    bool loadSnapshot(const TimelineSnapshotSpec& snapshot, juce::AudioFormatManager& formats,
                       double outputSampleRate, int maximumBlockSize, juce::String& error,
                       bool commitImmediately = true);
     bool commitPreparedSnapshot(juce::String& error) noexcept;
@@ -87,6 +86,7 @@ public:
     [[nodiscard]] juce::Array<juce::var> meterSnapshot();
     /// Returns the Project that owns the active realtime graph.
     [[nodiscard]] juce::String activeProjectId() const;
+    [[nodiscard]] float activeMasterGainDb() const noexcept;
     /// Returns the Project identity and meter epoch from one graph boundary.
     [[nodiscard]] ActiveProjectMeterIdentity activeProjectMeterIdentity() const;
     /// Requests an all-notes-off / all-sound-off / sustain-off panic for every
@@ -100,7 +100,7 @@ public:
     bool setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
-                                 const juce::var& persistedState, juce::String& error);
+                                 const PluginStateSpec& persistedState, juce::String& error);
     [[nodiscard]] juce::var deviceStatus(const juce::String& trackId, const juce::String& deviceId,
                                          juce::String& error) const;
     [[nodiscard]] juce::var deviceParameterStatus(const juce::String& trackId,
@@ -112,7 +112,8 @@ public:
     [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
                                          const juce::String& deviceId) noexcept;
     bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,
-                                 const juce::var& persistedState, juce::String& error) noexcept;
+                                 const PluginStateSpec& persistedState,
+                                 juce::String& error) noexcept;
     bool mirrorEditorDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
                                      int parameterIndex, float value, juce::String& error) noexcept;
     [[nodiscard]] juce::var devicePersistedState(const juce::String& trackId,
@@ -176,10 +177,8 @@ private:
         std::vector<std::unique_ptr<Clip>> clips;
         std::unique_ptr<TrackRuntime> runtime;
         juce::String instrumentDeviceId;
-        juce::String effectTopologySignature;
-        juce::String instrumentTopologySignature;
-        juce::var effectState;
-        juce::var instrumentState;
+        std::vector<PluginDeviceSpec> effects;
+        std::optional<InstrumentSpec> instrument;
         // Runtime devices are reusable only when both topology and persisted
         // state match the active graph. A state change receives newly prepared
         // plugin instances so state application never mutates the active graph.
@@ -200,19 +199,18 @@ private:
         std::int64_t punchStartSample = 0;
         std::int64_t punchEndSample = 0;
         bool metronomeEnabled = false;
+        float masterGainDb = 0.0f;
         bool hasSolo = false;
         std::int64_t beatSamples = 0;
         std::int64_t beatsPerBar = 4;
         std::uint16_t timeSignatureNumerator = 4;
         std::uint16_t timeSignatureDenominator = 4;
-        juce::Array<juce::var> unavailableClipIds;
-        juce::Array<juce::var> missingDeviceIds;
         std::vector<std::unique_ptr<Track>> tracks;
     };
 
     struct OfflineRecordingTrack final {
         juce::String id;
-        juce::var effectState;
+        std::vector<PluginDeviceSpec> effects;
     };
 
     struct MetronomeTransportSegment final {

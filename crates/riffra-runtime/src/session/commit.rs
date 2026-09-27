@@ -1,21 +1,15 @@
 //! Shared wiring for the Core canonical commit boundary.
 
+use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
-use crate::model::{
-    ArrangementMutationResult, ArrangementProjectionOutcome, RuntimeProjectionState,
-};
+use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome};
 use crate::session::context::SessionContext;
 use crate::session::error::AdapterError;
 use crate::{AudioSupervisor, HostEvent, RuntimeDriver, RuntimeReconciler};
 use riffra_core::{AppCore, ApplicationError, CreativeSession};
 use riffra_host::SessionStore;
 use std::path::Path;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CanonicalMutationEffect {
-    CanonicalOnly,
-    ProjectArrangement,
-}
+use std::sync::Arc;
 
 pub fn publish_canonical_state<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
@@ -34,7 +28,6 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
     built_in_instruments: &BuiltInInstrumentCatalog,
     project_id: &str,
     safe_mode: bool,
-    effect: CanonicalMutationEffect,
 ) -> Result<ArrangementMutationResult, String> {
     if safe_mode {
         return Ok(ArrangementMutationResult {
@@ -48,26 +41,23 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
         sequence: canonical.sequence,
         session_revision: canonical.session.arrangement.revision,
     };
-    if matches!(effect, CanonicalMutationEffect::CanonicalOnly) {
-        runtime.adopt_canonical_without_projection(key);
-        return Ok(ArrangementMutationResult {
-            canonical,
-            projection: ArrangementProjectionOutcome::NotRequired,
-            created_entity_ids: Default::default(),
-        });
-    }
-
-    let status = runtime.submit_nonblocking(
-        crate::runtime_snapshot::runtime_timeline_snapshot(
+    let outcome = runtime.project_canonical(
+        Arc::new(project_session(
             data_root,
             built_in_instruments,
             project_id,
             &canonical.session,
-        ),
+        )),
         key,
     );
-    let projection = match status.state {
-        RuntimeProjectionState::Failed => {
+    let projection = match outcome {
+        crate::runtime::CanonicalProjectionOutcome::Adopted
+        | crate::runtime::CanonicalProjectionOutcome::Deferred => {
+            ArrangementProjectionOutcome::NotRequired
+        }
+        crate::runtime::CanonicalProjectionOutcome::Queued => ArrangementProjectionOutcome::Queued,
+        crate::runtime::CanonicalProjectionOutcome::Failed { status } => {
+            let status = *status;
             let message = if status.active_projection_sequence.is_some() {
                 "Audio preparation failed. The previous playback state remains available."
             } else {
@@ -77,7 +67,6 @@ pub(crate) fn finalize_arrangement_mutation<D: RuntimeDriver>(
                 message: message.into(),
             }
         }
-        _ => ArrangementProjectionOutcome::Queued,
     };
     Ok(ArrangementMutationResult {
         canonical,
@@ -153,27 +142,6 @@ pub fn arrangement_mutation_result<D: RuntimeDriver>(
         context.built_in_instruments,
         &project_id,
         context.safe_mode,
-        CanonicalMutationEffect::ProjectArrangement,
-    )
-    .map_err(AdapterError::from)
-}
-
-pub fn arrangement_mutation_without_projection<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
-) -> Result<ArrangementMutationResult, AdapterError> {
-    let canonical = context.core.canonical_state()?;
-    let project_id = context
-        .storage
-        .project_id()
-        .map_err(|error| AdapterError::command(error.to_string()))?;
-    finalize_arrangement_mutation(
-        canonical,
-        context.runtime,
-        context.data_root,
-        context.built_in_instruments,
-        &project_id,
-        context.safe_mode,
-        CanonicalMutationEffect::CanonicalOnly,
     )
     .map_err(AdapterError::from)
 }

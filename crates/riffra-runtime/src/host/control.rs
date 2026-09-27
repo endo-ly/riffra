@@ -206,12 +206,13 @@ impl HostState {
         if command == "audio.master-gain.set" {
             let params: MasterGainParams = decode(params)?;
             let context = self.session_context()?;
-            let pair = session_adapter::set_master_gain_db(&context, params.gain_db)
+            let result = session_adapter::set_master_gain_db(&context, params.gain_db)
                 .map_err(|error| error.protocol_error())?;
+            let sequence = result.canonical.sequence;
             return Ok((
-                "sessionAudioPair",
-                serde_json::to_value(&pair).map_err(serialize_error)?,
-                pair.canonical.sequence,
+                "arrangementMutation",
+                serde_json::to_value(&result).map_err(serialize_error)?,
+                sequence,
             ));
         }
         if project::handles(command) {
@@ -248,7 +249,7 @@ impl HostState {
             )
             .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
-                let mut mutation = self.after_canonical_commit(result.projection_effect())?;
+                let mut mutation = self.after_canonical_commit()?;
                 mutation.created_entity_ids = result.created_entity_ids;
                 let sequence = mutation.canonical.sequence;
                 if result.result_type == "batchMutation" {
@@ -447,7 +448,7 @@ impl HostState {
                     );
                     return Err(error.protocol_error());
                 }
-                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                let mutation = session_adapter::arrangement_mutation_result(&context)
                     .map_err(|error| error.protocol_error())?;
                 let sequence = mutation.canonical.sequence;
                 Ok((
@@ -529,7 +530,7 @@ impl HostState {
                     rollback();
                     return Err(error.protocol_error());
                 }
-                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                let mutation = session_adapter::arrangement_mutation_result(&context)
                     .map_err(|error| error.protocol_error())?;
                 let sequence = mutation.canonical.sequence;
                 Ok((
@@ -1667,7 +1668,6 @@ impl HostState {
 
     pub(super) fn after_canonical_commit(
         &self,
-        effect: CanonicalMutationEffect,
     ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
         let canonical = self
             .canonical()
@@ -1689,7 +1689,6 @@ impl HostState {
             self.built_in_instruments.as_ref(),
             &project_id,
             self.core.safe_mode(),
-            effect,
         )
         .map_err(command_error)?;
         Ok(mutation)

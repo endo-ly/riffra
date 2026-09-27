@@ -79,7 +79,7 @@ pub async fn update_session_settings(
 pub async fn set_master_gain_db(
     gain_db: f64,
     app: AppHandle,
-) -> Result<SessionAudioPair, NativeCommandError> {
+) -> Result<ArrangementMutationResult, NativeCommandError> {
     dispatch(app, "audio.master-gain.set", json!({ "gainDb": gain_db })).await
 }
 

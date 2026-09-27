@@ -1,7 +1,7 @@
 use super::AudioSupervisor;
 use super::error::NativeAudioError;
+use crate::execution::TimelineSnapshot;
 use crate::runtime::{ProjectionDriver, RuntimeError, TransportDriver};
-use serde_json::Value;
 use std::time::Duration;
 
 impl From<NativeAudioError> for RuntimeError {
@@ -47,7 +47,7 @@ impl From<NativeAudioError> for RuntimeError {
 impl ProjectionDriver for AudioSupervisor {
     fn prepare_timeline_snapshot(
         &self,
-        snapshot: Value,
+        snapshot: &TimelineSnapshot,
         timeout: Duration,
     ) -> Result<(), RuntimeError> {
         AudioSupervisor::prepare_timeline_snapshot(self, snapshot, timeout)

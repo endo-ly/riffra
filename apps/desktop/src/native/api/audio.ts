@@ -4,7 +4,7 @@ import type {
   AudioStatus,
   AssetId,
   DeviceChannels,
-  SessionAudioPair,
+  ArrangementMutationResult,
 } from '@/model/domain';
 import type { AssetPreviewOptions } from '../contracts';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
@@ -96,8 +96,8 @@ export async function resetFeedbackProtection(): Promise<AudioStatus> {
   return await invokeHost<AudioStatus>('reset_feedback_protection');
 }
 
-export async function setMasterGainDb(gainDb: number): Promise<SessionAudioPair> {
-  return invokeHost<SessionAudioPair>('set_master_gain_db', {
+export async function setMasterGainDb(gainDb: number): Promise<ArrangementMutationResult> {
+  return invokeHost<ArrangementMutationResult>('set_master_gain_db', {
     gainDb,
   });
 }

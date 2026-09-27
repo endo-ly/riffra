@@ -11,15 +11,15 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     TimelineEngine engine(true);
     juce::String error;
     constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(makeInstrumentSnapshot("track:live-fade"), formats, 48'000.0,
-                                    kBlockSamples, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, makeInstrumentSnapshot("track:live-fade"), formats,
+                                 48'000.0, kBlockSamples, error))
         << error.toStdString();
     InstrumentTrace trace;
     auto instrument = PluginRackTestPeer::installInstrument(
         std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, kBlockSamples, error);
     ASSERT_NE(instrument, nullptr) << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live-fade",
-                                                               std::move(instrument)));
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
+        engine, "track:live-fade", "instrument:live-fade", std::move(instrument)));
     ASSERT_TRUE(engine.setLiveMidiTarget("track:live-fade", error));
     ASSERT_TRUE(engine.enqueueTargetedMidi("track:live-fade",
                                            juce::MidiMessage::noteOn(1, 60, 0.8f), error));
@@ -44,8 +44,8 @@ TEST(TimelineEngineTest, ProcessesAnAudioEffectChainOncePerTransportChunk) {
     TimelineEngine engine(true);
     juce::String error;
     constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
-                                    kBlockSamples, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
+                                 kBlockSamples, error))
         << error.toStdString();
     ProcessorTrace trace;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
@@ -75,14 +75,14 @@ TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     formats.registerBasicFormats();
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeInstrumentSnapshot("track:tail"), formats, 48'000.0, 32, error));
+    ASSERT_TRUE(loadTestSnapshot(engine, makeInstrumentSnapshot("track:tail"), formats, 48'000.0,
+                                 32, error));
     InstrumentTrace instrumentTrace;
     auto instrument = PluginRackTestPeer::installInstrument(
         std::make_unique<TestInstrumentProcessor>(instrumentTrace), 48'000.0, 32, error);
     ASSERT_NE(instrument, nullptr) << error.toStdString();
-    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:tail",
-                                                               std::move(instrument)));
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
+        engine, "track:tail", "instrument:tail", std::move(instrument)));
     std::vector<int> effectCalls;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:tail", "effect:tail",
@@ -116,8 +116,8 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     formats.registerBasicFormats();
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(makeBuiltInInstrumentSnapshot("track:builtin", true, true),
-                                    formats, 48'000.0, 512, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, makeBuiltInInstrumentSnapshot("track:builtin", true, true),
+                                 formats, 48'000.0, 512, error))
         << error.toStdString();
 
     std::vector<int> processOrder;
@@ -198,43 +198,16 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
     TimelineEngine engine;
     juce::String error;
 
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    const auto makeTrack = [&timebase](const juce::String& id, const bool muted) {
-        auto* track = new juce::DynamicObject();
-        track->setProperty("id", id);
-        track->setProperty("kind", "audio");
-        track->setProperty("gainDb", 0.0);
-        track->setProperty("pan", 0.0);
-        track->setProperty("muted", muted);
-        track->setProperty("solo", false);
-        track->setProperty("armed", false);
-        track->setProperty("monitoring", "on");
-        auto* audioInput = new juce::DynamicObject();
-        audioInput->setProperty("channelIndex", 0);
-        track->setProperty("audioInput", juce::var(audioInput));
-        auto* rack = new juce::DynamicObject();
-        rack->setProperty("devices", juce::Array<juce::var>{});
-        track->setProperty("rack", juce::var(rack));
-        track->setProperty("audioClips", juce::Array<juce::var>{});
-        track->setProperty("midiClips", juce::Array<juce::var>{});
-        track->setProperty("automation", juce::Array<juce::var>{});
-        return juce::var(track);
-    };
-
-    juce::Array<juce::var> tracks;
-    tracks.add(makeTrack("track:guitar", false));
-    tracks.add(makeTrack("track:muted-guitar", true));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-
-    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
+    auto snapshot = makeTestSnapshot();
+    for (const auto& [id, muted] : std::array<std::pair<const char*, bool>, 2>{
+             std::pair{"track:guitar", false}, std::pair{"track:muted-guitar", true}}) {
+        auto track = makeAudioTrack(id);
+        track.muted = muted;
+        track.monitoring = MonitoringSpec::on;
+        track.audioInput = AudioInputSpec{0};
+        snapshot.graph.tracks.push_back(std::move(track));
+    }
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 512, error));
 
     constexpr int kBlockSamples = 512;
     std::array<float, kBlockSamples> input{};
@@ -273,8 +246,8 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
     const auto measurePeak = [&](const int trackCount, float& peak) {
         TimelineEngine engine;
         juce::String error;
-        if (!engine.loadSnapshot(makeAudioTrackSnapshot(trackCount, true, false), formats, 48'000.0,
-                                 kBlockSamples, error))
+        if (!loadTestSnapshot(engine, makeAudioTrackSnapshot(trackCount, true, false), formats,
+                              48'000.0, kBlockSamples, error))
             return false;
         std::array<float, kBlockSamples> input{};
         input.fill(0.05f);
@@ -312,27 +285,14 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     const auto processedFile = directory.get().getChildFile("transport-processed.wav");
     ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
     ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto clips = track->getProperty("audioClips");
-    ASSERT_TRUE(clips.isArray());
-    for (auto& clipValue : *clips.getArray()) {
-        auto* clip = clipValue.getDynamicObject();
-        ASSERT_NE(clip, nullptr);
-        clip->setProperty("sourceEndFrame", 1024);
-        clip->setProperty("durationFrames", 1024);
-    }
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine engine(true);
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error))
+        << error.toStdString();
     constexpr int kBlockSamples = 64;
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};
@@ -371,23 +331,15 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
 
 TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
     // Arrange
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("metronomeEnabled", true);
-    snapshot->setProperty("tracks", juce::Array<juce::var>{});
+    auto snapshot = makeTestSnapshot();
+    snapshot.graph.metronomeEnabled = true;
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine engine(true);
     juce::String error;
     constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, kBlockSamples, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, kBlockSamples, error))
         << error.toStdString();
     std::array<float, kBlockSamples> output{};
     const std::array<float*, 1> outputs{output.data()};
@@ -414,27 +366,14 @@ TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {
     const auto processedFile = directory.get().getChildFile("play-zero-processed.wav");
     ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
     ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto clips = track->getProperty("audioClips");
-    ASSERT_TRUE(clips.isArray());
-    for (auto& clipValue : *clips.getArray()) {
-        auto* clip = clipValue.getDynamicObject();
-        ASSERT_NE(clip, nullptr);
-        clip->setProperty("sourceEndFrame", 1024);
-        clip->setProperty("durationFrames", 1024);
-    }
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine engine(true);
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 64, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error))
+        << error.toStdString();
     std::array<float, 64> left{};
     std::array<float, 64> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
@@ -456,28 +395,14 @@ TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
     const auto processedFile = directory.get().getChildFile("stop-block-processed.wav");
     ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
     ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto clips = track->getProperty("audioClips");
-    ASSERT_TRUE(clips.isArray());
-    for (auto& clipValue : *clips.getArray()) {
-        auto* clip = clipValue.getDynamicObject();
-        ASSERT_NE(clip, nullptr);
-        clip->setProperty("sourceEndFrame", 1024);
-        clip->setProperty("durationFrames", 1024);
-    }
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     TimelineEngine engine(true);
     juce::String error;
     constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, kBlockSamples, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, kBlockSamples, error))
         << error.toStdString();
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};

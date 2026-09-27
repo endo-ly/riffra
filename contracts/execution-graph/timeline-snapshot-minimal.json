@@ -1,0 +1,21 @@
+{
+  "projectId": "project-minimal",
+  "revision": 0,
+  "graph": {
+    "timebase": {
+      "ppq": 960,
+      "bpm": 120.0,
+      "timeSignatureNumerator": 4,
+      "timeSignatureDenominator": 4
+    },
+    "loopRange": {
+      "enabled": false,
+      "startTick": 0,
+      "endTick": 0
+    },
+    "punchRange": null,
+    "metronomeEnabled": false,
+    "masterGainDb": 0.0,
+    "tracks": []
+  }
+}

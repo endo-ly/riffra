@@ -21,9 +21,10 @@ const float* ArrangementGraph::audioInputSource(const int configuredChannel,
     return physicalInputChannels[configuredChannel];
 }
 
-bool ArrangementGraph::shouldMonitorAudioInput(const juce::String& monitoring, const bool armed,
+bool ArrangementGraph::shouldMonitorAudioInput(const MonitoringSpec monitoring, const bool armed,
                                                const bool instrument) noexcept {
-    return !instrument && (monitoring == "on" || (monitoring == "auto" && armed));
+    return !instrument &&
+           (monitoring == MonitoringSpec::on || (monitoring == MonitoringSpec::automatic && armed));
 }
 
 std::int64_t ArrangementGraph::compensationDelay(const std::int64_t maximumPluginDelay,

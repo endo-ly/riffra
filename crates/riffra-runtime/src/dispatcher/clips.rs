@@ -90,7 +90,6 @@ pub(super) fn dispatch<A>(
                         &params.clip_id,
                         TimelineTick(params.split_tick),
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "audio-clip.duplicate" => {
@@ -100,7 +99,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .duplicate_audio_clip_with_created_ids(&params.clip_id)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "audio-clip.crossfade" => {
@@ -128,7 +126,6 @@ pub(super) fn dispatch<A>(
                         params.duration_ticks,
                         params.name,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-clip.add-asset" => dispatcher.add_midi_clip(decode(request.params)?)?,
@@ -173,7 +170,6 @@ pub(super) fn dispatch<A>(
                         &params.clip_id,
                         TimelineTick(params.split_tick),
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-clip.duplicate" => {
@@ -183,7 +179,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .duplicate_midi_clip_with_created_ids(&params.clip_id)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.add" => {
@@ -200,7 +195,6 @@ pub(super) fn dispatch<A>(
                         params.velocity,
                         params.channel,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.insert" => {
@@ -210,7 +204,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .insert_midi_notes_with_created_ids(&params.clip_id, params.notes)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "midi-note.update" => {
@@ -298,7 +291,6 @@ pub(super) fn dispatch<A>(
                         params.note_ids,
                         params.offset_ticks,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "clip.remove" => {
@@ -321,7 +313,6 @@ pub(super) fn dispatch<A>(
                         params.midi_clip_ids,
                         TimelineTick(params.start_tick),
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         _ => unreachable!("unsupported clips command family"),
@@ -356,7 +347,6 @@ impl<'a, A> HostDispatcher<'a, A> {
                     },
                     |id| riffra_host::load(&self.data_root, id).is_some(),
                 )?,
-            CanonicalMutationEffect::ProjectArrangement,
         ))
     }
 
@@ -382,7 +372,6 @@ impl<'a, A> HostDispatcher<'a, A> {
                     notes,
                     events,
                 })?,
-            CanonicalMutationEffect::ProjectArrangement,
         ))
     }
 

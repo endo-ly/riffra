@@ -1,8 +1,8 @@
 //! Shared canonical Session operations used by the GUI and Host control
 //! adapters.
 
-pub mod adapter;
-pub mod commit;
-pub mod context;
+pub(crate) mod adapter;
+pub(crate) mod commit;
+pub(crate) mod context;
 pub mod error;
-pub mod transport;
+pub(crate) mod transport;

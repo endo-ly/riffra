@@ -25,7 +25,6 @@ import type {
   ArrangementMutationResult,
   ProjectTimebase,
   RuntimeProjectionStatus,
-  SessionAudioPair,
   RecordingStopResult,
   MonitoringState,
   MidiInputRoute,
@@ -208,12 +207,8 @@ export interface AudioApi {
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   /** Explicitly releases the Native feedback-protection latch. */
   resetFeedbackProtection(): Promise<AudioStatus>;
-  /**
-   * Sets the master gain on the Audio Runtime and persists the clamped value
-   * into the canonical session settings. One Rust Application Operation
-   * coordinates the runtime and persistence; React never re-derives settings.
-   */
-  setMasterGainDb(gainDb: number): Promise<SessionAudioPair>;
+  /** Persists the master gain in canonical session settings. */
+  setMasterGainDb(gainDb: number): Promise<ArrangementMutationResult>;
   recoverAudioDevice(): Promise<AudioStatus>;
   /** Rebuilds the saved Session runtime without reopening the audio device. */
   retryStartupRuntime(): Promise<AudioStatus>;

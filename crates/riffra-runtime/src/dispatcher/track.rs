@@ -49,7 +49,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .add_track_with_created_ids(params.name, parse_track_kind(&params.kind)?)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "track.update" => {
@@ -77,7 +76,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .duplicate_track_with_created_ids(&params.track_id)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "track.reorder" => {
@@ -144,7 +142,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .add_marker_with_created_ids(tick, params.name)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "marker.update" => {
@@ -160,7 +157,7 @@ pub(super) fn dispatch<A>(
                         .map_err(|error| DispatchError::invalid_request(error.to_string()))
                 })
                 .transpose()?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
@@ -171,17 +168,15 @@ pub(super) fn dispatch<A>(
                             tick,
                         },
                     )?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "marker.remove" => {
             let params: MarkerIdParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .remove_marker(&params.marker_id)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "timebase.update" => {
@@ -261,7 +256,6 @@ pub(super) fn dispatch<A>(
                         parse_automation_parameter(&params.parameter)?,
                         params.points,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "automation.clear" => {
@@ -275,7 +269,6 @@ pub(super) fn dispatch<A>(
                         parse_automation_parameter(&params.parameter)?,
                         Vec::new(),
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         _ => unreachable!("unsupported track command family"),

@@ -61,7 +61,6 @@ interface WorkspaceArrangeProps {
   setSelection: (selection: ArrangeSelection) => void;
   api: ArrangeWorkspaceApi;
   audio: AudioStatus;
-  setAudio: (audio: AudioStatus) => void;
   focusedTrackId: string | null;
   onFocusTrack: (trackId: string | null) => void;
   onToggleTransport: () => void;
@@ -174,14 +173,23 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     [api],
   );
   const panicMidiPreview = useCallback((trackId: string) => api.panicMidiTrack(trackId), [api]);
+  const projectionDiagnostics = props.runtimeProjectionStatus.activeDiagnostics;
+  const unavailableClipIds = projectionDiagnostics?.unavailableClipIds ?? [];
+  const missingDeviceIds = useMemo(
+    () => [
+      ...new Set([
+        ...(props.missingDeviceIds ?? []),
+        ...(projectionDiagnostics?.missingDeviceIds ?? []),
+      ]),
+    ],
+    [projectionDiagnostics?.missingDeviceIds, props.missingDeviceIds],
+  );
   const { playbackOutOfSync } = useArrangeStatusToast({
     runtimeProjectionStatus: props.runtimeProjectionStatus,
     runtimeProjectionFailure: props.runtimeProjectionFailure ?? null,
     runtimeProjectionRetrying: props.runtimeProjectionRetrying,
     onRetryRuntimeProjection: props.onRetryRuntimeProjection,
     editorMessage: editor.message,
-    unavailableClipIds: transport?.unavailableClipIds ?? [],
-    missingDeviceIds: transport?.missingDeviceIds ?? [],
   });
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
@@ -248,8 +256,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const activeInstrumentUnavailable = Boolean(
     activeMidiTrack?.instrument?.source.type === 'vst3' &&
     (activeMidiTrack.instrument.source.disabledPlaceholder ||
-      props.missingDeviceIds?.includes(activeMidiTrack.instrument.id) ||
-      transport?.missingDeviceIds.includes(activeMidiTrack.instrument.id)),
+      missingDeviceIds.includes(activeMidiTrack.instrument.id)),
   );
   const midiPreviewAvailable = Boolean(
     runtimeReady &&
@@ -629,7 +636,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   timebase={timebase}
                   analyses={analyses}
                   selectedClipIds={selectedClipIds}
-                  unavailableClipIds={transport?.unavailableClipIds ?? []}
+                  unavailableClipIds={unavailableClipIds}
                   selected={
                     props.selection.kind === 'track' && props.selection.trackId === track.id
                   }
@@ -680,10 +687,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
-                  missingDeviceIds={[
-                    ...(props.missingDeviceIds ?? []),
-                    ...(transport?.missingDeviceIds ?? []),
-                  ]}
+                  missingDeviceIds={missingDeviceIds}
                   onAddDevice={() =>
                     setPluginPicker({
                       trackId: track.id,
@@ -777,13 +781,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <MixerPanel
             session={props.session}
             selectedTrackId={selectedTrackId}
-            missingDeviceIds={[
-              ...(props.missingDeviceIds ?? []),
-              ...(transport?.missingDeviceIds ?? []),
-            ]}
+            missingDeviceIds={missingDeviceIds}
             api={props.api}
             applyCanonicalState={props.applyCanonicalState}
-            setAudio={props.setAudio}
             onSelectTrack={(trackId) => {
               ruler.clearSelectedRange();
               props.setSelection({ kind: 'track', trackId });
@@ -802,10 +802,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         audio={props.audio}
         api={props.api}
         runtimeReady={runtimeReady}
-        missingDeviceIds={[
-          ...(props.missingDeviceIds ?? []),
-          ...(transport?.missingDeviceIds ?? []),
-        ]}
+        missingDeviceIds={missingDeviceIds}
         onChooseInstrument={() => {
           if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
         }}

@@ -46,7 +46,6 @@ pub(super) fn dispatch<A>(
                         params.end,
                         params.name,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.insert" => {
@@ -56,7 +55,6 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.list" => {
@@ -100,22 +98,20 @@ pub(super) fn dispatch<A>(
                     "at least one musical note field is required",
                 ));
             }
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .update_musical_note(&params.clip_id, &params.note_id, params.patch)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.remove" => {
             let params: MusicalNoteIdParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .remove_musical_note(&params.clip_id, &params.note_id)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.note.transform" => {
@@ -137,7 +133,6 @@ pub(super) fn dispatch<A>(
                         velocity_offset: params.velocity_offset,
                         transpose_semitones: params.transpose_semitones,
                     })?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.midi-clip.resize" => {
@@ -147,12 +142,11 @@ pub(super) fn dispatch<A>(
                     "MIDI clip resize requires a start or end",
                 ));
             }
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .resize_musical_midi_clip(&params.clip_id, params.start, params.end)?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.harmony.resolve" => {
@@ -179,27 +173,24 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .insert_harmony_events_with_created_ids(params.events)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "music.harmony.update" => {
             let params: MusicalHarmonyUpdateParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .update_harmony_event(&params.event_id, params.patch)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "music.harmony.remove" => {
             let params: MusicalHarmonyRemoveParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .remove_harmony_events(params.event_ids)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "music.harmony.realize" => {
@@ -221,7 +212,6 @@ pub(super) fn dispatch<A>(
                         params.velocity,
                         params.channel,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.phrase.insert" => {
@@ -236,7 +226,6 @@ pub(super) fn dispatch<A>(
                         params.placements,
                         params.channel,
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "music.phrase.preview" => {
@@ -290,27 +279,24 @@ pub(super) fn dispatch<A>(
                     .core
                     .application(&dispatcher.storage)
                     .add_region_with_created_ids(params.name, params.start, params.end)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "music.region.update" => {
             let params: MusicalRegionUpdateParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .update_region(&params.region_id, params.name, params.start, params.end)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         "music.region.remove" => {
             let params: MusicalRegionIdParams = decode(request.params)?;
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .remove_region(&params.region_id)?,
-                CanonicalMutationEffect::CanonicalOnly,
             )
         }
         _ => unreachable!("unsupported music command family"),
@@ -726,16 +712,12 @@ mod tests {
         assert_eq!(listed.value[0]["start"], "1:1");
         assert!(listed.value[0].get("startTick").is_none());
 
-        let realized = dispatcher
+        dispatcher
             .dispatch(request(
                 "music.harmony.realize",
                 json!({"clipId":clip_id,"start":"1:1","end":"3:1"}),
             ))
             .unwrap();
-        assert_eq!(
-            realized.projection_effect(),
-            super::CanonicalMutationEffect::ProjectArrangement
-        );
         let updated = dispatcher
             .dispatch(request(
                 "music.harmony.update",
@@ -785,10 +767,6 @@ mod tests {
                 }),
             ))
             .unwrap();
-        assert_eq!(
-            phrase.projection_effect(),
-            super::CanonicalMutationEffect::ProjectArrangement
-        );
         let session: riffra_core::CreativeSession =
             serde_json::from_value(phrase.value.clone()).unwrap();
         assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);

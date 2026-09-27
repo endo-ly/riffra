@@ -1,4 +1,4 @@
-import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import { useAudioMeters } from '@/shared/audio/audio-meters';
 import { Meter } from '@/shared/ui/primitives';
 import type { AudioMonitorApi } from './audio-api';
@@ -8,13 +8,12 @@ import styles from './AudioMonitor.module.css';
 interface AudioMonitorProps {
   session: CreativeSession;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
-  setAudio: (audio: AudioStatus) => void;
   api: AudioMonitorApi;
   disabled?: boolean;
 }
 
 export function AudioMonitor(props: AudioMonitorProps) {
-  const { session, applyCanonicalState, setAudio, api } = props;
+  const { session, applyCanonicalState, api } = props;
   const meters = useAudioMeters();
   const {
     draftDb: masterDraftDb,
@@ -25,7 +24,6 @@ export function AudioMonitor(props: AudioMonitorProps) {
   } = useMasterGainControl({
     session,
     applyCanonicalState,
-    setAudio,
     api,
     disabled: props.disabled,
   });

@@ -45,11 +45,7 @@ pub(super) fn dispatch<A>(
                 })?;
             let storage = dispatcher.storage.store().map_err(DispatchError::from)?;
             crate::library::index::refresh(&dispatcher.data_root, &storage, &session);
-            dispatcher.value_with_effect(
-                "projectState",
-                dispatcher.project_state()?,
-                CanonicalMutationEffect::CanonicalOnly,
-            )
+            dispatcher.value("projectState", dispatcher.project_state()?)
         }
         "project.export" => dispatcher.value(
             "projectExport",

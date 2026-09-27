@@ -125,17 +125,19 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     ASSERT_TRUE(playbackState.setParameter("device-state", 0, 0.75f, error));
     const auto captured = playbackState.persistedState("device-state", error);
     ASSERT_TRUE(captured.isObject()) << error;
-    auto* persistedDevice = new juce::DynamicObject();
-    persistedDevice->setProperty("id", "device-state");
-    persistedDevice->setProperty("kind", "plugin");
-    persistedDevice->setProperty("parameterValues",
-                                 captured.getProperty("parameterValues", juce::Array<juce::var>{}));
-    persistedDevice->setProperty("stateData", captured.getProperty("stateData", {}));
-    persistedDevice->setProperty("bypassed", captured.getProperty("bypassed", false));
-    juce::Array<juce::var> persistedDevices;
-    persistedDevices.add(juce::var(persistedDevice));
+    PluginStateSpec persistedState;
+    const auto stateData = captured.getProperty("stateData", {});
+    if (stateData.isString()) persistedState.stateData = stateData.toString();
+    persistedState.bypassed = static_cast<bool>(captured.getProperty("bypassed", false));
+    const auto parameterValues = captured.getProperty("parameterValues", {});
+    if (parameterValues.isArray())
+        for (const auto& value : *parameterValues.getArray())
+            persistedState.parameterValues.push_back(
+                static_cast<float>(static_cast<double>(value)));
+    const std::vector<PluginDeviceSpec> persistedDevices{
+        {"device-state", "test-device.vst3", std::move(persistedState)}};
 
-    ASSERT_TRUE(liveState.applyState(juce::var(persistedDevices), error)) << error;
+    ASSERT_TRUE(liveState.applyState(persistedDevices, error)) << error;
     const auto liveCaptured = liveState.persistedState("device-state", error);
     const auto liveValues = liveCaptured.getProperty("parameterValues", juce::Array<juce::var>{});
     ASSERT_TRUE(liveValues.isArray());

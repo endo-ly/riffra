@@ -11,8 +11,8 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     TimelineEngine engine;
     juce::String error;
     constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(10, false, true), formats, 48'000.0,
-                                    kBlockSamples, error));
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(10, false, true), formats, 48'000.0,
+                                 kBlockSamples, error));
     CaptureIsolationSink captureSink;
     engine.setRecordingSink(&captureSink);
     std::array<float, kBlockSamples> input{};
@@ -55,8 +55,8 @@ TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment)
     juce::String error;
     constexpr int kBlockSamples = 512;
     constexpr int kRecordingSamples = 100'000;
-    ASSERT_TRUE(engine.loadSnapshot(makeAudioTrackSnapshot(1, false, true), formats, 48'000.0,
-                                    kBlockSamples, error));
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, false, true), formats, 48'000.0,
+                                 kBlockSamples, error));
     test::TemporaryDirectory directory;
     CaptureIsolationSink captureSink(directory.get());
     engine.setRecordingSink(&captureSink);

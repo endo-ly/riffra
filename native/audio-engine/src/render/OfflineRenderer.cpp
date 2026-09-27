@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <utility>
 
 #include "timeline/TimelineEngine.h"
 #include "timeline/TimelineTimebase.h"
@@ -72,21 +73,19 @@ bool normalizeFile(const juce::File& source, const juce::File& destination,
 
 }  // namespace
 
-bool OfflineRenderer::render(const juce::var& snapshot, juce::AudioFormatManager& formats,
-                             const juce::File& destination, const std::uint64_t startTick,
-                             const std::uint64_t endTick, const double sampleRate,
-                             const int blockSize, const float masterGainDb, const bool normalize,
-                             Result& result, juce::String& error) {
-    if (!snapshot.isObject() || endTick <= startTick || sampleRate <= 0.0 || blockSize <= 0) {
+bool OfflineRenderer::render(const OfflineRenderRequestSpec& request,
+                             juce::AudioFormatManager& formats, Result& result,
+                             juce::String& error) {
+    const auto sampleRate = static_cast<double>(request.sampleRate);
+    const auto blockSize = static_cast<int>(request.blockSize);
+    const auto destination = juce::File(request.destination);
+    if (request.endTick <= request.startTick || sampleRate <= 0.0 || blockSize <= 0) {
         error = "Offline Render request is invalid.";
         return false;
     }
-    const auto timebase = snapshot.getProperty("timebase", {});
-    const auto ppq = static_cast<std::uint32_t>(static_cast<int>(timebase.getProperty("ppq", 0)));
-    const auto bpm = static_cast<double>(timebase.getProperty("bpm", 0.0));
-    const TimelineTimebase timelineTimebase{ppq, bpm};
-    const auto startSample = timelineTimebase.tickToSample(startTick, sampleRate);
-    const auto endSample = timelineTimebase.tickToSample(endTick, sampleRate);
+    const TimelineTimebase timelineTimebase{request.graph.timebase.ppq, request.graph.timebase.bpm};
+    const auto startSample = timelineTimebase.tickToSample(request.startTick, sampleRate);
+    const auto endSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
     if (startSample < 0 || endSample <= startSample) {
         error = "Offline Render range has no samples.";
         return false;
@@ -96,11 +95,10 @@ bool OfflineRenderer::render(const juce::var& snapshot, juce::AudioFormatManager
         return false;
     }
 
-    auto renderSnapshot = snapshot;
-    if (auto* snapshotObject = renderSnapshot.getDynamicObject())
-        snapshotObject->setProperty("metronomeEnabled", false);
-    auto loopRange = renderSnapshot.getProperty("loopRange", {});
-    if (auto* loopObject = loopRange.getDynamicObject()) loopObject->setProperty("enabled", false);
+    auto renderGraph = request.graph;
+    renderGraph.metronomeEnabled = false;
+    renderGraph.loopRange.enabled = false;
+    const TimelineSnapshotSpec renderSnapshot{{}, 0, std::move(renderGraph)};
 
     TimelineEngine engine(true);
     if (!engine.loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error)) return false;
@@ -119,7 +117,7 @@ bool OfflineRenderer::render(const juce::var& snapshot, juce::AudioFormatManager
     std::int64_t position = 0;
     float peak = 0.0f;
     const auto masterGain =
-        juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 0.0f, masterGainDb));
+        juce::Decibels::decibelsToGain(static_cast<float>(request.graph.masterGainDb));
     while (position < endSample) {
         const auto count =
             static_cast<int>(std::min<std::int64_t>(blockSize, endSample - position));
@@ -142,8 +140,8 @@ bool OfflineRenderer::render(const juce::var& snapshot, juce::AudioFormatManager
     }
     writer.reset();
 
-    const auto normalizationGain = normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
-    if (normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
+    const auto normalizationGain = request.normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
+    if (request.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
         if (!normalizeFile(partial, normalized, formats, normalizationGain, error) ||
             !normalized.moveFileTo(destination)) {
             partial.deleteFile();

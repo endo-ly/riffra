@@ -79,6 +79,11 @@ target_sources(riffra-render-core PRIVATE
   src/timeline/TimelineEngine.h
   src/timeline/TimelineSnapshotBuilder.cpp
   src/timeline/TimelineSnapshotBuilder.h
+  src/contract/ContractReader.cpp
+  src/contract/ContractReader.h
+  src/contract/ExecutionGraph.h
+  src/contract/ExecutionGraphDecoder.cpp
+  src/contract/ExecutionGraphDecoder.h
   src/timeline/TimelineTimebase.h
   src/recording/RecordingCaptureRuntime.cpp
   src/recording/RecordingCaptureRuntime.h
@@ -368,7 +373,8 @@ if(BUILD_TESTING)
   add_executable(riffra-real-vst-runtime-test
     tests/plugins/RealVstRuntimeTest.cpp)
   target_link_libraries(riffra-real-vst-runtime-test PRIVATE
-    riffra-render-core)
+    riffra-render-core
+    juce::juce_audio_devices)
   add_dependencies(riffra-real-vst-runtime-test
     riffra-test-effect_VST3
     riffra-test-instrument_VST3)
@@ -404,6 +410,7 @@ if(BUILD_TESTING)
 
   add_executable(riffra-audio-tests)
   target_sources(riffra-audio-tests PRIVATE
+    tests/contract/ExecutionGraphContractTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
@@ -431,6 +438,7 @@ if(BUILD_TESTING)
     GTest::gtest_main
   )
   target_compile_definitions(riffra-audio-tests PRIVATE
+    RIFFRA_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/execution-graph"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)

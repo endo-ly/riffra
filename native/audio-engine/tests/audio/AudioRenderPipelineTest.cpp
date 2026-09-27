@@ -6,6 +6,7 @@
 #include <memory>
 #include <thread>
 
+#include "../timeline/TimelineTestSupport.h"
 #include "audio/AudioRenderPipeline.h"
 #include "audio/PreviewEngine.h"
 #include "recording/ArrangeRecordingSession.h"
@@ -16,39 +17,14 @@ namespace {
 
 constexpr int kBlockSize = 32;
 
-juce::var makeMonitoringSnapshot(const int channelIndex = 0, const bool armed = false) {
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    auto* audioInput = new juce::DynamicObject();
-    audioInput->setProperty("channelIndex", channelIndex);
-    auto* rack = new juce::DynamicObject();
-    rack->setProperty("devices", juce::Array<juce::var>{});
-    auto* track = new juce::DynamicObject();
-    track->setProperty("id", "track:monitoring");
-    track->setProperty("kind", "audio");
-    track->setProperty("gainDb", 0.0);
-    track->setProperty("pan", 0.0);
-    track->setProperty("muted", false);
-    track->setProperty("solo", false);
-    track->setProperty("armed", armed);
-    track->setProperty("monitoring", "on");
-    track->setProperty("audioInput", juce::var(audioInput));
-    track->setProperty("rack", juce::var(rack));
-    track->setProperty("audioClips", juce::Array<juce::var>{});
-    track->setProperty("midiClips", juce::Array<juce::var>{});
-    track->setProperty("automation", juce::Array<juce::var>{});
-
-    juce::Array<juce::var> tracks;
-    tracks.add(juce::var(track));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-    return juce::var(snapshot);
+TimelineSnapshotSpec makeMonitoringSnapshot(const int channelIndex = 0, const bool armed = false) {
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:monitoring");
+    track.armed = armed;
+    track.monitoring = MonitoringSpec::on;
+    track.audioInput = AudioInputSpec{static_cast<std::uint32_t>(channelIndex)};
+    snapshot.graph.tracks.push_back(std::move(track));
+    return snapshot;
 }
 
 void fillPreviewBuffer(juce::AudioBuffer<float>& buffer, const float value) {
@@ -151,7 +127,7 @@ TEST(AudioRenderPipelineTest, ReleasingFeedbackProtectionClearsItsMuteReason) {
     TimelineEngine timeline;
     juce::String error;
     ASSERT_TRUE(
-        timeline.loadSnapshot(makeMonitoringSnapshot(), formats, 48'000.0, kBlockSize, error));
+        loadTestSnapshot(timeline, makeMonitoringSnapshot(), formats, 48'000.0, kBlockSize, error));
     AudioRenderPipeline callback(timeline);
     callback.setUserEmergencyMute(false);
     std::array<float, kBlockSize> input{};
@@ -181,8 +157,8 @@ TEST(AudioRenderPipelineTest, DetectsFeedbackOnEveryMonitoredInputChannel) {
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
-    ASSERT_TRUE(
-        timeline.loadSnapshot(makeMonitoringSnapshot(1), formats, 48'000.0, kBlockSize, error));
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(1), formats, 48'000.0, kBlockSize,
+                                 error));
     AudioRenderPipeline callback(timeline);
     callback.setInputChannel(0);
     callback.setUserEmergencyMute(false);
@@ -209,8 +185,8 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
-    ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
-                                      kBlockSize, error));
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
     AudioRenderPipeline callback(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     callback.setRecordingFinalizationDispatcher(
@@ -507,8 +483,8 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
-    ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
-                                      kBlockSize, error));
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
     AudioRenderPipeline callback(timeline);
     callback.recording().setFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
     const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -531,8 +507,8 @@ TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
-    ASSERT_TRUE(timeline.loadSnapshot(makeMonitoringSnapshot(0, true), formats, 48'000.0,
-                                      kBlockSize, error));
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
+                                 kBlockSize, error));
     AudioRenderPipeline callback(timeline);
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                .getChildFile("riffra-recording-cancel-test")

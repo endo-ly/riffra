@@ -29,14 +29,6 @@ where
         self.core.history_state()
     }
 
-    /// Projects the current canonical snapshot through a host Runtime Port.
-    pub fn project_current<P>(&self, projection: &P) -> Result<(), ApplicationError>
-    where
-        P: crate::RuntimeProjection + ?Sized,
-    {
-        self.core.project_current(projection)
-    }
-
     /// Returns the canonical production snapshot.
     pub fn get_session(&self) -> Result<CreativeSession, ApplicationError> {
         Ok(self.core.snapshot()?.session)

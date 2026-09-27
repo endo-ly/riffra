@@ -16,6 +16,7 @@ function status(overrides: Partial<RuntimeProjectionStatus> = {}): RuntimeProjec
     preparedSessionRevision: null,
     activeProjectionSequence: 1,
     activeSessionRevision: 2,
+    activeDiagnostics: null,
     runtimeGeneration: 1,
     audioEnvironmentRevision: 1,
     targetAudioEnvironmentRevision: 1,

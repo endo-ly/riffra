@@ -1,13 +1,13 @@
 use super::HostState;
+use crate::execution::project_session;
 use crate::model::ProjectState;
 use crate::projects;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
-use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ErrorCode, ProtocolError};
 use riffra_core::CanonicalState;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 const PROJECT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
@@ -78,7 +78,7 @@ pub(super) fn dispatch(
                     ..Default::default()
                 })
                 .map_err(|error| command_error(error.to_string()))?;
-            let mutation = state.after_canonical_commit(CanonicalMutationEffect::CanonicalOnly)?;
+            let mutation = state.after_canonical_commit()?;
             let project_state = project_state(state)?;
             state
                 .events
@@ -182,26 +182,6 @@ fn activate_project_inner(
             &prepared.loaded.session,
             candidate_key,
         ) {
-            return Err(project_switch_failure(
-                state,
-                &previous_project_id,
-                &previous_canonical,
-                project_id,
-                error,
-                operation,
-            ));
-        }
-        if let Err(error) = state
-            .core
-            .audio()
-            .set_master_gain_db(prepared.loaded.session.settings.master_db)
-            .map(|_| ())
-            .map_err(|error| {
-                super::audio::graph_failed(format!(
-                    "Project master gain could not be applied: {error}"
-                ))
-            })
-        {
             return Err(project_switch_failure(
                 state,
                 &previous_project_id,
@@ -316,12 +296,12 @@ fn apply_project_runtime_candidate(
     state
         .runtime
         .apply_candidate_and_wait(
-            runtime_timeline_snapshot(
+            Arc::new(project_session(
                 &state.data_root,
                 state.built_in_instruments.as_ref(),
                 project_id,
                 session,
-            ),
+            )),
             key,
             PROJECT_RUNTIME_TIMEOUT,
         )
@@ -393,12 +373,12 @@ pub(super) fn apply_project_runtime_transition(
     state
         .runtime
         .apply_and_wait(
-            runtime_timeline_snapshot(
+            Arc::new(project_session(
                 &state.data_root,
                 state.built_in_instruments.as_ref(),
                 project_id,
                 &canonical.session,
-            ),
+            )),
             riffra_core::ProjectionKey {
                 sequence: canonical.sequence,
                 session_revision: canonical.session.arrangement.revision,
@@ -406,13 +386,6 @@ pub(super) fn apply_project_runtime_transition(
             PROJECT_RUNTIME_TIMEOUT,
         )
         .map_err(project_runtime_projection_error)?;
-    state
-        .core
-        .audio()
-        .set_master_gain_db(canonical.session.settings.master_db)
-        .map_err(|error| {
-            super::audio::graph_failed(format!("Project master gain could not be applied: {error}"))
-        })?;
     Ok(())
 }
 

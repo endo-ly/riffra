@@ -7,6 +7,7 @@
 
 #include "FaultInjection.h"
 #include "PluginRack.h"
+#include "contract/ExecutionGraphDecoder.h"
 
 namespace riffra {
 
@@ -101,45 +102,6 @@ bool PluginEditorHost::close() {
         std::_Exit(125);
     }
     return true;
-}
-
-std::optional<PluginLoadError> PluginEditorHost::load(const juce::String& path,
-                                                      const double sampleRate, const int blockSize,
-                                                      const juce::var& persistedState) {
-    struct LoadResult final {
-        std::optional<PluginLoadError> value;
-    };
-    const auto result = std::make_shared<LoadResult>();
-    const auto self = shared_from_this();
-    juce::String dispatchError;
-    if (!runOnMessageThread(
-            [self, path, sampleRate, blockSize, persistedState, result] {
-                if (!self->closeOnMessageThread()) {
-                    result->value = PluginLoadError{
-                        "pluginEditor",
-                        "The previous VST3 editor could not be closed safely.",
-                    };
-                    return;
-                }
-                result->value = self->rack.load(path, sampleRate, blockSize);
-                if (!result->value.has_value() && persistedState.isObject()) {
-                    juce::String stateError;
-                    if (!self->rack.applyPersistedState(persistedState, stateError)) {
-                        self->rack.clear();
-                        result->value = PluginLoadError{
-                            "pluginState",
-                            stateError.isNotEmpty()
-                                ? stateError
-                                : "The VST3 persisted state could not be applied.",
-                        };
-                    }
-                }
-                if (!result->value.has_value()) self->resizeParameterQueue();
-            },
-            dispatchError)) {
-        return PluginLoadError{"pluginLifecycle", dispatchError};
-    }
-    return result->value;
 }
 
 bool PluginEditorHost::clear(juce::String& error) {
@@ -297,8 +259,10 @@ void PluginEditorHost::publishStateIfDirty(const bool force) {
     opaqueStateDirty.store(false, std::memory_order_release);
     parameterStateDirty.store(false, std::memory_order_release);
     juce::String error;
-    const auto state = rack.persistedState(error);
-    if (error.isNotEmpty() || !state.isObject()) return;
+    const auto value = rack.persistedState(error);
+    if (error.isNotEmpty() || !value.isObject()) return;
+    PluginStateSpec state;
+    if (!decodePluginState(value, state, error)) return;
     onStateChanged(state);
 }
 

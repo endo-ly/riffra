@@ -3,7 +3,6 @@ use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
 };
-use crate::session::commit::CanonicalMutationEffect;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
@@ -320,19 +319,12 @@ pub struct DispatchResult {
     pub value: Value,
     pub sequence: u64,
     pub created_entity_ids: BTreeMap<String, Vec<String>>,
-    projection_effect: CanonicalMutationEffect,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TrackIdParams {
     pub(crate) track_id: String,
-}
-
-impl DispatchResult {
-    pub(crate) fn projection_effect(&self) -> CanonicalMutationEffect {
-        self.projection_effect
-    }
 }
 
 impl HostDispatcher<'static, ()> {
@@ -553,7 +545,6 @@ impl<'a, A> HostDispatcher<'a, A> {
             } else {
                 BTreeMap::new()
             },
-            projection_effect: CanonicalMutationEffect::ProjectArrangement,
         })
     }
 
@@ -603,7 +594,6 @@ impl<'a, A> HostDispatcher<'a, A> {
         };
         if is_arrangement_mutation_command(&command) {
             let canonical = self.core.canonical_state()?;
-            let projection_effect = result.projection_effect;
             return Ok(DispatchResult {
                 result_type: "arrangementMutation",
                 value: serde_json::to_value(ArrangementMutationResult {
@@ -614,7 +604,6 @@ impl<'a, A> HostDispatcher<'a, A> {
                 .expect("arrangement mutation results serialize"),
                 sequence: canonical.sequence,
                 created_entity_ids,
-                projection_effect,
             });
         }
         Ok(DispatchResult {
@@ -622,12 +611,11 @@ impl<'a, A> HostDispatcher<'a, A> {
             value: result.value,
             sequence,
             created_entity_ids,
-            projection_effect: result.projection_effect,
         })
     }
 
     fn session(&self, session: CreativeSession) -> DispatchResult {
-        self.session_with_effect(session, CanonicalMutationEffect::ProjectArrangement)
+        self.value("session", session)
     }
 
     fn project_state(&self) -> Result<ProjectState, DispatchError> {
@@ -682,49 +670,25 @@ impl<'a, A> HostDispatcher<'a, A> {
             value: serde_json::to_value(value).expect("project values must serialize"),
             sequence,
             created_entity_ids: BTreeMap::new(),
-            projection_effect: CanonicalMutationEffect::CanonicalOnly,
         })
     }
 
-    fn session_with_effect(
-        &self,
-        session: CreativeSession,
-        projection_effect: CanonicalMutationEffect,
-    ) -> DispatchResult {
-        self.value_with_effect("session", session, projection_effect)
-    }
-
-    fn application_mutation(
-        &self,
-        mutation: ApplicationMutation,
-        projection_effect: CanonicalMutationEffect,
-    ) -> DispatchResult {
+    fn application_mutation(&self, mutation: ApplicationMutation) -> DispatchResult {
         DispatchResult {
             result_type: "session",
             value: serde_json::to_value(mutation.session)
                 .expect("canonical mutation results serialize"),
             sequence: 0,
             created_entity_ids: mutation.created_entity_ids,
-            projection_effect,
         }
     }
 
     fn value<T: serde::Serialize>(&self, result_type: &'static str, value: T) -> DispatchResult {
-        self.value_with_effect(result_type, value, CanonicalMutationEffect::CanonicalOnly)
-    }
-
-    fn value_with_effect<T: serde::Serialize>(
-        &self,
-        result_type: &'static str,
-        value: T,
-        projection_effect: CanonicalMutationEffect,
-    ) -> DispatchResult {
         DispatchResult {
             result_type,
             value: serde_json::to_value(value).expect("canonical values must serialize"),
             sequence: 0,
             created_entity_ids: BTreeMap::new(),
-            projection_effect,
         }
     }
 }
@@ -1132,51 +1096,6 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fs::read(current).unwrap(), before);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn metadata_mutations_report_when_runtime_projection_is_unnecessary() {
-        let root = std::env::temp_dir().join(format!("riffra-dispatcher-effect-{}", now_ms()));
-        let dispatcher = Dispatcher::open(
-            root.clone(),
-            crate::test_support::prepare_built_in_resource_root(&root),
-        )
-        .unwrap();
-
-        let settings = dispatcher
-            .dispatch(request(
-                "session.settings.update",
-                json!({"note":"authoring note"}),
-            ))
-            .unwrap();
-        assert_eq!(
-            settings.projection_effect,
-            super::CanonicalMutationEffect::CanonicalOnly
-        );
-
-        let marker = dispatcher
-            .dispatch(request(
-                "marker.add",
-                json!({"name":"Verse","position":"1:1"}),
-            ))
-            .unwrap();
-        assert_eq!(
-            marker.projection_effect,
-            super::CanonicalMutationEffect::CanonicalOnly
-        );
-
-        let metronome = dispatcher
-            .dispatch(request(
-                "session.settings.update",
-                json!({"metronomeEnabled":true}),
-            ))
-            .unwrap();
-        assert_eq!(
-            metronome.projection_effect,
-            super::CanonicalMutationEffect::ProjectArrangement
-        );
-
         let _ = fs::remove_dir_all(root);
     }
 

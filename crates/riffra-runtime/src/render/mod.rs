@@ -1,6 +1,7 @@
 use crate::asset;
+use crate::execution::{ExecutionGraph, ProjectionDiagnostics, project_graph, resolve};
 use crate::instrument::BuiltInInstrumentCatalog;
-use riffra_core::{AssetId, CreativeSession, MusicalPosition, OfflineRenderRequest, RenderRuntime};
+use riffra_core::{AssetId, CreativeSession, MusicalPosition};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -13,6 +14,22 @@ use ts_rs::TS;
 mod worker;
 
 pub(crate) use worker::RenderWorker;
+
+/// Platform-independent request for rendering a prepared Execution Graph.
+pub(crate) struct OfflineRenderRequest {
+    pub(crate) graph: ExecutionGraph,
+    pub(crate) destination: PathBuf,
+    pub(crate) start_tick: u64,
+    pub(crate) end_tick: u64,
+    pub(crate) sample_rate: u32,
+    pub(crate) block_size: u32,
+    pub(crate) normalize: bool,
+}
+
+/// Runtime-owned renderer for a prepared Execution Graph.
+pub(crate) trait RenderRuntime: Send + Sync {
+    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String>;
+}
 
 const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
@@ -65,7 +82,7 @@ pub struct RenderResult {
 }
 
 struct RenderPlan {
-    snapshot: serde_json::Value,
+    graph: ExecutionGraph,
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
@@ -74,7 +91,7 @@ struct RenderPlan {
     output_path: PathBuf,
 }
 
-pub fn render_timeline_with_options(
+pub(crate) fn render_timeline_with_options(
     renderer: &impl RenderRuntime,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
@@ -145,13 +162,12 @@ fn render_timeline_with_renderer(
     }
 
     if let Err(error) = render(OfflineRenderRequest {
-        snapshot: plan.snapshot,
+        graph: plan.graph,
         destination: plan.output_path.clone(),
         start_tick: plan.start_tick,
         end_tick: plan.end_tick,
         sample_rate: plan.sample_rate,
         block_size: DEFAULT_OFFLINE_BLOCK_SIZE,
-        master_gain_db: session.settings.master_db,
         normalize: options.normalize,
     }) {
         let _ = fs::remove_file(&plan.output_path);
@@ -360,15 +376,12 @@ fn build_render_plan(
             "Offline Render source asset is not registered: {missing_id}"
         ));
     }
-    let snapshot = crate::runtime_snapshot::offline_runtime_timeline_snapshot(
-        data_root,
-        built_in_instruments,
-        &render_session,
-    );
-    fail_for_missing_dependencies(&snapshot)?;
+    let resources = resolve(data_root, built_in_instruments, &render_session);
+    let (graph, diagnostics) = project_graph(&render_session, &resources);
+    fail_for_missing_dependencies(&diagnostics)?;
 
     Ok(RenderPlan {
-        snapshot,
+        graph,
         start_tick,
         end_tick,
         sample_rate,
@@ -443,29 +456,17 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
     }
 }
 
-fn fail_for_missing_dependencies(snapshot: &serde_json::Value) -> Result<(), String> {
-    let unavailable = snapshot["unavailableClipIds"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .collect::<Vec<_>>();
-    if !unavailable.is_empty() {
+fn fail_for_missing_dependencies(diagnostics: &ProjectionDiagnostics) -> Result<(), String> {
+    if !diagnostics.unavailable_clip_ids.is_empty() {
         return Err(format!(
             "Offline Render cannot resolve clip assets: {}",
-            unavailable.join(", ")
+            diagnostics.unavailable_clip_ids.join(", ")
         ));
     }
-    let missing_devices = snapshot["missingDeviceIds"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .collect::<Vec<_>>();
-    if !missing_devices.is_empty() {
+    if !diagnostics.missing_device_ids.is_empty() {
         return Err(format!(
             "Offline Render cannot load Track Devices: {}",
-            missing_devices.join(", ")
+            diagnostics.missing_device_ids.join(", ")
         ));
     }
     Ok(())
@@ -655,12 +656,12 @@ mod tests {
         )
         .unwrap();
 
-        let tracks = plan.snapshot["tracks"].as_array().unwrap();
+        let tracks = &plan.graph.tracks;
         assert_eq!(tracks.len(), 2);
-        assert_eq!(tracks[0]["id"], "instrument");
-        assert_eq!(tracks[0]["muted"], false);
-        assert_eq!(tracks[1]["id"], "latency-reference");
-        assert_eq!(tracks[1]["muted"], true);
+        assert_eq!(tracks[0].id, "instrument");
+        assert!(!tracks[0].muted);
+        assert_eq!(tracks[1].id, "latency-reference");
+        assert!(tracks[1].muted);
     }
 
     #[test]

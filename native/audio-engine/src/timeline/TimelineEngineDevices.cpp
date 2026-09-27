@@ -269,7 +269,7 @@ juce::var TimelineEngine::deviceProgramStatus(const juce::String& trackId,
 
 bool TimelineEngine::mirrorEditorDeviceState(const juce::String& trackId,
                                              const juce::String& deviceId,
-                                             const juce::var& persistedState,
+                                             const PluginStateSpec& persistedState,
                                              juce::String& error) noexcept {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) {
@@ -462,7 +462,8 @@ bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce:
 
 bool TimelineEngine::setDevicePersistedState(const juce::String& trackId,
                                              const juce::String& deviceId,
-                                             const juce::var& persistedState, juce::String& error) {
+                                             const PluginStateSpec& persistedState,
+                                             juce::String& error) {
     const juce::SpinLock::ScopedLockType lock(timelineLock);
     if (timeline == nullptr) {
         error = "Arrangement Graph is not loaded.";
