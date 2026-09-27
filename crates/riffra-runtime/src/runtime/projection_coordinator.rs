@@ -65,9 +65,22 @@ struct ActiveProjection {
 
 #[derive(Clone, Copy)]
 enum CanonicalReferenceSource {
-    Pending,
-    Running,
+    Pending {
+        operation_id: u64,
+        key: ProjectionKey,
+    },
+    Running {
+        operation_id: u64,
+        key: ProjectionKey,
+    },
     Active,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DeferredCanonicalProjection {
+    operation_id: u64,
+    reference_key: ProjectionKey,
+    key: ProjectionKey,
 }
 
 #[derive(Debug)]
@@ -80,7 +93,8 @@ pub(super) enum CanonicalSubmit {
 struct ProjectionState {
     next_operation_id: u64,
     latest_target: Option<RuntimeTarget>,
-    deferred_canonical_key: Option<ProjectionKey>,
+    deferred_canonical_projection: Option<DeferredCanonicalProjection>,
+    completed_deferred_canonical: Option<DeferredCanonicalProjection>,
     latest_canonical_key: Option<ProjectionKey>,
     desired_key: Option<ProjectionKey>,
     running_operation_id: Option<u64>,
@@ -121,7 +135,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             Mutex::new(ProjectionState {
                 next_operation_id: 0,
                 latest_target: None,
-                deferred_canonical_key: None,
+                deferred_canonical_projection: None,
+                completed_deferred_canonical: None,
                 latest_canonical_key: None,
                 desired_key: None,
                 running_operation_id: None,
@@ -202,10 +217,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         let audio_environment_revision = state.audio_environment_revision;
         if canonical
             && state
-                .deferred_canonical_key
-                .is_some_and(|deferred| key.sequence >= deferred.sequence)
+                .deferred_canonical_projection
+                .is_some_and(|deferred| key.sequence >= deferred.key.sequence)
         {
-            state.deferred_canonical_key = None;
+            state.deferred_canonical_projection = None;
         }
         if canonical
             && state.status.state == RuntimeProjectionState::Failed
@@ -242,6 +257,9 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 },
                 false,
             );
+        }
+        if canonical {
+            state.completed_deferred_canonical = None;
         }
 
         if state.desired_key == Some(key) {
@@ -380,7 +398,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             })
             .map(|target| {
                 (
-                    CanonicalReferenceSource::Pending,
+                    CanonicalReferenceSource::Pending {
+                        operation_id: target.operation_id,
+                        key: target.key,
+                    },
                     Arc::clone(&target.projection),
                 )
             })
@@ -395,7 +416,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                     })
                     .map(|target| {
                         (
-                            CanonicalReferenceSource::Running,
+                            CanonicalReferenceSource::Running {
+                                operation_id: target.operation_id,
+                                key: target.key,
+                            },
                             Arc::clone(&target.projection),
                         )
                     })
@@ -418,21 +442,31 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             && same_projected_graph(&reference, &projection)
         {
             match source {
-                CanonicalReferenceSource::Pending | CanonicalReferenceSource::Running => {
+                CanonicalReferenceSource::Pending {
+                    operation_id,
+                    key: reference_key,
+                }
+                | CanonicalReferenceSource::Running {
+                    operation_id,
+                    key: reference_key,
+                } => {
                     let deferred = state
-                        .deferred_canonical_key
-                        .filter(|deferred| deferred.sequence >= key.sequence)
-                        .unwrap_or(key);
-                    let operation_id = state.status.operation_id;
-                    state.deferred_canonical_key = Some(deferred);
-                    state.latest_canonical_key = Some(deferred);
-                    state.status_operation_canonical = true;
+                        .deferred_canonical_projection
+                        .filter(|deferred| deferred.key.sequence >= key.sequence)
+                        .unwrap_or(DeferredCanonicalProjection {
+                            operation_id,
+                            reference_key,
+                            key,
+                        });
+                    state.deferred_canonical_projection = Some(deferred);
+                    state.completed_deferred_canonical = None;
+                    state.latest_canonical_key = Some(deferred.key);
                     wake.notify_all();
                     drop(state);
                     publish_current_status(&self.state, &self.status_hook);
                     return Ok(CanonicalSubmit::Deferred(ProjectionOperation {
-                        operation_id,
-                        key: deferred,
+                        operation_id: deferred.operation_id,
+                        key: deferred.key,
                     }));
                 }
                 CanonicalReferenceSource::Active => {
@@ -441,7 +475,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                             "matching active canonical projection could not be adopted".into(),
                         ));
                     }
-                    state.deferred_canonical_key = None;
+                    state.deferred_canonical_projection = None;
+                    state.completed_deferred_canonical = None;
                     let status = active_canonical_status(&state);
                     if state.status_operation_canonical {
                         state.status = status.clone();
@@ -550,7 +585,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             .as_ref()
             .is_some_and(|target| target.key == key)
             || state.latest_target.is_none() && state.desired_key == Some(key);
-        targeted || state.deferred_canonical_key == Some(key)
+        targeted
+            || state
+                .deferred_canonical_projection
+                .is_some_and(|deferred| deferred.key == key)
     }
 
     pub(crate) fn wait_for_operation(
@@ -565,19 +603,38 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
             .lock()
             .map_err(|_| RuntimeError::Internal("Runtime Projection lock was poisoned.".into()))?;
         loop {
-            if state.status.operation_id != operation_id {
-                return Err(RuntimeError::Superseded {
-                    message: format!(
-                        "Runtime operation {operation_id} was superseded by a newer projection."
-                    ),
-                });
+            let generation = self.driver.runtime_generation();
+            if observe_generation(&mut state, generation) {
+                wake.notify_all();
             }
             if let Some((failed_operation_id, error)) = state.terminal_error.as_ref()
                 && *failed_operation_id == operation_id
             {
                 return Err(error.clone());
             }
-            let generation = self.driver.runtime_generation();
+            let deferred_operation_is_waited = state.latest_canonical_key == Some(key)
+                && (state.deferred_canonical_projection.is_some_and(|deferred| {
+                    deferred.operation_id == operation_id && deferred.key == key
+                }) || state.completed_deferred_canonical.is_some_and(|deferred| {
+                    deferred.operation_id == operation_id && deferred.key == key
+                }));
+            let canonical_projection_is_active = deferred_operation_is_waited
+                && state.published_status.state == RuntimeProjectionState::Active
+                && state.published_status.runtime_generation == generation
+                && state.published_status.audio_environment_revision
+                    == state.audio_environment_revision
+                && state.published_status.active_projection_sequence == Some(key.sequence)
+                && state.published_status.active_session_revision == Some(key.session_revision);
+            if canonical_projection_is_active {
+                return Ok(state.published_status.clone());
+            }
+            if state.status.operation_id != operation_id && !deferred_operation_is_waited {
+                return Err(RuntimeError::Superseded {
+                    message: format!(
+                        "Runtime operation {operation_id} was superseded by a newer projection."
+                    ),
+                });
+            }
             let requested_projection_is_active = state
                 .active_projection
                 .as_ref()
@@ -675,7 +732,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 audio_environment_cancelled(target.operation_id),
             ));
         }
-        state.deferred_canonical_key = None;
+        state.deferred_canonical_projection = None;
+        state.completed_deferred_canonical = None;
         state.desired_key = None;
         state.active_projection = None;
         state.audio_environment_revision = state.audio_environment_revision.saturating_add(1);
@@ -744,7 +802,8 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 canonical: true,
                 ..active
             });
-            state.deferred_canonical_key = None;
+            state.deferred_canonical_projection = None;
+            state.completed_deferred_canonical = None;
             state.latest_canonical_key = Some(key);
             state.desired_key = Some(key);
             state.status_operation_canonical = true;
@@ -860,8 +919,11 @@ fn worker_loop<D: ProjectionDriver>(
             let publish_result = {
                 let should_publish = {
                     let state = state.0.lock().expect("runtime projection lock poisoned");
-                    state.status.operation_id == target.operation_id
-                        && state.latest_target.is_none()
+                    let deferred_canonical = state
+                        .deferred_canonical_projection
+                        .is_some_and(|deferred| deferred.operation_id == target.operation_id);
+                    (state.status.operation_id == target.operation_id || deferred_canonical)
+                        && (state.latest_target.is_none() || deferred_canonical)
                         && !state.stop_requested
                         && target.runtime_generation == generation
                         && target.audio_environment_revision == state.audio_environment_revision
@@ -869,9 +931,10 @@ fn worker_loop<D: ProjectionDriver>(
                             .active_projection
                             .as_ref()
                             .is_none_or(|active| target.key.sequence >= active.key.sequence)
-                        && state
-                            .desired_key
-                            .is_none_or(|desired| target.key.sequence >= desired.sequence)
+                        && (deferred_canonical
+                            || state
+                                .desired_key
+                                .is_none_or(|desired| target.key.sequence >= desired.sequence))
                 };
                 if !should_publish {
                     None
@@ -958,7 +1021,6 @@ fn worker_loop<D: ProjectionDriver>(
                         state.running_operation_id = None;
                         state.running_target = None;
                         state.status.running_operation_id = None;
-                        try_adopt_deferred_canonical_key(&mut state, driver.runtime_generation());
                         wake.notify_one();
                     }
                     publish_current_status(&state, &status_hook);
@@ -1014,7 +1076,7 @@ fn worker_loop<D: ProjectionDriver>(
             );
         }
         let completed_at_ms = now_ms();
-        let _ = {
+        let deferred_canonical_status = {
             let mut state = state.0.lock().expect("runtime projection lock poisoned");
             let identity_is_current = target.runtime_generation == current_generation
                 && target.audio_environment_revision == state.audio_environment_revision;
@@ -1023,13 +1085,17 @@ fn worker_loop<D: ProjectionDriver>(
             state.status.running_operation_id = None;
             match result {
                 Ok(()) if identity_is_current => {
+                    let deferred_canonical = state
+                        .deferred_canonical_projection
+                        .is_some_and(|deferred| deferred.operation_id == target.operation_id);
                     if state
                         .active_projection
                         .as_ref()
                         .is_none_or(|active| target.key.sequence >= active.key.sequence)
-                        && state
-                            .desired_key
-                            .is_none_or(|desired| target.key.sequence >= desired.sequence)
+                        && (deferred_canonical
+                            || state
+                                .desired_key
+                                .is_none_or(|desired| target.key.sequence >= desired.sequence))
                     {
                         state.active_projection = Some(ActiveProjection {
                             runtime_generation: current_generation,
@@ -1072,8 +1138,11 @@ fn worker_loop<D: ProjectionDriver>(
                             RuntimeProjectionState::Idle
                         };
                     }
-                    try_adopt_deferred_canonical_key(&mut state, current_generation);
-                    false
+                    try_adopt_deferred_canonical_key(
+                        &mut state,
+                        current_generation,
+                        target.operation_id,
+                    )
                 }
                 Ok(()) => {
                     if state.status.operation_id == target.operation_id
@@ -1091,7 +1160,7 @@ fn worker_loop<D: ProjectionDriver>(
                     } else {
                         RuntimeProjectionState::Idle
                     };
-                    false
+                    None
                 }
                 Err(error) => {
                     let current_operation = state.status.operation_id == target.operation_id;
@@ -1108,11 +1177,34 @@ fn worker_loop<D: ProjectionDriver>(
                         state.status.last_error = Some(error.to_string());
                         state.status.last_error_code = Some(runtime_error_code(&error));
                     }
-                    false
+                    let deferred = state
+                        .deferred_canonical_projection
+                        .filter(|deferred| deferred.operation_id == target.operation_id);
+                    if let Some(deferred) = deferred {
+                        state.deferred_canonical_projection = None;
+                        state.terminal_error = Some((target.operation_id, error.clone()));
+                        if identity_is_current {
+                            let status = failed_deferred_canonical_status(
+                                &state,
+                                deferred,
+                                &error,
+                                completed_at_ms,
+                            );
+                            state.published_status = status.clone();
+                            Some(status)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 }
             }
         };
         publish_current_status(&state, &status_hook);
+        if let Some(status) = deferred_canonical_status {
+            status_hook(status);
+        }
         state.1.notify_one();
     }
 }
@@ -1246,7 +1338,8 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) -> bool {
         return false;
     }
     state.active_projection = None;
-    state.deferred_canonical_key = None;
+    state.deferred_canonical_projection = None;
+    state.completed_deferred_canonical = None;
     state.status.active_projection_sequence = None;
     state.status.active_session_revision = None;
     state.status.active_audio_environment_revision = None;
@@ -1280,26 +1373,48 @@ fn observe_generation(state: &mut ProjectionState, generation: u64) -> bool {
     true
 }
 
-fn try_adopt_deferred_canonical_key(state: &mut ProjectionState, generation: u64) -> bool {
-    if state.latest_target.is_some() || state.running_operation_id.is_some() {
-        return false;
-    }
-    let Some(key) = state.deferred_canonical_key else {
-        return false;
-    };
-    if try_adopt_canonical_key(state, generation, key) {
-        state.deferred_canonical_key = None;
-        true
-    } else if state
+fn try_adopt_deferred_canonical_key(
+    state: &mut ProjectionState,
+    generation: u64,
+    operation_id: u64,
+) -> Option<RuntimeProjectionStatus> {
+    let deferred = state
+        .deferred_canonical_projection
+        .filter(|deferred| deferred.operation_id == operation_id)?;
+    state.deferred_canonical_projection = None;
+    let referenced_projection_is_active = state
         .active_projection
         .as_ref()
-        .is_some_and(|active| key.sequence < active.key.sequence)
+        .is_some_and(|active| active.canonical && active.key == deferred.reference_key);
+    if !referenced_projection_is_active || !try_adopt_canonical_key(state, generation, deferred.key)
     {
-        state.deferred_canonical_key = None;
-        false
-    } else {
-        false
+        return None;
     }
+    let status = active_canonical_status(state);
+    state.completed_deferred_canonical = Some(deferred);
+    state.published_status = status.clone();
+    Some(status)
+}
+
+fn failed_deferred_canonical_status(
+    state: &ProjectionState,
+    deferred: DeferredCanonicalProjection,
+    error: &RuntimeError,
+    completed_at_ms: u64,
+) -> RuntimeProjectionStatus {
+    let mut status = canonical_projection_status(state);
+    status.state = RuntimeProjectionState::Failed;
+    status.operation_id = deferred.operation_id;
+    status.running_operation_id = None;
+    status.target_projection_sequence = Some(deferred.key.sequence);
+    status.target_session_revision = Some(deferred.key.session_revision);
+    status.prepared_session_revision = None;
+    status.target_audio_environment_revision = Some(state.audio_environment_revision);
+    status.prepared_audio_environment_revision = None;
+    status.completed_at_ms = Some(completed_at_ms);
+    status.last_error = Some(error.to_string());
+    status.last_error_code = Some(runtime_error_code(error));
+    status
 }
 
 fn try_adopt_canonical_key(
@@ -2194,5 +2309,147 @@ mod tests {
         assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 20]);
         assert!(coordinator.is_ready_for(key(3, 30)));
+    }
+
+    #[test]
+    fn defers_to_the_running_canonical_before_a_queued_candidate() {
+        // Arrange
+        let driver = Arc::new(FakeProjectionDriver::new(Duration::ZERO));
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let status_sink = Arc::clone(&statuses);
+        let coordinator = Arc::new(
+            ProjectionCoordinator::new_with_status_hook(
+                Arc::clone(&driver),
+                Arc::new(move |status| status_sink.lock().unwrap().push(status)),
+            )
+            .unwrap(),
+        );
+        let active = snapshot(10);
+        submit_canonical(&coordinator, Arc::clone(&active), key(1, 10));
+        wait_until(|| coordinator.status().active_session_revision == Some(10));
+        wait_until(|| {
+            statuses
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|status| status.state == RuntimeProjectionState::Active)
+        });
+        statuses.lock().unwrap().clear();
+
+        let prepare_barrier = Arc::new(Barrier::new(2));
+        *driver.prepare_barrier.lock().unwrap() = Some(Arc::clone(&prepare_barrier));
+        let running_projection = snapshot(20);
+        let running = coordinator
+            .submit_with_canonical_deadline(Arc::clone(&running_projection), key(2, 20), None, true)
+            .unwrap();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 2);
+        let candidate = coordinator
+            .submit_with_canonical_deadline(snapshot(30), key(3, 30), None, false)
+            .unwrap();
+
+        // Act
+        let canonical_key = key(4, 21);
+        let CanonicalSubmit::Deferred(deferred) = coordinator
+            .submit_canonical_with_deadline(
+                reidentify(&running_projection, canonical_key.session_revision),
+                canonical_key,
+                None,
+            )
+            .unwrap()
+        else {
+            panic!("a matching running canonical graph must defer its canonical key");
+        };
+        let waiter_coordinator = Arc::clone(&coordinator);
+        let waiter = thread::spawn(move || {
+            waiter_coordinator.wait_for_operation(
+                deferred.operation_id,
+                deferred.key,
+                Instant::now() + Duration::from_secs(2),
+                Duration::from_secs(2),
+            )
+        });
+
+        let candidate_identity_is_preserved = {
+            let state = coordinator.state.0.lock().unwrap();
+            deferred.operation_id == running.operation_id
+                && state.status.operation_id == candidate.operation_id
+                && state.latest_target.as_ref().is_some_and(|target| {
+                    target.operation_id == candidate.operation_id && !target.canonical
+                })
+                && state.deferred_canonical_projection.is_some_and(|deferred| {
+                    deferred.operation_id == running.operation_id
+                        && deferred.reference_key == running.key
+                        && deferred.key == canonical_key
+                })
+        };
+
+        // The running canonical finishes first. The candidate is then held in
+        // prepare while its unrelated waiter is allowed to observe C'.
+        prepare_barrier.wait();
+        wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 3);
+        let canonical_result = waiter
+            .join()
+            .expect("the canonical waiter should finish without waiting for the candidate");
+        let status_while_candidate_prepares = coordinator.status();
+        let active_before_candidate_finishes = {
+            let state = coordinator.state.0.lock().unwrap();
+            state.active_projection.as_ref().is_some_and(|active| {
+                active.canonical
+                    && active.key == canonical_key
+                    && active.projection.snapshot.revision == 20
+            })
+        };
+        let canonical_events = statuses.lock().unwrap().clone();
+        prepare_barrier.wait();
+
+        // Assert
+        assert!(candidate_identity_is_preserved);
+        assert_eq!(
+            canonical_result.unwrap().active_projection_sequence,
+            Some(4)
+        );
+        assert_eq!(
+            status_while_candidate_prepares.state,
+            RuntimeProjectionState::Active
+        );
+        assert_eq!(
+            status_while_candidate_prepares.active_session_revision,
+            Some(21)
+        );
+        assert!(
+            status_while_candidate_prepares
+                .running_operation_id
+                .is_none()
+        );
+        let canonical_status = canonical_events.last().unwrap();
+        assert_eq!(canonical_status.state, RuntimeProjectionState::Active);
+        assert_eq!(canonical_status.active_projection_sequence, Some(4));
+        assert_eq!(canonical_status.active_session_revision, Some(21));
+        assert_eq!(canonical_status.target_projection_sequence, None);
+        assert_eq!(canonical_status.running_operation_id, None);
+        assert!(canonical_events.iter().all(|status| {
+            status.operation_id != candidate.operation_id
+                && status.target_projection_sequence != Some(candidate.key.sequence)
+        }));
+        assert!(active_before_candidate_finishes);
+        wait_until(|| {
+            driver.prepare_finished.load(Ordering::Acquire) == 3
+                && coordinator
+                    .state
+                    .0
+                    .lock()
+                    .unwrap()
+                    .running_operation_id
+                    .is_none()
+        });
+        assert!(coordinator.is_ready_for(canonical_key));
+        let state = coordinator.state.0.lock().unwrap();
+        let active = state.active_projection.as_ref().unwrap();
+        assert!(active.canonical);
+        assert_eq!(active.key, canonical_key);
+        assert_eq!(active.projection.snapshot.revision, 20);
+        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10, 20]);
+        assert_eq!(driver.discarded.load(Ordering::Acquire), 1);
+        assert_eq!(statuses.lock().unwrap().len(), canonical_events.len());
     }
 }
