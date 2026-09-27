@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include "contract/ExecutionGraph.h"
+
 namespace riffra {
 
 class OfflineRenderer final {
@@ -13,10 +15,8 @@ public:
         double sampleRate = 0.0;
     };
 
-    [[nodiscard]] bool render(const juce::var& snapshot, juce::AudioFormatManager& formats,
-                              const juce::File& destination, std::uint64_t startTick,
-                              std::uint64_t endTick, double sampleRate, int blockSize,
-                              float masterGainDb, bool normalize, Result& result,
+    [[nodiscard]] bool render(const OfflineRenderRequestSpec& request,
+                              juce::AudioFormatManager& formats, Result& result,
                               juce::String& error);
 };
 

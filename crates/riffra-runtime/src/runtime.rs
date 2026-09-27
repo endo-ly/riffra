@@ -1,12 +1,12 @@
 //! Shared projection reconciliation and transport ordering.
 
-mod ports;
+pub(crate) mod ports;
 mod projection_coordinator;
 mod transport;
 mod transport_executor;
 
-pub use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
-pub use self::projection_coordinator::ProjectionStatusHook;
+pub(crate) use self::ports::{ProjectionDriver, RuntimeDriver, TransportDriver};
+pub(crate) use self::projection_coordinator::ProjectionStatusHook;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -59,19 +59,30 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+use self::projection_coordinator::CanonicalSubmit;
 use self::projection_coordinator::ProjectionCoordinator;
 use self::transport::PlayDecision;
 use self::transport_executor::TransportExecutor;
+use crate::execution::ProjectedTimeline;
 use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
 use riffra_core::ProjectionKey;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-pub struct RuntimeReconciler<D: RuntimeDriver> {
+pub(crate) struct RuntimeReconciler<D: RuntimeDriver> {
     projection: ProjectionCoordinator<D>,
     transport: Arc<TransportExecutor<D>>,
     transport_failure: Arc<Mutex<Option<String>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum CanonicalProjectionOutcome {
+    Adopted,
+    Queued,
+    Failed {
+        status: Box<RuntimeProjectionStatus>,
+    },
 }
 
 /// Outcome of a Play request for a projection that was not ready yet.
@@ -89,7 +100,8 @@ pub(crate) enum PlayStart {
 }
 
 impl<D: RuntimeDriver> RuntimeReconciler<D> {
-    pub fn new(driver: Arc<D>) -> Result<Self, RuntimeError> {
+    #[cfg(test)]
+    pub(crate) fn new(driver: Arc<D>) -> Result<Self, RuntimeError> {
         Self::with_status_listener(driver, Arc::new(|_| {}))
     }
 
@@ -145,18 +157,22 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         })
     }
 
-    pub fn submit_nonblocking(
+    pub(crate) fn project_canonical(
         &self,
-        snapshot: Value,
+        projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
-    ) -> RuntimeProjectionStatus {
-        self.projection.submit_nonblocking(snapshot, key)
-    }
-
-    /// Records that an already active canonical graph also represents a newer
-    /// canonical key without rebuilding the graph.
-    pub(crate) fn adopt_canonical_without_projection(&self, key: ProjectionKey) {
-        self.projection.adopt_canonical_without_projection(key);
+    ) -> CanonicalProjectionOutcome {
+        match self
+            .projection
+            .submit_canonical_with_deadline(projection, key, None)
+        {
+            Ok(CanonicalSubmit::Adopted) => CanonicalProjectionOutcome::Adopted,
+            Ok(CanonicalSubmit::Deferred(_)) => CanonicalProjectionOutcome::Adopted,
+            Ok(CanonicalSubmit::Queued(_)) => CanonicalProjectionOutcome::Queued,
+            Err(_) => CanonicalProjectionOutcome::Failed {
+                status: Box::new(self.status()),
+            },
+        }
     }
 
     pub(crate) fn commit_candidate_as_canonical(
@@ -188,47 +204,37 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         self.transport.stop_for_audio_environment()
     }
 
-    /// Invalidates the prepared graph after stopping transport for a changed
-    /// audio environment.
-    pub fn invalidate_for_audio_environment(&self) -> Result<u64, RuntimeError> {
-        let stop_result = self.stop_for_audio_environment();
-        self.projection.notify();
-        let revision = self.projection.advance_audio_environment();
-        stop_result.map(|()| revision)
-    }
-
     pub fn apply_and_wait(
         &self,
-        snapshot: Value,
+        projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
         timeout: Duration,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        self.apply_and_wait_with_canonical(snapshot, key, timeout, true)
+        let deadline = Instant::now() + timeout;
+        match self
+            .projection
+            .submit_canonical_with_deadline(projection, key, Some(deadline))?
+        {
+            CanonicalSubmit::Adopted => Ok(self.status()),
+            CanonicalSubmit::Deferred(operation) | CanonicalSubmit::Queued(operation) => self
+                .projection
+                .wait_for_operation(operation.operation_id, operation.key, deadline, timeout),
+        }
     }
 
     /// Applies a proposed graph without making it the restart recovery source.
     pub fn apply_candidate_and_wait(
         &self,
-        snapshot: Value,
+        projection: Arc<ProjectedTimeline>,
         key: ProjectionKey,
         timeout: Duration,
-    ) -> Result<RuntimeProjectionStatus, RuntimeError> {
-        self.apply_and_wait_with_canonical(snapshot, key, timeout, false)
-    }
-
-    fn apply_and_wait_with_canonical(
-        &self,
-        snapshot: Value,
-        key: ProjectionKey,
-        timeout: Duration,
-        canonical: bool,
     ) -> Result<RuntimeProjectionStatus, RuntimeError> {
         let deadline = Instant::now() + timeout;
         let operation = self.projection.submit_with_canonical_deadline(
-            snapshot,
+            projection,
             key,
             Some(deadline),
-            canonical,
+            false,
         )?;
         self.projection
             .wait_for_operation(operation.operation_id, operation.key, deadline, timeout)
@@ -341,7 +347,7 @@ mod tests {
     impl ProjectionDriver for FakeDriver {
         fn prepare_timeline_snapshot(
             &self,
-            snapshot: Value,
+            snapshot: &crate::execution::TimelineSnapshot,
             timeout: Duration,
         ) -> Result<(), RuntimeError> {
             self.prepare_timeout_ms
@@ -373,7 +379,7 @@ mod tests {
                     message: "Native audio transport was lost.".into(),
                 });
             }
-            *self.pending.lock().unwrap() = Some(snapshot["revision"].as_u64().unwrap());
+            *self.pending.lock().unwrap() = Some(snapshot.revision);
             Ok(())
         }
 
@@ -420,8 +426,46 @@ mod tests {
         }
     }
 
-    fn snapshot(revision: u64) -> Value {
-        serde_json::json!({ "revision": revision })
+    fn snapshot(revision: u64) -> Arc<ProjectedTimeline> {
+        Arc::new(ProjectedTimeline {
+            snapshot: crate::execution::TimelineSnapshot {
+                project_id: "project:test".into(),
+                revision,
+                graph: crate::execution::ExecutionGraph {
+                    timebase: crate::execution::GraphTimebase {
+                        ppq: 960,
+                        bpm: 120.0,
+                        time_signature_numerator: 4,
+                        time_signature_denominator: 4,
+                    },
+                    loop_range: crate::execution::GraphLoopRange {
+                        enabled: false,
+                        start_tick: 0,
+                        end_tick: 0,
+                    },
+                    punch_range: None,
+                    metronome_enabled: false,
+                    master_gain_db: (revision % 115) as f64 - 90.0,
+                    tracks: Vec::new(),
+                },
+            },
+            diagnostics: Default::default(),
+        })
+    }
+
+    fn reidentify(projection: &Arc<ProjectedTimeline>, revision: u64) -> Arc<ProjectedTimeline> {
+        let mut projection = projection.as_ref().clone();
+        projection.snapshot.revision = revision;
+        Arc::new(projection)
+    }
+
+    fn submit_canonical<D: RuntimeDriver>(
+        reconciler: &RuntimeReconciler<D>,
+        projection: Arc<ProjectedTimeline>,
+        key: ProjectionKey,
+    ) -> RuntimeProjectionStatus {
+        let _ = reconciler.project_canonical(projection, key);
+        reconciler.status()
     }
 
     fn key(sequence: u64, session_revision: u64) -> ProjectionKey {
@@ -445,10 +489,10 @@ mod tests {
     fn does_not_publish_superseded_prepared_snapshot() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(1), key(1, 1));
+        submit_canonical(&reconciler, snapshot(1), key(1, 1));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
-        reconciler.submit_nonblocking(snapshot(2), key(2, 2));
+        submit_canonical(&reconciler, snapshot(2), key(2, 2));
 
         wait_until(|| reconciler.status().active_session_revision == Some(2));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[2]);
@@ -461,10 +505,10 @@ mod tests {
     fn does_not_regress_an_active_revision_when_requests_arrive_out_of_order() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
+        submit_canonical(&reconciler, snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_session_revision == Some(10));
 
-        let status_before = reconciler.submit_nonblocking(snapshot(9), key(9, 9));
+        let status_before = submit_canonical(&reconciler, snapshot(9), key(9, 9));
         assert_eq!(status_before.target_session_revision, Some(10));
 
         let status = reconciler.status();
@@ -477,7 +521,7 @@ mod tests {
     fn ignores_a_response_from_an_old_runtime_generation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(20)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(4), key(4, 4));
+        submit_canonical(&reconciler, snapshot(4), key(4, 4));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
         driver.generation.store(2, Ordering::Release);
 
@@ -506,16 +550,13 @@ mod tests {
             RuntimeReconciler::with_status_listener(Arc::clone(&driver), listener).unwrap();
 
         // Act
-        reconciler.submit_nonblocking(snapshot(12), key(12, 12));
-        wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
-
-        // Assert
-        assert!(
+        submit_canonical(&reconciler, snapshot(12), key(12, 12));
+        wait_until(|| {
             states
                 .lock()
                 .unwrap()
                 .contains(&RuntimeProjectionState::Failed)
-        );
+        });
     }
 
     #[test]
@@ -526,7 +567,7 @@ mod tests {
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
 
         // Act
-        reconciler.submit_nonblocking(snapshot(13), key(13, 13));
+        submit_canonical(&reconciler, snapshot(13), key(13, 13));
         assert!(reconciler.request_play_when_ready(key(13, 13)).is_ok());
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
 
@@ -540,7 +581,7 @@ mod tests {
     fn stop_does_not_wait_for_runtime_preparation() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(5), key(5, 5));
+        submit_canonical(&reconciler, snapshot(5), key(5, 5));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -553,7 +594,7 @@ mod tests {
     fn dropping_the_reconciler_does_not_join_a_stalled_runtime_worker() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(500)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(6), key(6, 6));
+        submit_canonical(&reconciler, snapshot(6), key(6, 6));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let started = Instant::now();
@@ -565,7 +606,7 @@ mod tests {
     fn play_waits_for_the_latest_graph_before_native_playback() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(25)));
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
-        reconciler.submit_nonblocking(snapshot(7), key(7, 7));
+        submit_canonical(&reconciler, snapshot(7), key(7, 7));
         let play = reconciler.request_play_when_ready(key(7, 7));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -583,7 +624,7 @@ mod tests {
     fn stop_during_play_prepare_prevents_late_playback() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
-        reconciler.submit_nonblocking(snapshot(71), key(71, 71));
+        submit_canonical(&reconciler, snapshot(71), key(71, 71));
         let play = reconciler.request_play_when_ready(key(71, 71));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -599,7 +640,7 @@ mod tests {
     fn superseded_play_does_not_leave_play_intent_armed() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(2), key(2, 2));
+        submit_canonical(&reconciler, snapshot(2), key(2, 2));
 
         assert!(reconciler.request_play_when_ready(key(1, 1)).is_ok());
         wait_until(|| reconciler.status().active_session_revision == Some(2));
@@ -613,13 +654,13 @@ mod tests {
         driver.play_failure_once.store(1, Ordering::Release);
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
 
-        reconciler.submit_nonblocking(snapshot(30), key(30, 30));
+        submit_canonical(&reconciler, snapshot(30), key(30, 30));
         assert!(reconciler.request_play_when_ready(key(30, 30)).is_ok());
         wait_until(|| matches!(reconciler.status().state, RuntimeProjectionState::Failed));
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
         assert_eq!(driver.stopped.load(Ordering::Relaxed), 1);
 
-        reconciler.submit_nonblocking(snapshot(31), key(31, 31));
+        submit_canonical(&reconciler, snapshot(31), key(31, 31));
         wait_until(|| reconciler.status().active_session_revision == Some(31));
 
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
@@ -629,7 +670,7 @@ mod tests {
     fn a_newer_play_can_start_after_stop_cancels_an_older_waiter() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(100)));
         let reconciler = Arc::new(RuntimeReconciler::new(Arc::clone(&driver)).unwrap());
-        reconciler.submit_nonblocking(snapshot(73), key(73, 73));
+        submit_canonical(&reconciler, snapshot(73), key(73, 73));
         let old_play = reconciler.request_play_when_ready(key(73, 73));
 
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
@@ -646,10 +687,10 @@ mod tests {
     fn rejects_a_late_lower_projection_sequence_while_a_newer_graph_is_preparing() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(20), key(20, 20));
+        submit_canonical(&reconciler, snapshot(20), key(20, 20));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
-        let status = reconciler.submit_nonblocking(snapshot(19), key(19, 19));
+        let status = submit_canonical(&reconciler, snapshot(19), key(19, 19));
         assert_eq!(status.target_projection_sequence, Some(20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[20]);
@@ -659,7 +700,7 @@ mod tests {
     fn apply_and_wait_reports_a_stale_submission_instead_of_following_newer_work() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(40)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
+        submit_canonical(&reconciler, snapshot(11), key(11, 11));
         wait_until(|| driver.prepare_started.load(Ordering::Acquire) == 1);
 
         let error = reconciler
@@ -675,7 +716,7 @@ mod tests {
     fn reuses_an_active_projection_without_repreparing_before_play() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(20), key(20, 20));
+        submit_canonical(&reconciler, snapshot(20), key(20, 20));
         wait_until(|| reconciler.status().active_projection_sequence == Some(20));
 
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
@@ -693,14 +734,14 @@ mod tests {
     fn a_canonical_update_during_playback_does_not_stop_the_transport() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
+        submit_canonical(&reconciler, snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_projection_sequence == Some(10));
         assert!(matches!(
             reconciler.request_play_when_ready(key(10, 10)).unwrap(),
             PlayStart::Started
         ));
 
-        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
+        submit_canonical(&reconciler, snapshot(11), key(11, 11));
         wait_until(|| reconciler.status().active_projection_sequence == Some(11));
 
         assert_eq!(driver.played.load(Ordering::Relaxed), 1);
@@ -712,7 +753,8 @@ mod tests {
         // Arrange
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(10), key(0, 10));
+        let projection = snapshot(10);
+        submit_canonical(&reconciler, Arc::clone(&projection), key(0, 10));
         wait_until(|| reconciler.status().active_projection_sequence == Some(0));
         let prepare_count = driver.prepare_started.load(Ordering::Acquire);
 
@@ -721,7 +763,8 @@ mod tests {
         assert_eq!(driver.played.load(Ordering::Acquire), 0);
         assert_eq!(driver.starting.load(Ordering::Acquire), 1);
         assert!(matches!(play, PlayStart::Stalled));
-        reconciler.adopt_canonical_without_projection(key(1, 11));
+        let outcome = reconciler.project_canonical(reidentify(&projection, 11), key(1, 11));
+        assert!(matches!(outcome, CanonicalProjectionOutcome::Adopted));
 
         // Assert
         wait_until(|| driver.played.load(Ordering::Acquire) == 1);
@@ -738,7 +781,7 @@ mod tests {
         // Arrange
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(10), key(10, 10));
+        submit_canonical(&reconciler, snapshot(10), key(10, 10));
         wait_until(|| reconciler.status().active_projection_sequence == Some(10));
 
         // Act
@@ -746,7 +789,7 @@ mod tests {
         assert!(matches!(outcome, PlayStart::Stalled));
 
         // Assert
-        reconciler.submit_nonblocking(snapshot(11), key(11, 11));
+        submit_canonical(&reconciler, snapshot(11), key(11, 11));
         wait_until(|| driver.played.load(Ordering::Acquire) == 1);
         assert_eq!(reconciler.status().active_projection_sequence, Some(11));
     }
@@ -755,10 +798,10 @@ mod tests {
     fn accepts_a_restored_session_with_a_lower_arrangement_revision() {
         let driver = Arc::new(FakeDriver::new(Duration::from_millis(5)));
         let reconciler = RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
-        reconciler.submit_nonblocking(snapshot(100), key(1, 100));
+        submit_canonical(&reconciler, snapshot(100), key(1, 100));
         wait_until(|| reconciler.status().active_projection_sequence == Some(1));
 
-        reconciler.submit_nonblocking(snapshot(40), key(2, 40));
+        submit_canonical(&reconciler, snapshot(40), key(2, 40));
         wait_until(|| reconciler.status().active_projection_sequence == Some(2));
         assert_eq!(reconciler.status().active_session_revision, Some(40));
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[100, 40]);

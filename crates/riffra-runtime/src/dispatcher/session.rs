@@ -30,17 +30,11 @@ pub(super) fn dispatch<A>(
         }
         "session.settings.update" => {
             let params: SessionSettingsPatch = decode(request.params)?;
-            let effect = if params.metronome_enabled.is_some() {
-                CanonicalMutationEffect::ProjectArrangement
-            } else {
-                CanonicalMutationEffect::CanonicalOnly
-            };
-            dispatcher.session_with_effect(
+            dispatcher.session(
                 dispatcher
                     .core
                     .application(&dispatcher.storage)
                     .update_session_settings(params)?,
-                effect,
             )
         }
         "session.apply" => {

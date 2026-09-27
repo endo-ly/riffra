@@ -96,7 +96,6 @@ pub(super) fn dispatch<A>(
                         name,
                         plugin_path.to_string_lossy().into_owned(),
                     )?,
-                CanonicalMutationEffect::ProjectArrangement,
             )
         }
         "effect.remove" => {

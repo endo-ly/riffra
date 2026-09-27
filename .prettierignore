@@ -9,3 +9,4 @@ apps/desktop/src-tauri/binaries
 apps/desktop/src-tauri/gen
 native/audio-engine/build
 apps/desktop/src/model/generated
+contracts/

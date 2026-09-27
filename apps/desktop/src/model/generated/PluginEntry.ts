@@ -3,4 +3,8 @@ import type { PluginFormat } from "./PluginFormat";
 import type { PluginRole } from "./PluginRole";
 import type { PluginScanState } from "./PluginScanState";
 
-export type PluginEntry = { id: string, name: string, vendor: string | null, version: string | null, format: PluginFormat, role: PluginRole | null, path: string, bundle: boolean, modifiedAtMs: number | null, scanState: PluginScanState, };
+export type PluginEntry = { id: string, name: string, vendor: string | null, version: string | null, format: PluginFormat,
+/**
+ * The plug-in role reported by the VST3 scanner, when available.
+ */
+role: PluginRole | null, path: string, bundle: boolean, modifiedAtMs: number | null, scanState: PluginScanState, };

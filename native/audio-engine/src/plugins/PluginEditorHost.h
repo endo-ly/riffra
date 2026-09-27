@@ -5,7 +5,6 @@
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <optional>
 
 #include "PluginRack.h"
 
@@ -13,7 +12,7 @@ namespace riffra {
 
 class PluginEditorHost final : public std::enable_shared_from_this<PluginEditorHost> {
 public:
-    using StateCallback = std::function<void(const juce::var&)>;
+    using StateCallback = std::function<void(const PluginStateSpec&)>;
     using ParameterCallback = std::function<void(int, float)>;
 
     explicit PluginEditorHost(PluginRack& rack, StateCallback stateCallback = {},
@@ -22,9 +21,6 @@ public:
 
     bool open(juce::String& error);
     bool close();
-    [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
-                                                      int blockSize,
-                                                      const juce::var& persistedState = {});
     bool clear(juce::String& error);
 
 private:

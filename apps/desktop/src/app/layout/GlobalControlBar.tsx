@@ -34,7 +34,6 @@ interface GlobalControlBarProps {
   onOpenAudioSettings: () => void;
   audioSettingsOpen: boolean;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
-  setAudio: (audio: AudioStatus) => void;
   transportPlaying: boolean;
   transportStarting: boolean;
   onPlay: () => void;
@@ -149,7 +148,6 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           <AudioMonitor
             session={props.session}
             applyCanonicalState={props.applyCanonicalState}
-            setAudio={props.setAudio}
             api={props.audioMonitorApi}
             disabled={props.projectSwitching}
           />

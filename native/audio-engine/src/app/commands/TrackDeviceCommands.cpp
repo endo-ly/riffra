@@ -1,4 +1,5 @@
 #include "../AudioCommandDispatcher.h"
+#include "contract/ExecutionGraphDecoder.h"
 #include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
@@ -132,7 +133,13 @@ CommandResult AudioCommandDispatcher::dispatchTrackDevice(const juce::var& comma
         const auto requestId = currentRequestId();
         const auto trackId = command.getProperty("trackId", {}).toString();
         const auto deviceId = command.getProperty("deviceId", {}).toString();
-        const auto state = command.getProperty("state", {});
+        PluginStateSpec state;
+        juce::String contractError;
+        if (!decodePluginState(command.getProperty("state", {}), state, contractError)) {
+            writeJson(
+                makeError("pluginContract", contractError, "runtime.trackDevice.setPluginState"));
+            return {};
+        }
         context.timelineOperationRunning.store(true, std::memory_order_release);
         const auto submitted = context.runtimeLifecycle.submit(
             [&, requestId, trackId, deviceId, state] {
@@ -228,7 +235,8 @@ CommandResult AudioCommandDispatcher::dispatchTrackDevice(const juce::var& comma
                 context.trackPluginEditorDeviceId = editorDeviceId;
                 context.trackPluginEditor = std::make_shared<PluginEditorHost>(
                     *device,
-                    [&, editorProjectId, editorTrackId, editorDeviceId](const juce::var& state) {
+                    [&, editorProjectId, editorTrackId,
+                     editorDeviceId](const PluginStateSpec& state) {
                         const auto stateCopy = state;
                         const auto stateKey =
                             "track-state:" + (editorTrackId + ":" + editorDeviceId).toStdString();
@@ -248,14 +256,15 @@ CommandResult AudioCommandDispatcher::dispatchTrackDevice(const juce::var& comma
                                 changed->setProperty("projectId", editorProjectId);
                                 changed->setProperty("trackId", editorTrackId);
                                 changed->setProperty("deviceId", editorDeviceId);
-                                changed->setProperty(
-                                    "parameterValues",
-                                    stateCopy.getProperty("parameterValues",
-                                                          juce::Array<juce::var>{}));
+                                juce::Array<juce::var> parameterValues;
+                                for (const auto value : stateCopy.parameterValues)
+                                    parameterValues.add(value);
+                                changed->setProperty("parameterValues", parameterValues);
                                 changed->setProperty("stateData",
-                                                     stateCopy.getProperty("stateData", {}));
-                                changed->setProperty("bypassed",
-                                                     stateCopy.getProperty("bypassed", false));
+                                                     stateCopy.stateData.has_value()
+                                                         ? juce::var(*stateCopy.stateData)
+                                                         : juce::var());
+                                changed->setProperty("bypassed", stateCopy.bypassed);
                                 writeJson(juce::var(changed), {}, OutputKind::state, stateKey);
                             },
                             std::chrono::seconds(10));

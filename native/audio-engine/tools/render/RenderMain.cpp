@@ -4,16 +4,19 @@
 #include <iostream>
 #include <string>
 
+#include "contract/ContractReader.h"
+#include "contract/ExecutionGraphDecoder.h"
 #include "render/OfflineRenderer.h"
 
 namespace {
 
-juce::var makeError(const juce::String& message) {
+juce::var makeError(const juce::String& message, const juce::String& kind = "renderRejected",
+                    const juce::String& operation = "renderTimelineOffline") {
     auto* value = new juce::DynamicObject();
     value->setProperty("type", "error");
-    value->setProperty("kind", "renderRejected");
+    value->setProperty("kind", kind);
     value->setProperty("message", message);
-    value->setProperty("operation", "renderTimelineOffline");
+    value->setProperty("operation", operation);
     return juce::var(value);
 }
 
@@ -29,18 +32,26 @@ int runRenderWorker() {
         return 1;
     }
 
-    const auto request = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
-    if (!request.isObject() ||
-        request.getProperty("type", {}).toString() != "renderTimelineOffline" ||
-        static_cast<int>(request.getProperty("protocolVersion", 0)) != 1) {
+    const auto envelope = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
+    juce::String type;
+    std::uint32_t protocolVersion = 0;
+    juce::var payload;
+    juce::String contractError;
+    riffra::ContractReader envelopeReader(envelope, "", {"type", "protocolVersion", "request"},
+                                          contractError);
+    if (!envelopeReader.string("type", type) ||
+        !envelopeReader.unsigned32("protocolVersion", protocolVersion) ||
+        !envelopeReader.object("request", payload) || !envelopeReader.finish()) {
+        writeJson(makeError(contractError, "renderContract", "renderTimelineOffline"));
+        return 1;
+    }
+    if (type != "renderTimelineOffline" || protocolVersion != 2) {
         writeJson(makeError("Offline Render request is invalid."));
         return 1;
     }
-    const auto destination = request.getProperty("destination", {}).toString();
-    const auto startTick = static_cast<juce::int64>(request.getProperty("startTick", -1));
-    const auto endTick = static_cast<juce::int64>(request.getProperty("endTick", -1));
-    if (destination.isEmpty() || startTick < 0 || endTick <= startTick) {
-        writeJson(makeError("Offline Render destination or range is invalid."));
+    riffra::OfflineRenderRequestSpec renderRequest;
+    if (!riffra::decodeOfflineRenderRequest(payload, renderRequest, contractError)) {
+        writeJson(makeError(contractError, "renderContract", "renderTimelineOffline"));
         return 1;
     }
 
@@ -49,13 +60,7 @@ int runRenderWorker() {
     riffra::OfflineRenderer renderer;
     riffra::OfflineRenderer::Result result;
     juce::String error;
-    if (!renderer.render(request.getProperty("snapshot", {}), formats, juce::File(destination),
-                         static_cast<std::uint64_t>(startTick), static_cast<std::uint64_t>(endTick),
-                         static_cast<double>(request.getProperty("sampleRate", 0.0)),
-                         static_cast<int>(request.getProperty("blockSize", 0)),
-                         static_cast<float>(request.getProperty("masterGainDb", 0.0)),
-                         static_cast<bool>(request.getProperty("normalize", false)), result,
-                         error)) {
+    if (!renderer.render(renderRequest, formats, result, error)) {
         writeJson(makeError(error));
         return 1;
     }

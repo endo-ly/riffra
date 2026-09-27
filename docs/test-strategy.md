@@ -60,3 +60,16 @@ Project管理は、DataRootのファイル境界、Coreの正準状態、Hostの
 Project切替テストでは、旧ProjectのUndo履歴や表示選択が新Projectへ持ち越されないことも確認する。保存処理のテストでは、Project Aの変更がProject Bの `session.json` と `generations/` に影響しないことを確認する。
 
 Project packageのテストでは、Importが現在のProjectを上書きせず新しいProjectとして追加すること、ExportがSave dialogで指定された絶対パスを成功通知へ含めることを確認する。Renderのテストでは、成果物が `DataRoot/renders/` に作られ、`DataRoot/exports/` を作成しないことを確認する。
+
+## 4. 実行グラフ契約
+
+Rust が生成する契約フィクスチャと C++ の厳格デコーダを同じファイルで検証し、両言語間のフィールド名・型・範囲を固定する。フィクスチャを手で編集せず、Rust の鮮度テストと C++ のデコードテストから契約のずれを検出する。
+
+| 層                               | 確認する内容                                                                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `riffra-runtime`                 | 資源解決と純粋な投影を分け、実行グラフと投影診断を構築する。Presentation-only の変更では投影比較が一致する                                |
+| Coordinator                      | 同一の Project ID・実行グラフ・診断・音声環境を持つ正準要求は準備を省略し、実行中または待機中の同一投影は完了後に新しい正準キーを採用する |
+| `riffra-audio` / `riffra-render` | 必須・未知キー、型、enum、範囲をデコードし、契約違反を拒否する。Master Gain はグラフのコミットで適用される                                |
+| Desktop                          | 現役投影の診断を `RuntimeProjectionStatus` から表示し、Transport 状態に依存しない                                                         |
+
+契約変更では `contracts/execution-graph/` の Rust 生成フィクスチャを更新し、C++ の正常デコードと欠落・未知・範囲外入力の拒否を確認する。

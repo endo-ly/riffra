@@ -206,12 +206,13 @@ impl HostState {
         if command == "audio.master-gain.set" {
             let params: MasterGainParams = decode(params)?;
             let context = self.session_context()?;
-            let pair = session_adapter::set_master_gain_db(&context, params.gain_db)
+            let result = session_adapter::set_master_gain_db(&context, params.gain_db)
                 .map_err(|error| error.protocol_error())?;
+            let sequence = result.canonical.sequence;
             return Ok((
-                "sessionAudioPair",
-                serde_json::to_value(&pair).map_err(serialize_error)?,
-                pair.canonical.sequence,
+                "arrangementMutation",
+                serde_json::to_value(&result).map_err(serialize_error)?,
+                sequence,
             ));
         }
         if project::handles(command) {
@@ -248,7 +249,7 @@ impl HostState {
             )
             .map_err(|error| error.protocol_error())?;
             if result.sequence > current_sequence {
-                let mut mutation = self.after_canonical_commit(result.projection_effect())?;
+                let mut mutation = self.after_canonical_commit()?;
                 mutation.created_entity_ids = result.created_entity_ids;
                 let sequence = mutation.canonical.sequence;
                 if result.result_type == "batchMutation" {
@@ -447,7 +448,7 @@ impl HostState {
                     );
                     return Err(error.protocol_error());
                 }
-                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                let mutation = session_adapter::arrangement_mutation_result(&context)
                     .map_err(|error| error.protocol_error())?;
                 let sequence = mutation.canonical.sequence;
                 Ok((
@@ -529,7 +530,7 @@ impl HostState {
                     rollback();
                     return Err(error.protocol_error());
                 }
-                let mutation = session_adapter::arrangement_mutation_without_projection(&context)
+                let mutation = session_adapter::arrangement_mutation_result(&context)
                     .map_err(|error| error.protocol_error())?;
                 let sequence = mutation.canonical.sequence;
                 Ok((
@@ -1667,7 +1668,6 @@ impl HostState {
 
     pub(super) fn after_canonical_commit(
         &self,
-        effect: CanonicalMutationEffect,
     ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
         let canonical = self
             .canonical()
@@ -1689,7 +1689,6 @@ impl HostState {
             self.built_in_instruments.as_ref(),
             &project_id,
             self.core.safe_mode(),
-            effect,
         )
         .map_err(command_error)?;
         Ok(mutation)
@@ -3205,6 +3204,56 @@ mod tests {
         let reopened = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
         reopened.shutdown();
         drop(reopened);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
+
+    #[test]
+    fn master_gain_set_commits_canonical_state_and_requests_projection() {
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-master-gain-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
+            safe_mode: false,
+            binaries: RuntimeBinaries::new(
+                data_root.join("missing-riffra-audio"),
+                data_root.join("missing-riffra-plugin-scan"),
+                data_root.join("missing-riffra-render"),
+                data_root.join("missing-sonalloy"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
+
+        // Act
+        let response = host.dispatch_control(
+            ControlRequest::new(
+                "master-gain-set",
+                ControlCommand::new("audio.master-gain.set", serde_json::json!({"gainDb": -9.0})),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
+
+        // Assert
+        assert!(response.ok);
+        let mutation: crate::model::ArrangementMutationResult =
+            serde_json::from_value(response.result.unwrap().value).unwrap();
+        assert_eq!(mutation.canonical.sequence, 1);
+        assert_eq!(mutation.canonical.session.settings.master_db, -9.0);
+        assert!(matches!(
+            mutation.projection,
+            crate::model::ArrangementProjectionOutcome::Queued
+                | crate::model::ArrangementProjectionOutcome::Failed { .. }
+        ));
+
+        host.shutdown();
+        drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
 }

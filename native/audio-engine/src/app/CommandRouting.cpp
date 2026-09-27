@@ -15,10 +15,10 @@ bool contains(const std::array<std::string_view, Size>& values,
 
 constexpr std::array<std::string_view, 1> kShutdownCommands{"shutdown"};
 constexpr std::array<std::string_view, 4> kSafetyCommands{
-    "setEmergencyMute", "setFeedbackProtection", "setEngineTransitionMute", "setMasterGainDb"};
-constexpr std::array<std::string_view, 5> kTimelineCommands{
-    "loadTimelineSnapshot", "prepareTimelineSnapshot", "commitTimelineSnapshot",
-    "discardTimelineSnapshot", "waitForTimelineIdle"};
+    "setEmergencyMute", "setFeedbackProtection", "setEngineTransitionMute", "previewMasterGainDb"};
+constexpr std::array<std::string_view, 4> kTimelineCommands{
+    "prepareTimelineSnapshot", "commitTimelineSnapshot", "discardTimelineSnapshot",
+    "waitForTimelineIdle"};
 constexpr std::array<std::string_view, 9> kTrackDeviceCommands{
     "setTrackDeviceBypassed",   "setTrackDeviceParameter", "getTrackDeviceStatus",
     "getTrackDeviceParameters", "getTrackDevicePrograms",  "getTrackPluginState",

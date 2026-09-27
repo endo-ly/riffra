@@ -99,7 +99,7 @@ riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
 riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
   ├─ 楽曲データの形（domain: CreativeSession / Arrangement / Recording / Asset / Rack）
   ├─ 操作の手順（application: Session / Arrangement / Recording / Rack / Transport / History）
-  ├─ 外部（保存・音声・書き出し）との接続口（ports: SessionStorage / RuntimeProjection / RenderRuntime）
+  ├─ 永続化との接続口（ports: SessionStorage）
   ├─ 正準・順番・履歴・投影順の中枢（AppCore）
   ├─ 保存前の検査と整形（validate_and_normalize）
   └─ Tauri・WebView・OS統合を含まない
@@ -164,7 +164,18 @@ Attached CLI（apps/cli --attach）
 
 ### 5.1 投影プロトコル
 
-Core の `RuntimeProjection` Port は、正準スナップショットとその確定順序をホストの音声ランタイムへ渡す契約を定める。`riffra-runtime` の `RuntimeReconciler` がサイドカーとの接続、最新投影の採用、Transport ordering を担う。
+正準状態からサイドカーへ渡す実行内容は、`riffra-runtime` が所有する型付き `ExecutionGraph` として定義する。`TimelineSnapshot` は Project ID、Arrangement revision、実行グラフを持ち、ライブ再生とオフラインレンダーは同じグラフ契約を使う。Core は実行グラフの型やサイドカー境界を持たない。
+
+投影生成は、素材・プラグイン・内蔵プリセットを解決する I/O 段階と、解決済み資源からグラフを構築する純関数段階に分かれる。出力は `ProjectedTimeline { snapshot, diagnostics }` であり、実行できない素材やデバイスはグラフから除外して診断へ記録する。
+
+| 操作                                  | 意味                                                                                    |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `prepare_timeline_snapshot(snapshot)` | 型付き投影候補をサイドカーへ渡して事前構築（VST読み込み・グラフ構築）。まだ再生されない |
+| `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                        |
+| `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                                    |
+| `wait_for_timeline_idle()`            | タイムライン処理の競合時に、サイドカーのライフサイクル処理が完了するまで待つ            |
+
+正準コミット後は投影結果を常に Coordinator へ渡す。Coordinator は同一音声環境内の正準参照から Project ID、実行グラフ、診断を比較し、すべて一致するときだけ準備を省略する。Presentation-only の編集や revision の進行だけではグラフを再構築しない。
 
 | 操作                                  | 意味                                                                              |
 | ------------------------------------- | --------------------------------------------------------------------------------- |
@@ -210,7 +221,7 @@ MIDI とライブ入力の扱いは次の通り。
 
 ### 5.2 投影の整合性
 
-投影要求の識別子は `canonicalSequence`、`sessionRevision`、サイドカーの `runtimeGeneration`、デバイス環境の `audioEnvironmentRevision` の組である。Host はこの組を一致条件に投影を直列処理する。準備中は現在のグラフを維持し、準備と有効化が完了した投影のみ再生に使う。
+投影要求の識別子は `canonicalSequence`、`sessionRevision`、サイドカーの `runtimeGeneration`、デバイス環境の `audioEnvironmentRevision` の組である。Host はこの組を一致条件に投影を直列処理する。準備中は現在のグラフを維持し、準備と有効化が完了した投影のみ再生に使う。再準備を省略する場合も正準キーは採用し、同一投影が待機中または実行中なら完了後に新しいキーを現役へ適用する。
 
 Play / Stop の順序は次の通り。
 
@@ -243,11 +254,13 @@ setAudioDriver → 要求された設定（ドライバ・デバイス・サン�
 
 安全ミュートは Native の atomic bitmask で所有者別に管理する（ユーザー操作・エンジン遷移・デバイス障害・フィードバック保護は独立）。状態通知の分担は次の通り。
 
-| 通知                      | 表す状態                     |
-| ------------------------- | ---------------------------- |
-| `AudioStatus`             | デバイスとコールバックの状態 |
-| `RuntimeProjectionStatus` | グラフ投影の状態             |
-| `TransportStatus`         | 停止・準備中・再生中の状態   |
+| 通知                      | 表す状態                                           |
+| ------------------------- | -------------------------------------------------- |
+| `AudioStatus`             | デバイスとコールバックの状態                       |
+| `RuntimeProjectionStatus` | グラフ投影の状態と現役グラフの `activeDiagnostics` |
+| `TransportStatus`         | 停止・準備中・再生中の状態と再生位置               |
+
+未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は再生状態・再生位置を表し、投影診断は持たない。
 
 Audio Status の診断値は、コールバック計測（回数・平均/最大処理時間・オーバーラン）、出力診断（準備前ピーク・リミッターのゲインリダクション・最終ハードクリップ数）、ライブ MIDI のドロップ数、規模（Track / Runtime / Plugin 数・最大レイテンシ）、投影時間、音声環境 revision を含む。これらは障害の推測材料ではなく、同じ世代の音声処理状態を確認するための値である。
 
@@ -258,6 +271,8 @@ Audio Status の診断値は、コールバック計測（回数・平均/最大
 Track の Gain、Pan、Mute、Solo、Record Arm は `CreativeSession.arrangement.tracks` が正本であり、Master Gain は `CreativeSession.settings.masterDb` が正本である。Mixer は既存の Canonical state を編集するためのUIであり、Mixer専用の Track、Master、Bus、Effect Chain の正準モデルを持たない。
 
 Gain と Pan の連続操作は、確定前の値を `setTrackMix` として Native の現行 `TrackRuntime` へ一時適用する。Native は次の Audio block の先頭で atomics を読み込み、プレビュー値を保存、履歴、Undo/Redo、Recovery state、Runtime 投影の入力へ戻さない。操作の確定時にのみ Host の `updateTrack` が Canonical state を変更し、次の投影で実行状態を再構築する。
+
+Master Gain の正準値は `ExecutionGraph.masterGainDb` を通じてサイドカーへ渡し、現役グラフのコミット時に出力へ適用する。`previewMasterGainDb` はドラッグ中の一時値であり、次のグラフコミットで正準値に戻る。デバイス環境の変更やサイドカー再起動後も、正準グラフの再投影で同じ値を復元する。
 
 ```text
 Desktop Mixer

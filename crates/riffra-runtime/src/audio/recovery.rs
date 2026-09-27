@@ -20,21 +20,10 @@ pub enum AudioDeviceReopenOutcome {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct RuntimeControlState {
-    pub(crate) master_gain_db: f64,
     pub(crate) midi_listening: bool,
     pub(crate) user_emergency_muted: bool,
-}
-
-impl Default for RuntimeControlState {
-    fn default() -> Self {
-        Self {
-            master_gain_db: 0.0,
-            midi_listening: false,
-            user_emergency_muted: false,
-        }
-    }
 }
 
 /// Owns desired controls and restart coordination. Sidecar process ownership
@@ -119,13 +108,6 @@ impl AudioSupervisor {
                 resource: "Runtime control",
             })?
             .clone();
-        self.wait_for_command(
-            serde_json::json!({
-                "type": "setMasterGainDb",
-                "gainDb": controls.master_gain_db,
-            }),
-            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
-        )?;
         self.wait_for_command(
             serde_json::json!({
                 "type": if controls.midi_listening {

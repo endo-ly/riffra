@@ -1,7 +1,7 @@
 use crate::application::history::History;
 use crate::domain::CreativeSession;
 use crate::errors::ApplicationError;
-use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
+use crate::ports::SessionStorage;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -318,21 +318,6 @@ impl<A> AppCore<A> {
         self.commit_candidate_locked(storage, current, prepared.session)
     }
 
-    /// Submits the current canonical snapshot to a host runtime projection
-    /// Port without changing production state.
-    pub(crate) fn project_current<P>(&self, projection: &P) -> Result<(), ApplicationError>
-    where
-        P: RuntimeProjection + ?Sized,
-    {
-        let snapshot = self.snapshot()?;
-        projection
-            .project(RuntimeProjectionRequest::new(
-                snapshot.session,
-                snapshot.sequence,
-            ))
-            .map_err(application_error_from_port)
-    }
-
     /// Commits a prepared candidate. This is useful for a long-running host
     /// operation that merges only its owned fields onto the latest snapshot.
     pub(crate) fn commit_candidate<S>(
@@ -541,10 +526,9 @@ fn next_update_timestamp(previous: u64, candidate: u64) -> u64 {
     now.max(candidate).max(previous.saturating_add(1))
 }
 
-fn application_error_from_port(error: PortError) -> ApplicationError {
+fn application_error_from_port(error: crate::ports::PortError) -> ApplicationError {
     match error {
-        PortError::Storage(message) => ApplicationError::Storage(message),
-        PortError::Runtime(message) => ApplicationError::Runtime(message),
+        crate::ports::PortError::Storage(message) => ApplicationError::Storage(message),
     }
 }
 
@@ -556,7 +540,7 @@ mod tests {
         AudioClip, AudioClipMove, FrameRange, MidiClip, MidiNote, TimelineTick, TrackInstrument,
         TrackKind,
     };
-    use crate::ports::{PortError, RuntimeProjection, RuntimeProjectionRequest, SessionStorage};
+    use crate::ports::{PortError, SessionStorage};
     use std::sync::{Arc, Barrier, Mutex};
 
     #[derive(Default)]
@@ -579,27 +563,7 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct MemoryProjection {
-        requests: Mutex<Vec<RuntimeProjectionRequest>>,
-    }
-
-    impl RuntimeProjection for MemoryProjection {
-        fn project(&self, request: RuntimeProjectionRequest) -> Result<(), PortError> {
-            self.requests.lock().unwrap().push(request);
-            Ok(())
-        }
-    }
-
     struct NoopAudio;
-
-    struct FailingProjection;
-
-    impl RuntimeProjection for FailingProjection {
-        fn project(&self, _request: RuntimeProjectionRequest) -> Result<(), PortError> {
-            Err(PortError::Runtime("runtime unavailable".into()))
-        }
-    }
 
     #[test]
     fn commit_persists_and_records_history() {
@@ -1526,68 +1490,6 @@ mod tests {
         assert_eq!(after.session, before.session);
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(core.history_state().unwrap(), HistoryState::default());
-    }
-
-    #[test]
-    fn committed_snapshot_is_sent_to_the_runtime_projection_port() {
-        let storage = MemoryStorage::default();
-        let projection = MemoryProjection::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-
-        let application = core.application(&storage);
-        application
-            .update_session_settings(crate::application::SessionSettingsPatch {
-                project_name: Some(Some("Projected".into())),
-                ..Default::default()
-            })
-            .unwrap();
-        application.project_current(&projection).unwrap();
-
-        let requests = projection.requests.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(
-            requests[0].session().project_name.as_deref(),
-            Some("Projected")
-        );
-        assert_eq!(requests[0].sequence(), 1);
-    }
-
-    #[test]
-    fn runtime_projection_failure_does_not_rollback_a_durable_commit() {
-        let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-
-        let application = core.application(&storage);
-        application
-            .update_session_settings(crate::application::SessionSettingsPatch {
-                project_name: Some(Some("Durable".into())),
-                ..Default::default()
-            })
-            .unwrap();
-        let error = application.project_current(&FailingProjection).unwrap_err();
-
-        assert_eq!(
-            error,
-            ApplicationError::Runtime("runtime unavailable".into())
-        );
-        assert_eq!(
-            core.snapshot().unwrap().session.project_name.as_deref(),
-            Some("Durable")
-        );
-        assert!(core.history_state().unwrap().can_undo);
-        assert_eq!(storage.sessions.lock().unwrap().len(), 1);
     }
 
     #[test]

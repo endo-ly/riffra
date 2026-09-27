@@ -1,6 +1,7 @@
 //! Process adapter for device-independent Riffra offline rendering.
 
-use riffra_core::{OfflineRenderRequest, RenderRuntime};
+use crate::execution::OfflineRenderRequest as OfflineRenderRequestSpec;
+use crate::render::{OfflineRenderRequest, RenderRuntime};
 use serde_json::Value;
 use std::{
     io::{Read, Write},
@@ -61,15 +62,16 @@ impl RenderWorker {
         }
         let payload = serde_json::json!({
             "type": "renderTimelineOffline",
-            "protocolVersion": 1,
-            "snapshot": request.snapshot,
-            "destination": request.destination,
-            "startTick": request.start_tick,
-            "endTick": request.end_tick,
-            "sampleRate": request.sample_rate,
-            "blockSize": request.block_size,
-            "masterGainDb": request.master_gain_db,
-            "normalize": request.normalize,
+            "protocolVersion": 2,
+            "request": OfflineRenderRequestSpec {
+                graph: request.graph,
+                destination: request.destination.to_string_lossy().into_owned(),
+                start_tick: request.start_tick,
+                end_tick: request.end_tick,
+                sample_rate: request.sample_rate,
+                block_size: request.block_size,
+                normalize: request.normalize,
+            },
         });
         let encoded = serde_json::to_vec(&payload).map_err(RenderWorkerError::Encode)?;
         tracing::info!("starting offline render worker");
@@ -184,7 +186,40 @@ impl RenderRuntime for RenderWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::{ExecutionGraph, GraphLoopRange, GraphTimebase};
     use std::sync::atomic::AtomicBool;
+
+    fn empty_graph() -> ExecutionGraph {
+        ExecutionGraph {
+            timebase: GraphTimebase {
+                ppq: 960,
+                bpm: 120.0,
+                time_signature_numerator: 4,
+                time_signature_denominator: 4,
+            },
+            loop_range: GraphLoopRange {
+                enabled: false,
+                start_tick: 0,
+                end_tick: 0,
+            },
+            punch_range: None,
+            metronome_enabled: false,
+            master_gain_db: 0.0,
+            tracks: Vec::new(),
+        }
+    }
+
+    fn offline_request(destination: PathBuf) -> OfflineRenderRequest {
+        OfflineRenderRequest {
+            graph: empty_graph(),
+            destination,
+            start_tick: 0,
+            end_tick: 960,
+            sample_rate: 48_000,
+            block_size: 512,
+            normalize: false,
+        }
+    }
 
     #[test]
     fn explicit_worker_path_is_preserved() {
@@ -203,16 +238,7 @@ mod tests {
     fn cancellation_is_observed_before_worker_spawn() {
         let worker = RenderWorker::new(PathBuf::from("missing-render-worker"));
         let cancelled = AtomicBool::new(true);
-        let request = OfflineRenderRequest {
-            snapshot: serde_json::json!({}),
-            destination: PathBuf::from("output.wav"),
-            start_tick: 0,
-            end_tick: 1,
-            sample_rate: 48_000,
-            block_size: 512,
-            master_gain_db: 0.0,
-            normalize: false,
-        };
+        let request = offline_request(PathBuf::from("output.wav"));
 
         let error = worker
             .render_timeline_offline_cancellable(request, &cancelled)
@@ -233,30 +259,7 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&destination);
         let worker = RenderWorker::new(executable.into());
-        let request = OfflineRenderRequest {
-            snapshot: serde_json::json!({
-                "revision": 1,
-                "timebase": {
-                    "ppq": 960,
-                    "bpm": 120.0,
-                    "timeSignatureNumerator": 4,
-                    "timeSignatureDenominator": 4
-                },
-                "loopRange": {
-                    "enabled": false,
-                    "startTick": 0,
-                    "endTick": 0
-                },
-                "tracks": []
-            }),
-            destination: destination.clone(),
-            start_tick: 0,
-            end_tick: 960,
-            sample_rate: 48_000,
-            block_size: 512,
-            master_gain_db: 0.0,
-            normalize: false,
-        };
+        let request = offline_request(destination.clone());
 
         // Act
         worker

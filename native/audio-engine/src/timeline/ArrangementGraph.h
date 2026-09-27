@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <utility>
 
+#include "contract/ExecutionGraph.h"
+
 namespace riffra {
 
 /// Realtime-safe routing and capture calculations shared by every Track node
@@ -20,7 +22,7 @@ public:
     [[nodiscard]] static const float* audioInputSource(int configuredChannel,
                                                        const float* const* physicalInputChannels,
                                                        int physicalInputChannelCount) noexcept;
-    [[nodiscard]] static bool shouldMonitorAudioInput(const juce::String& monitoring, bool armed,
+    [[nodiscard]] static bool shouldMonitorAudioInput(MonitoringSpec monitoring, bool armed,
                                                       bool instrument) noexcept;
     [[nodiscard]] static std::int64_t compensationDelay(std::int64_t maximumPluginDelay,
                                                         std::int64_t trackPluginDelay) noexcept;

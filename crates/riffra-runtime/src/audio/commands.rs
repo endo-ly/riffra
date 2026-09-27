@@ -1,6 +1,7 @@
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::AudioDeviceReopenOutcome;
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor};
+use crate::execution::TimelineSnapshot;
 use crate::instrument::InstrumentPreviewDefinition;
 use crate::model::AudioStatus;
 use crate::preferences::AudioDriverConfig;
@@ -100,15 +101,19 @@ impl AudioSupervisor {
         self.send_command(serde_json::json!({"type": "meterStatus"}), "")
     }
 
-    pub fn prepare_timeline_snapshot(
+    pub(crate) fn prepare_timeline_snapshot(
         &self,
-        snapshot: serde_json::Value,
+        snapshot: &TimelineSnapshot,
         timeout: Duration,
     ) -> NativeAudioResult<()> {
+        let snapshot =
+            serde_json::to_value(snapshot).map_err(|error| NativeAudioError::Protocol {
+                message: format!("Timeline snapshot could not be encoded: {error}"),
+            })?;
         self.send_command_ack(
             serde_json::json!({
                 "type": "prepareTimelineSnapshot",
-                "protocolVersion": 1,
+                "protocolVersion": 2,
                 "snapshot": snapshot,
             }),
             "",
@@ -343,36 +348,13 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus> {
-        let safe_gain = gain_db.clamp(-90.0, 0.0);
-        let status = self.send_command(
-            serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
-            "Master gain updated through the safety limiter.",
-        )?;
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })?
-            .master_gain_db = safe_gain;
-        Ok(status)
-    }
-
     pub fn preview_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<()> {
         let safe_gain = gain_db.clamp(-90.0, 0.0);
         self.send_command_ack(
-            serde_json::json!({"type": "setMasterGainDb", "gainDb": safe_gain}),
+            serde_json::json!({"type": "previewMasterGainDb", "gainDb": safe_gain}),
             "",
             Duration::from_secs(3),
         )?;
-        self.recovery
-            .runtime_controls
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Runtime control",
-            })?
-            .master_gain_db = safe_gain;
         Ok(())
     }
 

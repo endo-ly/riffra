@@ -9,7 +9,7 @@ Vst3InstrumentRuntime::Vst3InstrumentRuntime(std::unique_ptr<PluginRack> rack) n
 
 std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
     const juce::String& path, const double sampleRate, const int blockSize,
-    const juce::var& persistedState, juce::String& error) {
+    const PluginStateSpec& persistedState, juce::String& error) {
     auto rack = std::make_unique<PluginRack>();
     if (const auto loadError = rack->load(path, sampleRate, blockSize)) {
         error = loadError->scope + ": " + loadError->message;

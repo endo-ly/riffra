@@ -4,9 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
-use crate::model::{
-    ArrangementMutationResult, AudioStatus, RuntimeProjectionStatus, SessionAudioPair,
-};
+use crate::model::{ArrangementMutationResult, AudioStatus, RuntimeProjectionStatus};
 use crate::{AppState, NativeCommandError};
 use riffra_core::application::{
     MidiNoteInput, MidiNotePatch, MidiNoteUpdate, SessionSettingsPatch,

@@ -5,7 +5,7 @@ pub use riffra_runtime::RuntimeProjectionStatus;
 pub use riffra_runtime::{
     ArrangementMutationResult, AudioDeviceProbe, AudioStatus, DeviceChannels,
     ProjectActivationResult, ProjectRecoveryState, ProjectState, RecordingStopResult,
-    RecoveryCandidate, SessionAudioPair,
+    RecoveryCandidate,
 };
 #[cfg(test)]
 pub use riffra_runtime::{

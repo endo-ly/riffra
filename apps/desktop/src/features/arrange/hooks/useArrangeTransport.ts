@@ -35,8 +35,6 @@ export function useArrangeTransport(
       previous.recordingPassOrdinal !== next.recordingPassOrdinal ||
       previous.clockGeneration !== next.clockGeneration ||
       previous.discontinuity !== next.discontinuity ||
-      previous.unavailableClipIds.join('\u0000') !== next.unavailableClipIds.join('\u0000') ||
-      previous.missingDeviceIds.join('\u0000') !== next.missingDeviceIds.join('\u0000') ||
       previous.armedTrackIds.join('\u0000') !== next.armedTrackIds.join('\u0000')
     );
   };

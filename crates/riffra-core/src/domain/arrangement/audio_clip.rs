@@ -14,17 +14,6 @@ pub enum FadeShape {
     Smooth,
 }
 
-impl FadeShape {
-    /// Engine-facing discriminant matching the audio sidecar contract.
-    pub fn as_code(self) -> u8 {
-        match self {
-            FadeShape::Linear => 0,
-            FadeShape::EqualPower => 1,
-            FadeShape::Smooth => 2,
-        }
-    }
-}
-
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

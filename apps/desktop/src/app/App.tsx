@@ -97,7 +97,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     retryBootstrap,
     session,
     audio,
-    setAudio,
     importMidi,
     plugins,
     recordings,
@@ -328,7 +327,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onOpenAudioSettings={() => setAudioSettingsOpen(true)}
         audioSettingsOpen={audioSettingsOpen}
         applyCanonicalState={applyCanonicalState}
-        setAudio={setAudio}
         transportPlaying={transportPlaying}
         transportStarting={transportStarting}
         onPlay={() => void playTransport()}
@@ -543,7 +541,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               setSelection={arrange.setSelection}
               api={nativeApi}
               audio={audio}
-              setAudio={setAudio}
               onToggleTransport={() =>
                 void (transportPlaying || transportStarting ? stopTransport() : playTransport())
               }

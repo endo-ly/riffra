@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "InstrumentRuntime.h"
+#include "contract/ExecutionGraph.h"
 #include "plugins/PluginRack.h"
 
 namespace riffra {
@@ -11,8 +12,8 @@ namespace riffra {
 class Vst3InstrumentRuntime final : public InstrumentRuntime {
 public:
     [[nodiscard]] static std::unique_ptr<Vst3InstrumentRuntime> create(
-        const juce::String& path, double sampleRate, int blockSize, const juce::var& persistedState,
-        juce::String& error);
+        const juce::String& path, double sampleRate, int blockSize,
+        const PluginStateSpec& persistedState, juce::String& error);
 
     /// Installs an already prepared rack for native integration tests.
     [[nodiscard]] static std::unique_ptr<Vst3InstrumentRuntime> fromRack(

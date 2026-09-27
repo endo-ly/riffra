@@ -28,24 +28,11 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto clips = track->getProperty("audioClips");
-    ASSERT_TRUE(clips.isArray());
-    for (auto& clipValue : *clips.getArray()) {
-        auto* clip = clipValue.getDynamicObject();
-        ASSERT_NE(clip, nullptr);
-        clip->setProperty("sourceEndFrame", kSourceFrames);
-        clip->setProperty("durationFrames", kSourceFrames);
-    }
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, kSourceFrames);
     TimelineEngine engine(true);
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error))
+        << error.toStdString();
     std::vector<int> processOrder;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:audio", "effect:double",
@@ -99,8 +86,8 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     formats.registerBasicFormats();
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0, 32, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
+                                 32, error))
         << error.toStdString();
 
     constexpr int kBlockSamples = 32;
@@ -152,8 +139,8 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     EXPECT_LT(static_cast<float>(previewMeters[0].getProperty("peakRight", 0.0)), 0.001f);
 
     // Act: publish a fresh canonical snapshot and render again.
-    ASSERT_TRUE(
-        engine.loadSnapshot(makeAudioTrackSnapshot(1, true, false), formats, 48'000.0, 32, error))
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
+                                 32, error))
         << error.toStdString();
     mixLiveInput();
 
@@ -167,23 +154,12 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeAudioTrackSnapshot(1, true, false);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto* point = new juce::DynamicObject();
-    point->setProperty("tick", 0);
-    point->setProperty("value", -12.0);
-    auto* lane = new juce::DynamicObject();
-    lane->setProperty("parameter", "volume");
-    lane->setProperty("points", juce::Array<juce::var>{juce::var(point)});
-    track->setProperty("automation", juce::Array<juce::var>{juce::var(lane)});
+    snapshot.graph.tracks.front().volumeAutomation.push_back({0, -12.0});
 
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error))
+        << error.toStdString();
     std::array<float, 32> input{};
     std::array<float, 32> left{};
     std::array<float, 32> right{};
@@ -212,18 +188,13 @@ TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeAudioTrackSnapshot(2, true, false);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 2);
-    auto* secondTrack = tracks[1].getDynamicObject();
-    ASSERT_NE(secondTrack, nullptr);
-    secondTrack->setProperty("monitoring", "on");
-    secondTrack->setProperty("solo", true);
+    snapshot.graph.tracks[1].monitoring = MonitoringSpec::on;
+    snapshot.graph.tracks[1].solo = true;
 
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error))
+        << error.toStdString();
     std::array<float, 32> input{};
     std::array<float, 32> left{};
     std::array<float, 32> right{};
@@ -252,29 +223,14 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile);
-    auto* snapshotObject = snapshot.getDynamicObject();
-    ASSERT_NE(snapshotObject, nullptr);
-    auto tracks = snapshotObject->getProperty("tracks");
-    ASSERT_TRUE(tracks.isArray() && tracks.size() == 1);
-    auto* track = tracks[0].getDynamicObject();
-    ASSERT_NE(track, nullptr);
-    auto clips = track->getProperty("audioClips");
-    ASSERT_TRUE(clips.isArray());
-    for (auto& clipValue : *clips.getArray()) {
-        auto* clip = clipValue.getDynamicObject();
-        ASSERT_NE(clip, nullptr);
-        clip->setProperty("sourceEndFrame", kSourceFrames);
-        clip->setProperty("durationFrames", kSourceFrames);
-    }
-    track->setProperty("monitoring", "on");
-    auto* input = new juce::DynamicObject();
-    input->setProperty("channelIndex", 0);
-    track->setProperty("audioInput", juce::var(input));
+    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, kSourceFrames);
+    snapshot.graph.tracks.front().monitoring = MonitoringSpec::on;
+    snapshot.graph.tracks.front().audioInput = AudioInputSpec{0};
 
     TimelineEngine engine;
     juce::String error;
-    ASSERT_TRUE(engine.loadSnapshot(snapshot, formats, 48'000.0, 32, error)) << error.toStdString();
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error))
+        << error.toStdString();
     ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:audio", 4));
 
     std::array<float, 32> inputSamples{};
@@ -320,9 +276,9 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughOfflineRenderer) {
     juce::String error;
 
     // Act
-    const auto rendered =
-        renderer.render(makeBuiltInInstrumentSnapshot("track:offline"), formats, destination, 0,
-                        960, 48'000.0, 512, 0.0f, false, result, error);
+    const auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
+    const auto rendered = renderTestSnapshot(renderer, snapshot.graph, formats, destination, 0, 960,
+                                             48'000, 512, false, result, error);
 
     // Assert
     ASSERT_TRUE(rendered) << error.toStdString();
@@ -350,39 +306,12 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
     TimelineEngine engine;
     juce::String error;
 
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    auto* track = new juce::DynamicObject();
-    track->setProperty("id", "track:guitar");
-    track->setProperty("kind", "audio");
-    track->setProperty("gainDb", 0.0);
-    track->setProperty("pan", 0.0);
-    track->setProperty("muted", false);
-    track->setProperty("solo", false);
-    track->setProperty("armed", false);
-    track->setProperty("monitoring", "on");
-    auto* audioInput = new juce::DynamicObject();
-    audioInput->setProperty("channelIndex", 0);
-    track->setProperty("audioInput", juce::var(audioInput));
-    auto* rack = new juce::DynamicObject();
-    rack->setProperty("devices", juce::Array<juce::var>{});
-    track->setProperty("rack", juce::var(rack));
-    track->setProperty("audioClips", juce::Array<juce::var>{});
-    track->setProperty("midiClips", juce::Array<juce::var>{});
-    track->setProperty("automation", juce::Array<juce::var>{});
-
-    juce::Array<juce::var> tracks;
-    tracks.add(juce::var(track));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-
-    ASSERT_TRUE(engine.loadSnapshot(juce::var(snapshot), formats, 48'000.0, 512, error));
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:guitar");
+    track.monitoring = MonitoringSpec::on;
+    track.audioInput = AudioInputSpec{0};
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 512, error));
     std::vector<int> processOrder;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackChainDevice(
         engine, "track:guitar", "device:amp",

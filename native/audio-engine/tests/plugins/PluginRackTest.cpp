@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "../support/TestAudioProcessor.h"
+#include "contract/ExecutionGraphDecoder.h"
 
 namespace riffra {
 namespace {
@@ -163,7 +164,9 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     ASSERT_FALSE(saved.isVoid()) << error;
     ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
 
-    ASSERT_TRUE(rack->applyPersistedState(saved, error)) << error;
+    PluginStateSpec state;
+    ASSERT_TRUE(decodePluginState(saved, state, error)) << error;
+    ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
     const auto restored = rack->persistedState(error);
     ASSERT_FALSE(restored.isVoid()) << error;
     const auto values = restored.getProperty("parameterValues", {});

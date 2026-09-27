@@ -2,9 +2,8 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CanonicalState } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { fakeAudioStatus } from '@/native/native-api-fake';
 import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
 import { useMasterGainControl } from './useMasterGainControl';
 
@@ -21,21 +20,14 @@ describe('useMasterGainControl', () => {
     const staleSession = structuredClone(initialSession);
     staleSession.settings.masterDb = -6;
     const staleCanonical: CanonicalState = { ...canonicalState(staleSession), sequence: 1 };
-    let resolveUpdate!: (result: {
-      canonical: CanonicalState;
-      audio: ReturnType<typeof fakeAudioStatus>;
-    }) => void;
+    let resolveUpdate!: (result: ArrangementMutationResult) => void;
     const api = {
       previewMasterGainDb: vi.fn().mockResolvedValue(undefined),
       setMasterGainDb: vi.fn(
-        () =>
-          new Promise<{ canonical: CanonicalState; audio: ReturnType<typeof fakeAudioStatus> }>(
-            (resolve) => (resolveUpdate = resolve),
-          ),
+        () => new Promise<ArrangementMutationResult>((resolve) => (resolveUpdate = resolve)),
       ),
     };
     const applyCanonicalState = vi.fn((canonical: CanonicalState) => canonical.sequence >= 2);
-    const setAudio = vi.fn();
 
     const { result, rerender } = renderHook(
       ({ session }) =>
@@ -43,7 +35,6 @@ describe('useMasterGainControl', () => {
           session,
           api,
           applyCanonicalState,
-          setAudio,
         }),
       { initialProps: { session: initialSession } },
     );
@@ -62,12 +53,15 @@ describe('useMasterGainControl', () => {
     await waitFor(() => expect(result.current.draftDb).toBe(-3));
 
     await act(async () => {
-      resolveUpdate({ canonical: staleCanonical, audio: fakeAudioStatus() });
+      resolveUpdate({
+        canonical: staleCanonical,
+        projection: { state: 'queued' },
+        createdEntityIds: {},
+      });
       await commitPromise;
     });
 
     expect(applyCanonicalState).toHaveBeenCalledWith(staleCanonical);
-    expect(setAudio).not.toHaveBeenCalled();
     expect(result.current.draftDb).toBe(-3);
   });
 });

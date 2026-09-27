@@ -5,19 +5,12 @@
 
 namespace riffra {
 
-bool PluginChain::load(const juce::var& values, const double sampleRate, const int blockSize,
-                       juce::String& error, const juce::String& runtimeRole) {
-    if (!values.isArray()) {
-        error = "Plugin Chain devices must be an array.";
-        return false;
-    }
+bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double sampleRate,
+                       const int blockSize, juce::String& error, const juce::String& runtimeRole) {
     std::vector<Device> candidate;
-    for (const auto& value : *values.getArray()) {
-        if (!value.isObject() || value.getProperty("kind", {}).toString() != "plugin" ||
-            static_cast<bool>(value.getProperty("disabledPlaceholder", false)))
-            continue;
-        const auto id = value.getProperty("id", {}).toString();
-        const auto path = value.getProperty("path", {}).toString();
+    for (const auto& value : values) {
+        const auto& id = value.id;
+        const auto& path = value.path;
         if (id.isEmpty() || path.isEmpty()) {
             error = "Plugin Chain devices require an id and path.";
             return false;
@@ -28,7 +21,7 @@ bool PluginChain::load(const juce::var& values, const double sampleRate, const i
                     loadError->message;
             return false;
         }
-        if (!rack->applyPersistedState(value, error)) {
+        if (!rack->applyPersistedState(value.state, error)) {
             error = runtimeRole + " device " + id + " failed at stateApply: " + error;
             return false;
         }
@@ -113,22 +106,15 @@ bool PluginChain::setParameter(const juce::String& deviceId, const int parameter
     return found->rack->setParameter(parameterIndex, value, error);
 }
 
-bool PluginChain::applyState(const juce::var& values, juce::String& error) noexcept {
-    if (!values.isArray()) {
-        error = "Plugin Chain state must be an array.";
-        return false;
-    }
-    for (const auto& value : *values.getArray()) {
-        if (!value.isObject() || value.getProperty("kind", {}).toString() != "plugin" ||
-            static_cast<bool>(value.getProperty("disabledPlaceholder", false)))
-            continue;
-        const auto deviceId = value.getProperty("id", {}).toString();
-        auto* rack = findDevice(deviceId);
+bool PluginChain::applyState(const std::vector<PluginDeviceSpec>& values,
+                             juce::String& error) noexcept {
+    for (const auto& value : values) {
+        auto* rack = findDevice(value.id);
         if (rack == nullptr) {
             error = "Plugin Chain state references an unknown device.";
             return false;
         }
-        if (!rack->applyPersistedState(value, error)) return false;
+        if (!rack->applyPersistedState(value.state, error)) return false;
     }
     return true;
 }

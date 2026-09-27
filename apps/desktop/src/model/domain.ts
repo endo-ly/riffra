@@ -87,7 +87,6 @@ export type {
   RenderResult,
   ScanIssue,
   ScanReport,
-  SessionAudioPair,
   SessionSettings,
   TimelineLoopRange,
   TimelinePunchRange,

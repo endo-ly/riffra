@@ -30,12 +30,8 @@ use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
 use crate::model::{AudioStatus, RuntimeProjectionStatus};
 use crate::recording::{self, RecordingContext};
 use crate::render::{self, RenderOptions, RenderResult};
-use crate::runtime::{RuntimeError, RuntimeReconciler};
-use crate::session::{
-    adapter as session_adapter,
-    commit::{self, CanonicalMutationEffect},
-    context::SessionContext,
-};
+use crate::runtime::RuntimeError;
+use crate::session::{adapter as session_adapter, commit, context::SessionContext};
 use crate::startup;
 use crate::{
     AudioDeviceReopenOutcome, AudioDriverConfig, AudioPreferences, AudioPreferencesStore,
@@ -308,11 +304,6 @@ impl DawHost {
     /// Returns the canonical Core shared with the Host's control server.
     pub fn core(&self) -> &AppCore<AudioSupervisor> {
         &self.state.core
-    }
-
-    /// Returns the Runtime reconciler shared with the Host.
-    pub fn runtime(&self) -> &RuntimeReconciler<AudioSupervisor> {
-        &self.state.runtime
     }
 
     /// Returns the Data Root owned by the Host.

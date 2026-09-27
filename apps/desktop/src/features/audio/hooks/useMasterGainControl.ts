@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  AudioStatus,
-  CanonicalState,
-  CreativeSession,
-  SessionAudioPair,
-} from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
 import { getHostGeneration, getProjectEpoch } from '@/native/invoke';
 import type { AudioApi } from '@/native/native-api';
 
@@ -17,7 +12,6 @@ interface PendingCommit {
 interface UseMasterGainControlOptions {
   session: CreativeSession;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
-  setAudio: (audio: AudioStatus) => void;
   api: MasterGainControlApi;
   disabled?: boolean;
 }
@@ -26,7 +20,6 @@ interface UseMasterGainControlOptions {
 export function useMasterGainControl({
   session,
   applyCanonicalState,
-  setAudio,
   api,
   disabled = false,
 }: UseMasterGainControlOptions) {
@@ -137,7 +130,7 @@ export function useMasterGainControl({
       }
       try {
         if (gainDb === lastCommittedDb.current) return;
-        const result: SessionAudioPair = await api.setMasterGainDb(gainDb);
+        const result: ArrangementMutationResult = await api.setMasterGainDb(gainDb);
         if (
           disposed.current ||
           getHostGeneration() !== generationAtRequest ||
@@ -147,7 +140,6 @@ export function useMasterGainControl({
         if (!applyCanonicalState(result.canonical)) return;
         lastCommittedDb.current = result.canonical.session.settings.masterDb;
         canonicalDb.current = result.canonical.session.settings.masterDb;
-        setAudio(result.audio);
         setDraftDb(result.canonical.session.settings.masterDb);
       } catch {
         if (
@@ -177,7 +169,7 @@ export function useMasterGainControl({
           pendingCommit.current = null;
       }
     },
-    [api, applyCanonicalState, disabled, setAudio],
+    [api, applyCanonicalState, disabled],
   );
 
   const beginEditing = useCallback(() => {

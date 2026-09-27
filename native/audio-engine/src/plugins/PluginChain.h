@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "PluginRack.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
 
@@ -12,8 +13,8 @@ class TimelineEngineTestPeer;
 
 class PluginChain final {
 public:
-    bool load(const juce::var& devices, double sampleRate, int blockSize, juce::String& error,
-              const juce::String& runtimeRole);
+    bool load(const std::vector<PluginDeviceSpec>& devices, double sampleRate, int blockSize,
+              juce::String& error, const juce::String& runtimeRole);
     void prepare(double sampleRate, int blockSize) noexcept;
     void reset() noexcept;
     void release() noexcept;
@@ -25,7 +26,7 @@ public:
     bool setBypassed(const juce::String& deviceId, bool bypassed) noexcept;
     bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
                       juce::String& error) noexcept;
-    bool applyState(const juce::var& devices, juce::String& error) noexcept;
+    bool applyState(const std::vector<PluginDeviceSpec>& devices, juce::String& error) noexcept;
     [[nodiscard]] juce::var persistedState(const juce::String& deviceId, juce::String& error) const;
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;

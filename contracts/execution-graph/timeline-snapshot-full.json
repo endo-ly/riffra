@@ -1,0 +1,265 @@
+{
+  "projectId": "project-full",
+  "revision": 23,
+  "graph": {
+    "timebase": {
+      "ppq": 960,
+      "bpm": 123.5,
+      "timeSignatureNumerator": 7,
+      "timeSignatureDenominator": 8
+    },
+    "loopRange": {
+      "enabled": true,
+      "startTick": 120,
+      "endTick": 3840
+    },
+    "punchRange": {
+      "startTick": 240,
+      "endTick": 1920
+    },
+    "metronomeEnabled": true,
+    "masterGainDb": -6.0,
+    "tracks": [
+      {
+        "id": "track-audio",
+        "kind": "audio",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitoring": "off",
+        "audioInput": {
+          "channelIndex": 2
+        },
+        "midiInput": {
+          "deviceId": null,
+          "channel": null
+        },
+        "volumeAutomation": [
+          {
+            "tick": 0,
+            "value": 1.0
+          }
+        ],
+        "panAutomation": [
+          {
+            "tick": 960,
+            "value": -0.5
+          }
+        ],
+        "effects": [],
+        "instrument": null,
+        "audioClips": [
+          {
+            "id": "audio-linear-raw",
+            "path": "audio/one.wav",
+            "sourceSampleRate": 48000,
+            "sourceStartFrame": 0,
+            "sourceEndFrame": 48000,
+            "durationFrames": 48000,
+            "durationSampleRate": 48000,
+            "startTick": 0,
+            "fadeInFrames": 0,
+            "fadeOutFrames": 0,
+            "fadeShape": "linear",
+            "gainDb": 0.0,
+            "pan": 0.0,
+            "takeVariant": "raw",
+            "loopEnabled": false,
+            "muted": false
+          },
+          {
+            "id": "audio-equal-processed",
+            "path": "audio/two.wav",
+            "sourceSampleRate": 44100,
+            "sourceStartFrame": 1,
+            "sourceEndFrame": 44101,
+            "durationFrames": 44100,
+            "durationSampleRate": 44100,
+            "startTick": 960,
+            "fadeInFrames": 128,
+            "fadeOutFrames": 256,
+            "fadeShape": "equalPower",
+            "gainDb": -3.0,
+            "pan": 0.5,
+            "takeVariant": "processed",
+            "loopEnabled": true,
+            "muted": true
+          },
+          {
+            "id": "audio-smooth",
+            "path": "audio/three.wav",
+            "sourceSampleRate": 48000,
+            "sourceStartFrame": 0,
+            "sourceEndFrame": 24000,
+            "durationFrames": 24000,
+            "durationSampleRate": 48000,
+            "startTick": 1920,
+            "fadeInFrames": 32,
+            "fadeOutFrames": 64,
+            "fadeShape": "smooth",
+            "gainDb": 2.0,
+            "pan": -0.5,
+            "takeVariant": "raw",
+            "loopEnabled": false,
+            "muted": false
+          }
+        ],
+        "midiClips": []
+      },
+      {
+        "id": "track-internal",
+        "kind": "instrument",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitoring": "auto",
+        "audioInput": null,
+        "midiInput": {
+          "deviceId": "midi-device",
+          "channel": 16
+        },
+        "volumeAutomation": [
+          {
+            "tick": 0,
+            "value": 1.0
+          }
+        ],
+        "panAutomation": [
+          {
+            "tick": 960,
+            "value": -0.5
+          }
+        ],
+        "effects": [],
+        "instrument": {
+          "type": "internal",
+          "id": "instrument-internal",
+          "bypassed": true,
+          "definitionJson": "{\"schemaVersion\":1}",
+          "definitionBaseDir": "instruments/builtin/preset"
+        },
+        "audioClips": [],
+        "midiClips": [
+          {
+            "id": "midi-1",
+            "startTick": 120,
+            "durationTicks": 960,
+            "loopEnabled": true,
+            "muted": false,
+            "notes": [
+              {
+                "startTick": 0,
+                "durationTicks": 480,
+                "note": 60,
+                "velocity": 100,
+                "channel": 1
+              }
+            ],
+            "events": [
+              {
+                "kind": "pitchBend",
+                "tick": 100,
+                "channel": 1,
+                "data1": 1,
+                "data2": 2
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "track-vst",
+        "kind": "instrument",
+        "gainDb": 1.5,
+        "pan": -0.25,
+        "muted": false,
+        "solo": true,
+        "armed": true,
+        "monitoring": "on",
+        "audioInput": null,
+        "midiInput": {
+          "deviceId": null,
+          "channel": null
+        },
+        "volumeAutomation": [
+          {
+            "tick": 0,
+            "value": 1.0
+          }
+        ],
+        "panAutomation": [
+          {
+            "tick": 960,
+            "value": -0.5
+          }
+        ],
+        "effects": [
+          {
+            "id": "fx-1",
+            "path": "plugins/fx.vst3",
+            "state": {
+              "stateData": "opaque-state",
+              "parameterValues": [
+                0.25,
+                0.75
+              ],
+              "bypassed": false
+            }
+          }
+        ],
+        "instrument": {
+          "type": "vst3",
+          "id": "instrument-vst",
+          "path": "plugins/instrument.vst3",
+          "state": {
+            "stateData": null,
+            "parameterValues": [
+              0.25,
+              0.75
+            ],
+            "bypassed": false
+          }
+        },
+        "audioClips": [],
+        "midiClips": [
+          {
+            "id": "midi-1",
+            "startTick": 120,
+            "durationTicks": 960,
+            "loopEnabled": true,
+            "muted": false,
+            "notes": [
+              {
+                "startTick": 0,
+                "durationTicks": 480,
+                "note": 60,
+                "velocity": 100,
+                "channel": 1
+              }
+            ],
+            "events": [
+              {
+                "kind": "channelPressure",
+                "tick": 100,
+                "channel": 1,
+                "data1": 1,
+                "data2": 2
+              },
+              {
+                "kind": "controlChange",
+                "tick": 200,
+                "channel": 1,
+                "data1": 7,
+                "data2": 64
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

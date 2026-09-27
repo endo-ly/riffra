@@ -6,14 +6,14 @@
 //! change never exposes partially restored audio.
 
 use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT};
+use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
 use riffra_core::{AppCore, CanonicalSnapshot};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const STARTUP_SAFETY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -115,7 +115,6 @@ trait StartupAudioPort {
         generation: u64,
         timeout: Duration,
     ) -> NativeAudioResult<u64>;
-    fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus>;
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus>;
 }
 
@@ -138,10 +137,6 @@ impl StartupAudioPort for AudioSupervisor {
         timeout: Duration,
     ) -> NativeAudioResult<u64> {
         self.wait_for_next_generation(generation, timeout)
-    }
-
-    fn set_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<AudioStatus> {
-        self.set_master_gain_db(gain_db)
     }
 
     fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
@@ -181,14 +176,13 @@ where
                     return Err(error);
                 }
             };
-            let status =
-                match initialize_audio_safety(core, target.canonical.session.settings.master_db) {
-                    Ok(status) => status,
-                    Err(error) => {
-                        core.audio().mark_startup_failed();
-                        return Err(error);
-                    }
-                };
+            let status = match initialize_audio_safety(core) {
+                Ok(status) => status,
+                Err(error) => {
+                    core.audio().mark_startup_failed();
+                    return Err(error);
+                }
+            };
             last_status = Some(status.clone());
             if !safe_for_startup_restore(&status) {
                 core.audio().mark_startup_failed();
@@ -305,16 +299,12 @@ where
     ))
 }
 
-fn initialize_audio_safety(
-    core: &AppCore<AudioSupervisor>,
-    master_gain_db: f64,
-) -> Result<AudioStatus, String> {
-    initialize_audio_safety_with(core.audio(), master_gain_db, STARTUP_SAFETY_TIMEOUT)
+fn initialize_audio_safety(core: &AppCore<AudioSupervisor>) -> Result<AudioStatus, String> {
+    initialize_audio_safety_with(core.audio(), STARTUP_SAFETY_TIMEOUT)
 }
 
 fn initialize_audio_safety_with<A: StartupAudioPort>(
     audio: &A,
-    master_gain_db: f64,
     timeout: Duration,
 ) -> Result<AudioStatus, String> {
     let deadline = Instant::now() + timeout;
@@ -327,7 +317,7 @@ fn initialize_audio_safety_with<A: StartupAudioPort>(
             retry_generation = Some(generation);
             control_retries = 0;
         }
-        match initialize_safety_generation(audio, generation, master_gain_db) {
+        match initialize_safety_generation(audio, generation) {
             Ok(status) if audio.current_generation() == generation => return Ok(status),
             Ok(_) => continue,
             Err(error) => {
@@ -357,14 +347,10 @@ fn initialize_audio_safety_with<A: StartupAudioPort>(
 fn initialize_safety_generation<A: StartupAudioPort>(
     audio: &A,
     generation: u64,
-    master_gain_db: f64,
 ) -> Result<AudioStatus, StartupError> {
     audio
         .wait_until_ready(generation, SIDECAR_READY_TIMEOUT)
         .map_err(StartupError::Readiness)?;
-    audio
-        .set_master_gain_db(master_gain_db)
-        .map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
     let status = audio.refresh_status().map_err(StartupError::Control)?;
     ensure_generation(audio, generation)?;
@@ -387,12 +373,12 @@ fn restore_startup_runtime(
 
     runtime
         .apply_and_wait(
-            runtime_timeline_snapshot(
+            Arc::new(project_session(
                 data_root,
                 built_in_instruments,
                 &target.project_id,
                 &target.canonical.session,
-            ),
+            )),
             riffra_core::ProjectionKey {
                 sequence: target.canonical.sequence,
                 session_revision: target.canonical.session.arrangement.revision,
@@ -597,11 +583,6 @@ mod tests {
             Ok(2)
         }
 
-        fn set_master_gain_db(&self, _gain_db: f64) -> NativeAudioResult<AudioStatus> {
-            self.record("gain");
-            Ok(Self::status(AudioState::Muted))
-        }
-
         fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
             self.record("status");
             Ok(Self::status(self.status_state))
@@ -612,12 +593,12 @@ mod tests {
     fn keeps_output_muted_while_retrying_transport_loss_on_a_new_generation() {
         let audio = FakeStartupAudio::new(AudioState::Muted, true);
 
-        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Muted);
         assert_eq!(
             audio.events.lock().unwrap().as_slice(),
-            ["lost", "ready", "gain", "status"]
+            ["lost", "ready", "status"]
         );
     }
 
@@ -625,7 +606,7 @@ mod tests {
     fn does_not_release_mute_for_a_faulted_status() {
         let audio = FakeStartupAudio::new(AudioState::Faulted, false);
 
-        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Faulted);
         assert!(!safe_for_startup_restore(&status));
@@ -635,7 +616,7 @@ mod tests {
     fn retains_a_muted_status_while_preparing_the_runtime() {
         let audio = FakeStartupAudio::new(AudioState::Muted, false);
 
-        let status = initialize_audio_safety_with(&audio, 0.0, Duration::from_secs(1)).unwrap();
+        let status = initialize_audio_safety_with(&audio, Duration::from_secs(1)).unwrap();
 
         assert_eq!(status.state, AudioState::Muted);
         assert!(safe_for_startup_restore(&status));

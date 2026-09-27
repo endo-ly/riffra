@@ -1,43 +1,14 @@
 //! Host adapters from Core session and transport decisions to the runtime.
 
+use crate::RuntimeDriver;
+use crate::execution::project_session;
 use crate::session::context::SessionContext;
 use crate::session::error::AdapterError;
-use crate::{RuntimeDriver, RuntimeReconciler};
-use riffra_core::{
-    CreativeSession, PortError, RuntimeProjection, RuntimeProjectionRequest, TimelineTick,
-};
-use std::path::Path;
+use riffra_core::CreativeSession;
+use std::sync::Arc;
 use std::time::Duration;
 
-pub use crate::runtime_snapshot::{offline_runtime_timeline_snapshot, runtime_timeline_snapshot};
-
 const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
-
-struct RuntimeProjectionAdapter<'a, D: RuntimeDriver> {
-    data_root: &'a Path,
-    built_in_instruments: &'a crate::instrument::BuiltInInstrumentCatalog,
-    runtime: &'a RuntimeReconciler<D>,
-    project_id: String,
-}
-
-impl<D: RuntimeDriver> RuntimeProjection for RuntimeProjectionAdapter<'_, D> {
-    fn project(&self, request: RuntimeProjectionRequest) -> Result<(), PortError> {
-        let key = riffra_core::ProjectionKey {
-            sequence: request.sequence(),
-            session_revision: request.session().arrangement.revision,
-        };
-        let snapshot = runtime_timeline_snapshot(
-            self.data_root,
-            self.built_in_instruments,
-            &self.project_id,
-            request.session(),
-        );
-        self.runtime
-            .apply_and_wait(snapshot, key, ARRANGEMENT_RUNTIME_TIMEOUT)
-            .map(|_| ())
-            .map_err(|error| PortError::Runtime(error.to_string()))
-    }
-}
 
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
@@ -46,18 +17,23 @@ pub fn sync_arrangement_runtime<D: RuntimeDriver>(
         .storage
         .project_id()
         .map_err(|error| error.to_string())?;
-    let projection = RuntimeProjectionAdapter {
-        data_root: context.data_root,
-        built_in_instruments: context.built_in_instruments,
-        runtime: context.runtime,
-        project_id,
-    };
+    let canonical = context.core.snapshot().map_err(|error| error.to_string())?;
     context
-        .core
-        .application(&context.storage)
-        .project_current(&projection)
-        .map_err(|error| error.to_string())?;
-    Ok(context.runtime.status())
+        .runtime
+        .apply_and_wait(
+            Arc::new(project_session(
+                context.data_root,
+                context.built_in_instruments,
+                &project_id,
+                &canonical.session,
+            )),
+            riffra_core::ProjectionKey {
+                sequence: canonical.sequence,
+                session_revision: canonical.session.arrangement.revision,
+            },
+            ARRANGEMENT_RUNTIME_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())
 }
 
 /// Prepares a proposed Arrangement graph before its Session becomes
@@ -82,12 +58,12 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
     context
         .runtime
         .apply_candidate_and_wait(
-            runtime_timeline_snapshot(
+            Arc::new(project_session(
                 context.data_root,
                 context.built_in_instruments,
                 &project_id,
                 candidate,
-            ),
+            )),
             riffra_core::ProjectionKey {
                 sequence: expected_sequence.saturating_add(1),
                 session_revision: candidate.arrangement.revision,
@@ -95,45 +71,6 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
             ARRANGEMENT_RUNTIME_TIMEOUT,
         )
         .map_err(|error| AdapterError::runtime(error.to_string()))
-}
-
-pub fn play_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    // Play registers a transport intent for the current canonical key. When
-    // nothing in flight can produce that key anymore, the canonical
-    // projection is resubmitted so the armed intent plays on activation.
-    let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    let outcome = context
-        .runtime
-        .request_play_when_ready(riffra_core::ProjectionKey {
-            sequence: projection.sequence,
-            session_revision: projection.session.arrangement.revision,
-        })
-        .map_err(|error| error.to_string())?;
-    if outcome == crate::runtime::PlayStart::Stalled {
-        crate::session::adapter::arrangement_mutation_result(context)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-pub fn stop_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    context.runtime.stop().map(|_| ()).map_err(String::from)
-}
-
-pub fn go_to_start_timeline(context: &SessionContext<'_>) -> Result<(), String> {
-    context
-        .runtime
-        .stop_and_seek_to_start(|| {
-            context
-                .audio
-                .seek_timeline(0)
-                .map_err(crate::RuntimeError::from)
-        })
-        .map_err(String::from)
-}
-
-pub fn seek_timeline(context: &SessionContext<'_>, tick: TimelineTick) -> Result<(), String> {
-    context.audio.seek_timeline(tick.0).map_err(String::from)
 }
 
 #[cfg(test)]
@@ -164,16 +101,13 @@ mod tests {
         )
         .unwrap();
         let catalog = crate::instrument::BuiltInInstrumentCatalog::load(&resource_root).unwrap();
-        let snapshot = offline_runtime_timeline_snapshot(&resource_root, &catalog, &session);
+        let projection = project_session(&resource_root, &catalog, "project", &session);
 
         assert_eq!(
-            snapshot["missingDeviceIds"],
-            serde_json::json!(["device:missing"])
+            projection.diagnostics.missing_device_ids,
+            ["device:missing"]
         );
-        assert_eq!(
-            snapshot["tracks"][0]["instrument"]["disabledPlaceholder"],
-            true
-        );
+        assert!(projection.snapshot.graph.tracks[0].instrument.is_none());
         assert!(
             !session.arrangement.tracks[0]
                 .instrument

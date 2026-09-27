@@ -61,9 +61,6 @@ pub enum ApplicationError {
     /// A state lock was poisoned and the operation was not attempted.
     #[error("canonical state lock is poisoned")]
     StateLock,
-    /// The runtime rejected a projection after the canonical commit completed.
-    #[error("runtime projection failed: {0}")]
-    Runtime(String),
     /// No history entry is available for the requested direction.
     #[error("history is empty")]
     HistoryEmpty,

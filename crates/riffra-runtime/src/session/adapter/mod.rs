@@ -27,20 +27,17 @@ use std::path::Path;
 
 use crate::RuntimeDriver;
 use crate::asset;
-use crate::model::{AudioStatus, SessionAudioPair};
+use crate::model::AudioStatus;
 use crate::plugins;
 use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
 
 pub use crate::session::commit::{
-    arrangement_mutation_result, arrangement_mutation_without_projection, commit_core_application,
-    commit_core_application_with_created_ids, publish_canonical_state, restore_generation,
+    arrangement_mutation_result, commit_core_application, commit_core_application_with_created_ids,
+    publish_canonical_state, restore_generation,
 };
 pub use crate::session::context::{SessionContext, current_session};
 pub use crate::session::error::AdapterError;
-pub use crate::session::transport::{
-    go_to_start_timeline, play_timeline, prepare_arrangement_candidate, seek_timeline,
-    stop_timeline, sync_arrangement_runtime,
-};
+pub use crate::session::transport::{prepare_arrangement_candidate, sync_arrangement_runtime};
 use riffra_core::application::SessionSettingsPatch;
 
 pub fn undo(

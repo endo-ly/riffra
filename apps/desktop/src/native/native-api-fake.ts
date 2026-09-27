@@ -189,6 +189,7 @@ export class FakeNativeApi implements NativeApi {
       preparedSessionRevision: null,
       activeProjectionSequence: null,
       activeSessionRevision: null,
+      activeDiagnostics: null,
       runtimeGeneration: 1,
       audioEnvironmentRevision: 0,
       targetAudioEnvironmentRevision: null,
@@ -737,8 +738,6 @@ export class FakeNativeApi implements NativeApi {
       armedTrackIds: [],
       clockGeneration: 0,
       discontinuity: 0,
-      unavailableClipIds: [],
-      missingDeviceIds: [],
       instrumentFaults: [],
       ...status,
     };
@@ -1020,12 +1019,6 @@ export class FakeNativeApi implements NativeApi {
         finalization: { state: 'notRequired' },
       });
     }
-    if (sessionAudioMethodNames.has(name)) {
-      return Promise.resolve({
-        canonical: this.bootstrapState.canonical,
-        audio: this.audio,
-      });
-    }
     if (arrangementMutationMethodNames.has(name)) {
       const result: ArrangementMutationResult = {
         canonical: this.bootstrapState.canonical,
@@ -1061,9 +1054,8 @@ export class FakeNativeApi implements NativeApi {
   }
 }
 
-const sessionAudioMethodNames = new Set<keyof NativeApi>(['setMasterGainDb']);
-
 const arrangementMutationMethodNames = new Set<keyof NativeApi>([
+  'setMasterGainDb',
   'relinkMissingDependency',
   'restoreRecoveryGeneration',
   'undoSession',

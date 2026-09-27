@@ -152,11 +152,7 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
     return true;
 }
 
-bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error) noexcept {
-    if (!state.isObject()) {
-        error = "Plugin persisted state must be an object.";
-        return false;
-    }
+bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept {
     try {
         FaultInjection::before(FaultStage::stateApply);
     } catch (const std::exception& exception) {
@@ -167,16 +163,15 @@ bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error
         error = "Fault injection interrupted VST3 state application.";
         return false;
     }
-    const auto stateData = state.getProperty("stateData", {}).toString();
-    if (stateData.isNotEmpty()) {
-        if (!applyStateData(stateData, error)) return false;
+    if (state.stateData.has_value() && state.stateData->isNotEmpty()) {
+        if (!applyStateData(*state.stateData, error)) return false;
     }
-    const auto values = state.getProperty("parameterValues", {});
-    if (values.isArray()) {
+    {
         const auto available = parameterStatus().getProperty("parameters", {});
         const auto count = available.isArray() ? available.size() : 0;
-        for (int index = 0; index < std::min(values.size(), count); ++index) {
-            const auto target = static_cast<float>(values[index]);
+        for (int index = 0; index < std::min(static_cast<int>(state.parameterValues.size()), count);
+             ++index) {
+            const auto target = state.parameterValues[static_cast<std::size_t>(index)];
             const auto availableIndex = static_cast<int>(available[index].getProperty("index", -1));
             const auto current = static_cast<float>(available[index].getProperty("value", target));
             // VST instruments often expose thousands of parameters, most of
@@ -190,7 +185,7 @@ bool PluginRack::applyPersistedState(const juce::var& state, juce::String& error
             if (!setParameter(index, target, error)) return false;
         }
     }
-    setBypassed(static_cast<bool>(state.getProperty("bypassed", false)));
+    setBypassed(state.bypassed);
     return true;
 }
 

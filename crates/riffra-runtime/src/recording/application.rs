@@ -30,6 +30,7 @@ use std::sync::Arc;
 use crate::HostEvent;
 use crate::asset;
 use crate::audio::AudioSupervisor;
+use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::jobs::JobRegistry;
 use crate::library;
@@ -40,8 +41,7 @@ use crate::model::{
 use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
-use crate::runtime_snapshot::runtime_timeline_snapshot;
-use crate::session::commit::{self, CanonicalMutationEffect};
+use crate::session::commit;
 use riffra_core::AppCore;
 use riffra_core::{
     AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, Provenance,
@@ -58,7 +58,7 @@ use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
 pub struct RecordingContext {
     pub core: Arc<AppCore<AudioSupervisor>>,
     pub audio: AudioSupervisor,
-    pub runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
+    pub(crate) runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     pub storage: riffra_host::SessionStore,
     pub data_root: PathBuf,
     pub built_in_instruments: Arc<BuiltInInstrumentCatalog>,
@@ -126,12 +126,12 @@ fn start_recording_in_session(
         .project_id()
         .map_err(|error| error.to_string())?;
     context.runtime.apply_and_wait(
-        runtime_timeline_snapshot(
+        Arc::new(project_session(
             &context.data_root,
             context.built_in_instruments.as_ref(),
             &project_id,
             &session,
-        ),
+        )),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
             session_revision: session.arrangement.revision,
@@ -1187,7 +1187,6 @@ fn finalize_arrange_recording(
         context.built_in_instruments.as_ref(),
         &project_id,
         context.safe_mode,
-        CanonicalMutationEffect::ProjectArrangement,
     )
 }
 
@@ -1654,7 +1653,6 @@ fn place_recording_on_timeline(
         context.built_in_instruments.as_ref(),
         &project_id,
         context.safe_mode,
-        CanonicalMutationEffect::ProjectArrangement,
     )?))
 }
 

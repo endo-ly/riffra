@@ -86,7 +86,7 @@ bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
     for (const auto& track : timeline->tracks) {
         if (track->runtime == nullptr || track->runtime->instrumentTrack || !track->runtime->armed)
             continue;
-        finalizedRecordingTracks.push_back({track->id, track->effectState});
+        finalizedRecordingTracks.push_back({track->id, track->effects});
     }
     for (auto& trackPtr : timeline->tracks) {
         auto& track = *trackPtr;
@@ -168,7 +168,7 @@ bool TimelineEngine::generateProcessedVariants(
         }
         PluginChain offlineEffects;
         if (progress) progress();
-        if (!offlineEffects.load(track.effectState, sampleRate, blockSize, error,
+        if (!offlineEffects.load(track.effects, sampleRate, blockSize, error,
                                  track.id + "/offline-processing"))
             return false;
         if (progress) progress();

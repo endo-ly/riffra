@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 
+#include "../timeline/TimelineTestSupport.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceCallback.h"
 #include "device/AudioDeviceController.h"
@@ -13,39 +14,13 @@
 namespace riffra {
 namespace {
 
-juce::var makeArmedAudioSnapshot() {
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    auto* audioInput = new juce::DynamicObject();
-    audioInput->setProperty("channelIndex", 0);
-    auto* rack = new juce::DynamicObject();
-    rack->setProperty("devices", juce::Array<juce::var>{});
-    auto* track = new juce::DynamicObject();
-    track->setProperty("id", "track:recording");
-    track->setProperty("kind", "audio");
-    track->setProperty("gainDb", 0.0);
-    track->setProperty("pan", 0.0);
-    track->setProperty("muted", false);
-    track->setProperty("solo", false);
-    track->setProperty("armed", true);
-    track->setProperty("monitoring", "off");
-    track->setProperty("audioInput", juce::var(audioInput));
-    track->setProperty("rack", juce::var(rack));
-    track->setProperty("audioClips", juce::Array<juce::var>{});
-    track->setProperty("midiClips", juce::Array<juce::var>{});
-    track->setProperty("automation", juce::Array<juce::var>{});
-
-    juce::Array<juce::var> tracks;
-    tracks.add(juce::var(track));
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", tracks);
-    return juce::var(snapshot);
+TimelineSnapshotSpec makeArmedAudioSnapshot() {
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:recording");
+    track.armed = true;
+    track.audioInput = AudioInputSpec{0};
+    snapshot.graph.tracks.push_back(std::move(track));
+    return snapshot;
 }
 
 TEST(AudioDeviceControllerTest, DeviceLossRequiresFaultOnlyOutsideTransition) {
@@ -60,7 +35,7 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
     formats.registerBasicFormats();
     TimelineEngine timeline;
     juce::String error;
-    ASSERT_TRUE(timeline.loadSnapshot(makeArmedAudioSnapshot(), formats, 48'000.0, 32, error));
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeArmedAudioSnapshot(), formats, 48'000.0, 32, error));
     AudioRenderPipeline pipeline(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     pipeline.recording().setFinalizationDispatcher(

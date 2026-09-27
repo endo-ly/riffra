@@ -96,7 +96,7 @@ fn apply<A>(
             .application(&dispatcher.storage)
             .set_track_instrument(&params.track_id, Some(instrument))
             .map_err(DispatchError::from)?;
-        dispatcher.session_with_effect(committed, CanonicalMutationEffect::ProjectArrangement)
+        dispatcher.session(committed)
     } else if params.instrument_id.starts_with("user:") {
         let store = UserInstrumentStore::new(&dispatcher.data_root, &dispatcher.sonalloy);
         let user = store
@@ -129,7 +129,7 @@ fn apply<A>(
                 return Err(DispatchError::from(error));
             }
         };
-        dispatcher.session_with_effect(committed, CanonicalMutationEffect::ProjectArrangement)
+        dispatcher.session(committed)
     } else {
         return Err(DispatchError::invalid_request(format!(
             "instrument id must start with builtin: or user: ({})",

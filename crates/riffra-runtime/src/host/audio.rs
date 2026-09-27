@@ -1,6 +1,7 @@
 use super::control::{audio_error, command_error};
 use super::*;
 use crate::NativeAudioError;
+use std::sync::Arc;
 use std::time::Duration;
 
 impl HostState {
@@ -165,12 +166,12 @@ impl HostState {
             .map_err(|error| error.to_string())?;
         self.runtime
             .apply_and_wait(
-                crate::runtime_snapshot::runtime_timeline_snapshot(
+                Arc::new(crate::execution::project_session(
                     &self.data_root,
                     self.built_in_instruments.as_ref(),
                     &project_id,
                     &snapshot.session,
-                ),
+                )),
                 riffra_core::ProjectionKey {
                     sequence: snapshot.sequence,
                     session_revision: snapshot.session.arrangement.revision,
@@ -179,13 +180,6 @@ impl HostState {
             )
             .map(|_| ())
             .map_err(|error| error.to_string())
-            .and_then(|()| {
-                self.core
-                    .audio()
-                    .set_master_gain_db(snapshot.session.settings.master_db)
-                    .map(|_| ())
-                    .map_err(|error| error.to_string())
-            })
     }
 
     pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {

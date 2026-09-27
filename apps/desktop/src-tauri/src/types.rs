@@ -14,7 +14,7 @@ use crate::model::{
     AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, DeviceChannels,
     MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState, ProjectState,
     RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
-    RuntimeProjectionStatus, SessionAudioPair,
+    RuntimeProjectionStatus,
 };
 use crate::plugins::{
     PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanIssue, ScanReport,
@@ -39,8 +39,8 @@ use riffra_runtime::{
     ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
     DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
-    PluginStateSnapshot, RuntimeProjectionState, TrackDeviceSummary, TrackRackSummary,
-    TrackSummary,
+    PluginStateSnapshot, ProjectionDiagnostics, RuntimeProjectionState, TrackDeviceSummary,
+    TrackRackSummary, TrackSummary,
 };
 use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
@@ -112,8 +112,8 @@ fn export_types() {
     AudioDiagnosticsRealtime::export_all(&cfg).expect("AudioDiagnosticsRealtime bindings");
     AudioDiagnosticsOutput::export_all(&cfg).expect("AudioDiagnosticsOutput bindings");
     RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
+    ProjectionDiagnostics::export_all(&cfg).expect("ProjectionDiagnostics bindings");
     RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");
-    SessionAudioPair::export_all(&cfg).expect("SessionAudioPair bindings");
     RecordingStopResult::export_all(&cfg).expect("RecordingStopResult bindings");
     RecordingFinalizationOutcome::export_all(&cfg).expect("RecordingFinalizationOutcome bindings");
     ArrangementMutationResult::export_all(&cfg).expect("ArrangementMutationResult bindings");

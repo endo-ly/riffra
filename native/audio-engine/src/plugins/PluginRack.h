@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "concurrency/BoundedMpmcQueue.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
 
@@ -38,7 +39,7 @@ public:
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setProgram(int index, juce::String& error);
-    bool applyPersistedState(const juce::var& state, juce::String& error) noexcept;
+    bool applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept;
     [[nodiscard]] juce::var persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,

@@ -115,7 +115,7 @@ CommandResult AudioCommandDispatcher::dispatchSafety(const juce::var& command) {
         return {};
     }
 
-    if (type == "setMasterGainDb") {
+    if (type == "previewMasterGainDb") {
         context.pipeline.setMasterGainDb(
             static_cast<float>(command.getProperty("gainDb", context.pipeline.getMasterGainDb())));
         writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),

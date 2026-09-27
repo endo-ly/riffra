@@ -61,7 +61,6 @@ function Harness({
         setSelection={setSelection}
         api={api}
         audio={api.audio}
-        setAudio={() => undefined}
         focusedTrackId={focusedTrackId}
         onFocusTrack={setFocusedTrackId}
         onToggleTransport={onToggleTransport ?? (() => undefined)}
@@ -1220,17 +1219,29 @@ describe('WorkspaceArrange', () => {
       armedTrackIds: [],
       clockGeneration: 1,
       discontinuity: 1,
-      unavailableClipIds: ['clip:missing'],
-      missingDeviceIds: [],
       instrumentFaults: [],
     };
+    const runtimeProjectionStatus = {
+      ...api.runtimeProjection,
+      activeDiagnostics: {
+        unavailableClipIds: ['clip:missing'],
+        missingDeviceIds: [],
+      },
+    } satisfies RuntimeProjectionStatus;
     api.onTransportStatus = (callback) => {
       queueMicrotask(() => callback(status));
       return () => undefined;
     };
 
-    render(<Harness api={api} initialSession={session} />);
+    render(
+      <Harness
+        api={api}
+        initialSession={session}
+        runtimeProjectionStatus={runtimeProjectionStatus}
+      />,
+    );
 
+    expect(await screen.findByText(/Playback skipped 1 missing source/)).toBeInTheDocument();
     expect(await screen.findByText('Lost Take')).toBeInTheDocument();
     expect((await screen.findAllByText('MISSING SOURCE')).length).toBeGreaterThan(0);
     expect(document.querySelector('[data-clip-id="clip:missing"]')).toBeInTheDocument();

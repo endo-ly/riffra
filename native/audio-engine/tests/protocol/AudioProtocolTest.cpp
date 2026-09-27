@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "../timeline/TimelineTestSupport.h"
 #include "app/AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
 #include "device/AudioDeviceService.h"
@@ -12,19 +13,10 @@ namespace riffra {
 
 namespace {
 
-juce::var makeProjectSnapshot(const juce::String& projectId) {
-    auto* timebase = new juce::DynamicObject();
-    timebase->setProperty("ppq", 960);
-    timebase->setProperty("bpm", 120.0);
-    timebase->setProperty("timeSignatureNumerator", 4);
-    timebase->setProperty("timeSignatureDenominator", 4);
-
-    auto* snapshot = new juce::DynamicObject();
-    snapshot->setProperty("projectId", projectId);
-    snapshot->setProperty("revision", 1);
-    snapshot->setProperty("timebase", juce::var(timebase));
-    snapshot->setProperty("tracks", juce::Array<juce::var>{});
-    return juce::var(snapshot);
+TimelineSnapshotSpec makeProjectSnapshot(const juce::String& projectId) {
+    auto snapshot = makeTestSnapshot();
+    snapshot.projectId = projectId;
+    return snapshot;
 }
 
 }  // namespace
@@ -88,8 +80,8 @@ TEST(AudioDeviceServiceTest, ReportsSafeInitialMeterAndStatusContracts) {
     formats.registerBasicFormats();
     juce::String error;
 
-    ASSERT_TRUE(
-        timeline.loadSnapshot(makeProjectSnapshot("project:meters"), formats, 48'000.0, 32, error))
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeProjectSnapshot("project:meters"), formats, 48'000.0,
+                                 32, error))
         << error.toStdString();
 
     const auto meters = AudioStatusBuilder::currentMeters(callback, &timeline);
@@ -128,15 +120,15 @@ TEST(AudioDeviceServiceTest, KeepsProjectMeterEpochAndCumulativeDiagnosticsConsi
     formats.registerBasicFormats();
     juce::String error;
 
-    ASSERT_TRUE(
-        timeline.loadSnapshot(makeProjectSnapshot("project:old"), formats, 48'000.0, 32, error))
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeProjectSnapshot("project:old"), formats, 48'000.0,
+                                 32, error))
         << error.toStdString();
     const auto oldProjectEpoch = timeline.activeProjectMeterIdentity().meterEpoch;
     callback.metrics().beginProjectBlock(oldProjectEpoch);
     callback.metrics().recordBlock(oldProjectEpoch, 0.9f, 0.95f, 0.98f, 0.97f, 0.96f, 6.0f, 3, 4);
 
-    ASSERT_TRUE(
-        timeline.loadSnapshot(makeProjectSnapshot("project:new"), formats, 48'000.0, 32, error))
+    ASSERT_TRUE(loadTestSnapshot(timeline, makeProjectSnapshot("project:new"), formats, 48'000.0,
+                                 32, error))
         << error.toStdString();
 
     const auto newProjectEpoch = timeline.activeProjectMeterIdentity().meterEpoch;
