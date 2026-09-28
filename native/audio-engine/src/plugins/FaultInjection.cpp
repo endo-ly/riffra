@@ -3,10 +3,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#include "protocol/ProtocolChannel.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -96,8 +97,7 @@ void FaultInjection::stdoutFlood() {
     static std::atomic<bool> emitted{false};
     if (emitted.exchange(true, std::memory_order_acq_rel)) return;
     std::string flood(256 * 1024, 'x');
-    flood.push_back('\n');
-    std::cout << flood << std::flush;
+    writeProtocolLine(flood);
 }
 
 }  // namespace riffra

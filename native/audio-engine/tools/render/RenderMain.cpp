@@ -7,6 +7,7 @@
 #include "contract/ContractReader.h"
 #include "contract/ExecutionGraphDecoder.h"
 #include "contract/SidecarMessages.h"
+#include "protocol/ProtocolChannel.h"
 #include "render/OfflineRenderer.h"
 
 namespace {
@@ -14,7 +15,7 @@ namespace {
 constexpr auto kRenderOperation = "renderTimelineOffline";
 
 void writeLine(const juce::var& value) {
-    std::cout << juce::JSON::toString(value, true) << std::endl;
+    riffra::writeProtocolLine(juce::JSON::toString(value, true).toStdString());
 }
 
 int reject(const juce::String& kind, const juce::String& message) {
@@ -23,6 +24,7 @@ int reject(const juce::String& kind, const juce::String& message) {
 }
 
 int runRenderWorker() {
+    riffra::isolateProtocolChannel();
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     std::string line;
     if (!std::getline(std::cin, line))

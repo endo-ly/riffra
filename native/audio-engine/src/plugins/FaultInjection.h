@@ -17,8 +17,9 @@ enum class FaultStage {
 /// RIFFRA_FAULT_STAGE selects a lifecycle boundary (discovery, create,
 /// prepare, stateApply, editorOpen, or destroy). RIFFRA_FAULT_MODE accepts a
 /// stage delay name such as prepareDelay, or a global action: delay,
-/// neverReturn, throwException, processAbort, or stdoutFlood. The delay is
-/// controlled by RIFFRA_FAULT_DELAY_MS and defaults to 5000 milliseconds.
+/// neverReturn, throwException, processAbort, or stdoutFlood, which writes one
+/// oversized line to the protocol channel. The delay is controlled by
+/// RIFFRA_FAULT_DELAY_MS and defaults to 5000 milliseconds.
 class FaultInjection final {
 public:
     static void before(FaultStage stage);
