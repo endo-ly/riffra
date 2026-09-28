@@ -101,7 +101,7 @@ TEST(TimelineEngineTest, GraphPublicationRestoresCanonicalMasterGainAfterPreview
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -12.0f);
 }
 
-TEST(AudioCommandDispatcherTest, QueueFullLeavesMuteStatesUnchanged) {
+TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     // Arrange
     juce::AudioFormatManager formats;
     TimelineEngine timeline;
@@ -149,16 +149,24 @@ TEST(AudioCommandDispatcherTest, QueueFullLeavesMuteStatesUnchanged) {
             CommandResponder(requestId, [&reply](const juce::var& value) { reply = value; }));
 
         // Assert
-        EXPECT_EQ(reply.getProperty("kind", {}).toString(), "error");
-        const auto error = reply.getProperty("error", {});
-        EXPECT_EQ(error.getProperty("kind", {}).toString(), "realtimeQueueFull");
+        EXPECT_NE(reply.getProperty("kind", {}).toString(), "error");
         ++requestId;
     }
 
-    EXPECT_FALSE(pipeline.hasMuteReason(MuteReason::UserEmergency));
-    EXPECT_FALSE(pipeline.hasMuteReason(MuteReason::FeedbackProtection));
-    EXPECT_FALSE(pipeline.hasMuteReason(MuteReason::EngineTransition));
-    EXPECT_FALSE(pipeline.isFeedbackSuspected());
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::FeedbackProtection));
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::EngineTransition));
+    EXPECT_TRUE(pipeline.isFeedbackSuspected());
+
+    // Releasing a safety mute still requires its panic command to be queued.
+    juce::var reply;
+    dispatcher.dispatch(
+        {requestId, SetEmergencyMuteCommand{false}},
+        CommandResponder(requestId, [&reply](const juce::var& value) { reply = value; }));
+    EXPECT_EQ(reply.getProperty("kind", {}).toString(), "error");
+    const auto error = reply.getProperty("error", {});
+    EXPECT_EQ(error.getProperty("kind", {}).toString(), "realtimeQueueFull");
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
 }
 
 }  // namespace riffra

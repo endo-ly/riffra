@@ -160,6 +160,25 @@ void ArrangeRecordingSession::writeMidiTrack(const juce::String& trackId,
                                              const juce::String& sourceDeviceId,
                                              const juce::MidiMessage& message,
                                              const std::uint64_t audioSample) noexcept {
+    captureMidiTrack(trackId, std::nullopt, sourceDeviceId, message, audioSample);
+}
+
+void ArrangeRecordingSession::writeMidiTrack(const juce::String& trackId,
+                                             const std::uint16_t sourceIndex,
+                                             const juce::MidiMessage& message,
+                                             const std::uint64_t audioSample) noexcept {
+    captureMidiTrack(trackId, sourceIndex, {}, message, audioSample);
+}
+
+void ArrangeRecordingSession::setMidiSourceIds(const std::vector<juce::String>& sourceIds) {
+    midiSourceIds = sourceIds;
+}
+
+void ArrangeRecordingSession::captureMidiTrack(const juce::String& trackId,
+                                               const std::optional<std::uint16_t> sourceIndex,
+                                               const juce::String& sourceDeviceId,
+                                               const juce::MidiMessage& message,
+                                               const std::uint64_t audioSample) noexcept {
     if (finished.load(std::memory_order_acquire)) return;
     const auto found = std::find_if(tracks.begin(), tracks.end(), [&](const TrackWriter& track) {
         return track.trackId == trackId && track.kind == "instrument";
@@ -187,29 +206,32 @@ void ArrangeRecordingSession::writeMidiTrack(const juce::String& trackId,
     MidiEvent event;
     event.audioSample = audioSample;
     event.trackIndex = found->midiTrackIndex;
-    // Convert directly into the fixed packet. CharacterPointer conversion is
-    // bounded and does not allocate, unlike toRawUTF8() for UTF-16 strings.
-    const auto source = sourceDeviceId.getCharPointer();
-    std::size_t sourceBytes = 0;
-    auto sourceEnded = false;
-    auto cursor = source;
-    for (std::size_t character = 0; character < event.sourceDeviceId.size(); ++character) {
-        const auto codePoint = cursor.getAndAdvance();
-        if (codePoint == 0) {
-            sourceEnded = true;
-            break;
+    event.sourceIndex = sourceIndex;
+    if (!sourceIndex.has_value()) {
+        // Convert directly into the fixed packet. CharacterPointer conversion
+        // is bounded and does not allocate, unlike toRawUTF8() for UTF-16.
+        const auto source = sourceDeviceId.getCharPointer();
+        std::size_t sourceBytes = 0;
+        auto sourceEnded = false;
+        auto cursor = source;
+        for (std::size_t character = 0; character < event.sourceDeviceId.size(); ++character) {
+            const auto codePoint = cursor.getAndAdvance();
+            if (codePoint == 0) {
+                sourceEnded = true;
+                break;
+            }
+            sourceBytes += juce::CharPointer_UTF8::getBytesRequiredFor(codePoint);
+            if (sourceBytes >= event.sourceDeviceId.size()) break;
         }
-        sourceBytes += juce::CharPointer_UTF8::getBytesRequiredFor(codePoint);
-        if (sourceBytes >= event.sourceDeviceId.size()) break;
+        if (!sourceEnded || sourceBytes >= event.sourceDeviceId.size()) {
+            eventCount.fetch_sub(1, std::memory_order_relaxed);
+            midiSourceIdOverflow.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        juce::CharPointer_UTF8(event.sourceDeviceId.data())
+            .writeWithDestByteLimit(source, event.sourceDeviceId.size());
+        event.sourceDeviceIdLength = static_cast<std::uint8_t>(sourceBytes);
     }
-    if (!sourceEnded || sourceBytes >= event.sourceDeviceId.size()) {
-        eventCount.fetch_sub(1, std::memory_order_relaxed);
-        midiSourceIdOverflow.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    juce::CharPointer_UTF8(event.sourceDeviceId.data())
-        .writeWithDestByteLimit(source, event.sourceDeviceId.size());
-    event.sourceDeviceIdLength = static_cast<std::uint8_t>(sourceBytes);
     const auto rawSize = message.getRawDataSize();
     event.status = rawSize > 0 ? bytes[0] & 0xf0 : 0;
     event.channel = message.getChannel();
@@ -328,11 +350,18 @@ bool ArrangeRecordingSession::finish(const bool processedSuccessfully, juce::Str
             juce::Array<juce::var> events;
             const auto segmentCount = std::min(captureSegmentCount.load(std::memory_order_acquire),
                                                captureSegments.size());
-            auto appendEvent = [&events](const MidiEvent& event, const std::uint64_t sampleOffset) {
+            auto appendEvent = [this, &events](const MidiEvent& event,
+                                               const std::uint64_t sampleOffset) {
                 auto* value = new juce::DynamicObject();
-                value->setProperty("sourceDeviceId",
-                                   juce::String::fromUTF8(event.sourceDeviceId.data(),
-                                                          event.sourceDeviceIdLength));
+                juce::String sourceDeviceId;
+                if (event.sourceIndex.has_value()) {
+                    const auto index = static_cast<std::size_t>(*event.sourceIndex);
+                    if (index < midiSourceIds.size()) sourceDeviceId = midiSourceIds[index];
+                } else {
+                    sourceDeviceId = juce::String::fromUTF8(event.sourceDeviceId.data(),
+                                                            event.sourceDeviceIdLength);
+                }
+                value->setProperty("sourceDeviceId", sourceDeviceId);
                 value->setProperty("sampleOffset", static_cast<juce::int64>(sampleOffset));
                 value->setProperty("status", event.status);
                 value->setProperty("channel", event.channel);

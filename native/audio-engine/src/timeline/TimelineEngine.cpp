@@ -91,7 +91,6 @@ RealtimeRequest TimelineEngine::commitPreparedSnapshot(juce::String& error) {
             return RealtimeRequest::queueFull;
         }
         auto& candidate = *graphs.pending;
-        candidate.midiSourceDeviceIds = midiSources.snapshot();
         const auto crossesProjectBoundary =
             graphs.latestCommitted == nullptr ||
             graphs.latestCommitted->projectId != candidate.projectId;
@@ -158,6 +157,11 @@ bool TimelineEngine::waitUntilApplied(const std::uint64_t commandSequence,
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return true;
+}
+
+void TimelineEngine::waitUntilApplied(const std::uint64_t commandSequence) const {
+    while (realtimeFrame.read().appliedCommandSequence < commandSequence)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
 
 void TimelineEngine::setRealtimeOwner(const RealtimeOwner next) {

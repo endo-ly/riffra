@@ -103,6 +103,14 @@ void RecordingCaptureRuntime::writeMidiTrack(const juce::String& trackId,
     if (sink) sink->writeMidiTrack(trackId, sourceDeviceId, message, audioSample);
 }
 
+void RecordingCaptureRuntime::writeMidiTrack(const juce::String& trackId,
+                                             const std::uint16_t sourceIndex,
+                                             const juce::MidiMessage& message,
+                                             const std::uint64_t audioSample) noexcept {
+    auto sink = acquireSink();
+    if (sink) sink->writeMidiTrack(trackId, sourceIndex, message, audioSample);
+}
+
 void RecordingCaptureRuntime::setCaptureRange(const std::uint64_t startAudioSample,
                                               const std::uint64_t endAudioSample,
                                               const std::uint64_t startTimelineSample,

@@ -86,11 +86,7 @@ void TimelineEngine::routeLiveMidi(RealtimeState& state) noexcept {
                 continue;
             if (runtime.hasLoadedInstrument()) (void)runtime.enqueueMidi(message);
             if (state.recordingPhase == RecordingPhase::recording) {
-                const auto* const sourceId =
-                    event.sourceIndex < MidiSourceRegistry::kCapacity
-                        ? &state.graph->midiSourceDeviceIds[event.sourceIndex]
-                        : &state.graph->unregisteredMidiSourceId;
-                recordingCapture->writeMidiTrack(track.id, *sourceId, message,
+                recordingCapture->writeMidiTrack(track.id, event.sourceIndex, message,
                                                  state.audioClockSample);
             }
         }

@@ -288,6 +288,7 @@ private:
     // Realtime command path.
     [[nodiscard]] std::optional<std::uint64_t> submit(RealtimeCommand command) noexcept;
     bool waitUntilApplied(std::uint64_t commandSequence, std::chrono::milliseconds timeout) const;
+    void waitUntilApplied(std::uint64_t commandSequence) const;
     void applyRealtimeCommand(RealtimeState& state, const RealtimeCommand& command) noexcept;
     void drainRealtimeCommands(RealtimeState& state) noexcept;
     void publishFrame(const RealtimeState& state) noexcept;

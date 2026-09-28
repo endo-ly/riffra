@@ -5,19 +5,18 @@ namespace riffra {
 std::uint16_t MidiSourceRegistry::indexFor(const juce::String& deviceId) {
     if (deviceId.isEmpty()) return kAllSources;
     const std::lock_guard lock(appendMutex);
-    const auto count = published.load(std::memory_order_relaxed);
-    for (std::size_t index = 0; index < count; ++index)
+    for (std::size_t index = 0; index < sourceCount; ++index)
         if (deviceIds[index] == deviceId) return static_cast<std::uint16_t>(index);
-    if (count == kCapacity) return kUnregistered;
-    deviceIds[count] = deviceId;
-    published.store(count + 1, std::memory_order_release);
-    return static_cast<std::uint16_t>(count);
+    if (sourceCount == kCapacity) return kUnregistered;
+    deviceIds[sourceCount] = deviceId;
+    return static_cast<std::uint16_t>(sourceCount++);
 }
 
-std::array<juce::String, MidiSourceRegistry::kCapacity> MidiSourceRegistry::snapshot() const {
-    std::array<juce::String, kCapacity> result;
-    const auto count = published.load(std::memory_order_acquire);
-    for (std::size_t index = 0; index < count; ++index) result[index] = deviceIds[index];
+std::vector<juce::String> MidiSourceRegistry::snapshot() const {
+    const std::lock_guard lock(appendMutex);
+    std::vector<juce::String> result;
+    result.reserve(sourceCount);
+    for (std::size_t index = 0; index < sourceCount; ++index) result.push_back(deviceIds[index]);
     return result;
 }
 

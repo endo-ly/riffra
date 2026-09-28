@@ -97,15 +97,13 @@ RealtimeRequest TimelineEngine::stopArrangeRecording(juce::String& error) {
         error = "The realtime command queue is full.";
         return RealtimeRequest::queueFull;
     }
-    if (!waitUntilApplied(*sequence, kRecordingApplyTimeout)) {
-        error = "The audio thread did not stop arrange recording in time.";
-        return RealtimeRequest::rejected;
-    }
+    waitUntilApplied(*sequence);
     return RealtimeRequest::accepted;
 }
 
 bool TimelineEngine::finalizeRecording(juce::String& error) {
     auto sinkLease = recordingCapture->acquireSink();
+    if (sinkLease) sinkLease->setMidiSourceIds(midiSources.snapshot());
     const std::lock_guard lock(finalizedRecordingMutex);
     finalizedRecordingTracks.clear();
     finalizedRecordingSampleRate = 0.0;

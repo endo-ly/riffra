@@ -3,16 +3,16 @@
 #include <JuceHeader.h>
 
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 namespace riffra {
 
 /// Assigns every MIDI input device a small index that realtime events carry.
 ///
-/// Entries are appended on the control side and copied into a graph before publication.
+/// Entries are appended on the control side and resolved for recording after capture stops.
 class MidiSourceRegistry final {
 public:
     /// Index a Track uses to accept every MIDI input device.
@@ -25,13 +25,13 @@ public:
     /// Control side. Returns the index of a device, registering it on first
     /// use; an empty identifier means every device.
     [[nodiscard]] std::uint16_t indexFor(const juce::String& deviceId);
-    /// Copies the registered identifiers for an immutable graph snapshot.
-    [[nodiscard]] std::array<juce::String, kCapacity> snapshot() const;
+    /// Copies the registered identifiers for control-side recording finalization.
+    [[nodiscard]] std::vector<juce::String> snapshot() const;
 
 private:
-    std::mutex appendMutex;
+    mutable std::mutex appendMutex;
     std::array<juce::String, kCapacity> deviceIds;
-    std::atomic<std::size_t> published{0};
+    std::size_t sourceCount = 0;
 };
 
 }  // namespace riffra

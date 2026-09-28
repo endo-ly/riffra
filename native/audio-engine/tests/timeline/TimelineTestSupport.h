@@ -156,6 +156,14 @@ public:
                         const juce::MidiMessage&, std::uint64_t) noexcept override {
         receivedMidiSourceId = sourceDeviceId;
     }
+    void writeMidiTrack(const juce::String&, const std::uint16_t sourceIndex,
+                        const juce::MidiMessage&, std::uint64_t) noexcept override {
+        receivedMidiSourceIndex = sourceIndex;
+    }
+    void setMidiSourceIds(const std::vector<juce::String>& sourceIds) override {
+        if (receivedMidiSourceIndex < sourceIds.size())
+            receivedMidiSourceId = sourceIds[receivedMidiSourceIndex];
+    }
     void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
                          std::uint64_t) noexcept override {}
 
@@ -188,6 +196,7 @@ public:
 
     juce::String receivedTrack;
     juce::String receivedMidiSourceId;
+    std::uint16_t receivedMidiSourceIndex = MidiSourceRegistry::kUnregistered;
     int receivedSamples = 0;
     int beginCount = 0;
     int endCount = 0;
@@ -247,6 +256,9 @@ public:
     void markLoopBoundary(std::uint64_t) noexcept override { ++boundaryCount; }
     void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
                         std::uint64_t) noexcept override {}
+    void writeMidiTrack(const juce::String&, std::uint16_t, const juce::MidiMessage&,
+                        std::uint64_t) noexcept override {}
+    void setMidiSourceIds(const std::vector<juce::String>&) override {}
     void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
                          std::uint64_t) noexcept override {}
 

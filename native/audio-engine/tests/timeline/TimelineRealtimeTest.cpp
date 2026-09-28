@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <future>
 #include <thread>
 
 #include "TimelineTestSupport.h"
@@ -223,7 +224,7 @@ TEST(TimelineRealtimeTest, ValidatesLiveMidiTargetAgainstOnlyTheCommittedGraph) 
     EXPECT_EQ(committedTarget, RealtimeRequest::accepted);
 }
 
-TEST(TimelineRealtimeTest, RecordsMidiSourceIdFromThePublishedGraph) {
+TEST(TimelineRealtimeTest, RecordsMidiSourceIdRegisteredAfterGraphPublication) {
     // Arrange
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -232,7 +233,6 @@ TEST(TimelineRealtimeTest, RecordsMidiSourceIdFromThePublishedGraph) {
     auto snapshot = makeInstrumentSnapshot("track:live-midi-source");
     auto& track = snapshot.graph.tracks.front();
     track.armed = true;
-    track.midiInput.deviceId = "midi:keyboard";
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
         << error;
     const auto sourceIndex = engine.midiSourceIndex("midi:keyboard");
@@ -246,10 +246,38 @@ TEST(TimelineRealtimeTest, RecordsMidiSourceIdFromThePublishedGraph) {
     (void)engine.beginBlock(kBlockSamples);
 
     // Assert
-    EXPECT_EQ(sink.receivedMidiSourceId, "midi:keyboard");
     engine.setRealtimeOwner(RealtimeOwner::control);
     EXPECT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    ASSERT_TRUE(engine.finalizeRecording(error)) << error;
+    EXPECT_EQ(sink.receivedMidiSourceId, "midi:keyboard");
     engine.clearRecordingSink();
+}
+
+TEST(TimelineRealtimeTest, ArrangeRecordingStopWaitsUntilItsQueuedCommandIsApplied) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, false, true), formats,
+                                 kSampleRate, kBlockSamples, error))
+        << error;
+    ASSERT_EQ(engine.startRecording(0, error), RealtimeRequest::accepted);
+    engine.setRealtimeOwner(RealtimeOwner::audio);
+
+    // Act
+    const auto nextSequence = TimelineEngineTestPeer::nextCommandSequence(engine);
+    auto stopped = std::async(std::launch::async, [&engine] {
+        juce::String stopError;
+        return engine.stopArrangeRecording(stopError);
+    });
+    EXPECT_EQ(stopped.wait_for(std::chrono::milliseconds(600)), std::future_status::timeout);
+    EXPECT_EQ(TimelineEngineTestPeer::nextCommandSequence(engine), nextSequence + 1);
+    EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
+    engine.setRealtimeOwner(RealtimeOwner::control);
+
+    // Assert
+    EXPECT_EQ(stopped.get(), RealtimeRequest::accepted);
+    EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::idle);
 }
 
 TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
