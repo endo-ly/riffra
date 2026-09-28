@@ -1,0 +1,8 @@
+{
+  "command": {
+    "countInBeats": 4,
+    "directory": "recordings/take-1",
+    "type": "startArrangeRecording"
+  },
+  "requestId": 1
+}

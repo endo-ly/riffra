@@ -1,0 +1,28 @@
+{
+  "kind": "event",
+  "event": {
+    "projectId": "project-1",
+    "inputPeak": 0.25,
+    "outputPeak": 0.5,
+    "outputPeakLeft": 0.5,
+    "outputPeakRight": 0.25,
+    "invalidSamples": 0,
+    "preLimiterPeak": 0.5,
+    "limiterGainReductionDb": 0.0,
+    "hardClipSamples": 0,
+    "muteReasons": 0,
+    "feedbackSuspected": false,
+    "previewing": false,
+    "instrumentPreviewing": false,
+    "trackMeters": [
+      {
+        "trackId": "track-1",
+        "peakLeft": 0.5,
+        "peakRight": 0.25,
+        "rmsLeft": 0.125,
+        "rmsRight": 0.0625
+      }
+    ],
+    "type": "audioMeters"
+  }
+}

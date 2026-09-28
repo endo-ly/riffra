@@ -1,0 +1,16 @@
+{
+  "kind": "response",
+  "requestId": 1,
+  "response": {
+    "type": "trackDeviceStatus",
+    "name": "Test Effect",
+    "bypassed": false,
+    "parameterCount": 1,
+    "capabilities": {
+      "parameters": true,
+      "state": true,
+      "presets": true,
+      "editor": false
+    }
+  }
+}

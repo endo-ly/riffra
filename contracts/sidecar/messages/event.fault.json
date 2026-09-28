@@ -1,0 +1,10 @@
+{
+  "kind": "event",
+  "event": {
+    "kind": "deviceLost",
+    "message": "The audio device disappeared.",
+    "operation": "audioDevice.recover",
+    "details": null,
+    "type": "fault"
+  }
+}

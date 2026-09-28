@@ -1,0 +1,7 @@
+{
+  "command": {
+    "tick": 960,
+    "type": "seekTimeline"
+  },
+  "requestId": 1
+}

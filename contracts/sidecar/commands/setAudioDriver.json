@@ -1,0 +1,12 @@
+{
+  "command": {
+    "bufferSize": null,
+    "driver": "ASIO",
+    "inputChannel": 0,
+    "inputDevice": "Interface",
+    "outputDevice": null,
+    "sampleRate": 48000,
+    "type": "setAudioDriver"
+  },
+  "requestId": 1
+}

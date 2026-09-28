@@ -1,0 +1,10 @@
+{
+  "kind": "error",
+  "requestId": 1,
+  "error": {
+    "kind": "deviceLost",
+    "message": "The audio device disappeared.",
+    "operation": "audioDevice.recover",
+    "details": null
+  }
+}

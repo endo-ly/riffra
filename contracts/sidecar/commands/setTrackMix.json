@@ -1,0 +1,9 @@
+{
+  "command": {
+    "gainDb": -3.0,
+    "pan": null,
+    "trackId": "track-1",
+    "type": "setTrackMix"
+  },
+  "requestId": 1
+}

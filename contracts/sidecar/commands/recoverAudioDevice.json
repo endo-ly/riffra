@@ -1,0 +1,6 @@
+{
+  "command": {
+    "type": "recoverAudioDevice"
+  },
+  "requestId": 1
+}

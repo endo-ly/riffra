@@ -1,0 +1,6 @@
+{
+  "command": {
+    "type": "setTransportStarting"
+  },
+  "requestId": 1
+}

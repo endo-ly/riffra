@@ -1,0 +1,7 @@
+{
+  "command": {
+    "type": "switchTakeComparisonVariant",
+    "variant": "processed"
+  },
+  "requestId": 1
+}

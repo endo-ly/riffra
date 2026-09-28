@@ -1,0 +1,18 @@
+{
+  "kind": "event",
+  "event": {
+    "state": "playing",
+    "revision": 7,
+    "timelineTick": 1920,
+    "sequence": 42,
+    "recordingPhase": "recording",
+    "recordingStartTick": 960,
+    "recordingPassOrdinal": 1,
+    "armedTrackIds": [
+      "track-1"
+    ],
+    "clockGeneration": 2,
+    "discontinuity": 5,
+    "type": "transportStatus"
+  }
+}

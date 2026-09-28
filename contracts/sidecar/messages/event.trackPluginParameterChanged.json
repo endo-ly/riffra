@@ -1,0 +1,11 @@
+{
+  "kind": "event",
+  "event": {
+    "type": "trackPluginParameterChanged",
+    "projectId": "project-1",
+    "trackId": "track-1",
+    "deviceId": "device-1",
+    "parameterIndex": 2,
+    "value": 0.5
+  }
+}

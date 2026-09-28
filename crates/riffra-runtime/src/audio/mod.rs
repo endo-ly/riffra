@@ -20,6 +20,7 @@ mod protocol;
 mod recovery;
 mod runtime_adapter;
 mod sidecar_process;
+mod wire;
 
 use command_bus::CommandBus;
 pub use error::{NativeAudioError, NativeAudioResult};

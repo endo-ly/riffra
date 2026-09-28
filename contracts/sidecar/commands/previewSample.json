@@ -1,0 +1,11 @@
+{
+  "command": {
+    "endMs": 500,
+    "gain": 1.0,
+    "loop": false,
+    "path": "samples/kick.wav",
+    "startMs": 0,
+    "type": "previewSample"
+  },
+  "requestId": 1
+}

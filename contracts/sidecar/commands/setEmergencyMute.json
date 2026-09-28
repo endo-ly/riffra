@@ -1,0 +1,7 @@
+{
+  "command": {
+    "muted": true,
+    "type": "setEmergencyMute"
+  },
+  "requestId": 1
+}

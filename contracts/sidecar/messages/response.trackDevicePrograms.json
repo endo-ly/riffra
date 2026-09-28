@@ -1,0 +1,18 @@
+{
+  "kind": "response",
+  "requestId": 1,
+  "response": {
+    "type": "trackDevicePrograms",
+    "currentIndex": 1,
+    "programs": [
+      {
+        "index": 0,
+        "name": "Init"
+      },
+      {
+        "index": 1,
+        "name": "Bright"
+      }
+    ]
+  }
+}
