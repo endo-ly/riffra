@@ -140,16 +140,30 @@ struct TransportStatusSpec final {
     TransportStateSpec state = TransportStateSpec::stopped;
     std::optional<std::uint64_t> revision;
     std::uint64_t timelineTick = 0;
+    std::int64_t timelineSample = 0;
+    std::uint64_t audioClockSample = 0;
+    std::optional<double> sampleRate;
     std::uint64_t sequence = 0;
     RecordingPhaseSpec recordingPhase = RecordingPhaseSpec::idle;
     std::uint64_t recordingStartTick = 0;
     std::uint32_t recordingPassOrdinal = 0;
     std::vector<juce::String> armedTrackIds;
+    std::vector<InstrumentFaultSpec> instrumentFaults;
     std::uint64_t clockGeneration = 0;
     std::uint64_t discontinuity = 0;
 };
 
-struct AckSpec final {};
+/// Completes `prepareTimelineSnapshot`, `commitTimelineSnapshot` and
+/// `discardTimelineSnapshot`.
+struct TimelineAckSpec final {};
+/// Completes `waitForTimelineIdle`.
+struct TimelineIdleAckSpec final {};
+/// Completes `sendTrackMidi` and `panicTrackMidi`.
+struct MidiAckSpec final {};
+/// Completes `setTrackMix`.
+struct TrackMixAckSpec final {};
+/// Completes the Track Device commands that change a device or open its editor.
+struct TrackDeviceAckSpec final {};
 
 struct TrackDeviceCapabilitiesSpec final {
     bool parameters = false;
@@ -191,9 +205,16 @@ struct TrackPluginStateSpec final {
     PluginStateSpec state;
 };
 
+/// Completes `setTrackDeviceProgram` with the state the program loaded.
+struct TrackDeviceProgramChangedSpec final {
+    PluginStateSpec state;
+};
+
 using SidecarResponseSpec =
-    std::variant<AudioStatusSpec, TransportStatusSpec, AckSpec, TrackDeviceStatusSpec,
-                 TrackDeviceParametersSpec, TrackDeviceProgramsSpec, TrackPluginStateSpec>;
+    std::variant<AudioStatusSpec, TransportStatusSpec, TimelineAckSpec, TimelineIdleAckSpec,
+                 MidiAckSpec, TrackMixAckSpec, TrackDeviceAckSpec, TrackDeviceStatusSpec,
+                 TrackDeviceParametersSpec, TrackDeviceProgramsSpec, TrackPluginStateSpec,
+                 TrackDeviceProgramChangedSpec>;
 
 struct SidecarErrorSpec final {
     juce::String kind;
@@ -257,9 +278,11 @@ struct OfflineRenderCompleteSpec final {
 };
 
 /// Every response `type` written on stdout.
-inline constexpr std::array<std::string_view, 7> kSidecarResponseTypes{
-    "audioStatus",         "transportStatus",  "ack", "trackDeviceStatus", "trackDeviceParameters",
-    "trackDevicePrograms", "trackPluginState",
+inline constexpr std::array<std::string_view, 12> kSidecarResponseTypes{
+    "audioStatus",         "transportStatus",   "timelineAck",
+    "timelineIdleAck",     "midiAck",           "trackMixAck",
+    "trackDeviceAck",      "trackDeviceStatus", "trackDeviceParameters",
+    "trackDevicePrograms", "trackPluginState",  "trackDeviceProgramChanged",
 };
 
 /// Every event `type` written on stdout.

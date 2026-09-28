@@ -332,8 +332,8 @@ TimelineStatus TimelineEngine::status() const {
     status.clockGeneration = clockGeneration.load(std::memory_order_acquire);
     status.discontinuity = discontinuity.load(std::memory_order_acquire);
     status.graphPublishCount = graphPublishCount.load(std::memory_order_acquire);
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
-    if (timeline == nullptr) return status;
+    const juce::SpinLock::ScopedTryLockType lock(timelineLock);
+    if (!lock.isLocked() || timeline == nullptr) return status;
     auto& graph = status.graph.emplace();
     graph.revision = timeline->revision;
     graph.sampleRate = timeline->outputSampleRate;

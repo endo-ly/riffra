@@ -37,11 +37,17 @@ pub(crate) enum SidecarMessage {
 pub(crate) enum SidecarResponse {
     AudioStatus(Box<WireAudioStatus>),
     TransportStatus(WireTransportStatus),
-    Ack {},
+    TimelineAck {},
+    TimelineIdleAck {},
+    MidiAck {},
+    TrackMixAck {},
+    TrackDeviceAck {},
     TrackDeviceStatus(WireTrackDeviceStatus),
     TrackDeviceParameters(WireTrackDeviceParameters),
     TrackDevicePrograms(WireTrackDevicePrograms),
     TrackPluginState(WireTrackPluginState),
+    /// State of a device after it loaded the requested program.
+    TrackDeviceProgramChanged(WireTrackPluginState),
 }
 
 impl SidecarResponse {
@@ -50,11 +56,16 @@ impl SidecarResponse {
         match self {
             Self::AudioStatus(_) => ExpectedResponse::AudioStatus,
             Self::TransportStatus(_) => ExpectedResponse::TransportStatus,
-            Self::Ack {} => ExpectedResponse::Ack,
+            Self::TimelineAck {} => ExpectedResponse::TimelineAck,
+            Self::TimelineIdleAck {} => ExpectedResponse::TimelineIdleAck,
+            Self::MidiAck {} => ExpectedResponse::MidiAck,
+            Self::TrackMixAck {} => ExpectedResponse::TrackMixAck,
+            Self::TrackDeviceAck {} => ExpectedResponse::TrackDeviceAck,
             Self::TrackDeviceStatus(_) => ExpectedResponse::TrackDeviceStatus,
             Self::TrackDeviceParameters(_) => ExpectedResponse::TrackDeviceParameters,
             Self::TrackDevicePrograms(_) => ExpectedResponse::TrackDevicePrograms,
             Self::TrackPluginState(_) => ExpectedResponse::TrackPluginState,
+            Self::TrackDeviceProgramChanged(_) => ExpectedResponse::TrackDeviceProgramChanged,
         }
     }
 }
@@ -127,7 +138,7 @@ pub(crate) struct WireAudioStatus {
     pub(crate) buffer_size: Option<u32>,
     #[serde(deserialize_with = "nullable")]
     pub(crate) round_trip_ms: Option<f64>,
-    /// Transport position of the active graph; `null` before a graph exists.
+    /// Transport position of the active graph; `null` when no graph could be read.
     #[serde(deserialize_with = "nullable")]
     pub(crate) timeline_tick: Option<u64>,
     pub(crate) recording: WireRecordingStatus,
@@ -284,15 +295,21 @@ pub(crate) enum WireRecordingPhase {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireTransportStatus {
     pub(crate) state: WireTransportState,
-    /// Revision of the active graph; `null` before a graph exists.
+    /// Revision of the active graph; `null` when no graph could be read.
     #[serde(deserialize_with = "nullable")]
     pub(crate) revision: Option<u64>,
     pub(crate) timeline_tick: u64,
+    pub(crate) timeline_sample: i64,
+    pub(crate) audio_clock_sample: u64,
+    /// Output sample rate of the active graph; `null` when no graph could be read.
+    #[serde(deserialize_with = "nullable")]
+    pub(crate) sample_rate: Option<f64>,
     pub(crate) sequence: u64,
     pub(crate) recording_phase: WireRecordingPhase,
     pub(crate) recording_start_tick: u64,
     pub(crate) recording_pass_ordinal: u32,
     pub(crate) armed_track_ids: Vec<String>,
+    pub(crate) instrument_faults: Vec<WireInstrumentFault>,
     pub(crate) clock_generation: u64,
     pub(crate) discontinuity: u64,
 }

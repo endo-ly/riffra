@@ -215,7 +215,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 - `response` と `error` は必ず `requestId` を持ち、`event` は持たない。要求に紐づかない失敗は `fault` イベントで送る
 - 1 つの要求には `response` か `error` を**ちょうど 1 回**返す。C++ の `CommandResponder` が要求ごとに 1 つ作られ、非同期処理へ move で渡る。応答しないまま破棄されると `noResponse` の `error` を送る
-- 命令ごとに応答の型は 1 つに決まる（`SidecarCommand::expected_response`）。`command_bus.rs` は `requestId`（原子カウンタ）で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させる
+- 命令ごとに応答の型は 1 つに決まる（`SidecarCommand::expected_response`）。`command_bus.rs` は `requestId`（原子カウンタ）で要求を相関し、期待と異なる型の応答はその要求をプロトコルエラーで即座に失敗させ、Host の状態へ反映しない。中身を持たない完了応答も命令の分類ごとに別の型とし、取り違えを型の不一致として検出する
 - 期限: 通常は `COMMAND_ACK_TIMEOUT`、デバイス操作は `AUDIO_DEVICE_COMMAND_TIMEOUT`、`prepareTimelineSnapshot` は `TIMELINE_PREPARE_TIMEOUT` と呼び出し側の残り時間の短い方、`waitForTimelineIdle` は呼び出し側の残り時間を使う。期限切れは失敗報告で確定する
 
 ### 5.3 起動とプロトコル版
@@ -230,18 +230,19 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | 状態照会            | `status`                                                                                                                              | `audioStatus`                                                       |
 | デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`previewMasterGainDb` | `audioStatus`                                                       |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `ack`                                                               |
+| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `timelineAck`（prepare / commit / discard）、`timelineIdleAck`      |
 | トランスポート      | `setTransportStarting`、`playTimeline`、`stopTimeline`、`seekTimeline`                                                                | `transportStatus`                                                   |
 | 録音                | `startArrangeRecording`、`stopArrangeRecording`                                                                                       | `audioStatus`                                                       |
 | MIDI                | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`                                                                    | `audioStatus`                                                       |
-|                     | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `ack`                                                               |
-| トラック/プラグイン | `setTrackMix`、`setTrackDeviceBypassed`、`setTrackDeviceParameter`、`setTrackPluginState`、`openTrackPluginEditor`                    | `ack`                                                               |
+|                     | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `midiAck`                                                           |
+| トラック/プラグイン | `setTrackMix`                                                                                                                         | `trackMixAck`                                                       |
+|                     | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`setTrackPluginState`、`openTrackPluginEditor`                                   | `trackDeviceAck`                                                    |
 |                     | `getTrackDeviceStatus`、`getTrackDeviceParameters`、`getTrackDevicePrograms`                                                          | `trackDeviceStatus`、`trackDeviceParameters`、`trackDevicePrograms` |
-|                     | `getTrackPluginState`、`setTrackDeviceProgram`                                                                                        | `trackPluginState`                                                  |
+|                     | `getTrackPluginState`、`setTrackDeviceProgram`                                                                                        | `trackPluginState`、`trackDeviceProgramChanged`                     |
 | プレビュー          | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`                                                          | `audioStatus`                                                       |
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                       |
 
-`setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。`ack` は値の Canonical commit を意味しない。
+`setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。`trackMixAck` は値の Canonical commit を意味しない。
 
 `prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、C++ の厳格デコーダが契約違反を `kind: timelineContract` として返し、グラフの準備処理へ進めない。投影の置換には prepare / commit / discard を使う。
 
@@ -303,15 +304,15 @@ stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing:
 
 C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つバリアで、書き込み時に滞留中の `telemetry` を捨てる。`state` はキーごとに最新の 1 件へ合流する。`telemetry` は損失を許す。
 
-| type                                                      | レーン      | 内容                                                                                                                   |
-| --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ready`                                                   | `control`   | 起動完了、プロトコル版、初期状態                                                                                       |
-| `fault`                                                   | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                     |
-| `recordingComplete`                                       | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                     |
-| `audioStatus`                                             | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                   |
-| `audioMeters`                                             | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                  |
-| `transportStatus`                                         | `telemetry` | `stopped` / `starting` / `playing` / `faulted`、再生位置、録音フェーズ。投影診断は含まない                             |
+| type                                                      | レーン      | 内容                                                                                                                                                     |
+| --------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ready`                                                   | `control`   | 起動完了、プロトコル版、初期状態                                                                                                                         |
+| `fault`                                                   | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                                                       |
+| `recordingComplete`                                       | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                                                       |
+| `audioStatus`                                             | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する                                   |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                                                     |
+| `audioMeters`                                             | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                                                    |
+| `transportStatus`                                         | `telemetry` | `stopped` / `starting` / `playing` / `faulted`、再生位置（tick・sample・オーディオクロック）、録音フェーズ、インストゥルメントの障害。投影診断は含まない |
 
 `response` と `error` は `control` レーンを通る。
 

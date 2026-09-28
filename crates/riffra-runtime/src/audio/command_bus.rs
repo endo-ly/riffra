@@ -149,6 +149,21 @@ impl AudioSupervisor {
     }
 }
 
+/// Reports whether a request is still waiting and expects a response of `kind`.
+/// Only such a response may change Host state before completing the request.
+pub(super) fn awaits_response(
+    pending: &SharedPendingRequests,
+    request_id: u64,
+    kind: ExpectedResponse,
+) -> bool {
+    pending.0.lock().is_ok_and(|pending| {
+        pending
+            .requests
+            .get(&request_id)
+            .is_some_and(|request| request.result.is_none() && request.expected == kind)
+    })
+}
+
 /// Completes one pending request. A response of another type than the one
 /// its command expects fails the request as a protocol violation.
 pub(super) fn complete_request(
@@ -195,6 +210,7 @@ pub(super) fn fail_pending_requests(pending: &SharedPendingRequests, error: Nati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RecordingHostEventSink;
 
     fn pending_with(requests: &[(u64, ExpectedResponse)]) -> SharedPendingRequests {
         let pending = CommandBus::new().pending;
@@ -225,7 +241,10 @@ mod tests {
 
     #[test]
     fn sidecar_termination_completes_all_pending_commands() {
-        let pending = pending_with(&[(7, ExpectedResponse::Ack), (8, ExpectedResponse::Ack)]);
+        let pending = pending_with(&[
+            (7, ExpectedResponse::TimelineAck),
+            (8, ExpectedResponse::MidiAck),
+        ]);
 
         fail_pending_requests(
             &pending,
@@ -242,13 +261,13 @@ mod tests {
 
     #[test]
     fn late_response_cannot_replace_a_completed_failure() {
-        let pending = pending_with(&[(42, ExpectedResponse::Ack)]);
+        let pending = pending_with(&[(42, ExpectedResponse::TimelineAck)]);
         fail_pending_requests(
             &pending,
             NativeAudioError::transport_lost("sidecar restarted"),
         );
 
-        complete_request(&pending, 42, Ok(SidecarResponse::Ack {}));
+        complete_request(&pending, 42, Ok(SidecarResponse::TimelineAck {}));
 
         assert!(matches!(
             result(&pending, 42),
@@ -258,13 +277,48 @@ mod tests {
 
     #[test]
     fn a_response_of_another_type_fails_the_request() {
-        let pending = pending_with(&[(5, ExpectedResponse::TrackPluginState)]);
+        let pending = pending_with(&[(5, ExpectedResponse::TimelineAck)]);
 
-        complete_request(&pending, 5, Ok(SidecarResponse::Ack {}));
+        complete_request(&pending, 5, Ok(SidecarResponse::MidiAck {}));
 
         assert!(matches!(
             result(&pending, 5),
             Err(NativeAudioError::Protocol { message }) if message.contains("unexpected response")
         ));
+    }
+
+    #[test]
+    fn a_response_of_another_type_does_not_change_host_state() {
+        let events = Arc::new(RecordingHostEventSink::default());
+        let supervisor = AudioSupervisor::offline_with_events("test", events.clone());
+        let before = supervisor.status().unwrap().message;
+        supervisor
+            .command_bus
+            .pending
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .insert(
+                1,
+                PendingRequest {
+                    expected: ExpectedResponse::TimelineAck,
+                    result: None,
+                },
+            );
+        let response = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../contracts/sidecar/messages/response.audioStatus.json"),
+        )
+        .unwrap();
+
+        supervisor.handle_sidecar_line(1, &response);
+
+        assert!(matches!(
+            result(&supervisor.command_bus.pending, 1),
+            Err(NativeAudioError::Protocol { .. })
+        ));
+        assert_eq!(supervisor.status().unwrap().message, before);
+        assert!(events.events().is_empty());
     }
 }

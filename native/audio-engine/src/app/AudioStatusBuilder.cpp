@@ -176,6 +176,8 @@ TransportStatusSpec AudioStatusBuilder::currentTransport(const TimelineEngine& t
     const auto status = timeline.status();
     TransportStatusSpec transport;
     transport.state = transportState(status.transportState);
+    transport.timelineSample = status.timelineSample;
+    transport.audioClockSample = status.audioClockSample;
     transport.sequence = status.sequence;
     transport.recordingPhase = recordingPhase(status.recordingPhase);
     transport.recordingStartTick = status.recordingStartTick;
@@ -185,7 +187,9 @@ TransportStatusSpec AudioStatusBuilder::currentTransport(const TimelineEngine& t
     if (const auto& graph = status.graph) {
         transport.revision = graph->revision;
         transport.timelineTick = graph->timelineTick;
+        transport.sampleRate = graph->sampleRate;
         transport.armedTrackIds = graph->armedTrackIds;
+        transport.instrumentFaults = graph->instrumentFaults;
     }
     return transport;
 }

@@ -57,7 +57,8 @@ struct TimelineStatus final {
     std::uint64_t clockGeneration = 0;
     std::uint64_t discontinuity = 0;
     std::uint64_t graphPublishCount = 0;
-    /// Present once a graph has been published.
+    /// Present when a graph is active and `timelineLock` was free; `status()`
+    /// never waits for the lock.
     std::optional<TimelineGraphStatus> graph;
 };
 

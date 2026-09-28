@@ -19,7 +19,7 @@ void AudioCommandDispatcher::handle(const SetTrackMixCommand& command, CommandRe
         responder.fail("trackMix", error, "track.mix.preview");
         return;
     }
-    responder.respond(AckSpec{});
+    responder.respond(TrackMixAckSpec{});
 }
 
 }  // namespace riffra

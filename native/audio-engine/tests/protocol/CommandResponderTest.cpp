@@ -29,7 +29,7 @@ TEST(CommandResponderTest, WritesOnlyTheFirstCompletion) {
     {
         CommandResponder responder(8, recordInto(written));
 
-        responder.respond(AckSpec{});
+        responder.respond(TrackMixAckSpec{});
         responder.fail("late", "A second completion must be ignored.", "test");
     }
 
@@ -43,7 +43,7 @@ TEST(CommandResponderTest, MovedFromResponderDoesNotReport) {
         CommandResponder original(9, recordInto(written));
         CommandResponder moved(std::move(original));
 
-        moved.respond(AckSpec{});
+        moved.respond(TrackMixAckSpec{});
     }
 
     EXPECT_EQ(written.size(), 1u);

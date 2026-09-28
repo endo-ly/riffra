@@ -232,12 +232,16 @@ ObjectBuilder transportStatusFields(const TransportStatusSpec& status) {
     builder.set("state", name(status.state))
         .set("revision", optionalInteger(status.revision))
         .set("timelineTick", integer(status.timelineTick))
+        .set("timelineSample", juce::var(static_cast<juce::int64>(status.timelineSample)))
+        .set("audioClockSample", integer(status.audioClockSample))
+        .set("sampleRate", optionalNumber(status.sampleRate))
         .set("sequence", integer(status.sequence))
         .set("recordingPhase", name(status.recordingPhase))
         .set("recordingStartTick", integer(status.recordingStartTick))
         .set("recordingPassOrdinal", integer(status.recordingPassOrdinal))
         .set("armedTrackIds",
              array(status.armedTrackIds, [](const juce::String& id) { return juce::var(id); }))
+        .set("instrumentFaults", array(status.instrumentFaults, encodeInstrumentFault))
         .set("clockGeneration", integer(status.clockGeneration))
         .set("discontinuity", integer(status.discontinuity));
     return builder;
@@ -261,6 +265,8 @@ ObjectBuilder errorFields(const SidecarErrorSpec& error) {
     return builder;
 }
 
+juce::var typeOnly(const char* type) { return ObjectBuilder{}.set("type", type).build(); }
+
 juce::var encodeResponseBody(const SidecarResponseSpec& response) {
     return std::visit(
         Overloaded{
@@ -270,7 +276,11 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
             [](const TransportStatusSpec& status) {
                 return transportStatusFields(status).set("type", "transportStatus").build();
             },
-            [](const AckSpec&) { return ObjectBuilder{}.set("type", "ack").build(); },
+            [](const TimelineAckSpec&) { return typeOnly("timelineAck"); },
+            [](const TimelineIdleAckSpec&) { return typeOnly("timelineIdleAck"); },
+            [](const MidiAckSpec&) { return typeOnly("midiAck"); },
+            [](const TrackMixAckSpec&) { return typeOnly("trackMixAck"); },
+            [](const TrackDeviceAckSpec&) { return typeOnly("trackDeviceAck"); },
             [](const TrackDeviceStatusSpec& status) {
                 return ObjectBuilder{}
                     .set("type", "trackDeviceStatus")
@@ -319,6 +329,12 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                 return ObjectBuilder{}
                     .set("type", "trackPluginState")
                     .set("state", encodePluginState(status.state))
+                    .build();
+            },
+            [](const TrackDeviceProgramChangedSpec& changed) {
+                return ObjectBuilder{}
+                    .set("type", "trackDeviceProgramChanged")
+                    .set("state", encodePluginState(changed.state))
                     .build();
             },
         },

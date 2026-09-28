@@ -1,0 +1,7 @@
+{
+  "kind": "response",
+  "requestId": 1,
+  "response": {
+    "type": "trackDeviceAck"
+  }
+}

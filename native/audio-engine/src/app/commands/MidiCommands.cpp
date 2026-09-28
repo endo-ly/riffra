@@ -42,7 +42,7 @@ void AudioCommandDispatcher::handle(const SendTrackMidiCommand& command,
         responder.fail("targetedMidi", timelineError, "midi.send");
         return;
     }
-    responder.respond(AckSpec{});
+    responder.respond(MidiAckSpec{});
 }
 
 void AudioCommandDispatcher::handle(const PanicTrackMidiCommand& command,
@@ -56,7 +56,7 @@ void AudioCommandDispatcher::handle(const PanicTrackMidiCommand& command,
         responder.fail("targetedMidi", timelineError, "midi.panic");
         return;
     }
-    responder.respond(AckSpec{});
+    responder.respond(MidiAckSpec{});
 }
 
 }  // namespace riffra

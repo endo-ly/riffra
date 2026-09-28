@@ -1,0 +1,15 @@
+{
+  "kind": "response",
+  "requestId": 1,
+  "response": {
+    "type": "trackDeviceProgramChanged",
+    "state": {
+      "parameterValues": [
+        0.25,
+        0.75
+      ],
+      "stateData": "opaque-state",
+      "bypassed": false
+    }
+  }
+}

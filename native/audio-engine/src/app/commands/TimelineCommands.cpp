@@ -21,7 +21,7 @@ void AudioCommandDispatcher::handle(const WaitForTimelineIdleCommand& command,
                        "runtime.timeline.waitForIdle");
         return;
     }
-    responder.respond(AckSpec{});
+    responder.respond(TimelineIdleAckSpec{});
 }
 
 void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& command,
@@ -50,7 +50,7 @@ void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& comman
             }
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (loaded)
-                pending->respond(AckSpec{});
+                pending->respond(TimelineAckSpec{});
             else
                 pending->fail("timeline", timelineError, "runtime.timeline.prepare");
         },
@@ -91,7 +91,7 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
                 return;
             }
             context.pipeline.setMasterGainDb(context.timelineEngine.activeMasterGainDb());
-            pending->respond(AckSpec{});
+            pending->respond(TimelineAckSpec{});
         },
         kTimelineVstLifecycleTimeout);
     if (!submitted) {
@@ -113,7 +113,7 @@ void AudioCommandDispatcher::handle(const DiscardTimelineSnapshotCommand&,
         [this, pending] {
             context.timelineEngine.discardPreparedSnapshot();
             context.timelineOperationRunning.store(false, std::memory_order_release);
-            pending->respond(AckSpec{});
+            pending->respond(TimelineAckSpec{});
         },
         std::chrono::seconds(5));
     if (!submitted) {

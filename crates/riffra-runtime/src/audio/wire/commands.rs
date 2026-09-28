@@ -156,11 +156,16 @@ pub(crate) enum TakeComparisonVariant {
 pub(crate) enum ExpectedResponse {
     AudioStatus,
     TransportStatus,
-    Ack,
+    TimelineAck,
+    TimelineIdleAck,
+    MidiAck,
+    TrackMixAck,
+    TrackDeviceAck,
     TrackDeviceStatus,
     TrackDeviceParameters,
     TrackDevicePrograms,
     TrackPluginState,
+    TrackDeviceProgramChanged,
 }
 
 impl SidecarCommand {
@@ -192,21 +197,19 @@ impl SidecarCommand {
             | Self::SeekTimeline { .. } => ExpectedResponse::TransportStatus,
             Self::PrepareTimelineSnapshot { .. }
             | Self::CommitTimelineSnapshot
-            | Self::DiscardTimelineSnapshot
-            | Self::WaitForTimelineIdle { .. }
-            | Self::SendTrackMidi { .. }
-            | Self::PanicTrackMidi { .. }
-            | Self::SetTrackMix { .. }
-            | Self::SetTrackDeviceBypassed { .. }
+            | Self::DiscardTimelineSnapshot => ExpectedResponse::TimelineAck,
+            Self::WaitForTimelineIdle { .. } => ExpectedResponse::TimelineIdleAck,
+            Self::SendTrackMidi { .. } | Self::PanicTrackMidi { .. } => ExpectedResponse::MidiAck,
+            Self::SetTrackMix { .. } => ExpectedResponse::TrackMixAck,
+            Self::SetTrackDeviceBypassed { .. }
             | Self::SetTrackDeviceParameter { .. }
             | Self::SetTrackPluginState { .. }
-            | Self::OpenTrackPluginEditor { .. } => ExpectedResponse::Ack,
+            | Self::OpenTrackPluginEditor { .. } => ExpectedResponse::TrackDeviceAck,
             Self::GetTrackDeviceStatus { .. } => ExpectedResponse::TrackDeviceStatus,
             Self::GetTrackDeviceParameters { .. } => ExpectedResponse::TrackDeviceParameters,
             Self::GetTrackDevicePrograms { .. } => ExpectedResponse::TrackDevicePrograms,
-            Self::GetTrackPluginState { .. } | Self::SetTrackDeviceProgram { .. } => {
-                ExpectedResponse::TrackPluginState
-            }
+            Self::GetTrackPluginState { .. } => ExpectedResponse::TrackPluginState,
+            Self::SetTrackDeviceProgram { .. } => ExpectedResponse::TrackDeviceProgramChanged,
         }
     }
 }

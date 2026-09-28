@@ -1,13 +1,13 @@
 //! Translation of sidecar messages into Host state and events.
 
 use super::AudioSupervisor;
-use super::command_bus::complete_request;
+use super::command_bus::{awaits_response, complete_request};
 use super::error::NativeAudioError;
 use super::wire::{
     SIDECAR_PROTOCOL_VERSION, SidecarError, SidecarEvent, SidecarMessage, SidecarResponse,
-    WireAudioMeters, WireAudioState, WireAudioStatus, WireRecordingPhase, WireRecoveryStatus,
-    WireTrackPluginParameterChanged, WireTrackPluginStateChanged, WireTransportState,
-    WireTransportStatus, decode_message, diagnostic_prefix,
+    WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault, WireRecordingPhase,
+    WireRecoveryStatus, WireTrackPluginParameterChanged, WireTrackPluginStateChanged,
+    WireTransportState, WireTransportStatus, decode_message, diagnostic_prefix,
 };
 use crate::HostEvent;
 use crate::model::{
@@ -136,12 +136,7 @@ fn audio_status_from_wire(status: WireAudioStatus) -> AudioStatus {
             instrument_faults: diagnostics
                 .instrument_faults
                 .into_iter()
-                .map(|fault| AudioInstrumentFault {
-                    track_id: fault.track_id,
-                    instrument_type: fault.instrument_type,
-                    fault_code: fault.fault_code,
-                    dropped_midi_events: fault.dropped_midi_events,
-                })
+                .map(instrument_fault)
                 .collect(),
         },
         message: status.message,
@@ -205,6 +200,15 @@ fn meter_frame(meters: WireAudioMeters) -> Option<AudioMeterFrame> {
     })
 }
 
+fn instrument_fault(fault: WireInstrumentFault) -> AudioInstrumentFault {
+    AudioInstrumentFault {
+        track_id: fault.track_id,
+        instrument_type: fault.instrument_type,
+        fault_code: fault.fault_code,
+        dropped_midi_events: fault.dropped_midi_events,
+    }
+}
+
 fn transport_status(status: WireTransportStatus) -> TransportStatus {
     TransportStatus {
         state: match status.state {
@@ -215,6 +219,9 @@ fn transport_status(status: WireTransportStatus) -> TransportStatus {
         },
         revision: status.revision,
         timeline_tick: status.timeline_tick,
+        timeline_sample: status.timeline_sample,
+        audio_clock_sample: status.audio_clock_sample,
+        sample_rate: status.sample_rate,
         sequence: status.sequence,
         recording_phase: match status.recording_phase {
             WireRecordingPhase::Idle => RecordingPhase::Idle,
@@ -225,6 +232,11 @@ fn transport_status(status: WireTransportStatus) -> TransportStatus {
         recording_start_tick: status.recording_start_tick,
         recording_pass_ordinal: status.recording_pass_ordinal,
         armed_track_ids: status.armed_track_ids,
+        instrument_faults: status
+            .instrument_faults
+            .into_iter()
+            .map(instrument_fault)
+            .collect(),
         clock_generation: status.clock_generation,
         discontinuity: status.discontinuity,
     }
@@ -304,7 +316,9 @@ impl AudioSupervisor {
                 request_id,
                 response,
             }) => {
-                self.apply_response(&response);
+                if awaits_response(&self.command_bus.pending, request_id, response.kind()) {
+                    self.apply_response(&response);
+                }
                 complete_request(&self.command_bus.pending, request_id, Ok(response));
             }
             Ok(SidecarMessage::Error { request_id, error }) => {
@@ -340,11 +354,16 @@ impl AudioSupervisor {
             SidecarResponse::TransportStatus(status) => self
                 .events
                 .emit(HostEvent::TransportStatus(transport_status(status.clone()))),
-            SidecarResponse::Ack {}
+            SidecarResponse::TimelineAck {}
+            | SidecarResponse::TimelineIdleAck {}
+            | SidecarResponse::MidiAck {}
+            | SidecarResponse::TrackMixAck {}
+            | SidecarResponse::TrackDeviceAck {}
             | SidecarResponse::TrackDeviceStatus(_)
             | SidecarResponse::TrackDeviceParameters(_)
             | SidecarResponse::TrackDevicePrograms(_)
-            | SidecarResponse::TrackPluginState(_) => {}
+            | SidecarResponse::TrackPluginState(_)
+            | SidecarResponse::TrackDeviceProgramChanged(_) => {}
         }
     }
 

@@ -249,11 +249,16 @@ fn response_name(response: &SidecarResponse) -> &'static str {
     match response {
         SidecarResponse::AudioStatus(_) => "audioStatus",
         SidecarResponse::TransportStatus(_) => "transportStatus",
-        SidecarResponse::Ack {} => "ack",
+        SidecarResponse::TimelineAck {} => "timelineAck",
+        SidecarResponse::TimelineIdleAck {} => "timelineIdleAck",
+        SidecarResponse::MidiAck {} => "midiAck",
+        SidecarResponse::TrackMixAck {} => "trackMixAck",
+        SidecarResponse::TrackDeviceAck {} => "trackDeviceAck",
         SidecarResponse::TrackDeviceStatus(_) => "trackDeviceStatus",
         SidecarResponse::TrackDeviceParameters(_) => "trackDeviceParameters",
         SidecarResponse::TrackDevicePrograms(_) => "trackDevicePrograms",
         SidecarResponse::TrackPluginState(_) => "trackPluginState",
+        SidecarResponse::TrackDeviceProgramChanged(_) => "trackDeviceProgramChanged",
     }
 }
 
@@ -277,14 +282,19 @@ fn render_name(message: &RenderMessage) -> &'static str {
     }
 }
 
-const RESPONSES: [&str; 7] = [
+const RESPONSES: [&str; 12] = [
     "audioStatus",
     "transportStatus",
-    "ack",
+    "timelineAck",
+    "timelineIdleAck",
+    "midiAck",
+    "trackMixAck",
+    "trackDeviceAck",
     "trackDeviceStatus",
     "trackDeviceParameters",
     "trackDevicePrograms",
     "trackPluginState",
+    "trackDeviceProgramChanged",
 ];
 const EVENTS: [&str; 8] = [
     "ready",

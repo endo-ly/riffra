@@ -123,7 +123,10 @@ impl AudioSupervisor {
 
     fn request_plugin_state(&self, command: SidecarCommand) -> NativeAudioResult<GraphPluginState> {
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
-            SidecarResponse::TrackPluginState(response) => Ok(plugin_state(response.state)),
+            SidecarResponse::TrackPluginState(response)
+            | SidecarResponse::TrackDeviceProgramChanged(response) => {
+                Ok(plugin_state(response.state))
+            }
             response => Err(unexpected(&response)),
         }
     }

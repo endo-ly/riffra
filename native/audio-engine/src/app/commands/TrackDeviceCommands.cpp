@@ -32,7 +32,7 @@ void AudioCommandDispatcher::handle(const SetTrackDeviceBypassedCommand& command
                 command.trackId, command.deviceId, command.bypassed, deviceError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (changed)
-                pending->respond(AckSpec{});
+                pending->respond(TrackDeviceAckSpec{});
             else
                 pending->fail("trackDevice", deviceError, "track.device.bypass");
         },
@@ -57,7 +57,7 @@ void AudioCommandDispatcher::handle(const SetTrackDeviceParameterCommand& comman
                 command.value, deviceError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (changed)
-                pending->respond(AckSpec{});
+                pending->respond(TrackDeviceAckSpec{});
             else
                 pending->fail("trackDevice", deviceError, "track.device.parameter");
         },
@@ -132,7 +132,7 @@ void AudioCommandDispatcher::handle(const SetTrackPluginStateCommand& command,
                 command.trackId, command.deviceId, command.state, deviceError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (changed)
-                pending->respond(AckSpec{});
+                pending->respond(TrackDeviceAckSpec{});
             else
                 pending->fail("trackDevice", deviceError, "track.device.setPluginState");
         },
@@ -163,7 +163,7 @@ void AudioCommandDispatcher::handle(const SetTrackDeviceProgramCommand& command,
                                        : std::nullopt;
             context.timelineOperationRunning.store(false, std::memory_order_release);
             if (state.has_value())
-                pending->respond(TrackPluginStateSpec{*state});
+                pending->respond(TrackDeviceProgramChangedSpec{*state});
             else
                 pending->fail("trackDevice", deviceError, "track.device.setProgram");
         },
@@ -257,7 +257,7 @@ void AudioCommandDispatcher::handle(const OpenTrackPluginEditorCommand& command,
                 pending->fail("pluginEditor", editorError, "track.pluginEditor.open");
                 return;
             }
-            pending->respond(AckSpec{});
+            pending->respond(TrackDeviceAckSpec{});
         },
         std::chrono::seconds(30));
     if (!submitted) {

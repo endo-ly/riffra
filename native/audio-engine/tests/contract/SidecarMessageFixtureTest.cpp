@@ -81,11 +81,15 @@ TransportStatusSpec transportStatus() {
     status.state = TransportStateSpec::playing;
     status.revision = 7u;
     status.timelineTick = 1'920;
+    status.timelineSample = 48'000;
+    status.audioClockSample = 96'000;
+    status.sampleRate = 48'000.0;
     status.sequence = 42;
     status.recordingPhase = RecordingPhaseSpec::recording;
     status.recordingStartTick = 960;
     status.recordingPassOrdinal = 1;
     status.armedTrackIds = {"track-1"};
+    status.instrumentFaults = {{"track-1", "vst3", 0, 1}};
     status.clockGeneration = 2;
     status.discontinuity = 5;
     return status;
@@ -120,11 +124,16 @@ std::vector<SidecarResponseSpec> responses() {
     return {
         audioStatus(),
         transportStatus(),
-        AckSpec{},
+        TimelineAckSpec{},
+        TimelineIdleAckSpec{},
+        MidiAckSpec{},
+        TrackMixAckSpec{},
+        TrackDeviceAckSpec{},
         TrackDeviceStatusSpec{"Test Effect", false, 1, {true, true, true, false}},
         parameters,
         programs,
         TrackPluginStateSpec{pluginState()},
+        TrackDeviceProgramChangedSpec{pluginState()},
     };
 }
 

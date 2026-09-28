@@ -459,7 +459,7 @@ pub struct AudioDiagnostics {
 }
 
 /// Fault counters for one instrument runtime in the active graph.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioInstrumentFault {
     pub track_id: String,
@@ -493,14 +493,21 @@ pub enum RecordingPhase {
 #[serde(rename_all = "camelCase")]
 pub struct TransportStatus {
     pub state: TransportState,
-    /// Revision of the active graph; `None` before a graph exists.
+    /// Revision of the active graph; `None` when no graph could be read.
     pub revision: Option<u64>,
     pub timeline_tick: u64,
+    /// Timeline position in output samples, including a pending seek.
+    pub timeline_sample: i64,
+    /// Samples processed by the audio device since the clock generation began.
+    pub audio_clock_sample: u64,
+    /// Output sample rate of the active graph; `None` when no graph could be read.
+    pub sample_rate: Option<f64>,
     pub sequence: u64,
     pub recording_phase: RecordingPhase,
     pub recording_start_tick: u64,
     pub recording_pass_ordinal: u32,
     pub armed_track_ids: Vec<String>,
+    pub instrument_faults: Vec<AudioInstrumentFault>,
     pub clock_generation: u64,
     pub discontinuity: u64,
 }
