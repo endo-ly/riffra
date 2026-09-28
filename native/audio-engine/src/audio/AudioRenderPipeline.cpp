@@ -25,7 +25,6 @@ void AudioRenderPipeline::setMuteReason(const MuteReason reason, const bool acti
     if (active) {
         muteReasons.fetch_or(bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
-        panicRequested.store(true, std::memory_order_release);
         previewEngine.requestSynthPanic();
     } else {
         muteReasons.fetch_and(~bit, std::memory_order_acq_rel);
@@ -119,21 +118,15 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                        const int numOutputChannels, const int numSamples,
                                        const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
-    TimelineEngine::AudioReadScope timelineRead(timelineEngine);
-    const auto projectEpoch = timelineRead.get() != nullptr ? timelineRead.get()->meterEpoch : 0;
+    if (const auto published = timelineEngine.beginBlock(numSamples).publishedMasterGainDb)
+        setMasterGainDb(*published);
+    const auto projectEpoch = timelineEngine.activeMeterEpoch();
     audioMetrics.beginProjectBlock(projectEpoch);
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
         audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
                                             activeSampleRate.load(std::memory_order_relaxed));
     };
-    if (panicRequested.exchange(false, std::memory_order_acq_rel))
-        timelineEngine.panicAllInstrumentTracks();
-    timelineEngine.servicePendingPanic();
-    int recordingOffset = 0;
-    int recordedSamples = numSamples;
-    (void)timelineEngine.recordingWindow(numSamples, recordingOffset, recordedSamples);
-
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
     const auto* selectedInput = inputChannelData != nullptr && selectedChannel < numInputChannels
                                     ? inputChannelData[selectedChannel]
@@ -189,6 +182,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
     feedbackDetector.observe(monitoredInputPeak, numSamples, monitoringActive);
     if (feedbackDetector.consumeSuspected()) {
         setFeedbackProtection(true);
+        timelineEngine.panicActiveGraph();
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
@@ -317,7 +311,8 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
     timelineEngine.audioDeviceStarted();
 }
 
-void AudioRenderPipeline::deviceStopped() noexcept {
+void AudioRenderPipeline::deviceStopped() {
+    timelineEngine.setRealtimeOwner(RealtimeOwner::control);
     activeSampleRate.store(0.0, std::memory_order_release);
     activeBlockSize.store(0, std::memory_order_release);
     limiterPrepared = false;

@@ -20,7 +20,7 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     ASSERT_NE(instrument, nullptr) << error.toStdString();
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
         engine, "track:live-fade", "instrument:live-fade", std::move(instrument)));
-    ASSERT_TRUE(engine.setLiveMidiTarget("track:live-fade", error));
+    ASSERT_TRUE((engine.setLiveMidiTarget("track:live-fade", error) == RealtimeRequest::accepted));
     ASSERT_TRUE(engine.enqueueTargetedMidi("track:live-fade",
                                            juce::MidiMessage::noteOn(1, 60, 0.8f), error));
 
@@ -29,7 +29,7 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 2, kBlockSamples);
 
     // Assert: the 5 ms fade splits the callback into two ranges, but the
@@ -61,7 +61,7 @@ TEST(TimelineEngineTest, ProcessesAnAudioEffectChainOncePerTransportChunk) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     engine.mix(inputs.data(), 1, outputs.data(), 2, kBlockSamples);
 
     // Assert: the live monitor input is merged before the shared effect chain,
@@ -143,7 +143,7 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
 
     // Act: timeline MIDI is rendered through the built-in runtime and its
     // effect chain, then a loop boundary resets and schedules it again.
-    engine.play();
+    ASSERT_TRUE(engine.play());
     engine.mix(outputChannels.data(), 2, kBlockSamples);
     const auto timelinePeak = outputMagnitude();
     auto loopPeak = 0.0f;
@@ -154,15 +154,15 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     }
 
     // A seek must reset the built-in runtime before the next timeline note.
-    engine.seekToTick(0);
-    engine.play();
+    ASSERT_TRUE(engine.seekToTick(0));
+    ASSERT_TRUE(engine.play());
     clearOutput();
     engine.mix(outputChannels.data(), 2, kBlockSamples);
     const auto seekPeak = outputMagnitude();
 
     // Stopped transport still accepts targeted live MIDI, including directly
     // after stop/reset.
-    engine.stop();
+    ASSERT_TRUE(engine.stop());
     ASSERT_TRUE(
         engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 64, 0.8f), error))
         << error.toStdString();
@@ -170,7 +170,7 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     engine.mix(outputChannels.data(), 2, kBlockSamples);
     const auto livePeak = outputMagnitude();
 
-    engine.stop();
+    ASSERT_TRUE(engine.stop());
     ASSERT_TRUE(
         engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 67, 0.7f), error))
         << error.toStdString();
@@ -230,7 +230,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
     EXPECT_GT(outputMagnitude(), 0.02f);
     EXPECT_LT(outputMagnitude(), 0.08f);
 
-    engine.play();
+    ASSERT_TRUE(engine.play());
     std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
     std::fill(outputRight.begin(), outputRight.end(), 0.0f);
     engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
@@ -256,7 +256,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputOncePerAudioCallback) {
         const std::array<const float*, 1> inputChannels{input.data()};
         const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
 
-        engine.play();
+        if (!engine.play()) return false;
         engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
         peak =
             std::max(juce::FloatVectorOperations::findMaximum(outputLeft.data(), kBlockSamples),
@@ -299,8 +299,8 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act: play from a non-zero seek position and stop while the source is loud.
-    engine.seekToTick(4);
-    engine.play();
+    ASSERT_TRUE(engine.seekToTick(4));
+    ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 2, kBlockSamples);
     const auto playStartPeak = *std::max_element(left.begin(), left.end());
     EXPECT_LT(left.front(), 0.01f);
@@ -308,7 +308,7 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
 
     engine.mix(outputs.data(), 2, kBlockSamples);
     const auto previous = left.back();
-    engine.stop();
+    ASSERT_TRUE(engine.stop());
     std::fill(left.begin(), left.end(), 0.0f);
     std::fill(right.begin(), right.end(), 0.0f);
     engine.mix(outputs.data(), 2, kBlockSamples);
@@ -345,9 +345,9 @@ TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
     const std::array<float*, 1> outputs{output.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 1, kBlockSamples);
-    engine.stop();
+    ASSERT_TRUE(engine.stop());
     output.fill(0.0f);
     engine.mix(outputs.data(), 1, kBlockSamples);
     engine.mixMetronome(outputs.data(), 1, kBlockSamples);
@@ -379,7 +379,7 @@ TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
     // Assert: a non-zero first source sample still starts at zero gain and
@@ -409,15 +409,15 @@ TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
-    engine.seekToTick(4);
-    engine.play();
+    ASSERT_TRUE(engine.seekToTick(4));
+    ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 2, kBlockSamples);
-    const auto beforeStop = engine.status().timelineSample;
-    engine.stop();
+    const auto beforeStop = engine.status().frame.timelineSample;
+    ASSERT_TRUE(engine.stop());
     std::fill(left.begin(), left.end(), 0.0f);
     std::fill(right.begin(), right.end(), 0.0f);
     engine.mix(outputs.data(), 2, kBlockSamples);
-    const auto afterStop = engine.status().timelineSample;
+    const auto afterStop = engine.status().frame.timelineSample;
 
     // Assert: the playhead advances by the 5 ms fade only, not by the 512
     // sample callback, and remains stable on subsequent stopped callbacks.
@@ -425,7 +425,7 @@ TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
     EXPECT_GT(left.front(), 0.01f);
     EXPECT_LT(std::abs(left.back()), 0.001f);
     engine.mix(outputs.data(), 2, kBlockSamples);
-    EXPECT_EQ(engine.status().timelineSample, afterStop);
+    EXPECT_EQ(engine.status().frame.timelineSample, afterStop);
 }
 
 }  // namespace riffra

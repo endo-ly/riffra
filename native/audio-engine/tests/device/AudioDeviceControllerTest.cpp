@@ -46,7 +46,7 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
                                .getChildFile("riffra-device-stop-recording-test")
                                .getChildFile(juce::Uuid().toString());
     ASSERT_TRUE(pipeline.recording().start(directory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
+    ASSERT_TRUE((timeline.startRecording(0, error) == RealtimeRequest::accepted));
     std::array<float, 32> input{};
     std::array<float, 32> output{};
     input.fill(0.25f);

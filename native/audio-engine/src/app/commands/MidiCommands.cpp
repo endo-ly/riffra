@@ -22,11 +22,11 @@ void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
 void AudioCommandDispatcher::handle(const SetLiveMidiTargetCommand& command,
                                     CommandResponder responder) {
     juce::String timelineError;
-    if (!context.timelineEngine.setLiveMidiTarget(command.trackId.value_or(juce::String()),
-                                                  timelineError)) {
-        responder.fail("liveMidiTarget", timelineError, "midi.liveTarget");
+    const auto request = context.timelineEngine.setLiveMidiTarget(
+        command.trackId.value_or(juce::String()), timelineError);
+    if (rejectUnlessAccepted(responder, request, "liveMidiTarget", timelineError,
+                             "midi.liveTarget"))
         return;
-    }
     responder.respond(currentStatus());
 }
 

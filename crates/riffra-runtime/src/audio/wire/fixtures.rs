@@ -248,7 +248,7 @@ fn sidecar_command_fixtures_are_current() {
 fn response_name(response: &SidecarResponse) -> &'static str {
     match response {
         SidecarResponse::AudioStatus(_) => "audioStatus",
-        SidecarResponse::TransportStatus(_) => "transportStatus",
+        SidecarResponse::TransportAccepted { .. } => "transportAccepted",
         SidecarResponse::TimelineAck {} => "timelineAck",
         SidecarResponse::TimelineIdleAck {} => "timelineIdleAck",
         SidecarResponse::MidiAck {} => "midiAck",
@@ -284,7 +284,7 @@ fn render_name(message: &RenderMessage) -> &'static str {
 
 const RESPONSES: [&str; 12] = [
     "audioStatus",
-    "transportStatus",
+    "transportAccepted",
     "timelineAck",
     "timelineIdleAck",
     "midiAck",

@@ -199,7 +199,7 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
 
     // Act
     ASSERT_TRUE(callback.recording().start(directory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
+    ASSERT_TRUE((timeline.startRecording(0, error) == RealtimeRequest::accepted));
     ASSERT_TRUE(callback.recording().stop(error));
 
     // Assert
@@ -493,7 +493,7 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
 
     ASSERT_TRUE(callback.recording().start(firstDirectory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
+    ASSERT_TRUE((timeline.startRecording(0, error) == RealtimeRequest::accepted));
     ASSERT_TRUE(callback.recording().stop(error));
     EXPECT_FALSE(callback.recording().start(secondDirectory, error));
 

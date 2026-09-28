@@ -86,11 +86,9 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             juce::String timelineError;
             const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
-            if (!committed) {
-                pending->fail("timeline", timelineError, "runtime.timeline.commit");
+            if (rejectUnlessAccepted(*pending, committed, "timeline", timelineError,
+                                     "runtime.timeline.commit"))
                 return;
-            }
-            context.pipeline.setMasterGainDb(context.timelineEngine.activeMasterGainDb());
             pending->respond(TimelineAckSpec{});
         },
         kTimelineVstLifecycleTimeout);
@@ -113,6 +111,7 @@ void AudioCommandDispatcher::handle(const DiscardTimelineSnapshotCommand&,
         [this, pending] {
             context.timelineEngine.discardPreparedSnapshot();
             context.timelineOperationRunning.store(false, std::memory_order_release);
+            context.timelineEngine.reclaimRetiredGraphs();
             pending->respond(TimelineAckSpec{});
         },
         std::chrono::seconds(5));

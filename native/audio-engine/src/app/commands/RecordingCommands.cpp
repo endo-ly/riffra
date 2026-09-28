@@ -15,10 +15,13 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
         responder.fail("recording", recordingError, "recording.start");
         return;
     }
-    if (!context.timelineEngine.startRecording(command.countInBeats, recordingError)) {
+    const auto started =
+        context.timelineEngine.startRecording(command.countInBeats, recordingError);
+    if (started != RealtimeRequest::accepted) {
         juce::String rollbackError;
         (void)context.pipeline.stopArrangeRecording(context.timelineEngine, rollbackError);
-        responder.fail("recording", recordingError, "recording.start");
+        (void)rejectUnlessAccepted(responder, started, "recording", recordingError,
+                                   "recording.start");
         return;
     }
     responder.respond(currentStatus());
@@ -27,9 +30,16 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
 void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
                                     CommandResponder responder) {
     juce::String recordingError;
+    const auto cancelled = context.timelineEngine.cancelRecordingIfCountingIn(recordingError);
+    if (cancelled == RealtimeRequest::queueFull) {
+        responder.fail("realtimeQueueFull", recordingError, "recording.stop");
+        return;
+    }
     auto stopped = false;
-    if (context.timelineEngine.cancelRecordingIfCountingIn()) {
-        context.timelineEngine.stop();
+    if (cancelled == RealtimeRequest::accepted) {
+        if (rejectUnlessQueued(responder, context.timelineEngine.stop().has_value(),
+                               "recording.stop"))
+            return;
         stopped = context.pipeline.cancelArrangeRecording(context.timelineEngine, recordingError);
     } else {
         stopped = context.pipeline.stopArrangeRecording(context.timelineEngine, recordingError);

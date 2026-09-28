@@ -41,6 +41,18 @@
 
 namespace {
 constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(45);
+constexpr int kGraphReclaimIntervalMs = 100;
+
+/// Destroys the graphs the audio thread has retired, on the message thread.
+class GraphReclaimTimer final : public juce::Timer {
+public:
+    explicit GraphReclaimTimer(riffra::TimelineEngine& timelineIn) : timeline(timelineIn) {}
+
+    void timerCallback() override { timeline.reclaimRetiredGraphs(); }
+
+private:
+    riffra::TimelineEngine& timeline;
+};
 
 bool parentProcessIsAlive(const std::uint32_t parentPid) noexcept {
 #if JUCE_WINDOWS
@@ -230,7 +242,10 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
             [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
     });
 
+    GraphReclaimTimer graphReclaimTimer(timelineEngine);
+    graphReclaimTimer.startTimer(kGraphReclaimIntervalMs);
     juce::MessageManager::getInstance()->runDispatchLoop();
+    graphReclaimTimer.stopTimer();
     if (commandThread.joinable()) commandThread.join();
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
     pipeline.setRecordingFinalizationDispatcher({});

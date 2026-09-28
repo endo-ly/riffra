@@ -462,7 +462,7 @@ mod tests {
             timeline_sample: 0,
             audio_clock_sample: 0,
             sample_rate: Some(48_000.0),
-            sequence: 0,
+            applied_command_sequence: 0,
             recording_phase: RecordingPhase::Idle,
             recording_start_tick: 0,
             recording_pass_ordinal: 0,

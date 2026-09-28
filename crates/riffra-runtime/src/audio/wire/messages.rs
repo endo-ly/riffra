@@ -33,10 +33,18 @@ pub(crate) enum SidecarMessage {
 
 /// Successful completion payload of one request.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(crate) enum SidecarResponse {
     AudioStatus(Box<WireAudioStatus>),
-    TransportStatus(WireTransportStatus),
+    /// The command entered the realtime queue and will be reported as applied in a later status.
+    TransportAccepted {
+        command_sequence: u64,
+    },
     TimelineAck {},
     TimelineIdleAck {},
     MidiAck {},
@@ -55,7 +63,7 @@ impl SidecarResponse {
     pub(crate) fn kind(&self) -> ExpectedResponse {
         match self {
             Self::AudioStatus(_) => ExpectedResponse::AudioStatus,
-            Self::TransportStatus(_) => ExpectedResponse::TransportStatus,
+            Self::TransportAccepted { .. } => ExpectedResponse::TransportAccepted,
             Self::TimelineAck {} => ExpectedResponse::TimelineAck,
             Self::TimelineIdleAck {} => ExpectedResponse::TimelineIdleAck,
             Self::MidiAck {} => ExpectedResponse::MidiAck,
@@ -304,7 +312,7 @@ pub(crate) struct WireTransportStatus {
     /// Output sample rate of the active graph; `null` when no graph could be read.
     #[serde(deserialize_with = "nullable")]
     pub(crate) sample_rate: Option<f64>,
-    pub(crate) sequence: u64,
+    pub(crate) applied_command_sequence: u64,
     pub(crate) recording_phase: WireRecordingPhase,
     pub(crate) recording_start_tick: u64,
     pub(crate) recording_pass_ordinal: u32,

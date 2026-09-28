@@ -87,6 +87,11 @@ target_sources(riffra-render-core PRIVATE
   src/timeline/TimelineEngineDevices.cpp
   src/timeline/TimelineEngineRender.cpp
   src/timeline/TimelineEngine.h
+  src/timeline/ControlGraphRegistry.cpp
+  src/timeline/ControlGraphRegistry.h
+  src/timeline/PreparedTimeline.h
+  src/timeline/RealtimeCommand.h
+  src/timeline/RealtimeFrame.h
   src/timeline/TimelineSnapshotBuilder.cpp
   src/timeline/TimelineSnapshotBuilder.h
   src/contract/ContractReader.cpp
@@ -456,6 +461,7 @@ if(BUILD_TESTING)
     tests/concurrency/SeqLockFrameTest.cpp
     tests/timeline/TimelineSnapshotTest.cpp
     tests/timeline/TimelineTransportTest.cpp
+    tests/timeline/TimelineRealtimeTest.cpp
     tests/timeline/TimelineRenderTest.cpp
     tests/timeline/TimelineRecordingTest.cpp
     tests/timeline/TimelineDeviceTest.cpp

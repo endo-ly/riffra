@@ -76,10 +76,14 @@ bool RecordingController::stop(juce::String& error) {
             error = "The previous recording is waiting for finalization.";
             return false;
         }
-        timeline.stopRecording();
+        if (!timeline.stopRecording(error)) return false;
         const auto captureFinalized = timeline.finalizeRecording(error);
-        timeline.stop();
+        const auto transportStopped = timeline.stop().has_value();
         if (!captureFinalized) return false;
+        if (!transportStopped) {
+            error = "The realtime command queue is full.";
+            return false;
+        }
         timeline.clearRecordingSink();
         if (arrangeRecording == nullptr) return true;
 

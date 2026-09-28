@@ -12,6 +12,7 @@
 #include "device/AudioDeviceController.h"
 #include "plugins/RuntimeLifecycleExecutor.h"
 #include "protocol/CommandResponder.h"
+#include "timeline/RealtimeCommand.h"
 
 namespace riffra {
 
@@ -52,6 +53,16 @@ private:
     /// Rejects a command that must not overlap an Arrangement Graph lifecycle task.
     [[nodiscard]] bool rejectWhileTimelineBusy(CommandResponder& responder,
                                                const juce::String& message);
+    /// Fails the request unless the timeline accepted it. A full realtime
+    /// command queue is reported as the retryable `realtimeQueueFull`.
+    [[nodiscard]] static bool rejectUnlessAccepted(CommandResponder& responder,
+                                                   RealtimeRequest request,
+                                                   const juce::String& kind,
+                                                   const juce::String& error,
+                                                   const juce::String& operation);
+    /// Fails the request when a realtime command could not be queued.
+    [[nodiscard]] static bool rejectUnlessQueued(CommandResponder& responder, bool queued,
+                                                 const juce::String& operation);
 
     void handle(const StatusCommand&, CommandResponder responder);
     void handle(const SetEmergencyMuteCommand& command, CommandResponder responder);

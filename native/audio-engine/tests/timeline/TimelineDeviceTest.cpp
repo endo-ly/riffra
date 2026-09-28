@@ -50,7 +50,7 @@ TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, GraphCommitRestoresCanonicalMasterGainAfterPreview) {
+TEST(TimelineEngineTest, GraphPublicationRestoresCanonicalMasterGainAfterPreview) {
     // Arrange
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
@@ -79,6 +79,7 @@ TEST(TimelineEngineTest, GraphCommitRestoresCanonicalMasterGainAfterPreview) {
         comparisonProcessed,
         timelineOperationRunning,
     });
+    pipeline.prepare(nullptr);
     auto snapshot = makeTestSnapshot();
     snapshot.graph.masterGainDb = -12.0;
     juce::String error;
@@ -91,6 +92,10 @@ TEST(TimelineEngineTest, GraphCommitRestoresCanonicalMasterGainAfterPreview) {
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -3.0f);
     dispatcher.dispatch({2, CommitTimelineSnapshotCommand{}}, CommandResponder(2, discard));
     ASSERT_TRUE(runtimeLifecycle.waitForIdle(std::chrono::seconds(5)));
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    pipeline.processBlock(nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()), {});
 
     // Assert
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -12.0f);

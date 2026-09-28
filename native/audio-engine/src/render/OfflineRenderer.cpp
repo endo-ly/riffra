@@ -157,8 +157,11 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             return false;
         }
     }
-    engine->seekToTick(0);
-    engine->play();
+    // The render thread owns the engine's realtime state, so both requests apply immediately.
+    if (!engine->seekToTick(0).has_value() || !engine->play().has_value()) {
+        error = "Offline Render transport could not start.";
+        return false;
+    }
 
     const auto& destination = plan.destination;
     const auto partial = destination.getSiblingFile(destination.getFileName() + ".partial");

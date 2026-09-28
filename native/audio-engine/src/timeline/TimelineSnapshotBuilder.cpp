@@ -14,6 +14,9 @@ namespace riffra {
 namespace {
 
 constexpr int kReadAheadSamples = 32768;
+// Device instances are prepared with headroom so later graphs with denser MIDI
+// can keep sharing them; a graph that needs more receives new instances.
+constexpr std::size_t kSharedDeviceMidiCapacity = 256;
 
 juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     if (!instrument.has_value()) return {};
@@ -28,18 +31,12 @@ TimelineSnapshotBuilder::TimelineSnapshotBuilder(TimelineEngine& engine) noexcep
 bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                     juce::AudioFormatManager& formats,
                                     const double outputSampleRate, const int maximumBlockSize,
-                                    std::unique_ptr<TimelineEngine::PreparedTimeline>& prepared,
-                                    bool& monitorLiveInputState,
-                                    std::uint32_t& monitoringInputChannelsState,
-                                    bool& armedInstrumentTrackState, juce::String& error) {
-    using Clip = TimelineEngine::Clip;
-    using PreparedTimeline = TimelineEngine::PreparedTimeline;
-    using Track = TimelineEngine::Track;
+                                    std::unique_ptr<PreparedTimeline>& prepared,
+                                    juce::String& error) {
+    using Clip = PreparedTimeline::Clip;
+    using Track = PreparedTimeline::Track;
 
     prepared.reset();
-    monitorLiveInputState = false;
-    monitoringInputChannelsState = 0;
-    armedInstrumentTrackState = false;
     if (!std::isfinite(outputSampleRate) || outputSampleRate <= 0.0 || maximumBlockSize <= 0) {
         error = "Timeline snapshot requires an active audio device.";
         return false;
@@ -90,7 +87,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->midiChannel = trackSpec.midiInput.channel.has_value()
                                           ? static_cast<int>(*trackSpec.midiInput.channel)
                                           : 0;
-        armedInstrumentTrackState |= track->runtime->instrumentTrack && track->runtime->armed;
+        track->runtime->key =
+            engine.graphRegistry.access([&track](ControlGraphRegistry::State& graphs) {
+                return graphs.trackKeys.keyFor(track->id);
+            });
         track->runtime->gainDb.store(static_cast<float>(trackSpec.gainDb),
                                      std::memory_order_release);
         track->runtime->pan.store(static_cast<float>(trackSpec.pan), std::memory_order_release);
@@ -99,17 +99,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         prepared->hasSolo = prepared->hasSolo || track->runtime->solo;
         track->runtime->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
             trackSpec.monitoring, track->runtime->armed, track->runtime->instrumentTrack);
-        track->runtime->setLowLatencyMonitoring(
-            track->runtime->instrumentTrack
-                ? (track->runtime->armed || engine.isLiveMidiTarget(track->id))
-                : track->runtime->monitorInput);
-        if (track->runtime->monitorInput) monitorLiveInputState = true;
         track->runtime->audioInputChannel =
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
-        if (track->runtime->monitorInput && track->runtime->audioInputChannel >= 0)
-            monitoringInputChannelsState |=
-                std::uint32_t{1} << static_cast<unsigned>(track->runtime->audioInputChannel);
 
         std::vector<AutomationRuntime::Point> volumeAutomation;
         std::vector<AutomationRuntime::Point> panAutomation;
@@ -128,27 +120,60 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->effects = trackSpec.effects;
         track->instrument = trackSpec.instrument;
         track->instrumentDeviceId = instrumentId(track->instrument);
-        auto sameRuntimeTopology = false;
-        {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (!engine.runtimeDevicesNeedReprepare.load(std::memory_order_acquire) &&
-                engine.timeline != nullptr) {
-                const auto existing =
-                    std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
-                                 [&track](const auto& item) { return item->id == track->id; });
-                if (existing != engine.timeline->tracks.end() &&
-                    sameEffectTopology((*existing)->effects, track->effects) &&
-                    sameInstrumentTopology((*existing)->instrument, track->instrument) &&
-                    (*existing)->runtime->outputSampleRate == track->runtime->outputSampleRate &&
-                    (*existing)->runtime->preparedBlockSize == track->runtime->preparedBlockSize) {
-                    sameRuntimeTopology = true;
-                    track->runtime->pluginDelaySamples = (*existing)->runtime->pluginDelaySamples;
-                    track->runtime->pluginTailSamples = (*existing)->runtime->pluginTailSamples;
-                    track->reuseRuntimeDevices = (*existing)->effects == track->effects &&
-                                                 (*existing)->instrument == track->instrument;
-                }
+
+        for (const auto& clipSpec : trackSpec.midiClips) {
+            MidiClip midiClip;
+            midiClip.startTick = clipSpec.startTick;
+            midiClip.durationTicks = clipSpec.durationTicks;
+            midiClip.loop = clipSpec.loopEnabled;
+            midiClip.muted = clipSpec.muted;
+            midiClip.notes.reserve(clipSpec.notes.size());
+            for (const auto& noteSpec : clipSpec.notes)
+                midiClip.notes.push_back({noteSpec.startTick, noteSpec.durationTicks, noteSpec.note,
+                                          noteSpec.velocity, noteSpec.channel});
+            midiClip.events.reserve(clipSpec.events.size());
+            for (const auto& eventSpec : clipSpec.events) {
+                const auto kind =
+                    eventSpec.kind == MidiEventKindSpec::controlChange ? "controlChange"
+                    : eventSpec.kind == MidiEventKindSpec::pitchBend   ? "pitchBend"
+                                                                       : "channelPressure";
+                midiClip.events.push_back(
+                    {kind, eventSpec.tick, eventSpec.channel, eventSpec.data1, eventSpec.data2});
             }
+            MidiScheduler::CompiledMidiClip compiled;
+            if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate, compiled,
+                                        error))
+                return false;
+            track->runtime->midiClips.push_back(std::move(compiled));
         }
+        track->runtime->midiEventCapacity =
+            MidiScheduler::maximumEventsPerBlock(track->runtime->midiClips, maximumBlockSize);
+        if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
+                                          track->runtime->midiEventCapacity)) {
+            error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
+            return false;
+        }
+
+        // Device instances already published are shared, never prepared again:
+        // the audio thread may be processing them.
+        auto sameRuntimeTopology = false;
+        engine.graphRegistry.access([&track,
+                                     &sameRuntimeTopology](ControlGraphRegistry::State& graphs) {
+            if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
+            const auto* existing = graphs.latestCommitted->findTrack(track->id);
+            if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
+                !sameInstrumentTopology(existing->instrument, track->instrument) ||
+                existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
+                existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
+                return;
+            sameRuntimeTopology = true;
+            track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
+            track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
+            track->reuseRuntimeDevices =
+                existing->effects == track->effects && existing->instrument == track->instrument &&
+                existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
+            if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
+        });
         if (!track->reuseRuntimeDevices &&
             !track->runtime->effects().load(track->effects, outputSampleRate, maximumBlockSize,
                                             processingMode, error, track->id + "/track-effect"))
@@ -178,6 +203,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 track->runtime->instrument()->setBypassed(internal.bypassed);
             }
         }
+        if (!track->reuseRuntimeDevices &&
+            !track->runtime->prepareTimelineMidiCapacity(
+                std::max(track->runtime->midiEventCapacity, kSharedDeviceMidiCapacity), error))
+            return false;
         if (!sameRuntimeTopology) {
             track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
             track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
@@ -241,45 +270,28 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             track->clips.push_back(std::move(clip));
         }
 
-        for (const auto& clipSpec : trackSpec.midiClips) {
-            MidiClip midiClip;
-            midiClip.startTick = clipSpec.startTick;
-            midiClip.durationTicks = clipSpec.durationTicks;
-            midiClip.loop = clipSpec.loopEnabled;
-            midiClip.muted = clipSpec.muted;
-            midiClip.notes.reserve(clipSpec.notes.size());
-            for (const auto& noteSpec : clipSpec.notes)
-                midiClip.notes.push_back({noteSpec.startTick, noteSpec.durationTicks, noteSpec.note,
-                                          noteSpec.velocity, noteSpec.channel});
-            midiClip.events.reserve(clipSpec.events.size());
-            for (const auto& eventSpec : clipSpec.events) {
-                const auto kind =
-                    eventSpec.kind == MidiEventKindSpec::controlChange ? "controlChange"
-                    : eventSpec.kind == MidiEventKindSpec::pitchBend   ? "pitchBend"
-                                                                       : "channelPressure";
-                midiClip.events.push_back(
-                    {kind, eventSpec.tick, eventSpec.channel, eventSpec.data1, eventSpec.data2});
-            }
-            MidiScheduler::CompiledMidiClip compiled;
-            if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate, compiled,
-                                        error))
-                return false;
-            track->runtime->midiClips.push_back(std::move(compiled));
-        }
-        track->runtime->midiEventCapacity =
-            MidiScheduler::maximumEventsPerBlock(track->runtime->midiClips, maximumBlockSize);
-        if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
-                                          track->runtime->midiEventCapacity)) {
-            error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
-            return false;
-        }
-        if (!track->runtime->prepareTimelineMidiCapacity(track->runtime->midiEventCapacity, error))
-            return false;
         track->runtime->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
         prepared->tracks.push_back(std::move(track));
+    }
+
+    auto& summary = prepared->summary;
+    summary.trackCount = prepared->tracks.size();
+    for (const auto& track : prepared->tracks) {
+        const auto& runtime = *track->runtime;
+        summary.pluginCount += static_cast<std::uint64_t>(runtime.effects().size());
+        summary.maximumLatencySamples =
+            std::max<std::uint64_t>(summary.maximumLatencySamples,
+                                    static_cast<std::uint64_t>(runtime.pluginLatencySamples()));
+        if (runtime.armed) summary.armedTrackIds.push_back(track->id);
+        if (runtime.instrument() != nullptr) ++summary.instrumentRuntimeCount;
+        summary.armedInstrumentTrack |= runtime.instrumentTrack && runtime.armed;
+        summary.monitorLiveInput |= runtime.monitorInput;
+        if (runtime.monitorInput && runtime.audioInputChannel >= 0)
+            summary.monitoringInputChannels |= std::uint32_t{1}
+                                               << static_cast<unsigned>(runtime.audioInputChannel);
     }
 
     for (auto& track : prepared->tracks) {

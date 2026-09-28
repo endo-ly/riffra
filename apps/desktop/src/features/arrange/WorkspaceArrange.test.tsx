@@ -1211,7 +1211,7 @@ describe('WorkspaceArrange', () => {
       timelineSample: 0,
       audioClockSample: 0,
       sampleRate: 48_000,
-      sequence: 1,
+      appliedCommandSequence: 1,
       recordingPhase: 'idle',
       recordingStartTick: 0,
       recordingPassOrdinal: 0,

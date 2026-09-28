@@ -222,7 +222,7 @@ fn transport_status(status: WireTransportStatus) -> TransportStatus {
         timeline_sample: status.timeline_sample,
         audio_clock_sample: status.audio_clock_sample,
         sample_rate: status.sample_rate,
-        sequence: status.sequence,
+        applied_command_sequence: status.applied_command_sequence,
         recording_phase: match status.recording_phase {
             WireRecordingPhase::Idle => RecordingPhase::Idle,
             WireRecordingPhase::CountingIn => RecordingPhase::CountingIn,
@@ -351,10 +351,8 @@ impl AudioSupervisor {
     fn apply_response(&self, response: &SidecarResponse) {
         match response {
             SidecarResponse::AudioStatus(status) => self.replace_status(status.as_ref().clone()),
-            SidecarResponse::TransportStatus(status) => self
-                .events
-                .emit(HostEvent::TransportStatus(transport_status(status.clone()))),
-            SidecarResponse::TimelineAck {}
+            SidecarResponse::TransportAccepted { .. }
+            | SidecarResponse::TimelineAck {}
             | SidecarResponse::TimelineIdleAck {}
             | SidecarResponse::MidiAck {}
             | SidecarResponse::TrackMixAck {}

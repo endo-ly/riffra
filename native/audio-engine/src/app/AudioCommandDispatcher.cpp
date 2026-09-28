@@ -46,25 +46,63 @@ bool AudioCommandDispatcher::rejectWhileTimelineBusy(CommandResponder& responder
     return true;
 }
 
+bool AudioCommandDispatcher::rejectUnlessAccepted(CommandResponder& responder,
+                                                  const RealtimeRequest request,
+                                                  const juce::String& kind,
+                                                  const juce::String& error,
+                                                  const juce::String& operation) {
+    switch (request) {
+        case RealtimeRequest::accepted:
+            return false;
+        case RealtimeRequest::rejected:
+            responder.fail(kind, error, operation);
+            return true;
+        case RealtimeRequest::queueFull:
+            responder.fail("realtimeQueueFull", error, operation);
+            return true;
+    }
+    return true;
+}
+
+bool AudioCommandDispatcher::rejectUnlessQueued(CommandResponder& responder, const bool queued,
+                                                const juce::String& operation) {
+    if (queued) return false;
+    responder.fail("realtimeQueueFull", "The realtime command queue is full.", operation);
+    return true;
+}
+
 void AudioCommandDispatcher::handle(const StatusCommand&, CommandResponder responder) {
     responder.respond(currentStatus());
 }
 
+// Muting also silences instruments so held notes do not sound once unmuted.
 void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
                                     CommandResponder responder) {
     context.pipeline.setUserEmergencyMute(command.muted);
+    if (command.muted &&
+        rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
+                           "audio.emergencyMute"))
+        return;
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
                                     CommandResponder responder) {
     context.pipeline.setFeedbackProtection(command.active);
+    if (command.active &&
+        rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
+                           "audio.feedbackProtection"))
+        return;
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& command,
                                     CommandResponder responder) {
     context.pipeline.setEngineTransitionMute(command.active);
+    if (command.active &&
+        rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
+                           "audio.engineTransitionMute"))
+        return;
     responder.respond(currentStatus());
 }
 
@@ -75,21 +113,22 @@ void AudioCommandDispatcher::handle(const PreviewMasterGainDbCommand& command,
 }
 
 void AudioCommandDispatcher::handle(const TransportCommand& command, CommandResponder responder) {
-    switch (command.kind) {
-        case TransportCommandKind::play:
-            context.timelineEngine.play();
-            break;
-        case TransportCommandKind::setStarting:
-            context.timelineEngine.startPreparing();
-            break;
-        case TransportCommandKind::stop:
-            context.timelineEngine.stop();
-            break;
-        case TransportCommandKind::seek:
-            context.timelineEngine.seekToTick(command.tick);
-            break;
-    }
-    responder.respond(AudioStatusBuilder::currentTransport(context.timelineEngine));
+    auto& timeline = context.timelineEngine;
+    const auto accepted = [&]() -> std::optional<std::uint64_t> {
+        switch (command.kind) {
+            case TransportCommandKind::play:
+                return timeline.play();
+            case TransportCommandKind::setStarting:
+                return timeline.startPreparing();
+            case TransportCommandKind::stop:
+                return timeline.stop();
+            case TransportCommandKind::seek:
+                return timeline.seekToTick(command.tick);
+        }
+        return std::nullopt;
+    }();
+    if (rejectUnlessQueued(responder, accepted.has_value(), "timeline.transport")) return;
+    responder.respond(TransportAcceptedSpec{*accepted});
 }
 
 }  // namespace riffra

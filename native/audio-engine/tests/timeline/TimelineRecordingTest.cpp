@@ -23,15 +23,16 @@ TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
     int captureOffset = 0;
     int captureSamples = 0;
-    ASSERT_TRUE(engine.startRecording(0, error));
-    ASSERT_TRUE(engine.recordingWindow(kBlockSamples, captureOffset, captureSamples));
+    ASSERT_TRUE((engine.startRecording(0, error) == RealtimeRequest::accepted));
+    ASSERT_TRUE(TimelineEngineTestPeer::recordingWindow(engine, kBlockSamples, captureOffset,
+                                                        captureSamples));
 
     // Act
     engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
     const auto rawSamplesAfterCallback = captureSink.totalRawSamples;
     const auto beginCountAfterCallback = captureSink.beginCount;
     const auto endCountAfterCallback = captureSink.endCount;
-    engine.stopRecording();
+    ASSERT_TRUE(engine.stopRecording(error));
     const auto finalized = finalizeCapturedRecording(engine, error);
     engine.clearRecordingSink();
 
@@ -68,8 +69,9 @@ TEST(TimelineEngineTest, StreamsOfflineProcessingForASingleLongRecordingSegment)
     const std::array<float*, 2> outputChannels{outputLeft.data(), outputRight.data()};
     int captureOffset = 0;
     int captureSamples = 0;
-    ASSERT_TRUE(engine.startRecording(0, error));
-    ASSERT_TRUE(engine.recordingWindow(kRecordingSamples, captureOffset, captureSamples));
+    ASSERT_TRUE((engine.startRecording(0, error) == RealtimeRequest::accepted));
+    ASSERT_TRUE(TimelineEngineTestPeer::recordingWindow(engine, kRecordingSamples, captureOffset,
+                                                        captureSamples));
 
     // Act
     auto remaining = kRecordingSamples;

@@ -84,7 +84,7 @@ TransportStatusSpec transportStatus() {
     status.timelineSample = 48'000;
     status.audioClockSample = 96'000;
     status.sampleRate = 48'000.0;
-    status.sequence = 42;
+    status.appliedCommandSequence = 42;
     status.recordingPhase = RecordingPhaseSpec::recording;
     status.recordingStartTick = 960;
     status.recordingPassOrdinal = 1;
@@ -123,7 +123,7 @@ std::vector<SidecarResponseSpec> responses() {
     programs.programs = {{0, "Init"}, {1, "Bright"}};
     return {
         audioStatus(),
-        transportStatus(),
+        TransportAcceptedSpec{42},
         TimelineAckSpec{},
         TimelineIdleAckSpec{},
         MidiAckSpec{},

@@ -1,5 +1,6 @@
 use super::RuntimeError;
 use super::TIMELINE_PREPARE_TIMEOUT;
+use super::is_retryable_native_kind;
 use super::now_ms;
 use super::ports::ProjectionDriver;
 use crate::execution::ProjectedTimeline;
@@ -1295,7 +1296,7 @@ fn worker_loop<D: ProjectionDriver>(
 fn is_timeline_busy(error: &RuntimeError) -> bool {
     matches!(
         error,
-        RuntimeError::Native { kind, .. } if kind == "timelineBusy"
+        RuntimeError::Native { kind, .. } if is_retryable_native_kind(kind)
     )
 }
 

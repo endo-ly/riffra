@@ -143,7 +143,7 @@ struct TransportStatusSpec final {
     std::int64_t timelineSample = 0;
     std::uint64_t audioClockSample = 0;
     std::optional<double> sampleRate;
-    std::uint64_t sequence = 0;
+    std::uint64_t appliedCommandSequence = 0;
     RecordingPhaseSpec recordingPhase = RecordingPhaseSpec::idle;
     std::uint64_t recordingStartTick = 0;
     std::uint32_t recordingPassOrdinal = 0;
@@ -164,6 +164,11 @@ struct MidiAckSpec final {};
 struct TrackMixAckSpec final {};
 /// Completes the Track Device commands that change a device or open its editor.
 struct TrackDeviceAckSpec final {};
+
+/// A transport command accepted by the realtime command queue.
+struct TransportAcceptedSpec final {
+    std::uint64_t commandSequence = 0;
+};
 
 struct TrackDeviceCapabilitiesSpec final {
     bool parameters = false;
@@ -211,7 +216,7 @@ struct TrackDeviceProgramChangedSpec final {
 };
 
 using SidecarResponseSpec =
-    std::variant<AudioStatusSpec, TransportStatusSpec, TimelineAckSpec, TimelineIdleAckSpec,
+    std::variant<AudioStatusSpec, TransportAcceptedSpec, TimelineAckSpec, TimelineIdleAckSpec,
                  MidiAckSpec, TrackMixAckSpec, TrackDeviceAckSpec, TrackDeviceStatusSpec,
                  TrackDeviceParametersSpec, TrackDeviceProgramsSpec, TrackPluginStateSpec,
                  TrackDeviceProgramChangedSpec>;
@@ -279,7 +284,7 @@ struct OfflineRenderCompleteSpec final {
 
 /// Every response `type` written on stdout.
 inline constexpr std::array<std::string_view, 12> kSidecarResponseTypes{
-    "audioStatus",         "transportStatus",   "timelineAck",
+    "audioStatus",         "transportAccepted", "timelineAck",
     "timelineIdleAck",     "midiAck",           "trackMixAck",
     "trackDeviceAck",      "trackDeviceStatus", "trackDeviceParameters",
     "trackDevicePrograms", "trackPluginState",  "trackDeviceProgramChanged",
