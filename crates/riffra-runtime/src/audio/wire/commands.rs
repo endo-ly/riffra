@@ -8,7 +8,11 @@ use serde::Serialize;
 ///
 /// `Option` fields serialize as `null`; the sidecar requires every key.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum SidecarCommand {
     Status,
     SetEmergencyMute {
@@ -209,7 +213,11 @@ impl SidecarCommand {
 
 /// The one request line accepted by `riffra-render`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum OfflineRenderEnvelope {
     RenderTimelineOffline {
         protocol_version: u32,

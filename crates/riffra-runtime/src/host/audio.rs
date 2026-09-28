@@ -1,6 +1,7 @@
 use super::control::{audio_error, command_error};
 use super::*;
 use crate::NativeAudioError;
+use crate::model::RuntimeStartupFinished;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -285,7 +286,9 @@ impl HostState {
             .as_ref()
             .is_ok_and(|initialization| initialization.runtime_error.is_none());
         self.events
-            .emit(HostEvent::RuntimeStartupFinished { succeeded });
+            .emit(HostEvent::RuntimeStartupFinished(RuntimeStartupFinished {
+                succeeded,
+            }));
         match initialized {
             Ok(initialization) => initialization
                 .runtime_error

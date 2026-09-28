@@ -20,7 +20,7 @@ mod protocol;
 mod recovery;
 mod runtime_adapter;
 mod sidecar_process;
-mod wire;
+pub(crate) mod wire;
 
 use command_bus::CommandBus;
 pub use error::{NativeAudioError, NativeAudioResult};
@@ -70,6 +70,7 @@ pub struct AudioSupervisor {
     events: SharedHostEventSink,
     audio_environment_revision: Arc<AtomicU64>,
     projection_duration_ms: Arc<AtomicU64>,
+    protocol_errors: Arc<AtomicU64>,
     recording_completion: Arc<(Mutex<Option<RecordingCompletion>>, Condvar)>,
     recording_finalization_pending: Arc<Mutex<Option<String>>>,
 }
@@ -167,51 +168,34 @@ impl AudioSupervisor {
         status.diagnostics.audio_environment_revision = self.audio_environment_revision();
         status.diagnostics.projection_duration_ms =
             self.projection_duration_ms.load(Ordering::Acquire);
+        status.diagnostics.protocol_errors = self.protocol_errors.load(Ordering::Acquire);
         if self.recording_finalization_pending() {
             status.recording.active = false;
             status.recording.processing = true;
         }
     }
 
-    pub(super) fn record_recording_completion(
-        &self,
-        value: &serde_json::Value,
-    ) -> NativeAudioResult<()> {
-        let directory = value
-            .get("directory")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| NativeAudioError::protocol("Recording completion has no directory."))?
-            .to_owned();
-        let succeeded = value
-            .get("success")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let message = value
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        let result = if succeeded {
+    pub(super) fn record_recording_completion(&self, completion: wire::WireRecordingComplete) {
+        let result = if completion.success {
             Ok(())
         } else {
             Err(NativeAudioError::structured(
                 "recordingProcessing",
-                message
-                    .clone()
+                completion
+                    .message
                     .unwrap_or_else(|| "Native recording processing failed.".into()),
                 "recording.stop",
                 None,
             ))
         };
         let (completion_lock, completion_ready) = &*self.recording_completion;
-        let mut completion =
-            completion_lock
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Recording completion",
-                })?;
-        *completion = Some(RecordingCompletion { directory, result });
-        completion_ready.notify_all();
-        Ok(())
+        if let Ok(mut pending) = completion_lock.lock() {
+            *pending = Some(RecordingCompletion {
+                directory: completion.directory,
+                result,
+            });
+            completion_ready.notify_all();
+        }
     }
 
     pub(super) fn fail_recording_completion(&self, error: NativeAudioError) {

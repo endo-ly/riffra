@@ -1,6 +1,7 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
+use crate::execution::GraphPluginState;
 use crate::instrument::{
     BuiltInInstrumentCatalog, InstrumentPreviewDefinition, UserInstrumentStore,
 };
@@ -285,13 +286,11 @@ impl HostState {
                         current.sequence,
                     ));
                 }
-                let value = self
+                let inspection = self
                     .core
                     .audio()
                     .inspect_track_device(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let inspection: crate::model::DeviceInspection =
-                    serde_json::from_value(value).map_err(serialize_error)?;
                 Ok((
                     "deviceInspection",
                     serde_json::to_value(inspection).map_err(serialize_error)?,
@@ -301,17 +300,11 @@ impl HostState {
             "device.parameter.list" => {
                 let params: DeviceParameterListParams = decode(params)?;
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
-                let value = self
+                let parameters = self
                     .core
                     .audio()
                     .list_track_device_parameters(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let parameters = value
-                    .get("parameters")
-                    .cloned()
-                    .ok_or_else(|| command_error("Native plugin response omitted parameters"))?;
-                let parameters: Vec<crate::model::DeviceParameterInfo> =
-                    serde_json::from_value(parameters).map_err(serialize_error)?;
                 Ok((
                     "deviceParameters",
                     serde_json::to_value(parameters).map_err(serialize_error)?,
@@ -321,33 +314,19 @@ impl HostState {
             "device.parameter.get" => {
                 let params: DeviceParameterGetParams = decode(params)?;
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
-                let value = self
+                let parameter = self
                     .core
                     .audio()
                     .list_track_device_parameters(&params.track_id, &params.device_id)
-                    .map_err(audio_error)?;
-                let parameters = value
-                    .get("parameters")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| command_error("Native plugin response omitted parameters"))?;
-                let parameter = parameters
-                    .iter()
-                    .find(|parameter| {
-                        parameter
-                            .get("index")
-                            .and_then(Value::as_u64)
-                            .and_then(|index| u32::try_from(index).ok())
-                            == Some(params.parameter_index)
-                    })
-                    .cloned()
+                    .map_err(audio_error)?
+                    .into_iter()
+                    .find(|parameter| parameter.index == params.parameter_index)
                     .ok_or_else(|| {
                         command_error(format!(
                             "plugin parameter is not registered: {}",
                             params.parameter_index
                         ))
                     })?;
-                let parameter: crate::model::DeviceParameterInfo =
-                    serde_json::from_value(parameter).map_err(serialize_error)?;
                 Ok((
                     "deviceParameter",
                     serde_json::to_value(parameter).map_err(serialize_error)?,
@@ -358,12 +337,11 @@ impl HostState {
                 let params: PluginDeviceParams = decode(params)?;
                 let (plugin_path, _) =
                     canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
-                let value = self
+                let state = self
                     .core
                     .audio()
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let state = native_plugin_state_value(&value)?;
                 let snapshot = plugin_state_snapshot(&plugin_path, state)?;
                 Ok((
                     "pluginState",
@@ -374,12 +352,12 @@ impl HostState {
             "plugin.preset.list" => {
                 let params: PluginDeviceParams = decode(params)?;
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
-                let value = self
+                let presets = self
                     .core
                     .audio()
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
-                    .map_err(audio_error)?;
-                let presets = plugin_presets(&value)?;
+                    .map_err(audio_error)?
+                    .presets;
                 if presets.is_empty() {
                     return Err(command_error(
                         "plugin does not expose host-visible programs",
@@ -394,16 +372,16 @@ impl HostState {
             "plugin.preset.get" => {
                 let params: PluginDeviceParams = decode(params)?;
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
-                let value = self
+                let programs = self
                     .core
                     .audio()
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let presets = plugin_presets(&value)?;
-                let current_index = native_current_program(&value).ok_or_else(|| {
+                let current_index = programs.current_index.ok_or_else(|| {
                     command_error("plugin does not expose a current host-visible program")
                 })?;
-                let preset = presets
+                let preset = programs
+                    .presets
                     .into_iter()
                     .find(|preset| preset.index == current_index)
                     .ok_or_else(|| command_error("plugin current program is not registered"))?;
@@ -418,13 +396,12 @@ impl HostState {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 validate_plugin_state(&params.state, &plugin_path)?;
-                let previous = self
+                let previous_state = self
                     .core
                     .audio()
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let previous_state = native_plugin_state_value(&previous)?;
-                let native_state = plugin_state_value(&params.state, bypassed)?;
+                let native_state = plugin_state_value(&params.state, bypassed);
                 let context =
                     self.session_context_with_project_commit(expected_project_id.clone())?;
                 self.core
@@ -472,16 +449,17 @@ impl HostState {
                     .audio()
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let presets = plugin_presets(&programs)?;
-                let program_index =
-                    resolve_plugin_preset(&presets, params.preset.as_deref(), params.preset_index)?;
-                let previous_program = native_current_program(&programs);
-                let previous = self
+                let program_index = resolve_plugin_preset(
+                    &programs.presets,
+                    params.preset.as_deref(),
+                    params.preset_index,
+                )?;
+                let previous_program = programs.current_index;
+                let previous_state = self
                     .core
                     .audio()
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let previous_state = native_plugin_state_value(&previous)?;
                 let context =
                     self.session_context_with_project_commit(expected_project_id.clone())?;
                 let rollback = || {
@@ -498,18 +476,11 @@ impl HostState {
                         previous_state.clone(),
                     );
                 };
-                let changed = self
+                let state = self
                     .core
                     .audio()
                     .set_track_plugin_program(&params.track_id, &params.device_id, program_index)
                     .map_err(audio_error)?;
-                let state = match native_plugin_state_value(&changed) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        rollback();
-                        return Err(error);
-                    }
-                };
                 let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
                     Ok(snapshot) => snapshot,
                     Err(error) => {
@@ -1918,33 +1889,16 @@ fn canonical_non_plugin_device_inspection(
     }))
 }
 
-fn native_plugin_state_value(value: &Value) -> Result<Value, ProtocolError> {
-    let state = value.get("state").cloned().unwrap_or_else(|| value.clone());
-    if !state.is_object() {
-        return Err(command_error("Native plugin response omitted state"));
-    }
-    Ok(state)
-}
-
 fn plugin_state_snapshot(
     plugin_path: &str,
-    state: Value,
+    state: GraphPluginState,
 ) -> Result<crate::model::PluginStateSnapshot, ProtocolError> {
-    let object = state
-        .as_object()
-        .ok_or_else(|| command_error("Native plugin state was not an object"))?;
-    let parameter_values = object
-        .get("parameterValues")
-        .cloned()
-        .ok_or_else(|| command_error("Native plugin state omitted parameterValues"))?;
-    let state_data = object.get("stateData").cloned().unwrap_or(Value::Null);
-    let snapshot: crate::model::PluginStateSnapshot = serde_json::from_value(serde_json::json!({
-        "schemaVersion": 1,
-        "pluginPath": plugin_path,
-        "parameterValues": parameter_values,
-        "stateData": state_data,
-    }))
-    .map_err(serialize_error)?;
+    let snapshot = crate::model::PluginStateSnapshot {
+        schema_version: 1,
+        plugin_path: plugin_path.into(),
+        parameter_values: state.parameter_values,
+        state_data: state.state_data,
+    };
     if snapshot
         .parameter_values
         .iter()
@@ -1960,15 +1914,12 @@ fn plugin_state_snapshot(
 fn plugin_state_value(
     state: &crate::model::PluginStateSnapshot,
     bypassed: bool,
-) -> Result<Value, ProtocolError> {
-    let mut value = serde_json::to_value(state).map_err(serialize_error)?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| command_error("plugin state did not form an object"))?;
-    object.remove("schemaVersion");
-    object.remove("pluginPath");
-    object.insert("bypassed".into(), Value::Bool(bypassed));
-    Ok(value)
+) -> GraphPluginState {
+    GraphPluginState {
+        state_data: state.state_data.clone(),
+        parameter_values: state.parameter_values.clone(),
+        bypassed,
+    }
 }
 
 fn validate_plugin_state(
@@ -1995,22 +1946,6 @@ fn validate_plugin_state(
         ));
     }
     Ok(())
-}
-
-fn plugin_presets(value: &Value) -> Result<Vec<crate::model::PluginPresetInfo>, ProtocolError> {
-    let programs = value
-        .get("programs")
-        .cloned()
-        .ok_or_else(|| command_error("Native plugin response omitted programs"))?;
-    serde_json::from_value(programs).map_err(serialize_error)
-}
-
-fn native_current_program(value: &Value) -> Option<u32> {
-    value
-        .get("currentIndex")
-        .and_then(Value::as_i64)
-        .filter(|index| *index >= 0)
-        .and_then(|index| u32::try_from(index).ok())
 }
 
 fn resolve_plugin_preset(

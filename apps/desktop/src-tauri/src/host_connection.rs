@@ -1281,35 +1281,26 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
         HostEvent::ProjectActivated(value) => {
             HostEventFrame::new("project-activated", json!(value))
         }
-        HostEvent::RuntimeStartupFinished { succeeded } => {
-            HostEventFrame::new("runtime-startup-finished", json!({"succeeded": succeeded}))
+        HostEvent::RuntimeStartupFinished(value) => {
+            HostEventFrame::new("runtime-startup-finished", json!(value))
         }
         HostEvent::RuntimeProjectionStatus(value) => {
             HostEventFrame::new("runtime-projection-status", json!(value))
         }
         HostEvent::AudioStatus(value) => HostEventFrame::new("audio-status", json!(value)),
-        HostEvent::AudioMeters(value) => HostEventFrame::new("audio-meters", value),
-        HostEvent::TransportStatus(value) => HostEventFrame::new("transport-status", value),
-        HostEvent::RecordingFinalized {
-            directory,
-            succeeded,
-            message,
-        } => HostEventFrame::new(
-            "recording-finalized",
-            json!({
-                "directory": directory,
-                "succeeded": succeeded,
-                "message": message,
-            }),
-        ),
-        HostEvent::RuntimeRestarted { generation } => {
-            HostEventFrame::new("runtime-restarted", json!({"generation": generation}))
+        HostEvent::AudioMeters(value) => HostEventFrame::new("audio-meters", json!(value)),
+        HostEvent::TransportStatus(value) => HostEventFrame::new("transport-status", json!(value)),
+        HostEvent::RecordingFinalized(value) => {
+            HostEventFrame::new("recording-finalized", json!(value))
+        }
+        HostEvent::RuntimeRestarted(value) => {
+            HostEventFrame::new("runtime-restarted", json!(value))
         }
         HostEvent::TrackPluginStateChanged(value) => {
-            HostEventFrame::new("track-plugin-state-changed", value)
+            HostEventFrame::new("track-plugin-state-changed", json!(value))
         }
         HostEvent::TrackPluginParameterChanged(value) => {
-            HostEventFrame::new("track-plugin-parameter-changed", value)
+            HostEventFrame::new("track-plugin-parameter-changed", json!(value))
         }
     }
 }

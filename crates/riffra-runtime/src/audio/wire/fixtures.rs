@@ -229,8 +229,16 @@ fn sidecar_command_fixtures_are_current() {
         .iter()
         .map(|(name, _)| name.clone())
         .collect::<BTreeSet<_>>();
-    assert_eq!(expected_names.len(), fixtures.len(), "duplicate command type");
-    assert_eq!(json_files(&root), expected_names, "command fixture set is stale");
+    assert_eq!(
+        expected_names.len(),
+        fixtures.len(),
+        "duplicate command type"
+    );
+    assert_eq!(
+        json_files(&root),
+        expected_names,
+        "command fixture set is stale"
+    );
     for (name, expected) in fixtures {
         let actual = fs::read_to_string(root.join(&name)).unwrap();
         assert_eq!(actual, expected, "command fixture {name} is stale");
@@ -328,7 +336,10 @@ fn sidecar_message_fixtures_decode() {
         let bytes = serde_json::to_vec(&value).unwrap();
         let implied = decode_fixture(&name, &bytes)
             .unwrap_or_else(|error| panic!("message fixture {name} did not decode: {error}"));
-        assert_eq!(implied, name, "message fixture name does not match its type");
+        assert_eq!(
+            implied, name,
+            "message fixture name does not match its type"
+        );
         decoded.insert(name);
     }
 
@@ -336,7 +347,11 @@ fn sidecar_message_fixtures_decode() {
         .iter()
         .map(|name| format!("response.{name}.json"))
         .chain(EVENTS.iter().map(|name| format!("event.{name}.json")))
-        .chain(RENDER_MESSAGES.iter().map(|name| format!("render.{name}.json")))
+        .chain(
+            RENDER_MESSAGES
+                .iter()
+                .map(|name| format!("render.{name}.json")),
+        )
         .chain(["error.json".to_owned()])
         .collect::<BTreeSet<_>>();
     assert_eq!(decoded, expected, "a message variant has no fixture");

@@ -169,7 +169,6 @@ fn activate_project_inner(
         .canonical()
         .map_err(|error| command_error(error.to_string()))?;
     let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
-    state.event_hub.set_plugin_project_id(None);
 
     let candidate_key = if state.core.safe_mode() {
         None
@@ -218,9 +217,6 @@ fn activate_project_inner(
         .core
         .set_recovered_from_generation(activated.loaded.recovered_from_generation);
     state.keep_plugin_persistence_project(project_id);
-    state
-        .event_hub
-        .set_plugin_project_id(Some(project_id.to_owned()));
     crate::library::index::refresh(
         &state.data_root,
         &activated.storage,
@@ -317,9 +313,6 @@ fn project_switch_failure(
     failure: ProtocolError,
     operation: ProjectOperation,
 ) -> ProtocolError {
-    state
-        .event_hub
-        .set_plugin_project_id(Some(previous_project_id.to_owned()));
     state.keep_plugin_persistence_project(previous_project_id);
     let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
     match apply_project_runtime_transition(state, previous_canonical, previous_project_id) {

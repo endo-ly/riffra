@@ -32,10 +32,10 @@ pub(crate) enum SidecarMessage {
 }
 
 /// Successful completion payload of one request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum SidecarResponse {
-    AudioStatus(WireAudioStatus),
+    AudioStatus(Box<WireAudioStatus>),
     TransportStatus(WireTransportStatus),
     Ack {},
     TrackDeviceStatus(WireTrackDeviceStatus),
@@ -83,9 +83,9 @@ pub(crate) enum SidecarEvent {
     /// The first message of a sidecar generation.
     Ready {
         protocol_version: u32,
-        status: WireAudioStatus,
+        status: Box<WireAudioStatus>,
     },
-    AudioStatus(WireAudioStatus),
+    AudioStatus(Box<WireAudioStatus>),
     AudioMeters(WireAudioMeters),
     TransportStatus(WireTransportStatus),
     RecordingComplete(WireRecordingComplete),

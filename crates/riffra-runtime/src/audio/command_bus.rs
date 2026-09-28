@@ -1,116 +1,57 @@
-use crate::model::AudioStatus;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use super::error::{NativeAudioError, NativeAudioResult};
-use super::{AudioSupervisor, COMMAND_ACK_TIMEOUT, SIDECAR_READY_TIMEOUT};
+use super::wire::{ExpectedResponse, SidecarCommand, SidecarResponse, encode_command};
+use super::{AudioSupervisor, SIDECAR_READY_TIMEOUT};
 
-#[derive(Default)]
-pub(crate) struct CommandResponse {
-    pub(crate) results: HashMap<u64, Option<NativeAudioResult<Value>>>,
+/// One request waiting for its only response.
+struct PendingRequest {
+    expected: ExpectedResponse,
+    result: Option<NativeAudioResult<SidecarResponse>>,
 }
 
-/// Owns request ids and acknowledgement waiters for the sidecar command bus.
+#[derive(Default)]
+pub(crate) struct PendingRequests {
+    requests: HashMap<u64, PendingRequest>,
+}
+
+pub(crate) type SharedPendingRequests = Arc<(Mutex<PendingRequests>, Condvar)>;
+
+/// Owns request ids and response waiters for the sidecar command bus.
 /// Process lifecycle and recovery state intentionally live outside this type.
 pub(crate) struct CommandBus {
-    pub(crate) responses: Arc<(Mutex<CommandResponse>, Condvar)>,
+    pub(crate) pending: SharedPendingRequests,
     next_request_id: AtomicU64,
 }
 
 impl CommandBus {
     pub(crate) fn new() -> Self {
         Self {
-            responses: Arc::new((Mutex::new(CommandResponse::default()), Condvar::new())),
+            pending: Arc::new((Mutex::new(PendingRequests::default()), Condvar::new())),
             next_request_id: AtomicU64::new(1),
         }
     }
 
-    pub(crate) fn next_request_id(&self) -> u64 {
+    fn next_request_id(&self) -> u64 {
         self.next_request_id.fetch_add(1, Ordering::Relaxed)
     }
 }
 
 impl AudioSupervisor {
-    pub(super) fn send_command(
+    /// Sends one command and waits for the response its type expects.
+    pub(super) fn request(
         &self,
-        command: Value,
-        message: &str,
-    ) -> NativeAudioResult<AudioStatus> {
-        self.send_command_with_timeout(command, message, COMMAND_ACK_TIMEOUT)
-    }
-
-    pub(super) fn send_command_with_timeout(
-        &self,
-        command: Value,
-        message: &str,
+        command: SidecarCommand,
         timeout: Duration,
-    ) -> NativeAudioResult<AudioStatus> {
-        self.wait_for_command(command, timeout)?;
-        let mut status = self
-            .status
-            .lock()
-            .map_err(|_| NativeAudioError::LockPoisoned {
-                resource: "Audio status",
-            })?;
-        if !message.is_empty() {
-            status.message = message.into();
-        }
-        Ok(status.clone())
-    }
-
-    pub(super) fn send_command_value(
-        &self,
-        command: Value,
-        timeout: Duration,
-    ) -> NativeAudioResult<Value> {
-        self.wait_for_command_value(command, timeout)
-    }
-
-    /// Waits for a sidecar acknowledgement without cloning the full
-    /// [`AudioStatus`]. High-rate realtime commands such as MIDI only need an
-    /// acknowledgement; cloning plugin state data for every note can otherwise
-    /// turn a performance path into a large allocation/serialization path.
-    pub(super) fn send_command_ack(
-        &self,
-        command: Value,
-        message: &str,
-        timeout: Duration,
-    ) -> NativeAudioResult<()> {
-        self.wait_for_command(command, timeout)?;
-        if !message.is_empty() {
-            let mut status = self
-                .status
-                .lock()
-                .map_err(|_| NativeAudioError::LockPoisoned {
-                    resource: "Audio status",
-                })?;
-            status.message = message.into();
-        }
-        Ok(())
-    }
-
-    pub(super) fn wait_for_command(
-        &self,
-        command: Value,
-        timeout: Duration,
-    ) -> NativeAudioResult<()> {
-        self.wait_for_command_value(command, timeout).map(|_| ())
-    }
-
-    pub(super) fn wait_for_command_value(
-        &self,
-        mut command: Value,
-        timeout: Duration,
-    ) -> NativeAudioResult<Value> {
+    ) -> NativeAudioResult<SidecarResponse> {
         let request_id = self.command_bus.next_request_id();
-        command["requestId"] = serde_json::json!(request_id);
-        let payload = serde_json::to_string(&command).map_err(|error| {
+        let line = encode_command(request_id, &command).map_err(|error| {
             NativeAudioError::protocol(format!("Audio command could not be encoded: {error}"))
         })?;
-        let (response_lock, response_ready) = &*self.command_bus.responses;
+        let (pending_lock, response_ready) = &*self.command_bus.pending;
         let mut sent = false;
         let mut expected_generation = self.sidecar_generation();
         for _ in 0..3 {
@@ -128,15 +69,19 @@ impl AudioSupervisor {
             {
                 continue;
             }
-            {
-                let mut response =
-                    response_lock
-                        .lock()
-                        .map_err(|_| NativeAudioError::LockPoisoned {
-                            resource: "Audio response",
-                        })?;
-                response.results.insert(request_id, None);
-            }
+            pending_lock
+                .lock()
+                .map_err(|_| NativeAudioError::LockPoisoned {
+                    resource: "Audio response",
+                })?
+                .requests
+                .insert(
+                    request_id,
+                    PendingRequest {
+                        expected: command.expected_response(),
+                        result: None,
+                    },
+                );
             let write_result = {
                 let mut child_slot =
                     self.process
@@ -152,15 +97,15 @@ impl AudioSupervisor {
                 });
                 child.and_then(|child| {
                     child
-                        .write(format!("{payload}\n").as_bytes())
+                        .write(format!("{line}\n").as_bytes())
                         .map_err(|error| NativeAudioError::transport_lost(format!(
                             "Native audio transport lost: command could not reach the isolated audio process: {error}"
                         )))
                 })
             };
             if let Err(error) = write_result {
-                if let Ok(mut response) = response_lock.lock() {
-                    response.results.remove(&request_id);
+                if let Ok(mut pending) = pending_lock.lock() {
+                    pending.requests.remove(&request_id);
                 }
                 return Err(error);
             }
@@ -174,72 +119,73 @@ impl AudioSupervisor {
             });
         }
 
-        let response = response_lock
+        let pending = pending_lock
             .lock()
             .map_err(|_| NativeAudioError::LockPoisoned {
                 resource: "Audio response",
             })?;
-        let wait = response_ready.wait_timeout_while(response, timeout, |current| {
-            current.results.get(&request_id).is_none_or(Option::is_none)
-        });
-        let (mut response, wait_result) = wait.map_err(|_| NativeAudioError::LockPoisoned {
-            resource: "Audio response",
-        })?;
-        if wait_result.timed_out()
-            && response
-                .results
-                .get(&request_id)
-                .is_none_or(Option::is_none)
-        {
-            response.results.remove(&request_id);
-            return Err(NativeAudioError::Timeout {
+        let (mut pending, _) = response_ready
+            .wait_timeout_while(pending, timeout, |current| {
+                current
+                    .requests
+                    .get(&request_id)
+                    .is_some_and(|request| request.result.is_none())
+            })
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Audio response",
+            })?;
+        match pending.requests.remove(&request_id) {
+            Some(PendingRequest {
+                result: Some(result),
+                ..
+            }) => result,
+            _ => Err(NativeAudioError::Timeout {
                 message: format!(
                     "Native audio command was not acknowledged within {} seconds.",
                     timeout.as_secs()
                 ),
-            });
+            }),
         }
-
-        response
-            .results
-            .remove(&request_id)
-            .flatten()
-            .unwrap_or_else(|| {
-                Err(NativeAudioError::protocol(
-                    "Native audio returned no command result.",
-                ))
-            })
     }
 }
 
-pub(super) fn record_command_response(
-    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
+/// Completes one pending request. A response of another type than the one
+/// its command expects fails the request as a protocol violation.
+pub(super) fn complete_request(
+    pending: &SharedPendingRequests,
     request_id: u64,
-    error: Option<NativeAudioError>,
-    value: Value,
+    result: NativeAudioResult<SidecarResponse>,
 ) {
-    let (response_lock, response_ready) = &**responses;
-    if let Ok(mut response) = response_lock.lock()
-        && let Some(result) = response.results.get_mut(&request_id)
-        && result.is_none()
-    {
-        *result = Some(match error {
-            Some(error) => Err(error),
-            None => Ok(value),
-        });
-        response_ready.notify_all();
+    let (pending_lock, response_ready) = &**pending;
+    let Ok(mut pending) = pending_lock.lock() else {
+        return;
+    };
+    let Some(request) = pending.requests.get_mut(&request_id) else {
+        return;
+    };
+    if request.result.is_some() {
+        return;
     }
+    request.result = Some(result.and_then(|response| {
+        if response.kind() == request.expected {
+            Ok(response)
+        } else {
+            Err(NativeAudioError::protocol(format!(
+                "unexpected response {:?} for a request expecting {:?}",
+                response.kind(),
+                request.expected
+            )))
+        }
+    }));
+    response_ready.notify_all();
 }
 
-pub(super) fn fail_pending_requests(
-    responses: &Arc<(Mutex<CommandResponse>, Condvar)>,
-    error: NativeAudioError,
-) {
-    let (response_lock, response_ready) = &**responses;
-    if let Ok(mut response) = response_lock.lock() {
-        for result in response.results.values_mut() {
-            if result.is_none() {
-                *result = Some(Err(error.clone()));
+pub(super) fn fail_pending_requests(pending: &SharedPendingRequests, error: NativeAudioError) {
+    let (pending_lock, response_ready) = &**pending;
+    if let Ok(mut pending) = pending_lock.lock() {
+        for request in pending.requests.values_mut() {
+            if request.result.is_none() {
+                request.result = Some(Err(error.clone()));
             }
         }
         response_ready.notify_all();
@@ -250,64 +196,75 @@ pub(super) fn fail_pending_requests(
 mod tests {
     use super::*;
 
-    #[test]
-    fn sidecar_termination_completes_the_pending_command() {
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        responses.0.lock().unwrap().results.insert(42, None);
+    fn pending_with(requests: &[(u64, ExpectedResponse)]) -> SharedPendingRequests {
+        let pending = CommandBus::new().pending;
+        pending
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .extend(requests.iter().map(|(id, expected)| {
+                (
+                    *id,
+                    PendingRequest {
+                        expected: *expected,
+                        result: None,
+                    },
+                )
+            }));
+        pending
+    }
 
-        fail_pending_requests(
-            &responses,
-            NativeAudioError::transport_lost("plugin process stopped"),
-        );
-
-        let response = responses.0.lock().unwrap();
-        assert!(matches!(
-            response.results.get(&42),
-            Some(Some(Err(NativeAudioError::TransportLost { message }))) if message == "plugin process stopped"
-        ));
+    fn result(pending: &SharedPendingRequests, id: u64) -> NativeAudioResult<ExpectedResponse> {
+        pending.0.lock().unwrap().requests[&id]
+            .result
+            .clone()
+            .expect("the request must be complete")
+            .map(|response| response.kind())
     }
 
     #[test]
     fn sidecar_termination_completes_all_pending_commands() {
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        responses
-            .0
-            .lock()
-            .unwrap()
-            .results
-            .extend([(7, None), (8, None)]);
+        let pending = pending_with(&[(7, ExpectedResponse::Ack), (8, ExpectedResponse::Ack)]);
 
         fail_pending_requests(
-            &responses,
+            &pending,
             NativeAudioError::transport_lost("plugin process stopped"),
         );
 
-        let response = responses.0.lock().unwrap();
+        for id in [7, 8] {
+            assert!(matches!(
+                result(&pending, id),
+                Err(NativeAudioError::TransportLost { message }) if message == "plugin process stopped"
+            ));
+        }
+    }
+
+    #[test]
+    fn late_response_cannot_replace_a_completed_failure() {
+        let pending = pending_with(&[(42, ExpectedResponse::Ack)]);
+        fail_pending_requests(
+            &pending,
+            NativeAudioError::transport_lost("sidecar restarted"),
+        );
+
+        complete_request(&pending, 42, Ok(SidecarResponse::Ack {}));
+
         assert!(matches!(
-            response.results.get(&7),
-            Some(Some(Err(NativeAudioError::TransportLost { message }))) if message == "plugin process stopped"
-        ));
-        assert!(matches!(
-            response.results.get(&8),
-            Some(Some(Err(NativeAudioError::TransportLost { message }))) if message == "plugin process stopped"
+            result(&pending, 42),
+            Err(NativeAudioError::TransportLost { message }) if message == "sidecar restarted"
         ));
     }
 
     #[test]
-    fn late_acknowledgement_cannot_replace_a_completed_failure() {
-        let responses = Arc::new((Mutex::new(CommandResponse::default()), Condvar::new()));
-        responses.0.lock().unwrap().results.insert(
-            42,
-            Some(Err(NativeAudioError::transport_lost("sidecar restarted"))),
-        );
+    fn a_response_of_another_type_fails_the_request() {
+        let pending = pending_with(&[(5, ExpectedResponse::TrackPluginState)]);
 
-        record_command_response(&responses, 42, None, Value::Null);
+        complete_request(&pending, 5, Ok(SidecarResponse::Ack {}));
 
-        let response = responses.0.lock().unwrap();
         assert!(matches!(
-            response.results.get(&42),
-            Some(Some(Err(NativeAudioError::TransportLost { message })))
-                if message == "sidecar restarted"
+            result(&pending, 5),
+            Err(NativeAudioError::Protocol { message }) if message.contains("unexpected response")
         ));
     }
 }

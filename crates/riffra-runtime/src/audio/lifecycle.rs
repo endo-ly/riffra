@@ -1,14 +1,14 @@
 use super::AudioSupervisor;
 use super::StartupState;
-use super::command_bus::{CommandBus, fail_pending_requests, record_command_response};
+use super::command_bus::{CommandBus, fail_pending_requests};
 use super::error::{NativeAudioError, NativeAudioResult};
-use super::protocol::{NativeEvent, handle_native_stdout, set_faulted, set_starting};
+use super::protocol::{set_faulted, set_starting};
 use super::recovery::RecoveryState;
 use super::sidecar_process::{ChildProcess, SidecarProcess};
+use crate::model::RuntimeRestarted;
 use crate::model::{AudioState, AudioStatus, RecordingStatus};
 use crate::preferences::AudioPreferences;
 use crate::{HostEvent, RuntimeBinaries, SharedHostEventSink};
-use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, atomic::Ordering};
@@ -83,6 +83,7 @@ impl AudioSupervisor {
             events,
             audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            protocol_errors: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
         }
@@ -139,6 +140,7 @@ impl AudioSupervisor {
             events,
             audio_environment_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             projection_duration_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            protocol_errors: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             recording_completion: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             recording_finalization_pending: Arc::new(Mutex::new(None)),
         };
@@ -191,6 +193,9 @@ impl AudioSupervisor {
                 expected: generation,
                 actual,
             });
+        }
+        if let Some(error) = self.process.startup_failure(generation) {
+            return Err(error);
         }
         if self.process.is_terminated(generation) {
             return Err(NativeAudioError::transport_lost(
@@ -290,12 +295,9 @@ impl AudioSupervisor {
             NativeAudioError::process("Native audio process stderr is unavailable")
         })?;
 
-        let event_status = Arc::clone(&self.status);
-        let event_responses = Arc::clone(&self.command_bus.responses);
         let event_generation = Arc::clone(&self.process.generation);
         let event_process = Arc::clone(&self.process);
         let event_supervisor = self.clone();
-        let event_events = Arc::clone(&self.events);
         if let Err(error) = thread::Builder::new()
             .name("riffra-audio-stdout".into())
             .spawn(move || {
@@ -303,66 +305,7 @@ impl AudioSupervisor {
                     if event_generation.load(Ordering::Acquire) != generation {
                         break;
                     }
-                    let bytes = line.as_bytes();
-                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(bytes) {
-                        match payload.get("type").and_then(serde_json::Value::as_str) {
-                            Some("transportStatus") => {
-                                event_events.emit(HostEvent::TransportStatus(payload));
-                            }
-                            Some("trackPluginStateChanged")
-                                if event_process.current_generation() == generation =>
-                            {
-                                event_events.emit(HostEvent::TrackPluginStateChanged(payload));
-                            }
-                            Some("trackPluginParameterChanged")
-                                if event_process.current_generation() == generation =>
-                            {
-                                event_events.emit(HostEvent::TrackPluginParameterChanged(payload));
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(response) = handle_native_stdout(&event_status, bytes) {
-                        if let Ok(mut status) = event_supervisor.status.lock() {
-                            event_supervisor.overlay_diagnostics(&mut status);
-                        }
-                        if let Some(request_id) = response.request_id {
-                            record_command_response(
-                                &event_responses,
-                                request_id,
-                                response.result.as_ref().err().cloned(),
-                                response.value.clone(),
-                            );
-                        }
-                        if matches!(response.event, NativeEvent::AudioStatus) {
-                            event_process.mark_ready(generation);
-                        }
-                        match response.event {
-                            NativeEvent::AudioStatus => {
-                                if let Ok(status) = event_status.lock() {
-                                    event_events
-                                        .emit(HostEvent::AudioStatus(Box::new(status.clone())));
-                                }
-                                if response.value.get("type").and_then(Value::as_str)
-                                    == Some("audioMeters")
-                                {
-                                    event_events
-                                        .emit(HostEvent::AudioMeters(response.value.clone()));
-                                }
-                            }
-                            NativeEvent::AudioMeters => {
-                                event_events.emit(HostEvent::AudioMeters(response.value.clone()));
-                            }
-                            NativeEvent::RecordingCompletion => {
-                                if let Err(error) =
-                                    event_supervisor.record_recording_completion(&response.value)
-                                {
-                                    event_supervisor.fail_recording_completion(error);
-                                }
-                            }
-                            NativeEvent::None => {}
-                        }
-                    }
+                    event_supervisor.handle_sidecar_line(generation, line.as_bytes());
                 }
                 if event_generation.load(Ordering::Acquire) == generation {
                     event_supervisor.handle_sidecar_exit(
@@ -418,7 +361,7 @@ impl AudioSupervisor {
         self.process.mark_terminated(generation);
         set_faulted(&self.status, error.to_string());
         self.fail_recording_completion(error.clone());
-        fail_pending_requests(&self.command_bus.responses, error);
+        fail_pending_requests(&self.command_bus.pending, error);
         self.emit_status();
 
         let planned = self.process.take_planned_termination(generation);
@@ -501,7 +444,7 @@ impl AudioSupervisor {
         let generation = self.next_sidecar_generation();
         let result = (|| {
             fail_pending_requests(
-                &self.command_bus.responses,
+                &self.command_bus.pending,
                 NativeAudioError::transport_lost(
                     "Native audio sidecar is restarting; the command will be retried.",
                 ),
@@ -584,9 +527,10 @@ impl AudioSupervisor {
             if let Some(handler) = self.runtime_restart_handler() {
                 handler(self, self.sidecar_generation());
             }
-            self.events.emit(HostEvent::RuntimeRestarted {
-                generation: self.sidecar_generation(),
-            });
+            self.events
+                .emit(HostEvent::RuntimeRestarted(RuntimeRestarted {
+                    generation: self.sidecar_generation(),
+                }));
         }
         result
     }
@@ -600,7 +544,7 @@ impl AudioSupervisor {
         self.process.shutting_down.store(true, Ordering::Release);
         self.process.readiness.1.notify_all();
         self.fail_recording_completion(NativeAudioError::ShuttingDown);
-        fail_pending_requests(&self.command_bus.responses, NativeAudioError::ShuttingDown);
+        fail_pending_requests(&self.command_bus.pending, NativeAudioError::ShuttingDown);
         let _command_gate = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
