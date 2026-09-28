@@ -1,78 +1,62 @@
 #include "../AudioCommandDispatcher.h"
 #include "midi/MidiInputService.h"
-#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
 
-CommandResult AudioCommandDispatcher::dispatchMidi(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    if (type == "enableMidiListening") {
-        context.midiInputs.setListening(true);
+void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
+                                    CommandResponder responder) {
+    context.midiInputs.setListening(command.listening);
+    if (command.listening) {
         context.midiInputs.reopenAll();
         context.midiInputs.monitor().setActive(true);
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-
-    if (type == "disableMidiListening") {
-        context.midiInputs.setListening(false);
+    } else {
         context.midiInputs.monitor().setActive(false);
         context.pipeline.stopPreview();
         context.pipeline.allNotesOff();
         context.midiInputs.reopenAll();
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
     }
+    responder.respond(currentStatus());
+}
 
-    if (type == "setLiveMidiTarget") {
-        const auto trackId = command.getProperty("trackId", {}).toString();
-        juce::String timelineError;
-        if (!context.timelineEngine.setLiveMidiTarget(trackId, timelineError)) {
-            writeJson(makeError("liveMidiTarget", timelineError));
-            return {};
-        }
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
+void AudioCommandDispatcher::handle(const SetLiveMidiTargetCommand& command,
+                                    CommandResponder responder) {
+    juce::String timelineError;
+    if (!context.timelineEngine.setLiveMidiTarget(command.trackId.value_or(juce::String()),
+                                                  timelineError)) {
+        responder.fail("liveMidiTarget", timelineError, "midi.liveTarget");
+        return;
     }
+    responder.respond(currentStatus());
+}
 
-    if (type == "sendTrackMidi" || type == "panicTrackMidi") {
-        if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
-            writeJson(makeError("timelineBusy",
-                                "The Arrangement Graph is still changing; targeted MIDI "
-                                "can be retried shortly."));
-            return {};
-        }
-        const auto trackId = command.getProperty("trackId", {}).toString();
-        juce::String timelineError;
-        bool accepted = false;
-        if (type == "sendTrackMidi") {
-            juce::MidiMessage message;
-            juce::String midiError;
-            if (!parseMidiBytes(command.getProperty("bytes", {}), message, midiError)) {
-                writeJson(makeError("midi", midiError));
-                return {};
-            }
-            accepted = context.timelineEngine.enqueueTargetedMidi(trackId, message, timelineError);
-        } else {
-            accepted = context.timelineEngine.panicTargetedMidi(trackId, timelineError);
-        }
-        if (!accepted) {
-            writeJson(makeError("targetedMidi", timelineError));
-            return {};
-        }
-        auto* acknowledgement = new juce::DynamicObject();
-        acknowledgement->setProperty("type", "midiAck");
-        writeJson(juce::var(acknowledgement));
-        return {};
+void AudioCommandDispatcher::handle(const SendTrackMidiCommand& command,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(
+            responder,
+            "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."))
+        return;
+    juce::String timelineError;
+    if (!context.timelineEngine.enqueueTargetedMidi(command.trackId, command.message,
+                                                    timelineError)) {
+        responder.fail("targetedMidi", timelineError, "midi.send");
+        return;
     }
-    return {};
+    responder.respond(AckSpec{});
+}
+
+void AudioCommandDispatcher::handle(const PanicTrackMidiCommand& command,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(
+            responder,
+            "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."))
+        return;
+    juce::String timelineError;
+    if (!context.timelineEngine.panicTargetedMidi(command.trackId, timelineError)) {
+        responder.fail("targetedMidi", timelineError, "midi.panic");
+        return;
+    }
+    responder.respond(AckSpec{});
 }
 
 }  // namespace riffra

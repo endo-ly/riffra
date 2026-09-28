@@ -84,6 +84,8 @@ target_sources(riffra-render-core PRIVATE
   src/contract/ExecutionGraph.h
   src/contract/ExecutionGraphDecoder.cpp
   src/contract/ExecutionGraphDecoder.h
+  src/contract/SidecarMessages.cpp
+  src/contract/SidecarMessages.h
   src/timeline/TimelineTimebase.h
   src/recording/RecordingCaptureRuntime.cpp
   src/recording/RecordingCaptureRuntime.h
@@ -112,10 +114,12 @@ target_sources(riffra-render-core PRIVATE
 )
 
 target_sources(riffra-audio-core PRIVATE
-  src/app/CommandRouting.cpp
-  src/app/CommandRouting.h
+  src/contract/SidecarCommands.cpp
+  src/contract/SidecarCommands.h
   src/protocol/AudioProtocol.cpp
   src/protocol/AudioProtocol.h
+  src/protocol/CommandResponder.cpp
+  src/protocol/CommandResponder.h
   src/protocol/OutputQueue.h
   src/app/AudioStatusBuilder.cpp
   src/app/AudioStatusBuilder.h
@@ -419,6 +423,9 @@ if(BUILD_TESTING)
     src/app/commands/MidiCommands.cpp
     src/app/commands/TrackMixCommands.cpp
     tests/contract/ExecutionGraphContractTest.cpp
+    tests/contract/SidecarContractTest.cpp
+    tests/contract/SidecarMessageFixtureTest.cpp
+    tests/protocol/CommandResponderTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
@@ -447,6 +454,7 @@ if(BUILD_TESTING)
   )
   target_compile_definitions(riffra-audio-tests PRIVATE
     RIFFRA_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/execution-graph"
+    RIFFRA_SIDECAR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/sidecar"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)

@@ -4,7 +4,6 @@
 #include <cmath>
 
 #include "../support/TestAudioProcessor.h"
-#include "contract/ExecutionGraphDecoder.h"
 
 namespace riffra {
 namespace {
@@ -24,8 +23,8 @@ TEST(PluginRackTest, ConfiguresStereoProcessor) {
     juce::String error;
     auto rack = makeRack(trace, error);
     ASSERT_NE(rack, nullptr) << error;
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("inputChannels", -1)), 2);
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("outputChannels", -1)), 2);
+    EXPECT_EQ(rack->status().inputChannels, 2);
+    EXPECT_EQ(rack->status().outputChannels, 2);
     EXPECT_FALSE(rack->isInstrument());
 }
 
@@ -59,8 +58,8 @@ TEST(PluginRackTest, RepreparesProcessorForTheCurrentAudioDeviceFormat) {
     // Assert
     EXPECT_DOUBLE_EQ(trace.sampleRate, 44'100.0);
     EXPECT_EQ(trace.blockSize, 1024);
-    EXPECT_DOUBLE_EQ(static_cast<double>(rack->status().getProperty("sampleRate", 0.0)), 44'100.0);
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("blockSize", 0)), 1024);
+    EXPECT_DOUBLE_EQ(rack->status().sampleRate, 44'100.0);
+    EXPECT_EQ(rack->status().blockSize, 1024);
 }
 
 TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
@@ -116,21 +115,7 @@ TEST(PluginRackTest, ReportsProcessedBlockCount) {
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
     rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
 
-    EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("processedBlocks", 0)), 1);
-}
-
-TEST(PluginRackTest, DoesNotExposePersistedStateInRuntimeStatus) {
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-    const auto status = rack->status();
-    const auto parameterStatus = rack->parameterStatus();
-
-    EXPECT_FALSE(status.hasProperty("stateData"));
-    EXPECT_FALSE(status.hasProperty("parameters"));
-    EXPECT_TRUE(parameterStatus.hasProperty("parameters"));
-    EXPECT_FALSE(parameterStatus.hasProperty("stateData"));
+    EXPECT_EQ(rack->status().processedBlocks, 1);
 }
 
 TEST(PluginRackTest, ChangesAndReportsPluginPrograms) {
@@ -140,16 +125,15 @@ TEST(PluginRackTest, ChangesAndReportsPluginPrograms) {
     ASSERT_NE(rack, nullptr) << error;
 
     const auto initial = rack->programStatus();
-    ASSERT_TRUE(initial.getProperty("supported", false));
-    ASSERT_EQ(initial.getProperty("programs", {}).size(), 2);
-    EXPECT_EQ(static_cast<int>(initial.getProperty("currentIndex", -1)), 0);
-    EXPECT_EQ(initial.getProperty("currentName", {}).toString(), "Program 0");
+    ASSERT_EQ(initial.names.size(), 2u);
+    EXPECT_EQ(initial.currentIndex, 0);
+    EXPECT_EQ(initial.names[0], "Program 0");
 
     EXPECT_TRUE(rack->setProgram(1, error)) << error;
     EXPECT_EQ(trace.currentProgram, 1);
     const auto changed = rack->programStatus();
-    EXPECT_EQ(static_cast<int>(changed.getProperty("currentIndex", -1)), 1);
-    EXPECT_EQ(changed.getProperty("currentName", {}).toString(), "Program 1");
+    EXPECT_EQ(changed.currentIndex, 1);
+    EXPECT_EQ(changed.names[1], "Program 1");
     EXPECT_FALSE(rack->setProgram(2, error));
 }
 
@@ -161,18 +145,14 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
 
     ASSERT_TRUE(rack->setParameter(0, 0.75f, error)) << error;
     const auto saved = rack->persistedState(error);
-    ASSERT_FALSE(saved.isVoid()) << error;
+    ASSERT_TRUE(saved.has_value()) << error;
     ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
 
-    PluginStateSpec state;
-    ASSERT_TRUE(decodePluginState(saved, state, error)) << error;
-    ASSERT_TRUE(rack->applyPersistedState(state, error)) << error;
+    ASSERT_TRUE(rack->applyPersistedState(*saved, error)) << error;
     const auto restored = rack->persistedState(error);
-    ASSERT_FALSE(restored.isVoid()) << error;
-    const auto values = restored.getProperty("parameterValues", {});
-    ASSERT_TRUE(values.isArray());
-    ASSERT_GT(values.size(), 0);
-    EXPECT_NEAR(static_cast<float>(values[0]), 0.75f, 0.0001f);
+    ASSERT_TRUE(restored.has_value()) << error;
+    ASSERT_FALSE(restored->parameterValues.empty());
+    EXPECT_NEAR(restored->parameterValues[0], 0.75f, 0.0001f);
 }
 
 TEST(PluginRackTest, ReleasesProcessorWhenCleared) {
@@ -194,8 +174,8 @@ TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
     ASSERT_NE(rack, nullptr) << error;
 
     EXPECT_TRUE(rack->isInstrument());
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("inputChannels", -1)), 0);
-    EXPECT_EQ(static_cast<int>(rack->status().getProperty("outputChannels", -1)), 2);
+    EXPECT_EQ(rack->status().inputChannels, 0);
+    EXPECT_EQ(rack->status().outputChannels, 2);
 }
 
 TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
@@ -267,7 +247,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
         EXPECT_EQ(trace.midiMessageCount, 257);
-        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
+        EXPECT_EQ(rack->status().droppedMidiEvents, 0);
     }
 
     {
@@ -290,7 +270,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         rack->process(nullptr, 0, outputs.data(), 2, kBlockSize, &timeline);
 
         EXPECT_EQ(trace.midiMessageCount, 0);
-        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
+        EXPECT_EQ(rack->status().droppedMidiEvents, 1);
     }
 
     {
@@ -306,7 +286,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
             EXPECT_EQ(accepted, index < 256);
         }
 
-        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 1);
+        EXPECT_EQ(rack->status().droppedMidiEvents, 1);
     }
 
     {
@@ -329,7 +309,7 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
 
         EXPECT_EQ(trace.midiMessageCount, 256);
-        EXPECT_EQ(static_cast<juce::int64>(rack->status().getProperty("droppedMidiEvents", -1)), 0);
+        EXPECT_EQ(rack->status().droppedMidiEvents, 0);
     }
 
     {

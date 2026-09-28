@@ -4,6 +4,7 @@
 #include <atomic>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "ArrangementCaptureSink.h"
@@ -11,6 +12,32 @@
 #include "concurrency/BoundedMpmcQueue.h"
 
 namespace riffra {
+
+/// Capture totals of one arrange recording across all of its tracks.
+struct ArrangeRecordingSummary final {
+    bool active = false;
+    juce::String directory;
+    double sampleRate = 0.0;
+    std::uint64_t samplesWritten = 0;
+    std::uint64_t droppedMidiEvents = 0;
+    std::uint64_t droppedBlocks = 0;
+    std::uint64_t missingSamples = 0;
+    std::uint64_t rawAttemptedSamples = 0;
+    std::uint64_t processedAttemptedSamples = 0;
+    std::uint64_t rawDroppedBlocks = 0;
+    std::uint64_t processedDroppedBlocks = 0;
+    std::uint64_t rawMissingSamples = 0;
+    std::uint64_t processedMissingSamples = 0;
+    std::optional<std::uint64_t> rawDropoutStartSample;
+    std::optional<std::uint64_t> rawDropoutEndSample;
+    std::optional<std::uint64_t> processedDropoutStartSample;
+    std::optional<std::uint64_t> processedDropoutEndSample;
+
+    /// Whether no audio block or MIDI event was lost.
+    [[nodiscard]] bool clean() const noexcept {
+        return droppedBlocks == 0 && droppedMidiEvents == 0;
+    }
+};
 
 class ArrangeRecordingSession final : public ArrangementCaptureSink {
 public:
@@ -38,7 +65,7 @@ public:
                                          int sampleCount, int timeoutMs) noexcept override;
     bool finish(bool processedSuccessfully, juce::String& error);
     bool cancel(juce::String& error);
-    [[nodiscard]] juce::var status() const;
+    [[nodiscard]] ArrangeRecordingSummary summary() const;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
 
 private:

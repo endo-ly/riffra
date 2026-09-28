@@ -2,191 +2,192 @@
 
 #include "audio/AudioRenderPipeline.h"
 #include "midi/MidiInputService.h"
-#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
 namespace {
 
-juce::var midiDeviceValue(const juce::MidiDeviceInfo& device) {
-    auto* value = new juce::DynamicObject();
-    value->setProperty("id", device.identifier);
-    value->setProperty("name", device.name);
-    return juce::var(value);
+std::vector<MidiDeviceSpec> midiDevices(const juce::Array<juce::MidiDeviceInfo>& devices) {
+    std::vector<MidiDeviceSpec> result;
+    result.reserve(static_cast<std::size_t>(devices.size()));
+    for (const auto& device : devices) result.push_back({device.identifier, device.name});
+    return result;
+}
+
+void describeChannels(const juce::StringArray& names, const juce::BigInteger& active,
+                      const char* fallbackPrefix, std::vector<AudioChannelSpec>& channels,
+                      std::vector<std::uint32_t>& activeChannels) {
+    for (int physicalIndex = 0; physicalIndex < names.size(); ++physicalIndex) {
+        const auto index = static_cast<std::uint32_t>(physicalIndex);
+        channels.push_back({index, names[physicalIndex].isNotEmpty()
+                                       ? names[physicalIndex]
+                                       : fallbackPrefix + juce::String(physicalIndex + 1)});
+        if (active[physicalIndex]) activeChannels.push_back(index);
+    }
+}
+
+TransportStateSpec transportState(const TransportState state) noexcept {
+    switch (state) {
+        case TransportState::stopped:
+            return TransportStateSpec::stopped;
+        case TransportState::starting:
+            return TransportStateSpec::starting;
+        case TransportState::playing:
+            return TransportStateSpec::playing;
+        case TransportState::faulted:
+            return TransportStateSpec::faulted;
+    }
+    return TransportStateSpec::faulted;
+}
+
+RecordingPhaseSpec recordingPhase(const RecordingPhase phase) noexcept {
+    switch (phase) {
+        case RecordingPhase::idle:
+            return RecordingPhaseSpec::idle;
+        case RecordingPhase::countingIn:
+            return RecordingPhaseSpec::countingIn;
+        case RecordingPhase::recording:
+            return RecordingPhaseSpec::recording;
+        case RecordingPhase::stopping:
+            return RecordingPhaseSpec::stopping;
+    }
+    return RecordingPhaseSpec::idle;
 }
 
 }  // namespace
 
-juce::var AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
-                                            const AudioRenderPipeline& pipeline,
-                                            const MidiMonitor* midi, const juce::String& message,
-                                            TimelineEngine* timeline) {
-    auto* status = new juce::DynamicObject();
-    status->setProperty("type", "audioStatus");
-    const juce::String state =
-        pipeline.isDeviceFaulted() ? "faulted" : (pipeline.isMuted() ? "muted" : "ready");
-    status->setProperty("state", state);
-    if (pipeline.isDeviceFaulted())
-        status->setProperty(
-            "message",
-            "Audio device disconnected; output is muted and any captured take is preserved.");
-    status->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
-    status->setProperty("masterGainDb", pipeline.getMasterGainDb());
-    const auto projectIdentity = timeline != nullptr ? timeline->activeProjectMeterIdentity()
-                                                     : TimelineEngine::ActiveProjectMeterIdentity{
-                                                           {}, pipeline.projectMeterEpoch()};
+AudioStatusSpec AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& manager,
+                                                  const AudioRenderPipeline& pipeline,
+                                                  const MidiMonitor& midi,
+                                                  TimelineEngine& timeline) {
+    AudioStatusSpec status;
+    status.muteReasons = pipeline.getMuteReasons();
+    if (pipeline.isDeviceFaulted()) {
+        status.state = AudioStateSpec::faulted;
+        status.message =
+            "Audio device disconnected; output is muted and any captured take is preserved.";
+    } else if (status.muteReasons != 0) {
+        status.state = AudioStateSpec::muted;
+        status.message = "Native audio is connected and muted.";
+    } else {
+        status.state = AudioStateSpec::ready;
+        status.message = "Native audio is ready through the safety chain.";
+    }
+
+    const auto projectIdentity = timeline.activeProjectMeterIdentity();
     const auto transientMeters = pipeline.peekTransientMeters(projectIdentity.meterEpoch);
-    status->setProperty("inputPeak", transientMeters.inputPeak);
-    status->setProperty("outputPeak", transientMeters.outputPeak);
-    status->setProperty("invalidSamples",
-                        static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
-    status->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
-    status->setProperty("previewing", pipeline.isPreviewing());
-    status->setProperty("instrumentPreviewing", pipeline.isInstrumentPreviewing());
-    if (midi != nullptr) {
-        status->setProperty("midiInputActive", midi->isActive());
-        status->setProperty("midiMessages", static_cast<juce::int64>(midi->getMessageCount()));
-        status->setProperty("lastMidiNote", midi->getLastNote());
+    status.inputPeak = transientMeters.inputPeak;
+    status.outputPeak = transientMeters.outputPeak;
+    status.invalidSamples = pipeline.getInvalidSampleCount();
+    status.feedbackSuspected = pipeline.isFeedbackSuspected();
+    status.previewing = pipeline.isPreviewing();
+    status.instrumentPreviewing = pipeline.isInstrumentPreviewing();
+    status.midiInputActive = midi.isActive();
+    status.midiMessages = midi.getMessageCount();
+    if (const auto lastNote = midi.getLastNote(); lastNote >= 0)
+        status.lastMidiNote = static_cast<std::uint8_t>(lastNote);
+    status.recording = pipeline.recordingStatus();
+
+    auto& diagnostics = status.diagnostics;
+    diagnostics.callbackCount = pipeline.getCallbackCount();
+    diagnostics.averageCallbackDurationUs = pipeline.getAverageCallbackDurationUs();
+    diagnostics.maximumCallbackDurationUs = pipeline.getMaximumCallbackDurationUs();
+    diagnostics.callbackOverruns = pipeline.getCallbackOverruns();
+    diagnostics.preLimiterPeak = transientMeters.preLimiterPeak;
+    diagnostics.limiterGainReductionDb = transientMeters.limiterGainReductionDb;
+    diagnostics.hardClipSamples = pipeline.getHardClipSamples();
+    timeline.serviceDeferredCleanup();
+    const auto timelineStatus = timeline.status();
+    diagnostics.graphPublishCount = timelineStatus.graphPublishCount;
+    if (const auto& graph = timelineStatus.graph) {
+        status.timelineTick = graph->timelineTick;
+        diagnostics.liveMidiDrops = graph->liveMidiDrops;
+        diagnostics.trackCount = graph->trackCount;
+        diagnostics.instrumentRuntimeCount = graph->instrumentRuntimeCount;
+        diagnostics.pluginCount = graph->pluginCount;
+        diagnostics.maximumLatencySamples = graph->maximumLatencySamples;
+        diagnostics.graphRevision = graph->revision;
+        diagnostics.instrumentFaults = graph->instrumentFaults;
     }
-    status->setProperty("recording", pipeline.recordingStatus());
-    auto* diagnostics = new juce::DynamicObject();
-    diagnostics->setProperty("callbackCount",
-                             static_cast<juce::int64>(pipeline.getCallbackCount()));
-    diagnostics->setProperty("averageCallbackDurationUs",
-                             static_cast<juce::int64>(pipeline.getAverageCallbackDurationUs()));
-    diagnostics->setProperty("maximumCallbackDurationUs",
-                             static_cast<juce::int64>(pipeline.getMaximumCallbackDurationUs()));
-    diagnostics->setProperty("callbackOverruns",
-                             static_cast<juce::int64>(pipeline.getCallbackOverruns()));
-    diagnostics->setProperty("preLimiterPeak", transientMeters.preLimiterPeak);
-    diagnostics->setProperty("limiterGainReductionDb", transientMeters.limiterGainReductionDb);
-    diagnostics->setProperty("hardClipSamples",
-                             static_cast<juce::int64>(pipeline.getHardClipSamples()));
-    if (timeline != nullptr) {
-        timeline->serviceDeferredCleanup();
-        const auto timelineStatus = timeline->status();
-        status->setProperty("timelineTick", timelineStatus.getProperty("timelineTick", 0));
-        diagnostics->setProperty("liveMidiDrops", timelineStatus.getProperty("liveMidiDrops", 0));
-        diagnostics->setProperty("trackCount", timelineStatus.getProperty("trackCount", 0));
-        diagnostics->setProperty("instrumentRuntimeCount",
-                                 timelineStatus.getProperty("instrumentRuntimeCount", 0));
-        diagnostics->setProperty("pluginCount", timelineStatus.getProperty("pluginCount", 0));
-        diagnostics->setProperty("maximumLatencySamples",
-                                 timelineStatus.getProperty("maximumLatencySamples", 0));
-        diagnostics->setProperty("graphRevision", timelineStatus.getProperty("graphRevision", 0));
-        diagnostics->setProperty("graphPublishCount",
-                                 timelineStatus.getProperty("graphPublishCount", 0));
-        diagnostics->setProperty(
-            "instrumentFaults",
-            timelineStatus.getProperty("instrumentFaults", juce::Array<juce::var>{}));
-    }
-    const auto projectIdentityAfter =
-        timeline != nullptr ? timeline->activeProjectMeterIdentity() : projectIdentity;
+    const auto projectIdentityAfter = timeline.activeProjectMeterIdentity();
     if (projectIdentity.meterEpoch != projectIdentityAfter.meterEpoch ||
         projectIdentity.projectId != projectIdentityAfter.projectId) {
-        status->setProperty("inputPeak", 0.0f);
-        status->setProperty("outputPeak", 0.0f);
-        diagnostics->setProperty("preLimiterPeak", 0.0f);
-        diagnostics->setProperty("limiterGainReductionDb", 0.0f);
+        status.inputPeak = 0.0;
+        status.outputPeak = 0.0;
+        diagnostics.preLimiterPeak = 0.0;
+        diagnostics.limiterGainReductionDb = 0.0;
     }
-    status->setProperty("diagnostics", juce::var(diagnostics));
-    if (message.isNotEmpty()) status->setProperty("message", message);
 
-    juce::Array<juce::var> midiInputs;
-    for (const auto& device : juce::MidiInput::getAvailableDevices())
-        midiInputs.add(midiDeviceValue(device));
-    juce::Array<juce::var> midiOutputs;
-    for (const auto& device : juce::MidiOutput::getAvailableDevices())
-        midiOutputs.add(midiDeviceValue(device));
-    status->setProperty("midiInputs", midiInputs);
-    status->setProperty("midiOutputs", midiOutputs);
+    status.midiInputs = midiDevices(juce::MidiInput::getAvailableDevices());
+    status.midiOutputs = midiDevices(juce::MidiOutput::getAvailableDevices());
 
     if (auto* device = manager.getCurrentAudioDevice()) {
         juce::AudioDeviceManager::AudioDeviceSetup setup;
         manager.getAudioDeviceSetup(setup);
-        status->setProperty("driver", device->getTypeName());
-        status->setProperty("inputDevice", setup.inputDeviceName);
-        status->setProperty("outputDevice", setup.outputDeviceName);
-        status->setProperty("inputChannel", pipeline.getInputChannel());
-        juce::Array<juce::var> inputChannels;
-        const auto channelNames = device->getInputChannelNames();
-        const auto activeInputChannels = device->getActiveInputChannels();
-        juce::Array<juce::var> activeInputChannelIndices;
-        for (int physicalIndex = 0; physicalIndex < channelNames.size(); ++physicalIndex) {
-            auto* channel = new juce::DynamicObject();
-            channel->setProperty("index", physicalIndex);
-            channel->setProperty("name", channelNames[physicalIndex].isNotEmpty()
-                                             ? channelNames[physicalIndex]
-                                             : "Input " + juce::String(physicalIndex + 1));
-            inputChannels.add(juce::var(channel));
-            if (activeInputChannels[physicalIndex]) activeInputChannelIndices.add(physicalIndex);
-        }
-        status->setProperty("inputChannels", inputChannels);
-        status->setProperty("activeInputChannels", activeInputChannelIndices);
-        juce::Array<juce::var> outputChannels;
-        const auto outputChannelNames = device->getOutputChannelNames();
-        const auto activeOutputChannels = device->getActiveOutputChannels();
-        juce::Array<juce::var> activeOutputChannelIndices;
-        for (int physicalIndex = 0; physicalIndex < outputChannelNames.size(); ++physicalIndex) {
-            auto* channel = new juce::DynamicObject();
-            channel->setProperty("index", physicalIndex);
-            channel->setProperty("name", outputChannelNames[physicalIndex].isNotEmpty()
-                                             ? outputChannelNames[physicalIndex]
-                                             : "Output " + juce::String(physicalIndex + 1));
-            outputChannels.add(juce::var(channel));
-            if (activeOutputChannels[physicalIndex]) activeOutputChannelIndices.add(physicalIndex);
-        }
-        status->setProperty("outputChannels", outputChannels);
-        status->setProperty("activeOutputChannels", activeOutputChannelIndices);
-        status->setProperty("sampleRate", device->getCurrentSampleRate());
-        status->setProperty("bufferSize", device->getCurrentBufferSizeSamples());
+        status.driver = device->getTypeName();
+        status.inputDevice = setup.inputDeviceName;
+        status.outputDevice = setup.outputDeviceName;
+        status.inputChannel = static_cast<std::uint32_t>(pipeline.getInputChannel());
+        describeChannels(device->getInputChannelNames(), device->getActiveInputChannels(), "Input ",
+                         status.inputChannels, status.activeInputChannels);
+        describeChannels(device->getOutputChannelNames(), device->getActiveOutputChannels(),
+                         "Output ", status.outputChannels, status.activeOutputChannels);
+        const auto sampleRate = device->getCurrentSampleRate();
+        status.sampleRate = sampleRate;
+        status.bufferSize = static_cast<std::uint32_t>(device->getCurrentBufferSizeSamples());
         const auto latencySamples =
             device->getInputLatencyInSamples() + device->getOutputLatencyInSamples();
-        const auto latencyMs =
-            device->getCurrentSampleRate() > 0.0
-                ? 1000.0 * static_cast<double>(latencySamples) / device->getCurrentSampleRate()
-                : 0.0;
-        status->setProperty("roundTripMs", latencyMs);
+        status.roundTripMs =
+            sampleRate > 0.0 ? 1000.0 * static_cast<double>(latencySamples) / sampleRate : 0.0;
     }
-    return juce::var(status);
+    return status;
 }
 
-juce::var AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
-                                            TimelineEngine* timeline) {
-    auto* meters = new juce::DynamicObject();
-    meters->setProperty("type", "audioMeters");
-    const auto identityBefore = timeline != nullptr ? timeline->activeProjectMeterIdentity()
-                                                    : TimelineEngine::ActiveProjectMeterIdentity{
-                                                          {}, pipeline.projectMeterEpoch()};
+AudioMetersSpec AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pipeline,
+                                                  TimelineEngine& timeline) {
+    const auto identityBefore = timeline.activeProjectMeterIdentity();
     const auto transientMeters = pipeline.consumeTransientMeters(identityBefore.meterEpoch);
-    const auto trackMeters =
-        timeline != nullptr ? timeline->meterSnapshot() : juce::Array<juce::var>{};
-    const auto identityAfter =
-        timeline != nullptr ? timeline->activeProjectMeterIdentity() : identityBefore;
+    auto trackMeters = timeline.meterSnapshot();
+    const auto identityAfter = timeline.activeProjectMeterIdentity();
     const auto identityStable = identityBefore.projectId == identityAfter.projectId &&
                                 identityBefore.meterEpoch == identityAfter.meterEpoch;
-    const auto stableTransientMeters =
+    const auto stableMeters =
         identityStable ? transientMeters : AudioMetrics::TransientMeterSnapshot{};
-    meters->setProperty("projectId", identityAfter.projectId);
-    meters->setProperty("inputPeak", stableTransientMeters.inputPeak);
-    meters->setProperty("outputPeak", stableTransientMeters.outputPeak);
-    meters->setProperty("outputPeakLeft", stableTransientMeters.outputPeakLeft);
-    meters->setProperty("outputPeakRight", stableTransientMeters.outputPeakRight);
-    meters->setProperty("invalidSamples",
-                        static_cast<juce::int64>(pipeline.getInvalidSampleCount()));
-    meters->setProperty("preLimiterPeak", stableTransientMeters.preLimiterPeak);
-    meters->setProperty("limiterGainReductionDb", stableTransientMeters.limiterGainReductionDb);
-    meters->setProperty("hardClipSamples", static_cast<juce::int64>(pipeline.getHardClipSamples()));
-    meters->setProperty("muteReasons", static_cast<juce::int64>(pipeline.getMuteReasons()));
-    meters->setProperty("feedbackSuspected", pipeline.isFeedbackSuspected());
-    meters->setProperty("previewing", pipeline.isPreviewing());
-    meters->setProperty("instrumentPreviewing", pipeline.isInstrumentPreviewing());
-    meters->setProperty("droppedTelemetryFrames",
-                        static_cast<juce::int64>(droppedTelemetryCount()));
-    meters->setProperty("droppedStateEvents", static_cast<juce::int64>(droppedStateCount()));
-    meters->setProperty("trackMeters", identityStable ? juce::var(trackMeters)
-                                                      : juce::var(juce::Array<juce::var>{}));
-    return juce::var(meters);
+
+    AudioMetersSpec meters;
+    if (identityAfter.projectId.isNotEmpty()) meters.projectId = identityAfter.projectId;
+    meters.inputPeak = stableMeters.inputPeak;
+    meters.outputPeak = stableMeters.outputPeak;
+    meters.outputPeakLeft = stableMeters.outputPeakLeft;
+    meters.outputPeakRight = stableMeters.outputPeakRight;
+    meters.invalidSamples = pipeline.getInvalidSampleCount();
+    meters.preLimiterPeak = stableMeters.preLimiterPeak;
+    meters.limiterGainReductionDb = stableMeters.limiterGainReductionDb;
+    meters.hardClipSamples = pipeline.getHardClipSamples();
+    meters.muteReasons = pipeline.getMuteReasons();
+    meters.feedbackSuspected = pipeline.isFeedbackSuspected();
+    meters.previewing = pipeline.isPreviewing();
+    meters.instrumentPreviewing = pipeline.isInstrumentPreviewing();
+    if (identityStable) meters.trackMeters = std::move(trackMeters);
+    return meters;
+}
+
+TransportStatusSpec AudioStatusBuilder::currentTransport(const TimelineEngine& timeline) {
+    const auto status = timeline.status();
+    TransportStatusSpec transport;
+    transport.state = transportState(status.transportState);
+    transport.sequence = status.sequence;
+    transport.recordingPhase = recordingPhase(status.recordingPhase);
+    transport.recordingStartTick = status.recordingStartTick;
+    transport.recordingPassOrdinal = status.recordingPassOrdinal;
+    transport.clockGeneration = status.clockGeneration;
+    transport.discontinuity = status.discontinuity;
+    if (const auto& graph = status.graph) {
+        transport.revision = graph->revision;
+        transport.timelineTick = graph->timelineTick;
+        transport.armedTrackIds = graph->armedTrackIds;
+    }
+    return transport;
 }
 
 }  // namespace riffra

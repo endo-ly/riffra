@@ -1,12 +1,10 @@
 #include "AudioProtocol.h"
 
-#include <array>
-#include <atomic>
-#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -17,7 +15,7 @@
 namespace riffra {
 namespace {
 
-thread_local juce::String currentRequestIdValue;
+enum class OutputKind { control, state, telemetry };
 
 class OutputWriter final {
 public:
@@ -31,47 +29,29 @@ public:
             const std::lock_guard lock(mutex);
             ensureStarted();
             if (kind == OutputKind::control) {
-                // A control response is an ordering barrier for lossy telemetry. Any telemetry
-                // still queued here describes an earlier state and must not overtake this response.
-                const auto dropped = outputQueue.enqueueControl(std::move(line));
-                droppedTelemetry.fetch_add(static_cast<std::uint64_t>(dropped),
-                                           std::memory_order_relaxed);
+                // A control message is an ordering barrier for lossy telemetry. Any telemetry
+                // still queued here describes an earlier state and must not overtake it.
+                outputQueue.enqueueControl(std::move(line));
             } else {
-                if (!outputQueue.enqueueTelemetry(std::move(line)))
-                    droppedTelemetry.fetch_add(1, std::memory_order_relaxed);
+                outputQueue.enqueueTelemetry(std::move(line));
             }
         }
         wake.notify_one();
     }
 
     void enqueueState(std::string key, std::string line) {
-        if (key.empty()) {
-            enqueue(std::move(line), OutputKind::telemetry);
-            return;
-        }
         {
             const std::lock_guard lock(mutex);
             ensureStarted();
             if (const auto existing = stateQueue.find(key); existing != stateQueue.end()) {
                 existing->second = std::move(line);
             } else {
-                if (stateQueue.size() >= kStateQueueLimit) {
-                    droppedState.fetch_add(1, std::memory_order_relaxed);
-                    return;
-                }
+                if (stateQueue.size() >= kStateQueueLimit) return;
                 stateOrder.push_back(key);
                 stateQueue.emplace(std::move(key), std::move(line));
             }
         }
         wake.notify_one();
-    }
-
-    [[nodiscard]] std::uint64_t droppedTelemetryCount() const noexcept {
-        return droppedTelemetry.load(std::memory_order_acquire);
-    }
-
-    [[nodiscard]] std::uint64_t droppedStateCount() const noexcept {
-        return droppedState.load(std::memory_order_acquire);
     }
 
 private:
@@ -120,104 +100,47 @@ private:
         if (writer.joinable()) writer.join();
     }
 
-    mutable std::mutex mutex;
+    std::mutex mutex;
     std::condition_variable wake;
     std::deque<std::string> stateOrder;
     std::unordered_map<std::string, std::string> stateQueue;
     OutputQueue outputQueue;
     std::thread writer;
-    std::atomic<std::uint64_t> droppedTelemetry{0};
-    std::atomic<std::uint64_t> droppedState{0};
     bool stopping = false;
 };
 
 OutputWriter outputWriter;
 
+std::string line(const juce::var& value) { return juce::JSON::toString(value, true).toStdString(); }
+
+std::string deviceKey(const juce::String& trackId, const juce::String& deviceId) {
+    return (trackId + ":" + deviceId).toStdString();
+}
+
 }  // namespace
 
-void clearCurrentRequestId() noexcept { currentRequestIdValue.clear(); }
-
-void setCurrentRequestId(const juce::String& requestId) { currentRequestIdValue = requestId; }
-
-juce::String currentRequestId() { return currentRequestIdValue; }
-
-std::uint64_t droppedTelemetryCount() noexcept { return outputWriter.droppedTelemetryCount(); }
-
-std::uint64_t droppedStateCount() noexcept { return outputWriter.droppedStateCount(); }
-
-juce::var makeError(const juce::String& kind, const juce::String& message,
-                    const juce::String& operation, const juce::var& details) {
-    auto* object = new juce::DynamicObject();
-    object->setProperty("type", "error");
-    object->setProperty("kind", kind);
-    object->setProperty("message", message);
-    object->setProperty("operation", operation.isEmpty() ? kind : operation);
-    object->setProperty("details",
-                        details.isVoid() ? juce::var(new juce::DynamicObject()) : details);
-    return juce::var(object);
+void writeControlEnvelope(const juce::var& envelope) {
+    outputWriter.enqueue(line(envelope), OutputKind::control);
 }
 
-bool parseMidiBytes(const juce::var& value, juce::MidiMessage& message, juce::String& error) {
-    if (!value.isArray()) {
-        error = "A bytes array of MIDI data is required.";
-        return false;
+void writeEvent(const SidecarEventSpec& event) {
+    auto encoded = line(encodeEvent(event));
+    if (const auto* changed = std::get_if<TrackPluginStateChangedSpec>(&event)) {
+        outputWriter.enqueueState("track-state:" + deviceKey(changed->trackId, changed->deviceId),
+                                  std::move(encoded));
+    } else if (const auto* parameter = std::get_if<TrackPluginParameterChangedSpec>(&event)) {
+        outputWriter.enqueueState(
+            "track-parameter:" + deviceKey(parameter->trackId, parameter->deviceId) + ":" +
+                std::to_string(parameter->parameterIndex),
+            std::move(encoded));
+    } else if (std::holds_alternative<AudioStatusSpec>(event)) {
+        outputWriter.enqueueState("audio-status", std::move(encoded));
+    } else if (std::holds_alternative<AudioMetersSpec>(event) ||
+               std::holds_alternative<TransportStatusSpec>(event)) {
+        outputWriter.enqueue(std::move(encoded), OutputKind::telemetry);
+    } else {
+        outputWriter.enqueue(std::move(encoded), OutputKind::control);
     }
-    const auto bytesArray = *value.getArray();
-    if (bytesArray.isEmpty() || bytesArray.size() > 3) {
-        error = "MIDI bytes must contain between 1 and 3 bytes.";
-        return false;
-    }
-    std::array<std::uint8_t, 3> bytes{};
-    for (int index = 0; index < bytesArray.size(); ++index) {
-        const auto& valueAtIndex = bytesArray[index];
-        if (!valueAtIndex.isInt() && !valueAtIndex.isInt64() && !valueAtIndex.isDouble()) {
-            error = "MIDI bytes must be integer values.";
-            return false;
-        }
-        const auto numeric = static_cast<double>(valueAtIndex);
-        if (!std::isfinite(numeric) || std::floor(numeric) != numeric || numeric < 0.0 ||
-            numeric > 255.0) {
-            error = "MIDI bytes must be integers from 0 through 255.";
-            return false;
-        }
-        bytes[static_cast<std::size_t>(index)] = static_cast<std::uint8_t>(numeric);
-    }
-    if ((bytes[0] & 0x80u) == 0u) {
-        error = "The first MIDI byte must be a status byte.";
-        return false;
-    }
-    for (int index = 1; index < bytesArray.size(); ++index) {
-        if (bytes[static_cast<std::size_t>(index)] > 0x7fu) {
-            error = "MIDI data bytes must be below 128.";
-            return false;
-        }
-    }
-    switch (bytesArray.size()) {
-        case 1:
-            message = juce::MidiMessage(bytes[0]);
-            break;
-        case 2:
-            message = juce::MidiMessage(bytes[0], bytes[1]);
-            break;
-        default:
-            message = juce::MidiMessage(bytes[0], bytes[1], bytes[2]);
-            break;
-    }
-    return true;
-}
-
-void writeJson(const juce::var& value, const juce::String& requestId, const OutputKind kind,
-               std::string stateKey) {
-    auto response = value;
-    const auto effectiveRequestId = requestId.isNotEmpty() ? requestId : currentRequestIdValue;
-    if (effectiveRequestId.isNotEmpty())
-        if (auto* object = response.getDynamicObject())
-            object->setProperty("requestId", effectiveRequestId.getLargeIntValue());
-    auto line = juce::JSON::toString(response, true).toStdString();
-    if (kind == OutputKind::state)
-        outputWriter.enqueueState(std::move(stateKey), std::move(line));
-    else
-        outputWriter.enqueue(std::move(line), kind);
 }
 
 }  // namespace riffra

@@ -87,36 +87,34 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     pipeline.setEngineTransitionMute(true);
     auto& manager = deviceController.manager();
 
+    const auto currentStatus = [&] {
+        return AudioStatusBuilder::currentStatus(manager, pipeline, midiInputs.monitor(),
+                                                 timelineEngine);
+    };
     auto error = deviceController.initialise(startupConfiguration);
-    juce::String startupMessage;
     if (error.isNotEmpty()) {
         deviceController.close();
-        writeJson(makeError("deviceRejected", error, "audioDevice.activate"));
+        writeEvent(FaultSpec{{"deviceRejected", error, "audioDevice.activate", {}}});
         return 2;
     }
 
-    auto startupInputChannel = startupMessage.isEmpty() ? startupConfiguration.inputChannel : 0;
     const auto startupInputChannels =
         manager.getCurrentAudioDevice() != nullptr
             ? manager.getCurrentAudioDevice()->getInputChannelNames().size()
             : 0;
-    if (startupInputChannels > 0 && startupInputChannel >= startupInputChannels) {
-        auto* details = new juce::DynamicObject();
-        details->setProperty("inputChannel", startupInputChannel);
-        details->setProperty("availableInputChannels", startupInputChannels);
-        writeJson(makeError("deviceRejected", "The saved input channel is unavailable.",
-                            "audioDevice.activate", juce::var(details)));
+    if (startupInputChannels > 0 && startupConfiguration.inputChannel >= startupInputChannels) {
+        writeEvent(FaultSpec{{"deviceRejected", "The saved input channel is unavailable.",
+                              "audioDevice.activate",
+                              encodeInputChannelDetails(
+                                  {static_cast<std::uint32_t>(startupConfiguration.inputChannel),
+                                   static_cast<std::uint32_t>(startupInputChannels)})}});
         deviceController.close();
         return 2;
     }
-    pipeline.setInputChannel(startupInputChannel);
-    deviceController.setDeviceLossHandler([&] {
-        writeJson(
-            AudioStatusBuilder::currentStatus(manager, pipeline, nullptr, {}, &timelineEngine));
-    });
+    pipeline.setInputChannel(startupConfiguration.inputChannel);
+    deviceController.setDeviceLossHandler([&] { writeEvent(currentStatus()); });
     deviceController.attach();
-    writeJson(AudioStatusBuilder::currentStatus(manager, pipeline, &midiInputs.monitor(),
-                                                startupMessage, &timelineEngine));
+    writeEvent(ReadySpec{currentStatus()});
 
     watchdogRunning.store(true, std::memory_order_release);
     if (parentPid.has_value()) {
@@ -137,8 +135,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
             if (!midiInputs.isListening()) continue;
             if (midiInputs.deviceSetChanged()) {
                 midiInputs.reopenAll();
-                writeJson(AudioStatusBuilder::currentStatus(
-                    manager, pipeline, &midiInputs.monitor(), {}, &timelineEngine));
+                writeEvent(currentStatus());
             }
         }
     });
@@ -151,8 +148,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
         while (meterPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (!meterPushRunning.load(std::memory_order_acquire)) break;
-            writeJson(AudioStatusBuilder::currentMeters(pipeline, &timelineEngine), {},
-                      OutputKind::telemetry);
+            writeEvent(AudioStatusBuilder::currentMeters(pipeline, timelineEngine));
         }
     });
 
@@ -161,7 +157,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
         while (transportPushRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (!transportPushRunning.load(std::memory_order_acquire)) break;
-            writeJson(timelineEngine.status(), {}, OutputKind::telemetry);
+            writeEvent(AudioStatusBuilder::currentTransport(timelineEngine));
         }
     });
 
@@ -187,18 +183,12 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
                 if (error.isNotEmpty()) error << " ";
                 error << finishError;
             }
-            const auto succeeded = processed && finished;
-            const auto status = session->status();
-            pipeline.completeArrangeRecordingProcessing(status, error);
-
-            auto* completion = new juce::DynamicObject();
-            completion->setProperty("type", "recordingComplete");
-            completion->setProperty("directory", status.getProperty("directory", {}));
-            completion->setProperty("success", succeeded);
-            if (error.isNotEmpty()) completion->setProperty("message", error);
-            writeJson(juce::var(completion));
-            writeJson(AudioStatusBuilder::currentStatus(manager, pipeline, &midiInputs.monitor(),
-                                                        {}, &timelineEngine));
+            const auto summary = session->summary();
+            pipeline.completeArrangeRecordingProcessing(summary, error);
+            writeEvent(RecordingCompleteSpec{
+                summary.directory, processed && finished,
+                error.isNotEmpty() ? std::optional<juce::String>(error) : std::nullopt});
+            writeEvent(currentStatus());
         };
 
     pipeline.setRecordingFinalizationDispatcher(

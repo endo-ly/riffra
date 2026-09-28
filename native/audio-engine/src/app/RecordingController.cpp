@@ -6,6 +6,33 @@
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
+namespace {
+
+RecordingStatusSpec recordingStatus(const ArrangeRecordingSummary& summary) {
+    RecordingStatusSpec status;
+    status.active = summary.active;
+    status.directory = summary.directory;
+    status.sampleRate = summary.sampleRate;
+    status.samplesWritten = summary.samplesWritten;
+    status.droppedMidiEvents = summary.droppedMidiEvents;
+    status.droppedBlocks = summary.droppedBlocks;
+    status.missingSamples = summary.missingSamples;
+    status.rawAttemptedSamples = summary.rawAttemptedSamples;
+    status.processedAttemptedSamples = summary.processedAttemptedSamples;
+    status.rawDroppedBlocks = summary.rawDroppedBlocks;
+    status.processedDroppedBlocks = summary.processedDroppedBlocks;
+    status.rawMissingSamples = summary.rawMissingSamples;
+    status.processedMissingSamples = summary.processedMissingSamples;
+    status.rawDropoutStartSample = summary.rawDropoutStartSample;
+    status.rawDropoutEndSample = summary.rawDropoutEndSample;
+    status.processedDropoutStartSample = summary.processedDropoutStartSample;
+    status.processedDropoutEndSample = summary.processedDropoutEndSample;
+    status.recoveryStatus =
+        summary.clean() ? RecoveryStatusSpec::clean : RecoveryStatusSpec::partial;
+    return status;
+}
+
+}  // namespace
 
 RecordingController::RecordingController(TimelineEngine& timelineIn) noexcept
     : timeline(timelineIn) {}
@@ -26,7 +53,7 @@ bool RecordingController::start(const juce::File& directory, juce::String& error
     if (candidate == nullptr) return false;
     arrangeRecording = std::move(candidate);
     cancelled.store(false, std::memory_order_release);
-    finalizationStatus = juce::var{};
+    finalizationStatus.reset();
     timeline.setRecordingSink(arrangeRecording.get());
     return true;
 }
@@ -58,11 +85,9 @@ bool RecordingController::stop(juce::String& error) {
 
         detached = std::move(arrangeRecording);
         processing = true;
-        finalizationStatus = detached->status();
-        if (auto* statusObject = finalizationStatus.getDynamicObject()) {
-            statusObject->setProperty("active", false);
-            statusObject->setProperty("processing", true);
-        }
+        finalizationStatus = recordingStatus(detached->summary());
+        finalizationStatus->active = false;
+        finalizationStatus->processing = true;
         dispatcher = finalizationDispatcher;
     }
 
@@ -80,14 +105,12 @@ std::unique_ptr<ArrangeRecordingSession> RecordingController::takePendingFinaliz
     return std::move(pendingFinalization);
 }
 
-void RecordingController::completeProcessing(const juce::var& status, const juce::String& error) {
+void RecordingController::completeProcessing(const ArrangeRecordingSummary& summary,
+                                             const juce::String& error) {
     const juce::ScopedLock guard(lock);
-    finalizationStatus = status;
-    if (auto* result = finalizationStatus.getDynamicObject()) {
-        result->setProperty("active", false);
-        result->setProperty("processing", false);
-        if (error.isNotEmpty()) result->setProperty("error", error);
-    }
+    finalizationStatus = recordingStatus(summary);
+    finalizationStatus->active = false;
+    if (error.isNotEmpty()) finalizationStatus->error = error;
     processing = false;
 }
 
@@ -108,20 +131,13 @@ bool RecordingController::cancel(juce::String& error) {
     return wasCancelled;
 }
 
-juce::var RecordingController::status() const {
+RecordingStatusSpec RecordingController::status() const {
     const juce::ScopedLock guard(lock);
-    if (arrangeRecording != nullptr) {
-        auto result = arrangeRecording->status();
-        if (auto* statusObject = result.getDynamicObject())
-            statusObject->setProperty("processing", false);
-        return result;
-    }
-    if (finalizationStatus.isObject()) return finalizationStatus;
-    auto* result = new juce::DynamicObject();
-    result->setProperty("active", false);
-    result->setProperty("processing", false);
-    result->setProperty("cancelled", cancelled.load(std::memory_order_acquire));
-    return juce::var(result);
+    if (arrangeRecording != nullptr) return recordingStatus(arrangeRecording->summary());
+    if (finalizationStatus.has_value()) return *finalizationStatus;
+    RecordingStatusSpec idle;
+    idle.cancelled = cancelled.load(std::memory_order_acquire);
+    return idle;
 }
 
 }  // namespace riffra

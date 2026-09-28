@@ -89,6 +89,19 @@ bool ContractReader::number(const char* key, double& output) {
     return true;
 }
 
+bool ContractReader::optionalNumber(const char* key, std::optional<double>& output) {
+    juce::var item;
+    if (!read(key, item)) return false;
+    if (item.isVoid()) {
+        output.reset();
+        return true;
+    }
+    double value = 0.0;
+    if (!number(key, value)) return false;
+    output = value;
+    return true;
+}
+
 bool ContractReader::unsignedInteger(const char* key, std::uint64_t& output) {
     juce::var item;
     if (!read(key, item)) return false;
@@ -99,12 +112,39 @@ bool ContractReader::unsignedInteger(const char* key, std::uint64_t& output) {
     return true;
 }
 
+bool ContractReader::optionalUnsignedInteger(const char* key,
+                                             std::optional<std::uint64_t>& output) {
+    juce::var item;
+    if (!read(key, item)) return false;
+    if (item.isVoid()) {
+        output.reset();
+        return true;
+    }
+    std::uint64_t value = 0;
+    if (!unsignedInteger(key, value)) return false;
+    output = value;
+    return true;
+}
+
 bool ContractReader::unsigned32(const char* key, std::uint32_t& output) {
     std::uint64_t value = 0;
     if (!unsignedInteger(key, value)) return false;
     if (value > std::numeric_limits<std::uint32_t>::max())
         return fail(key, "integer exceeds u32 range");
     output = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool ContractReader::optionalUnsigned32(const char* key, std::optional<std::uint32_t>& output) {
+    juce::var item;
+    if (!read(key, item)) return false;
+    if (item.isVoid()) {
+        output.reset();
+        return true;
+    }
+    std::uint32_t value = 0;
+    if (!unsigned32(key, value)) return false;
+    output = value;
     return true;
 }
 

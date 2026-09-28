@@ -75,18 +75,12 @@ TEST(TimelineEngineTest, GraphCommitRestoresCanonicalMasterGainAfterPreview) {
     juce::String error;
     ASSERT_TRUE(timeline.loadSnapshot(snapshot, formatManager, 48'000.0, 32, error, false))
         << error;
-    auto* preview = new juce::DynamicObject();
-    preview->setProperty("type", "previewMasterGainDb");
-    preview->setProperty("gainDb", -3.0);
+    const auto discard = [](const juce::var&) {};
 
     // Act
-    const auto previewResult = dispatcher.dispatch(juce::var(preview));
-    juce::ignoreUnused(previewResult);
+    dispatcher.dispatch({1, PreviewMasterGainDbCommand{-3.0}}, CommandResponder(1, discard));
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -3.0f);
-    auto* commit = new juce::DynamicObject();
-    commit->setProperty("type", "commitTimelineSnapshot");
-    const auto commitResult = dispatcher.dispatch(juce::var(commit));
-    juce::ignoreUnused(commitResult);
+    dispatcher.dispatch({2, CommitTimelineSnapshotCommand{}}, CommandResponder(2, discard));
     ASSERT_TRUE(runtimeLifecycle.waitForIdle(std::chrono::seconds(5)));
 
     // Assert

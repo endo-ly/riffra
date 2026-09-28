@@ -1,6 +1,7 @@
 #include <JuceHeader.h>
 
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <optional>
 
@@ -14,18 +15,32 @@ namespace {
 using riffra::AudioConfiguration;
 using riffra::AudioDeviceService;
 using riffra::AudioEngine;
-using riffra::makeError;
-using riffra::writeJson;
+
+/// Writes the one JSON line produced by a probe invocation.
+void writeProbeResult(const juce::var& value) {
+    std::cout << juce::JSON::toString(value, true) << std::endl;
+}
+
+/// Rejects invalid process arguments before any protocol output exists.
+int rejectArguments(const juce::String& message) {
+    std::cerr << message << std::endl;
+    return 1;
+}
+
+/// Reports a --serve startup failure as a protocol fault.
+int failServe(const juce::String& message) {
+    riffra::writeEvent(riffra::FaultSpec{{"arguments", message, "sidecar.start", {}}});
+    return 1;
+}
 
 int runMain(const juce::StringArray& arguments) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (arguments.size() < 2) {
-        writeJson(makeError("arguments", "Use --probe, --probe-channels or --serve."));
-        return 1;
+        return rejectArguments("Use --probe, --probe-channels or --serve.");
     }
     const auto command = arguments[1];
     if (command == "--probe") {
-        writeJson(AudioDeviceService::discover());
+        writeProbeResult(AudioDeviceService::discover());
         return 0;
     }
     if (command == "--probe-channels") {
@@ -43,17 +58,15 @@ int runMain(const juce::StringArray& arguments) {
         const auto inputDevice = readValue(secondInput);
         const auto outputDevice = readValue(secondOutput);
         if (driver.isEmpty()) {
-            writeJson(makeError("arguments", "--probe-channels requires --audio-driver."));
-            return 1;
+            return rejectArguments("--probe-channels requires --audio-driver.");
         }
         juce::String probeError;
         const auto channels =
             AudioDeviceService::probeDeviceChannels(driver, inputDevice, outputDevice, probeError);
         if (!channels.has_value()) {
-            writeJson(makeError("deviceChannels", probeError));
-            return 1;
+            return rejectArguments(probeError);
         }
-        writeJson(*channels);
+        writeProbeResult(*channels);
         return 0;
     }
     if (command == "--serve") {
@@ -67,16 +80,13 @@ int runMain(const juce::StringArray& arguments) {
                 argument != "--buffer-size")
                 continue;
             if (index + 1 >= arguments.size()) {
-                writeJson(makeError("arguments", argument + " requires a value."));
-                return 1;
+                return failServe(argument + " requires a value.");
             }
             const auto value = arguments[++index];
             if (argument == "--parent-pid") {
                 const auto pid = value.getLargeIntValue();
                 if (pid <= 0 || pid > std::numeric_limits<std::uint32_t>::max()) {
-                    writeJson(
-                        makeError("arguments", "--parent-pid must be a positive process id."));
-                    return 1;
+                    return failServe("--parent-pid must be a positive process id.");
                 }
                 parentPid = static_cast<std::uint32_t>(pid);
             } else if (argument == "--audio-driver") {
@@ -86,8 +96,7 @@ int runMain(const juce::StringArray& arguments) {
             } else if (argument == "--input-channel") {
                 configuration.inputChannel = value.getIntValue();
                 if (configuration.inputChannel < 0) {
-                    writeJson(makeError("arguments", "--input-channel must be zero or greater."));
-                    return 1;
+                    return failServe("--input-channel must be zero or greater.");
                 }
             } else if (argument == "--output-device") {
                 configuration.outputDevice = value;
@@ -100,8 +109,7 @@ int runMain(const juce::StringArray& arguments) {
         AudioEngine engine;
         return engine.serve(parentPid, configuration);
     }
-    writeJson(makeError("arguments", "Unknown command: " + command));
-    return 1;
+    return rejectArguments("Unknown command: " + command);
 }
 
 }  // namespace

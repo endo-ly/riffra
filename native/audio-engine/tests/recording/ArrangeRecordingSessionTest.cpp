@@ -209,7 +209,7 @@ TEST_F(ArrangeRecordingSessionTest, ReportsOversizedMidiSourceIds) {
                             1100);
 
     EXPECT_EQ(session->droppedMidiEvents(), 1u);
-    EXPECT_EQ(static_cast<juce::int64>(session->status().getProperty("droppedMidiEvents", -1)), 1);
+    EXPECT_EQ(session->summary().droppedMidiEvents, 1u);
 
     EXPECT_TRUE(session->finish(true, error)) << error;
     const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));

@@ -2,25 +2,18 @@
 
 #include <JuceHeader.h>
 
-#include <cstdint>
-#include <string>
+#include "contract/SidecarMessages.h"
 
 namespace riffra {
 
-enum class OutputKind { control, state, telemetry };
+/// Writes an encoded response or error envelope on the ordered control lane.
+void writeControlEnvelope(const juce::var& envelope);
 
-void clearCurrentRequestId() noexcept;
-void setCurrentRequestId(const juce::String& requestId);
-[[nodiscard]] juce::String currentRequestId();
-
-[[nodiscard]] std::uint64_t droppedTelemetryCount() noexcept;
-[[nodiscard]] std::uint64_t droppedStateCount() noexcept;
-
-[[nodiscard]] juce::var makeError(const juce::String& kind, const juce::String& message,
-                                  const juce::String& operation = {},
-                                  const juce::var& details = {});
-bool parseMidiBytes(const juce::var& value, juce::MidiMessage& message, juce::String& error);
-void writeJson(const juce::var& value, const juce::String& requestId = {},
-               OutputKind kind = OutputKind::control, std::string stateKey = {});
+/// Writes one event on the output lane its type requires.
+///
+/// `ready`, `fault`, and `recordingComplete` are ordering barriers,
+/// `audioStatus` and plugin events keep only their latest value per key, and
+/// meters and transport status are lossy telemetry.
+void writeEvent(const SidecarEventSpec& event);
 
 }  // namespace riffra

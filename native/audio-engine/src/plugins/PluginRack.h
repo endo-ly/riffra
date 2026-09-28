@@ -22,6 +22,42 @@ struct PluginLoadError final {
     juce::String message;
 };
 
+/// Prepared configuration and runtime counters of one plugin rack.
+struct PluginRackStatus final {
+    bool loaded = false;
+    juce::String path;
+    juce::String name;
+    bool bypassed = false;
+    double sampleRate = 0.0;
+    int blockSize = 0;
+    int inputChannels = 0;
+    int outputChannels = 0;
+    std::uint64_t bypassedBlocks = 0;
+    std::uint64_t processedBlocks = 0;
+    std::uint64_t transitionBlocks = 0;
+    std::uint64_t droppedMidiEvents = 0;
+    std::uint64_t loadCount = 0;
+    std::uint64_t destroyCount = 0;
+};
+
+/// One host-visible plugin parameter.
+struct PluginParameterInfo final {
+    int index = 0;
+    juce::String name;
+    float value = 0.0f;
+    float defaultValue = 0.0f;
+    bool automatable = false;
+};
+
+/// Programs exposed by a plugin, or the reason they could not be enumerated.
+struct PluginProgramStatus final {
+    /// Selected program, or -1 when the plugin reports none.
+    int currentIndex = -1;
+    /// Program names in index order.
+    std::vector<juce::String> names;
+    std::optional<juce::String> error;
+};
+
 class PluginRack final {
 public:
     PluginRack();
@@ -40,7 +76,7 @@ public:
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setProgram(int index, juce::String& error);
     bool applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept;
-    [[nodiscard]] juce::var persistedState(juce::String& error) const;
+    [[nodiscard]] std::optional<PluginStateSpec> persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
                  const juce::MidiBuffer* timelineMidi = nullptr) noexcept;
@@ -51,9 +87,9 @@ public:
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
-    [[nodiscard]] juce::var status() const;
-    [[nodiscard]] juce::var parameterStatus() const;
-    [[nodiscard]] juce::var programStatus() const;
+    [[nodiscard]] PluginRackStatus status() const;
+    [[nodiscard]] std::vector<PluginParameterInfo> parameters() const;
+    [[nodiscard]] PluginProgramStatus programStatus() const;
     [[nodiscard]] bool hasPrograms() const noexcept;
     [[nodiscard]] bool hasEditor() const noexcept;
     [[nodiscard]] std::size_t parameterCount() const noexcept;
@@ -69,14 +105,6 @@ private:
     static constexpr std::size_t kMaximumPanicMidiEvents = 16 * 3;
     static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
 
-    struct CachedParameter {
-        int index = 0;
-        juce::String name;
-        float value = 0.0f;
-        float defaultValue = 0.0f;
-        bool automatable = false;
-    };
-
     struct ParameterQueue final {
         explicit ParameterQueue(std::size_t parameterCount) : capacity(parameterCount) {}
 
@@ -90,7 +118,6 @@ private:
     [[nodiscard]] juce::String currentPluginName() const;
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
         juce::AudioProcessor& processor, double sampleRate, int blockSize);
-    [[nodiscard]] juce::var cachedStatus(bool includeParameters) const;
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges(juce::AudioProcessor* processor,
                                      ParameterQueue* queue) noexcept;
@@ -135,7 +162,7 @@ private:
     juce::MidiBuffer processMidi;
     mutable juce::SpinLock pluginLock;
     mutable juce::CriticalSection statusLock;
-    std::vector<CachedParameter> cachedParameters;
+    std::vector<PluginParameterInfo> cachedParameters;
     juce::String pluginPath;
     juce::String pluginName;
     std::atomic<double> preparedSampleRate{0.0};

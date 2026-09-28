@@ -14,18 +14,15 @@ public:
 
     /// Drops queued telemetry before adding a control response so the response
     /// becomes an ordering barrier for older runtime state.
-    [[nodiscard]] std::size_t enqueueControl(std::string line) {
-        const auto dropped = telemetryQueue.size();
+    void enqueueControl(std::string line) {
         telemetryQueue.clear();
         controlQueue.push_back(std::move(line));
-        return dropped;
     }
 
     /// Adds telemetry unless the lossy queue is already at capacity.
-    [[nodiscard]] bool enqueueTelemetry(std::string line) {
-        if (telemetryQueue.size() >= kTelemetryQueueLimit) return false;
+    void enqueueTelemetry(std::string line) {
+        if (telemetryQueue.size() >= kTelemetryQueueLimit) return;
         telemetryQueue.push_back(std::move(line));
-        return true;
     }
 
     [[nodiscard]] bool hasControl() const noexcept { return !controlQueue.empty(); }

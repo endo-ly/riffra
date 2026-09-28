@@ -80,7 +80,9 @@ public:
         return feedbackSuspected.load(std::memory_order_acquire);
     }
     [[nodiscard]] bool isPreviewing() const noexcept;
-    [[nodiscard]] juce::var recordingStatus() const { return recordingController.status(); }
+    [[nodiscard]] RecordingStatusSpec recordingStatus() const {
+        return recordingController.status();
+    }
     [[nodiscard]] double getSampleRate() const noexcept;
     [[nodiscard]] int getBlockSize() const noexcept;
 
@@ -107,8 +109,9 @@ public:
     std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept {
         return recordingController.takePendingFinalization();
     }
-    void completeArrangeRecordingProcessing(const juce::var& status, const juce::String& error) {
-        recordingController.completeProcessing(status, error);
+    void completeArrangeRecordingProcessing(const ArrangeRecordingSummary& summary,
+                                            const juce::String& error) {
+        recordingController.completeProcessing(summary, error);
     }
     bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error) {
         juce::ignoreUnused(timeline);

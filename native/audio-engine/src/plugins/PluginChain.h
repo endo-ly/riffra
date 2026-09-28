@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "PluginRack.h"
@@ -27,7 +28,8 @@ public:
     bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
                       juce::String& error) noexcept;
     bool applyState(const std::vector<PluginDeviceSpec>& devices, juce::String& error) noexcept;
-    [[nodiscard]] juce::var persistedState(const juce::String& deviceId, juce::String& error) const;
+    [[nodiscard]] std::optional<PluginStateSpec> persistedState(const juce::String& deviceId,
+                                                                juce::String& error) const;
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] int size() const noexcept;

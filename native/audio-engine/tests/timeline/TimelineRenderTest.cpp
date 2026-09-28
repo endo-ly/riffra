@@ -110,33 +110,31 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     const auto baselineRight =
         juce::FloatVectorOperations::findMaximum(right.data(), kBlockSamples);
     const auto baselineMeters = engine.meterSnapshot();
-    ASSERT_EQ(baselineMeters.size(), 1);
-    EXPECT_NEAR(static_cast<float>(baselineMeters[0].getProperty("peakLeft", 0.0)), baselineLeft,
-                0.01f);
-    EXPECT_NEAR(static_cast<float>(baselineMeters[0].getProperty("peakRight", 0.0)), baselineRight,
-                0.01f);
-    EXPECT_GT(static_cast<float>(baselineMeters[0].getProperty("rmsLeft", 0.0)), 0.0f);
-    EXPECT_GT(static_cast<float>(baselineMeters[0].getProperty("rmsRight", 0.0)), 0.0f);
+    ASSERT_EQ(baselineMeters.size(), 1u);
+    EXPECT_NEAR(static_cast<float>(baselineMeters[0].peakLeft), baselineLeft, 0.01f);
+    EXPECT_NEAR(static_cast<float>(baselineMeters[0].peakRight), baselineRight, 0.01f);
+    EXPECT_GT(static_cast<float>(baselineMeters[0].rmsLeft), 0.0f);
+    EXPECT_GT(static_cast<float>(baselineMeters[0].rmsRight), 0.0f);
 
     const auto beforePreviewStatus = engine.status();
-    const auto beforePreviewRevision = beforePreviewStatus.getProperty("graphRevision", 0);
-    const auto beforePreviewPublishCount = beforePreviewStatus.getProperty("graphPublishCount", 0);
+    ASSERT_TRUE(beforePreviewStatus.graph.has_value());
 
     ASSERT_TRUE(engine.setTrackMixControl("track:live", -6.0f, -1.0f, error))
         << error.toStdString();
     const auto afterPreviewStatus = engine.status();
-    EXPECT_EQ(afterPreviewStatus.getProperty("graphRevision", 0), beforePreviewRevision);
-    EXPECT_EQ(afterPreviewStatus.getProperty("graphPublishCount", 0), beforePreviewPublishCount);
+    ASSERT_TRUE(afterPreviewStatus.graph.has_value());
+    EXPECT_EQ(afterPreviewStatus.graph->revision, beforePreviewStatus.graph->revision);
+    EXPECT_EQ(afterPreviewStatus.graphPublishCount, beforePreviewStatus.graphPublishCount);
     mixLiveInput();
     const auto previewMeters = engine.meterSnapshot();
 
     // Assert: preview is audible immediately, follows the final pan, and the
     // meter observes the same post-fader/post-pan contribution.
-    ASSERT_EQ(previewMeters.size(), 1);
+    ASSERT_EQ(previewMeters.size(), 1u);
     EXPECT_GT(left[0], right[0]);
     EXPECT_LT(right[0], 0.001f);
-    EXPECT_GT(static_cast<float>(previewMeters[0].getProperty("peakLeft", 0.0)), 0.0f);
-    EXPECT_LT(static_cast<float>(previewMeters[0].getProperty("peakRight", 0.0)), 0.001f);
+    EXPECT_GT(static_cast<float>(previewMeters[0].peakLeft), 0.0f);
+    EXPECT_LT(static_cast<float>(previewMeters[0].peakRight), 0.001f);
 
     // Act: publish a fresh canonical snapshot and render again.
     ASSERT_TRUE(loadTestSnapshot(engine, makeAudioTrackSnapshot(1, true, false), formats, 48'000.0,
@@ -207,9 +205,9 @@ TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
     const auto meters = engine.meterSnapshot();
 
     // Assert
-    ASSERT_EQ(meters.size(), 2);
-    EXPECT_FLOAT_EQ(static_cast<float>(meters[0].getProperty("peakLeft", 1.0)), 0.0f);
-    EXPECT_GT(static_cast<float>(meters[1].getProperty("peakLeft", 0.0)), 0.0f);
+    ASSERT_EQ(meters.size(), 2u);
+    EXPECT_FLOAT_EQ(static_cast<float>(meters[0].peakLeft), 0.0f);
+    EXPECT_GT(static_cast<float>(meters[1].peakLeft), 0.0f);
 }
 
 TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {

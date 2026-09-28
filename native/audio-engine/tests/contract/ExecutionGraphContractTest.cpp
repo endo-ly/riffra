@@ -1,112 +1,19 @@
 #include <gtest/gtest.h>
 
-#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "JsonTestSupport.h"
 #include "contract/ExecutionGraphDecoder.h"
 
 namespace riffra {
 namespace {
 
-using JsonPath = std::vector<std::string>;
-
-juce::var cloneJson(const juce::var& value) {
-    if (value.isArray()) {
-        juce::Array<juce::var> clone;
-        for (const auto& item : *value.getArray()) clone.add(cloneJson(item));
-        return clone;
-    }
-    if (value.isObject()) {
-        auto* clone = new juce::DynamicObject();
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index)
-            clone->setProperty(properties.getName(index), cloneJson(properties.getValueAt(index)));
-        return juce::var(clone);
-    }
-    return value;
-}
+using namespace json_test;
 
 juce::var fixture(const char* name) {
-    const auto file = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR).getChildFile(name);
-    return juce::JSON::parse(file.loadFileAsString());
-}
-
-void collectObjectPaths(const juce::var& value, JsonPath& path, std::vector<JsonPath>& output) {
-    if (value.isArray()) {
-        const auto& items = *value.getArray();
-        for (int index = 0; index < items.size(); ++index) {
-            path.push_back("#" + std::to_string(index));
-            collectObjectPaths(items.getReference(index), path, output);
-            path.pop_back();
-        }
-    } else if (value.isObject()) {
-        output.push_back(path);
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index) {
-            path.push_back(properties.getName(index).toString().toStdString());
-            collectObjectPaths(properties.getValueAt(index), path, output);
-            path.pop_back();
-        }
-    }
-}
-
-void collectFieldPaths(const juce::var& value, JsonPath& path,
-                       std::vector<std::pair<JsonPath, std::string>>& output) {
-    if (value.isArray()) {
-        const auto& items = *value.getArray();
-        for (int index = 0; index < items.size(); ++index) {
-            path.push_back("#" + std::to_string(index));
-            collectFieldPaths(items.getReference(index), path, output);
-            path.pop_back();
-        }
-    } else if (value.isObject()) {
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index) {
-            const auto key = properties.getName(index).toString().toStdString();
-            output.emplace_back(path, key);
-            path.push_back(key);
-            collectFieldPaths(properties.getValueAt(index), path, output);
-            path.pop_back();
-        }
-    }
-}
-
-juce::String formatPath(const JsonPath& path) {
-    juce::String result;
-    for (const auto& token : path) {
-        if (!token.empty() && token.front() == '#') {
-            const auto index = token.substr(1);
-            result += "[" + juce::String::fromUTF8(index.c_str()) + "]";
-        } else {
-            result += (result.isEmpty() ? "" : ".") + juce::String::fromUTF8(token.c_str());
-        }
-    }
-    return result;
-}
-
-juce::var mutateAtPath(const juce::var& root, const JsonPath& path, const std::size_t index,
-                       const std::function<void(juce::var&)>& mutate) {
-    if (index == path.size()) {
-        auto result = cloneJson(root);
-        mutate(result);
-        return result;
-    }
-    const auto& token = path[index];
-    if (!token.empty() && token.front() == '#') {
-        const auto itemIndex = std::stoi(token.substr(1));
-        auto result = cloneJson(root);
-        auto items = *result.getArray();
-        items.set(itemIndex, mutateAtPath(items.getReference(itemIndex), path, index + 1, mutate));
-        return items;
-    }
-    auto result = cloneJson(root);
-    auto* object = result.getDynamicObject();
-    const auto identifier = juce::Identifier(juce::String::fromUTF8(token.c_str()));
-    const auto child = root.getDynamicObject()->getProperty(identifier);
-    object->setProperty(identifier, mutateAtPath(child, path, index + 1, mutate));
-    return result;
+    return readJsonFile(juce::File(RIFFRA_CONTRACT_FIXTURE_DIR).getChildFile(name));
 }
 
 void expectTimelineSnapshotRejected(const juce::var& value, const juce::String& expectedPath = {}) {
@@ -121,10 +28,6 @@ void expectTimelineSnapshotAccepted(const juce::var& value) {
     TimelineSnapshotSpec decoded;
     juce::String error;
     ASSERT_TRUE(decodeTimelineSnapshot(value, decoded, error)) << error.toStdString();
-}
-
-void setInvalidValue(juce::var& root, const JsonPath& path, const juce::var& value) {
-    root = mutateAtPath(root, path, 0, [&value](juce::var& target) { target = value; });
 }
 
 TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
@@ -209,21 +112,14 @@ TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth)
     std::vector<std::pair<JsonPath, std::string>> fieldPaths;
     collectFieldPaths(full, path, fieldPaths);
     for (const auto& [objectPath, key] : fieldPaths) {
-        auto missing = cloneJson(full);
-        missing = mutateAtPath(missing, objectPath, 0, [&key](juce::var& target) {
-            target.getDynamicObject()->removeProperty(
-                juce::Identifier(juce::String::fromUTF8(key.c_str())));
-        });
+        const auto missing = withoutKey(full, objectPath, key);
         auto expectedPath = objectPath;
         expectedPath.push_back(key);
         expectTimelineSnapshotRejected(missing, formatPath(expectedPath));
     }
 
     for (const auto& objectPath : paths) {
-        auto unknown = cloneJson(full);
-        unknown = mutateAtPath(unknown, objectPath, 0, [](juce::var& target) {
-            target.getDynamicObject()->setProperty("__unexpected", false);
-        });
+        const auto unknown = withUnknownKey(full, objectPath);
         const auto expectedPath = formatPath(objectPath);
         expectTimelineSnapshotRejected(unknown, expectedPath.isEmpty()
                                                     ? juce::String("__unexpected")
@@ -269,23 +165,22 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     };
     for (const auto& [pathToValue, invalid] : invalidValues) {
         auto mutated = cloneJson(full);
-        setInvalidValue(mutated, pathToValue, invalid);
+        setValue(mutated, pathToValue, invalid);
         expectTimelineSnapshotRejected(mutated);
     }
 
     auto invalidLoop = cloneJson(full);
-    setInvalidValue(invalidLoop, {"graph", "loopRange", "endTick"}, 120);
+    setValue(invalidLoop, {"graph", "loopRange", "endTick"}, 120);
     expectTimelineSnapshotRejected(invalidLoop);
     auto invalidPunch = cloneJson(full);
-    setInvalidValue(invalidPunch, {"graph", "punchRange", "endTick"}, 240);
+    setValue(invalidPunch, {"graph", "punchRange", "endTick"}, 240);
     expectTimelineSnapshotRejected(invalidPunch);
     auto invalidMidiDuration = cloneJson(full);
-    setInvalidValue(invalidMidiDuration,
-                    {"graph", "tracks", "#1", "midiClips", "#0", "durationTicks"}, 0);
+    setValue(invalidMidiDuration, {"graph", "tracks", "#1", "midiClips", "#0", "durationTicks"}, 0);
     expectTimelineSnapshotRejected(invalidMidiDuration);
     auto invalidMidiPosition = cloneJson(full);
-    setInvalidValue(invalidMidiPosition,
-                    {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
+    setValue(invalidMidiPosition,
+             {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
     expectTimelineSnapshotRejected(invalidMidiPosition);
 
     const std::vector<std::pair<JsonPath, juce::var>> validBoundaries{
@@ -335,24 +230,23 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     };
     for (const auto& [pathToValue, boundary] : validBoundaries) {
         auto mutated = cloneJson(full);
-        setInvalidValue(mutated, pathToValue, boundary);
+        setValue(mutated, pathToValue, boundary);
         expectTimelineSnapshotAccepted(mutated);
     }
 
     auto oneTickMidiClip = cloneJson(full);
-    setInvalidValue(oneTickMidiClip, {"graph", "tracks", "#2", "midiClips", "#0", "durationTicks"},
-                    1);
-    setInvalidValue(oneTickMidiClip,
-                    {"graph", "tracks", "#2", "midiClips", "#0", "events", "#0", "tick"}, 0);
-    setInvalidValue(oneTickMidiClip,
-                    {"graph", "tracks", "#2", "midiClips", "#0", "events", "#1", "tick"}, 0);
+    setValue(oneTickMidiClip, {"graph", "tracks", "#2", "midiClips", "#0", "durationTicks"}, 1);
+    setValue(oneTickMidiClip, {"graph", "tracks", "#2", "midiClips", "#0", "events", "#0", "tick"},
+             0);
+    setValue(oneTickMidiClip, {"graph", "tracks", "#2", "midiClips", "#0", "events", "#1", "tick"},
+             0);
     expectTimelineSnapshotAccepted(oneTickMidiClip);
 
     auto minimumValidRanges = cloneJson(full);
-    setInvalidValue(minimumValidRanges, {"graph", "loopRange", "startTick"}, 0);
-    setInvalidValue(minimumValidRanges, {"graph", "loopRange", "endTick"}, 1);
-    setInvalidValue(minimumValidRanges, {"graph", "punchRange", "startTick"}, 0);
-    setInvalidValue(minimumValidRanges, {"graph", "punchRange", "endTick"}, 1);
+    setValue(minimumValidRanges, {"graph", "loopRange", "startTick"}, 0);
+    setValue(minimumValidRanges, {"graph", "loopRange", "endTick"}, 1);
+    setValue(minimumValidRanges, {"graph", "punchRange", "startTick"}, 0);
+    setValue(minimumValidRanges, {"graph", "punchRange", "endTick"}, 1);
     expectTimelineSnapshotAccepted(minimumValidRanges);
 }
 

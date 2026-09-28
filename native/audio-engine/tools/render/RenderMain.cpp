@@ -6,31 +6,27 @@
 
 #include "contract/ContractReader.h"
 #include "contract/ExecutionGraphDecoder.h"
+#include "contract/SidecarMessages.h"
 #include "render/OfflineRenderer.h"
 
 namespace {
 
-juce::var makeError(const juce::String& message, const juce::String& kind = "renderRejected",
-                    const juce::String& operation = "renderTimelineOffline") {
-    auto* value = new juce::DynamicObject();
-    value->setProperty("type", "error");
-    value->setProperty("kind", kind);
-    value->setProperty("message", message);
-    value->setProperty("operation", operation);
-    return juce::var(value);
+constexpr auto kRenderOperation = "renderTimelineOffline";
+
+void writeLine(const juce::var& value) {
+    std::cout << juce::JSON::toString(value, true) << std::endl;
 }
 
-void writeJson(const juce::var& value) {
-    std::cout << juce::JSON::toString(value, true) << std::endl;
+int reject(const juce::String& kind, const juce::String& message) {
+    writeLine(riffra::encodeOfflineRenderError({kind, message, kRenderOperation, {}}));
+    return 1;
 }
 
 int runRenderWorker() {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     std::string line;
-    if (!std::getline(std::cin, line)) {
-        writeJson(makeError("Expected one Offline Render request on standard input."));
-        return 1;
-    }
+    if (!std::getline(std::cin, line))
+        return reject("renderContract", "Expected one Offline Render request on standard input.");
 
     const auto envelope = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
     juce::String type;
@@ -41,35 +37,26 @@ int runRenderWorker() {
                                           contractError);
     if (!envelopeReader.string("type", type) ||
         !envelopeReader.unsigned32("protocolVersion", protocolVersion) ||
-        !envelopeReader.object("request", payload) || !envelopeReader.finish()) {
-        writeJson(makeError(contractError, "renderContract", "renderTimelineOffline"));
-        return 1;
-    }
-    if (type != "renderTimelineOffline" || protocolVersion != 2) {
-        writeJson(makeError("Offline Render request is invalid."));
-        return 1;
-    }
+        !envelopeReader.object("request", payload) || !envelopeReader.finish())
+        return reject("renderContract", contractError);
+    if (type != kRenderOperation) return reject("renderContract", "Unknown request type: " + type);
+    if (protocolVersion != riffra::kSidecarProtocolVersion)
+        return reject("protocol",
+                      "Unsupported protocol version " + juce::String(protocolVersion) + ".");
     riffra::OfflineRenderRequestSpec renderRequest;
-    if (!riffra::decodeOfflineRenderRequest(payload, renderRequest, contractError)) {
-        writeJson(makeError(contractError, "renderContract", "renderTimelineOffline"));
-        return 1;
-    }
+    if (!riffra::decodeOfflineRenderRequest(payload, renderRequest, contractError))
+        return reject("renderContract", contractError);
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     riffra::OfflineRenderer renderer;
     riffra::OfflineRenderer::Result result;
     juce::String error;
-    if (!renderer.render(renderRequest, formats, result, error)) {
-        writeJson(makeError(error));
-        return 1;
-    }
+    if (!renderer.render(renderRequest, formats, result, error))
+        return reject("renderRejected", error);
 
-    auto* response = new juce::DynamicObject();
-    response->setProperty("type", "offlineRenderComplete");
-    response->setProperty("frames", static_cast<juce::int64>(result.frames));
-    response->setProperty("sampleRate", result.sampleRate);
-    writeJson(juce::var(response));
+    writeLine(riffra::encodeOfflineRenderComplete(
+        {result.frames, static_cast<std::uint32_t>(result.sampleRate)}));
     return 0;
 }
 

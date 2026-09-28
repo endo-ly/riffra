@@ -1,11 +1,10 @@
 #include "AudioCommandDispatcher.h"
 
-#include <cstdlib>
 #include <string>
+#include <utility>
+#include <variant>
 
-#include "CommandRouting.h"
 #include "midi/MidiInputService.h"
-#include "plugins/PluginEditorHost.h"
 #include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
@@ -14,147 +13,83 @@ namespace riffra {
 void AudioCommandDispatcher::run(std::istream& input) {
     std::string line;
     while (std::getline(input, line)) {
-        clearCurrentRequestId();
-        const auto command = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
-        if (!command.isObject()) {
-            writeJson(makeError("protocol", "Expected one JSON object per line."));
+        const auto envelope = juce::JSON::parse(juce::String::fromUTF8(line.c_str()));
+        SidecarRequestSpec request;
+        juce::String error;
+        if (!decodeSidecarRequest(envelope, request, error)) {
+            if (const auto requestId = readSidecarRequestId(envelope))
+                CommandResponder(*requestId, writeControlEnvelope)
+                    .fail("invalidCommand", error, "sidecar.decode");
+            else
+                writeEvent(FaultSpec{{"protocol", error, "sidecar.decode", {}}});
             continue;
         }
-        setCurrentRequestId(command.getProperty("requestId", {}).toString());
-        if (dispatch(command).shutdown) break;
+        dispatch(request, CommandResponder(request.requestId, writeControlEnvelope));
     }
 }
 
-CommandResult AudioCommandDispatcher::dispatch(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    switch (commandFamilyFor(type.toStdString())) {
-        case CommandFamily::shutdown: {
-            context.pipeline.setEngineTransitionMute(true);
-            const auto submitted = context.runtimeLifecycle.submit(
-                [&] {
-                    if (context.trackPluginEditor != nullptr) {
-                        context.trackPluginEditor->close();
-                        context.trackPluginEditor.reset();
-                        context.trackPluginEditorTrackId.clear();
-                        context.trackPluginEditorDeviceId.clear();
-                    }
-                    context.timelineOperationRunning.store(false, std::memory_order_release);
-                },
-                std::chrono::seconds(10));
-            if (submitted && !context.runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500)))
-                std::_Exit(125);
-            return {true};
-        }
-        case CommandFamily::safety:
-            return dispatchSafety(command);
-        case CommandFamily::timeline:
-            return dispatchTimeline(command);
-        case CommandFamily::trackDevice:
-            return dispatchTrackDevice(command);
-        case CommandFamily::transport:
-            return dispatchTransport(command);
-        case CommandFamily::midi:
-            return dispatchMidi(command);
-        case CommandFamily::trackMix:
-            return dispatchTrackMix(command);
-        case CommandFamily::preview:
-            return dispatchPreview(command);
-        case CommandFamily::device:
-            return dispatchDevice(command);
-        case CommandFamily::recording:
-            return dispatchRecording(command);
-        case CommandFamily::status:
-            if (type == "status") {
-                writeJson(AudioStatusBuilder::currentStatus(
-                    context.deviceController.manager(), context.pipeline,
-                    &context.midiInputs.monitor(), {}, &context.timelineEngine));
-                return {};
-            }
-            writeJson(AudioStatusBuilder::currentMeters(context.pipeline, &context.timelineEngine));
-            return {};
-        case CommandFamily::unsupported:
+void AudioCommandDispatcher::dispatch(const SidecarRequestSpec& request,
+                                      CommandResponder responder) {
+    std::visit([this, &responder](const auto& command) { handle(command, std::move(responder)); },
+               request.command);
+}
+
+AudioStatusSpec AudioCommandDispatcher::currentStatus() const {
+    return AudioStatusBuilder::currentStatus(context.deviceController.manager(), context.pipeline,
+                                             context.midiInputs.monitor(), context.timelineEngine);
+}
+
+bool AudioCommandDispatcher::rejectWhileTimelineBusy(CommandResponder& responder,
+                                                     const juce::String& message) {
+    if (!context.timelineOperationRunning.load(std::memory_order_acquire)) return false;
+    responder.fail("timelineBusy", message, "runtime.timeline");
+    return true;
+}
+
+void AudioCommandDispatcher::handle(const StatusCommand&, CommandResponder responder) {
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
+                                    CommandResponder responder) {
+    context.pipeline.setUserEmergencyMute(command.muted);
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
+                                    CommandResponder responder) {
+    context.pipeline.setFeedbackProtection(command.active);
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& command,
+                                    CommandResponder responder) {
+    context.pipeline.setEngineTransitionMute(command.active);
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const PreviewMasterGainDbCommand& command,
+                                    CommandResponder responder) {
+    context.pipeline.setMasterGainDb(static_cast<float>(command.gainDb));
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const TransportCommand& command, CommandResponder responder) {
+    switch (command.kind) {
+        case TransportCommandKind::play:
+            context.timelineEngine.play();
+            break;
+        case TransportCommandKind::setStarting:
+            context.timelineEngine.startPreparing();
+            break;
+        case TransportCommandKind::stop:
+            context.timelineEngine.stop();
+            break;
+        case TransportCommandKind::seek:
+            context.timelineEngine.seekToTick(command.tick);
             break;
     }
-    writeJson(makeError("protocol", "Unsupported command: " + type));
-    return {};
-}
-
-CommandResult AudioCommandDispatcher::dispatchSafety(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    if (type == "setEmergencyMute") {
-        const auto mutedValue = command.getProperty("muted", {});
-        if (!mutedValue.isBool()) {
-            writeJson(makeError("invalidCommand",
-                                "setEmergencyMute requires a boolean muted field.",
-                                "safety.userEmergencyMute"));
-            return {};
-        }
-        const auto muted = static_cast<bool>(mutedValue);
-        context.pipeline.setUserEmergencyMute(muted);
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-
-    if (type == "setFeedbackProtection") {
-        const auto active = static_cast<bool>(command.getProperty("active", false));
-        context.pipeline.setFeedbackProtection(active);
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-
-    if (type == "setEngineTransitionMute") {
-        const auto active = static_cast<bool>(command.getProperty("active", true));
-        context.pipeline.setEngineTransitionMute(active);
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-
-    if (type == "previewMasterGainDb") {
-        context.pipeline.setMasterGainDb(
-            static_cast<float>(command.getProperty("gainDb", context.pipeline.getMasterGainDb())));
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
-    }
-    return {};
-}
-
-CommandResult AudioCommandDispatcher::dispatchTransport(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    if (type == "playTimeline") {
-        context.timelineEngine.play();
-        writeJson(context.timelineEngine.status());
-        return {};
-    }
-
-    if (type == "setTransportStarting") {
-        context.timelineEngine.startPreparing();
-        writeJson(context.timelineEngine.status());
-        return {};
-    }
-
-    if (type == "stopTimeline") {
-        context.timelineEngine.stop();
-        if (static_cast<bool>(command.getProperty("reportStatus", true)))
-            writeJson(context.timelineEngine.status());
-        return {};
-    }
-
-    if (type == "seekTimeline") {
-        const auto tick =
-            static_cast<std::uint64_t>(static_cast<juce::int64>(command.getProperty("tick", 0)));
-        context.timelineEngine.seekToTick(tick);
-        writeJson(context.timelineEngine.status());
-        return {};
-    }
-    return {};
+    responder.respond(AudioStatusBuilder::currentTransport(context.timelineEngine));
 }
 
 }  // namespace riffra

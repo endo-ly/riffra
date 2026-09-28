@@ -22,8 +22,12 @@ public:
     [[nodiscard]] bool optionalString(const char* key, std::optional<juce::String>& output);
     [[nodiscard]] bool boolean(const char* key, bool& output);
     [[nodiscard]] bool number(const char* key, double& output);
+    [[nodiscard]] bool optionalNumber(const char* key, std::optional<double>& output);
     [[nodiscard]] bool unsignedInteger(const char* key, std::uint64_t& output);
+    [[nodiscard]] bool optionalUnsignedInteger(const char* key,
+                                               std::optional<std::uint64_t>& output);
     [[nodiscard]] bool unsigned32(const char* key, std::uint32_t& output);
+    [[nodiscard]] bool optionalUnsigned32(const char* key, std::optional<std::uint32_t>& output);
     [[nodiscard]] bool unsigned8(const char* key, std::uint8_t& output);
     [[nodiscard]] bool optionalUnsigned8(const char* key, std::optional<std::uint8_t>& output);
     [[nodiscard]] bool finish();

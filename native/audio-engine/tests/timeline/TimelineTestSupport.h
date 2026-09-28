@@ -569,9 +569,8 @@ public:
 
         // Assert
         const auto state = rackPointer->persistedState(error);
-        const auto values = state.getProperty("parameterValues", {});
-        return values.isArray() && values.size() > 0 &&
-               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
+        return state.has_value() && !state->parameterValues.empty() &&
+               std::abs(state->parameterValues[0] - 0.75f) <= 0.0001f;
     }
 
     static bool persistedStateUpdatesInstrumentRuntime() {
@@ -608,9 +607,8 @@ public:
         // Assert
         if (!changed) return false;
         const auto restored = rackPointer->persistedState(error);
-        const auto values = restored.getProperty("parameterValues", {});
-        return values.isArray() && values.size() > 0 &&
-               std::abs(static_cast<float>(values[0]) - 0.75f) <= 0.0001f;
+        return restored.has_value() && !restored->parameterValues.empty() &&
+               std::abs(restored->parameterValues[0] - 0.75f) <= 0.0001f;
     }
 
     static bool programChangeUpdatesInstrumentRuntime() {
@@ -798,9 +796,9 @@ public:
             return false;
 
         // Assert
-        return engine.commitPreparedSnapshot(error) &&
-               std::abs(static_cast<double>(engine.status().getProperty("sampleRate", 0.0)) -
-                        44'100.0) <= 0.1;
+        if (!engine.commitPreparedSnapshot(error)) return false;
+        const auto status = engine.status();
+        return status.graph.has_value() && std::abs(status.graph->sampleRate - 44'100.0) <= 0.1;
     }
 
     static juce::var run(const juce::File& directory) {
@@ -947,8 +945,7 @@ public:
                 mixed = peak > 0.1f;
                 engine.seekToTick(960);
                 const auto seekStatus = engine.status();
-                seeked =
-                    static_cast<juce::int64>(seekStatus.getProperty("timelineSample", -1)) == 24000;
+                seeked = seekStatus.timelineSample == 24000;
 
                 CaptureIsolationSink captureSink(directory);
                 engine.setRecordingSink(&captureSink);
@@ -1417,14 +1414,8 @@ public:
                             diagProductionRawSamples = static_cast<std::uint64_t>(rawLength);
                             diagProductionProcessedSamples =
                                 static_cast<std::uint64_t>(processedLength);
-                            if (preStopStatus.isObject()) {
-                                diagProductionMissing =
-                                    static_cast<std::uint64_t>(static_cast<juce::int64>(
-                                        preStopStatus.getProperty("processedMissingSamples", 0)));
-                                diagProductionDropped =
-                                    static_cast<std::uint64_t>(static_cast<juce::int64>(
-                                        preStopStatus.getProperty("droppedBlocks", 0)));
-                            }
+                            diagProductionMissing = preStopStatus.processedMissingSamples;
+                            diagProductionDropped = preStopStatus.droppedBlocks;
 
                             productionWriterPassed =
                                 prodWindowed && stopOk && processed && finished &&
@@ -1591,9 +1582,8 @@ public:
                         const auto immediateStatus = engine.status();
                         immediateRecordStarted =
                             immediateWindow && immediateOffset == 0 && immediateSamples == 512 &&
-                            immediateStatus.getProperty("state", {}).toString() == "playing" &&
-                            static_cast<juce::int64>(
-                                immediateStatus.getProperty("timelineSample", -1)) == 12'512;
+                            immediateStatus.transportState == TransportState::playing &&
+                            immediateStatus.timelineSample == 12'512;
                         engine.stopRecording();
                         engine.stop();
                         engine.seekToTick(480);
@@ -1612,8 +1602,7 @@ public:
                                             static_cast<int>(countInOutput.size()));
                         countInAligned = countInWindow && countInOffset == 24'000 &&
                                          countInSamples == 128 &&
-                                         static_cast<juce::int64>(engine.status().getProperty(
-                                             "timelineSample", -1)) == 12'128;
+                                         engine.status().timelineSample == 12'128;
                         countInAudible =
                             *std::max_element(countInOutput.begin(), countInOutput.end()) > 0.0f;
                         engine.stopRecording();
@@ -1625,8 +1614,7 @@ public:
                         int cancelledSamples = 0;
                         countInCancelled =
                             engine.cancelRecordingIfCountingIn() &&
-                            engine.status().getProperty("recordingPhase", {}).toString() ==
-                                "idle" &&
+                            engine.status().recordingPhase == RecordingPhase::idle &&
                             !engine.recordingWindow(512, cancelledOffset, cancelledSamples) &&
                             cancelledSamples == 0;
                     }
@@ -1639,8 +1627,7 @@ public:
                     std::array<float*, 1> loopBoundaryChannels{loopBoundary.data()};
                     engine.mix(loopBoundaryChannels.data(), 1,
                                static_cast<int>(loopBoundary.size()));
-                    looped = static_cast<juce::int64>(
-                                 engine.status().getProperty("timelineSample", -1)) == 0;
+                    looped = engine.status().timelineSample == 0;
                     std::array<float, 512> clicks{};
                     std::array<float*, 1> clickChannels{clicks.data()};
                     engine.mixMetronome(clickChannels.data(), 1, static_cast<int>(clicks.size()));
