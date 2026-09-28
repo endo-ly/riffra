@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
-import type { TransportStatus } from '@/native/contracts';
+import type { TransportStatus } from '@/model/domain';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
 import { getHostGeneration } from '@/native/invoke';
 

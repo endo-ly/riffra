@@ -1,6 +1,6 @@
-import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
 import type {
   ArrangementMutationResult,
+  AudioMeterFrame,
   AudioStatus,
   BackgroundJobStatus,
   InstrumentCollection,
@@ -17,16 +17,13 @@ import type {
   HostTarget,
   LocalHostInfo,
   ProjectActivationResult,
+  RecordingFinalized,
+  RuntimeStartupFinished,
+  TransportStatus,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
-import { toAssetId, type TransportStatus } from './contracts';
-import type {
-  NativeApi,
-  HostConnectionBootstrap,
-  HostConnectionChangedEvent,
-  RecordingFinalizedEvent,
-  RuntimeStartupFinishedEvent,
-} from './native-api';
+import { toAssetId } from './contracts';
+import type { NativeApi, HostConnectionBootstrap, HostConnectionChangedEvent } from './native-api';
 
 type ResponseValue = unknown | ((...arguments_: unknown[]) => unknown);
 
@@ -49,14 +46,10 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     processing: false,
     directory: null,
     sampleRate: null,
-    rawChannels: null,
-    processedChannels: null,
     samplesWritten: 0,
     droppedMidiEvents: 0,
     droppedBlocks: 0,
     missingSamples: 0,
-    dropoutStartSample: null,
-    dropoutEndSample: null,
     rawAttemptedSamples: 0,
     processedAttemptedSamples: 0,
     rawDroppedBlocks: 0,
@@ -118,6 +111,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       maximumLatencySamples: 0,
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
+      protocolErrors: 0,
       instrumentFaults: [],
     },
     message: 'Fake audio supervisor is ready through the safety limiter.',
@@ -142,16 +136,12 @@ export class FakeNativeApi implements NativeApi {
 
   private readonly responses = new Map<keyof NativeApi, ResponseValue>();
   private readonly failures = new Map<keyof NativeApi, Error>();
-  private readonly runtimeStartupListeners = new Set<
-    (event: RuntimeStartupFinishedEvent) => void
-  >();
+  private readonly runtimeStartupListeners = new Set<(event: RuntimeStartupFinished) => void>();
   private readonly runtimeRestartListeners = new Set<(generation: number) => void>();
   private readonly runtimeProjectionListeners = new Set<
     (status: RuntimeProjectionStatus) => void
   >();
-  private readonly recordingFinalizedListeners = new Set<
-    (event: RecordingFinalizedEvent) => void
-  >();
+  private readonly recordingFinalizedListeners = new Set<(event: RecordingFinalized) => void>();
   private readonly transportListeners = new Set<(status: TransportStatus) => void>();
   private readonly audioStatusListeners = new Set<(status: AudioStatus) => void>();
   private readonly canonicalStateListeners = new Set<(state: CanonicalState) => void>();
@@ -717,28 +707,22 @@ export class FakeNativeApi implements NativeApi {
     this.runtimeProjectionListeners.forEach((listener) => listener(status));
   }
 
-  emitRecordingFinalized(event: RecordingFinalizedEvent): void {
+  emitRecordingFinalized(event: RecordingFinalized): void {
     this.recordingFinalizedListeners.forEach((listener) => listener(event));
   }
 
   emitTransportStatus(status: Partial<TransportStatus> = {}): void {
     const next: TransportStatus = {
-      type: 'transportStatus',
       state: 'stopped',
       revision: 0,
       timelineTick: 0,
-      timelineSample: 0,
-      audioClockSample: 0,
-      sampleRate: 48_000,
       sequence: 0,
       recordingPhase: 'idle',
       recordingStartTick: 0,
-      recordingCurrentTick: 0,
       recordingPassOrdinal: 0,
       armedTrackIds: [],
       clockGeneration: 0,
       discontinuity: 0,
-      instrumentFaults: [],
       ...status,
     };
     this.transportListeners.forEach((listener) => listener(next));

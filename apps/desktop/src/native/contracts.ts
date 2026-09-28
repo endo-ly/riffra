@@ -5,30 +5,6 @@ export function toAssetId(value: string): AssetId {
   return value as AssetId;
 }
 
-/** Live transport snapshot emitted by the audio sidecar over the status channel. */
-export interface TransportStatus {
-  type: 'transportStatus';
-  state: 'stopped' | 'starting' | 'playing' | 'faulted';
-  revision: number;
-  timelineTick: number;
-  timelineSample: number;
-  audioClockSample: number;
-  sampleRate: number;
-  sequence: number;
-  recordingPhase: 'idle' | 'countingIn' | 'recording' | 'stopping';
-  recordingStartTick: number;
-  recordingCurrentTick: number;
-  recordingPassOrdinal: number;
-  armedTrackIds: string[];
-  clockGeneration: number;
-  discontinuity: number;
-  instrumentFaults: {
-    trackId: string;
-    faultCode: number;
-    droppedMidiEvents: number;
-  }[];
-}
-
 export type ScanJobStatus = Extract<BackgroundJobStatus, { kind: 'scan' }>;
 
 /** Preview tuning sent to the native audio runtime. */
