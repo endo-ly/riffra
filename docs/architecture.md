@@ -254,10 +254,10 @@ setAudioDriver → 要求された設定（ドライバ・デバイス・サン�
 
 安全ミュートは Native の atomic bitmask で所有者別に管理する（ユーザー操作・エンジン遷移・デバイス障害・フィードバック保護は独立）。状態通知の分担は次の通り。
 
-| 通知                      | 表す状態                                           |
-| ------------------------- | -------------------------------------------------- |
-| `AudioStatus`             | デバイスとコールバックの状態                       |
-| `RuntimeProjectionStatus` | グラフ投影の状態と現役グラフの `activeDiagnostics` |
+| 通知                      | 表す状態                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `AudioStatus`             | デバイスとコールバックの状態                                                              |
+| `RuntimeProjectionStatus` | グラフ投影の状態と現役グラフの `activeDiagnostics`                                        |
 | `TransportStatus`         | トランスポート状態と再生位置、録音状態、適用済み命令番号、現役グラフの `instrumentFaults` |
 
 未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は `timelineSample`（保留中の Seek 先を含む）、`audioClockSample`、録音状態、`appliedCommandSequence`、現役グラフの `instrumentFaults` を表し、投影診断は持たない。`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`sampleRate` と `instrumentFaults` は `GraphSummary` から読み、`AudioStatus.diagnostics.instrumentFaults` と同じグラフ診断を使う。

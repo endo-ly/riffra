@@ -171,18 +171,18 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ## 4. 境界 B: シェル → WebView イベント
 
-| イベント                    | ペイロード                | 意味                                                                                                                      |
-| --------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `runtime-startup-finished`  | `RuntimeStartupFinished`  | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                          |
-| `audio-status`              | `AudioStatus`             | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                                                   |
-| `audio-meters`              | `AudioMeterFrame`         | Project ID、入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                                      |
+| イベント                    | ペイロード                | 意味                                                                                                                          |
+| --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `runtime-startup-finished`  | `RuntimeStartupFinished`  | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                              |
+| `audio-status`              | `AudioStatus`             | デバイス、コールバック、安全ミュート理由、MIDI、Preview、音声診断の状態                                                       |
+| `audio-meters`              | `AudioMeterFrame`         | Project ID、入力・出力ピーク、無効サンプル数、ミュート理由（高頻度）                                                          |
 | `transport-status`          | `TransportStatus`         | Transport の状態と再生位置、audio clock、現役グラフの sample rate、適用済み命令番号、録音状態、armed track、instrument faults |
-| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態、現役投影の診断、エラーコード、世代・音声環境 revision（queued / preparing / active / failed） |
-| `runtime-restarted`         | `RuntimeRestarted`        | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                                |
-| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                             |
-| `recording-finalized`       | `RecordingFinalized`      | Native処理後の録音Asset登録とArrangement確定の完了結果                                                                    |
-| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                               |
-| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                    |
+| `runtime-projection-status` | `RuntimeProjectionStatus` | 非同期のランタイム投影状態、現役投影の診断、エラーコード、世代・音声環境 revision（queued / preparing / active / failed）     |
+| `runtime-restarted`         | `RuntimeRestarted`        | サイドカー再起動（世代番号）。RustがCoreの最新スナップショットを再投影する                                                    |
+| `canonical-state-changed`   | `CanonicalState`          | GUI以外のHost操作を含む正準セッション、シーケンス、履歴の変更                                                                 |
+| `recording-finalized`       | `RecordingFinalized`      | Native処理後の録音Asset登録とArrangement確定の完了結果                                                                        |
+| `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                                   |
+| `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                        |
 
 `audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`（Track ID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
 
@@ -307,14 +307,14 @@ stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing:
 
 C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つバリアで、書き込み時に滞留中の `telemetry` を捨てる。`state` はキーごとに最新の 1 件へ合流する。`telemetry` は損失を許す。
 
-| type                                                      | レーン      | 内容                                                                                                                                                     |
-| --------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ready`                                                   | `control`   | 起動完了、プロトコル版、初期状態                                                                                                                         |
-| `fault`                                                   | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                                                       |
-| `recordingComplete`                                       | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                                                       |
-| `audioStatus`                                             | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する                                   |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                                                     |
-| `audioMeters`                                             | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                                                    |
+| type                                                      | レーン      | 内容                                                                                                                   |
+| --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ready`                                                   | `control`   | 起動完了、プロトコル版、初期状態                                                                                       |
+| `fault`                                                   | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                     |
+| `recordingComplete`                                       | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                     |
+| `audioStatus`                                             | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する |
+| `trackPluginStateChanged` / `trackPluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                   |
+| `audioMeters`                                             | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                  |
 | `transportStatus`                                         | `telemetry` | Transport の状態と再生位置、録音状態、適用済み命令番号、現役グラフの instrument faults。投影診断は別イベントで通知する |
 
 `response` と `error` は `control` レーンを通る。
