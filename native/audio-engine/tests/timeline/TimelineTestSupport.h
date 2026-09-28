@@ -57,15 +57,15 @@ bool loadTestSnapshot(TimelineEngine& engine, const TimelineSnapshotSpec& snapsh
     return engine.loadSnapshot(snapshot, formats, sampleRate, blockSize, error, commitImmediately);
 }
 
-bool renderTestSnapshot(OfflineRenderer& renderer, const ExecutionGraph& graph,
-                        juce::AudioFormatManager& formats, const juce::File& destination,
-                        const std::uint64_t startTick, const std::uint64_t endTick,
-                        const std::uint32_t sampleRate, const std::uint32_t blockSize,
-                        const bool normalize, OfflineRenderer::Result& result,
-                        juce::String& error) {
+bool renderTestSnapshot(const ExecutionGraph& graph, juce::AudioFormatManager& formats,
+                        const juce::File& destination, const std::uint64_t startTick,
+                        const std::uint64_t endTick, const std::uint32_t sampleRate,
+                        const std::uint32_t blockSize, const bool normalize,
+                        OfflineRenderer::Result& result, juce::String& error) {
     const OfflineRenderRequestSpec request{
         graph, destination.getFullPathName(), startTick, endTick, sampleRate, blockSize, normalize};
-    return renderer.render(request, formats, result, error);
+    const auto renderer = OfflineRenderer::prepare(request, formats, error);
+    return renderer != nullptr && renderer->render(formats, result, error);
 }
 bool writePcmWave(const juce::File& file, const std::uint32_t sampleRate,
                   const std::uint16_t channels, const std::uint32_t frames,
@@ -892,11 +892,10 @@ public:
                     loadTestSnapshot(engine, snapshot, formats, 48000.0, 512, error, false) &&
                     engine.preparedTrackReusesRuntimeDevices("track:test") &&
                     engine.commitPreparedSnapshot(error);
-                OfflineRenderer offlineRenderer;
                 OfflineRenderer::Result offlineResult;
                 const auto offlineOutput = directory.getChildFile("offline-selection.wav");
-                if (renderTestSnapshot(offlineRenderer, snapshot.graph, formats, offlineOutput, 480,
-                                       1440, 48000, 512, false, offlineResult, error)) {
+                if (renderTestSnapshot(snapshot.graph, formats, offlineOutput, 480, 1440, 48000,
+                                       512, false, offlineResult, error)) {
                     auto reader = std::unique_ptr<juce::AudioFormatReader>(
                         formats.createReaderFor(offlineOutput));
                     juce::AudioBuffer<float> rendered(2, 24000);
@@ -909,8 +908,8 @@ public:
                 }
                 OfflineRenderer::Result normalizedResult;
                 const auto normalizedOutput = directory.getChildFile("offline-normalized.wav");
-                if (renderTestSnapshot(offlineRenderer, snapshot.graph, formats, normalizedOutput,
-                                       0, 1440, 48000, 512, true, normalizedResult, error)) {
+                if (renderTestSnapshot(snapshot.graph, formats, normalizedOutput, 0, 1440, 48000,
+                                       512, true, normalizedResult, error)) {
                     auto reader = std::unique_ptr<juce::AudioFormatReader>(
                         formats.createReaderFor(normalizedOutput));
                     if (reader != nullptr && reader->numChannels == 2 &&

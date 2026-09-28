@@ -269,14 +269,13 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughOfflineRenderer) {
     formats.registerBasicFormats();
     test::TemporaryDirectory directory;
     const auto destination = directory.get().getChildFile("built-in.wav");
-    OfflineRenderer renderer;
     OfflineRenderer::Result result;
     juce::String error;
 
     // Act
     const auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
-    const auto rendered = renderTestSnapshot(renderer, snapshot.graph, formats, destination, 0, 960,
-                                             48'000, 512, false, result, error);
+    const auto rendered = renderTestSnapshot(snapshot.graph, formats, destination, 0, 960, 48'000,
+                                             512, false, result, error);
 
     // Assert
     ASSERT_TRUE(rendered) << error.toStdString();

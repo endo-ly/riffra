@@ -31,6 +31,10 @@
 
 `riffra-render` は起動ごとに 1 件の `renderTimelineOffline` 要求を stdin から読み、WAV を書き出して `offlineRenderComplete` か構造化エラーを 1 行で返す。
 
+- プラグインの生成と状態適用はメインスレッド（JUCE メッセージスレッド）で行い、書き出しは別スレッドで実行する。一部の VST3 プラグインは準備をメッセージスレッド経由で完了させるため、書き出し中もメインスレッドはメッセージを処理し続ける
+- プラグインは VST3 のオフライン処理モードで準備する
+- ディスクストリーミング型サンプラーなど、生成後も読み込みを続けて準備完了を通知しないプラグインがあるため、VST3 プラグインを含むグラフは書き出し前に無音を実時間の速さで 2 秒処理する
+
 ## 全体構造
 
 `--serve` 実行時のデータの流れは次の通り。
@@ -81,7 +85,7 @@ native/audio-engine/
 | `src/plugins/`     | エフェクトと VST ライフサイクル                                            | `PluginRack`（単体プラグインの読み込み・処理・状態・MIDI 受付）、`PluginChain`（トラック内エフェクト列）、`RuntimeLifecycleExecutor`（サードパーティ呼び出しの直列実行と番犬）、`PluginEditorHost`（エディタ表示と状態・パラメータ変化の送出）、`FaultInjection`（環境変数によるテスト用障害挿入）                                                                                                                                                                                                                                    |
 | `src/midi/`        | 物理 MIDI 入力の境界                                                       | `MidiInputService`（デバイス開閉・再開・集合変化検知）、`MidiMonitor`（JUCE MIDI スレッドからプレビューとタイムラインへの非阻止転送）                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `src/recording/`   | 録音データの書き出しと確定                                                 | `RecordingSession`（raw / processed の二重書きと manifest）、`ArrangeRecordingSession`（アレンジ録音の確定単位）、`RecordingCaptureRuntime`（リアルタイム取り込み）、`ArrangementCaptureSink`（取り込み先 IF）                                                                                                                                                                                                                                                                                                                        |
-| `src/render/`      | オフライン書き出し                                                         | `OfflineRenderer`（スナップショットと tick 範囲から WAV を生成。`riffra-render` と録音後処理で共有）                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `src/render/`      | オフライン書き出し                                                         | `OfflineRenderer`（スナップショットと tick 範囲から WAV を生成する `riffra-render` の中核。メッセージスレッドでの準備と別スレッドでの書き出しに分かれる）                                                                                                                                                                                                                                                                                                                                                                             |
 | `src/concurrency/` | 実時間スレッド間の受け渡し                                                 | `BoundedMpmcQueue`（確保なし・待機なしの固定容量 MPMC キュー。MIDI などの有界転送の土台）                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### `tools/`

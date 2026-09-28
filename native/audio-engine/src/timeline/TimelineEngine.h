@@ -169,6 +169,9 @@ public:
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
              int outputChannelCount, int sampleCount) noexcept;
+    /// Processes every track's instrument and effect chain with silence and no MIDI, discarding
+    /// the output, so devices that finish preparing while processing can do so before playback.
+    void warmUpDevices(int sampleCount) noexcept;
     [[nodiscard]] TimelineStatus status() const;
 
 private:

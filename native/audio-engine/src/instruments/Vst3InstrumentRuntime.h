@@ -12,7 +12,7 @@ namespace riffra {
 class Vst3InstrumentRuntime final : public InstrumentRuntime {
 public:
     [[nodiscard]] static std::unique_ptr<Vst3InstrumentRuntime> create(
-        const juce::String& path, double sampleRate, int blockSize,
+        const juce::String& path, double sampleRate, int blockSize, PluginProcessingMode mode,
         const PluginStateSpec& persistedState, juce::String& error);
 
     /// Installs an already prepared rack for native integration tests.

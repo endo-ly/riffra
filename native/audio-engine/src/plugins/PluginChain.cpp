@@ -6,7 +6,8 @@
 namespace riffra {
 
 bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double sampleRate,
-                       const int blockSize, juce::String& error, const juce::String& runtimeRole) {
+                       const int blockSize, const PluginProcessingMode mode, juce::String& error,
+                       const juce::String& runtimeRole) {
     std::vector<Device> candidate;
     for (const auto& value : values) {
         const auto& id = value.id;
@@ -16,7 +17,7 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double
             return false;
         }
         auto rack = std::make_unique<PluginRack>();
-        if (const auto loadError = rack->load(path, sampleRate, blockSize)) {
+        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode)) {
             error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": " +
                     loadError->message;
             return false;

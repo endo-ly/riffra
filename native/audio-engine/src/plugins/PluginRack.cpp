@@ -127,7 +127,8 @@ juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& proc
 }  // namespace
 
 std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const double sampleRate,
-                                                const int blockSize) {
+                                                const int blockSize,
+                                                const PluginProcessingMode mode) {
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
         return PluginLoadError{
@@ -170,7 +171,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         };
     }
 
-    if (auto configurationError = configureProcessor(*candidate, sampleRate, blockSize))
+    if (auto configurationError = configureProcessor(*candidate, sampleRate, blockSize, mode))
         return configurationError;
 
     auto candidateProgramCount = 0;
@@ -235,7 +236,8 @@ PluginRack::~PluginRack() {
 
 std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcessor& processor,
                                                               const double sampleRate,
-                                                              const int blockSize) {
+                                                              const int blockSize,
+                                                              const PluginProcessingMode mode) {
     if (!std::isfinite(sampleRate) || sampleRate <= 0.0 || blockSize <= 0) {
         return PluginLoadError{
             "pluginInitialization",
@@ -274,7 +276,7 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
 
     try {
         FaultInjection::before(FaultStage::prepare);
-        processor.setNonRealtime(false);
+        processor.setNonRealtime(mode == PluginProcessingMode::offline);
         processor.setProcessingPrecision(juce::AudioProcessor::singlePrecision);
         processor.setRateAndBufferSizeDetails(sampleRate, blockSize);
         processor.prepareToPlay(sampleRate, blockSize);

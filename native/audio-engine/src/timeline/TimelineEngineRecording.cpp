@@ -168,7 +168,8 @@ bool TimelineEngine::generateProcessedVariants(
         }
         PluginChain offlineEffects;
         if (progress) progress();
-        if (!offlineEffects.load(track.effects, sampleRate, blockSize, error,
+        if (!offlineEffects.load(track.effects, sampleRate, blockSize,
+                                 PluginProcessingMode::offline, error,
                                  track.id + "/offline-processing"))
             return false;
         if (progress) progress();

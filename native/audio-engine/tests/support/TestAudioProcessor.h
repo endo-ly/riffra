@@ -246,8 +246,8 @@ public:
             error = "Test processor was null.";
             return {};
         }
-        if (const auto configurationError =
-                PluginRack::configureProcessor(*processor, sampleRate, blockSize)) {
+        if (const auto configurationError = PluginRack::configureProcessor(
+                *processor, sampleRate, blockSize, PluginProcessingMode::realtime)) {
             error = configurationError->message;
             return {};
         }
