@@ -9,6 +9,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 include(CTest)
 
+set(RIFFRA_SANITIZER "" CACHE STRING "Sanitizer applied to every target: thread, address, or empty.")
+set_property(CACHE RIFFRA_SANITIZER PROPERTY STRINGS "" thread address)
+if(RIFFRA_SANITIZER)
+  if(MSVC OR NOT RIFFRA_SANITIZER MATCHES "^(thread|address)$")
+    message(FATAL_ERROR "RIFFRA_SANITIZER supports thread or address with Clang or GCC.")
+  endif()
+  add_compile_options(-fsanitize=${RIFFRA_SANITIZER} -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=${RIFFRA_SANITIZER})
+endif()
+
 option(RIFFRA_BUILTIN_RESOURCE_STAGE_ONLY
   "Configure only the built-in resource staging target." OFF)
 
@@ -107,6 +117,9 @@ target_sources(riffra-render-core PRIVATE
   src/instruments/SonalloyInstrumentRuntime.cpp
   src/instruments/SonalloyInstrumentRuntime.h
   src/concurrency/BoundedMpmcQueue.h
+  src/concurrency/RealtimeCommandQueue.h
+  src/concurrency/RetireQueue.h
+  src/concurrency/SeqLockFrame.h
   src/plugins/PluginChain.cpp
   src/plugins/PluginChain.h
   src/plugins/FaultInjection.cpp
@@ -439,6 +452,8 @@ if(BUILD_TESTING)
     tests/recording/ArrangeRecordingSessionTest.cpp
     tests/timeline/MidiSchedulerTest.cpp
     tests/concurrency/BoundedMpmcQueueTest.cpp
+    tests/concurrency/RealtimeCommandQueueTest.cpp
+    tests/concurrency/SeqLockFrameTest.cpp
     tests/timeline/TimelineSnapshotTest.cpp
     tests/timeline/TimelineTransportTest.cpp
     tests/timeline/TimelineRenderTest.cpp
@@ -458,7 +473,8 @@ if(BUILD_TESTING)
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
-  if(UNIX AND NOT APPLE)
+  # Sanitizers own the allocator, so allocation tracking is only linked without them.
+  if(UNIX AND NOT APPLE AND NOT RIFFRA_SANITIZER)
     target_compile_definitions(riffra-audio-tests PRIVATE RIFFRA_TRACK_MALLOC=1)
     target_link_options(riffra-audio-tests PRIVATE "-Wl,--wrap=malloc")
   endif()

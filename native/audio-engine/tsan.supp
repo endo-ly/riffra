@@ -1,0 +1,4 @@
+# ThreadSanitizer suppressions for the native audio engine tests.
+#
+# Only reports raised inside JUCE itself belong here, each with the reason it
+# is not a Riffra defect. Reports in Riffra code are fixed, never suppressed.

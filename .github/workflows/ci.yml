@@ -259,6 +259,30 @@ jobs:
         shell: bash
         run: ./scripts/ci/verify-sidecars.sh Debug
 
+      # ThreadSanitizer cannot map its shadow memory with the runner's default
+      # address-space randomization. Clang's runtime also intercepts the
+      # condition-variable waits of libstdc++, which older GCC runtimes miss.
+      - name: Check realtime concurrency with ThreadSanitizer
+        shell: bash
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: 4
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/native/audio-engine/tsan.supp
+        run: |
+          sudo sysctl vm.mmap_rnd_bits=28
+          cmake -S native/audio-engine -B native/audio-engine/build-tsan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DRIFFRA_SANITIZER=thread \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          cmake --build native/audio-engine/build-tsan --target riffra-audio-tests
+          ctest --test-dir native/audio-engine/build-tsan --output-on-failure \
+            -R '^(BoundedMpmcQueue|RealtimeCommandQueue|SeqLockFrame|Timeline[A-Za-z]*|ArrangementGraph|AutomationRuntime|MidiScheduler|AudioRenderPipeline|AudioProtocol|CommandResponder)Test\.'
+
   native-windows:
     name: Native audio engine (Windows)
     needs: changes
