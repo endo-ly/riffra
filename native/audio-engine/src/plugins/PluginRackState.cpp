@@ -103,8 +103,7 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
         error = "No VST3 plugin is loaded.";
         return false;
     }
-    const auto parameters = parameterStatus().getProperty("parameters", {});
-    if (!parameters.isArray() || index < 0 || index >= parameters.size()) {
+    if (index < 0 || static_cast<std::size_t>(index) >= parameterCount()) {
         error = "Plugin parameter index is out of range.";
         return false;
     }
@@ -167,13 +166,13 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         if (!applyStateData(*state.stateData, error)) return false;
     }
     {
-        const auto available = parameterStatus().getProperty("parameters", {});
-        const auto count = available.isArray() ? available.size() : 0;
-        for (int index = 0; index < std::min(static_cast<int>(state.parameterValues.size()), count);
-             ++index) {
-            const auto target = state.parameterValues[static_cast<std::size_t>(index)];
-            const auto availableIndex = static_cast<int>(available[index].getProperty("index", -1));
-            const auto current = static_cast<float>(available[index].getProperty("value", target));
+        const auto available = parameters();
+        const auto count = std::min(state.parameterValues.size(), available.size());
+        for (std::size_t offset = 0; offset < count; ++offset) {
+            const auto index = static_cast<int>(offset);
+            const auto target = state.parameterValues[offset];
+            const auto availableIndex = available[offset].index;
+            const auto current = available[offset].value;
             // VST instruments often expose thousands of parameters, most of
             // which are already at their saved/default value immediately
             // after construction. Avoid calling third-party automation hooks
@@ -189,44 +188,43 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
     return true;
 }
 
-juce::var PluginRack::persistedState(juce::String& error) const {
+std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) const {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
-        return {};
+        return std::nullopt;
     }
-    auto* result = new juce::DynamicObject();
-    juce::Array<juce::var> values;
-    std::vector<CachedParameter> cached;
+    PluginStateSpec result;
+    std::vector<PluginParameterInfo> cached;
     {
         const juce::ScopedLock statusGuard(statusLock);
         cached = cachedParameters;
     }
     const auto parameters = plugin->getParameters();
+    result.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
     for (int index = 0; index < parameters.size(); ++index) {
         const auto found =
             std::find_if(cached.begin(), cached.end(),
                          [index](const auto& parameter) { return parameter.index == index; });
-        values.add(found != cached.end()
-                       ? found->value
-                       : (parameters[index] != nullptr ? parameters[index]->getValue() : 0.0f));
+        result.parameterValues.push_back(
+            found != cached.end()
+                ? found->value
+                : (parameters[index] != nullptr ? parameters[index]->getValue() : 0.0f));
     }
-    result->setProperty("parameterValues", values);
-    result->setProperty("bypassed", bypassed.load(std::memory_order_acquire));
+    result.bypassed = bypassed.load(std::memory_order_acquire);
     try {
         juce::MemoryBlock state;
         plugin->getStateInformation(state);
-        result->setProperty("stateData", state.isEmpty() ? juce::String()
-                                                         : juce::Base64::toBase64(state.getData(),
-                                                                                  state.getSize()));
+        if (!state.isEmpty())
+            result.stateData = juce::Base64::toBase64(state.getData(), state.getSize());
     } catch (const std::exception& exception) {
         error = "VST3 state capture raised an exception: " + juce::String(exception.what());
-        return {};
+        return std::nullopt;
     } catch (...) {
         error = "VST3 state capture failed with an unknown exception.";
-        return {};
+        return std::nullopt;
     }
-    return juce::var(result);
+    return result;
 }
 
 void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const processor,
@@ -245,13 +243,13 @@ void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const process
 }
 
 void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
-    std::vector<CachedParameter> next;
+    std::vector<PluginParameterInfo> next;
     const auto& parameters = processor.getParameters();
     next.reserve(static_cast<std::size_t>(parameters.size()));
     for (int index = 0; index < parameters.size(); ++index) {
         auto* parameter = parameters[index];
         if (parameter == nullptr) continue;
-        next.push_back(CachedParameter{
+        next.push_back(PluginParameterInfo{
             index,
             parameter->getName(96),
             parameter->getValue(),
@@ -263,80 +261,50 @@ void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
     cachedParameters = std::move(next);
 }
 
-juce::var PluginRack::cachedStatus(const bool includeParameters) const {
+PluginRackStatus PluginRack::status() const {
     const juce::ScopedLock lock(statusLock);
-    auto* result = new juce::DynamicObject();
-    result->setProperty("loaded", loaded.load(std::memory_order_acquire));
-    result->setProperty("path", pluginPath);
-    result->setProperty("name", pluginName);
-    result->setProperty("bypassed", bypassed.load(std::memory_order_acquire));
-    result->setProperty("sampleRate", preparedSampleRate.load(std::memory_order_acquire));
-    result->setProperty("blockSize", preparedBlockSize.load(std::memory_order_acquire));
-    result->setProperty("inputChannels", pluginInputChannels.load(std::memory_order_acquire));
-    result->setProperty("outputChannels", pluginOutputChannels.load(std::memory_order_acquire));
-    result->setProperty("bypassedBlocks",
-                        static_cast<juce::int64>(bypassedBlocks.load(std::memory_order_acquire)));
-    result->setProperty("processedBlocks",
-                        static_cast<juce::int64>(processedBlocks.load(std::memory_order_acquire)));
-    result->setProperty("transitionBlocks",
-                        static_cast<juce::int64>(transitionBlocks.load(std::memory_order_acquire)));
-    result->setProperty("droppedMidiEvents", static_cast<juce::int64>(pendingMidi.droppedEvents()));
-    result->setProperty("loadCount",
-                        static_cast<juce::int64>(loadCount.load(std::memory_order_acquire)));
-    result->setProperty("destroyCount",
-                        static_cast<juce::int64>(destroyCount.load(std::memory_order_acquire)));
-    if (includeParameters) {
-        juce::Array<juce::var> parameters;
-        for (const auto& parameter : cachedParameters) {
-            auto* item = new juce::DynamicObject();
-            item->setProperty("index", parameter.index);
-            item->setProperty("name", parameter.name);
-            item->setProperty("value", parameter.value);
-            item->setProperty("defaultValue", parameter.defaultValue);
-            item->setProperty("automatable", parameter.automatable);
-            parameters.add(juce::var(item));
-        }
-        result->setProperty("parameters", parameters);
-    }
-    return juce::var(result);
+    return {
+        loaded.load(std::memory_order_acquire),
+        pluginPath,
+        pluginName,
+        bypassed.load(std::memory_order_acquire),
+        preparedSampleRate.load(std::memory_order_acquire),
+        preparedBlockSize.load(std::memory_order_acquire),
+        pluginInputChannels.load(std::memory_order_acquire),
+        pluginOutputChannels.load(std::memory_order_acquire),
+        bypassedBlocks.load(std::memory_order_acquire),
+        processedBlocks.load(std::memory_order_acquire),
+        transitionBlocks.load(std::memory_order_acquire),
+        pendingMidi.droppedEvents(),
+        loadCount.load(std::memory_order_acquire),
+        destroyCount.load(std::memory_order_acquire),
+    };
 }
 
-juce::var PluginRack::status() const { return cachedStatus(false); }
+std::vector<PluginParameterInfo> PluginRack::parameters() const {
+    const juce::ScopedLock lock(statusLock);
+    return cachedParameters;
+}
 
-juce::var PluginRack::parameterStatus() const { return cachedStatus(true); }
-
-juce::var PluginRack::programStatus() const {
+PluginProgramStatus PluginRack::programStatus() const {
     const juce::SpinLock::ScopedLockType lock(pluginLock);
-    auto* result = new juce::DynamicObject();
-    result->setProperty("supported", false);
-    result->setProperty("currentIndex", -1);
-    result->setProperty("currentName", juce::String());
-    result->setProperty("programs", juce::Array<juce::var>{});
-    if (plugin == nullptr) return juce::var(result);
-
+    PluginProgramStatus result;
+    if (plugin == nullptr) return result;
     try {
         const auto programCount = plugin->getNumPrograms();
-        juce::Array<juce::var> programs;
-        for (int index = 0; index < programCount; ++index) {
-            auto* program = new juce::DynamicObject();
-            program->setProperty("index", index);
-            program->setProperty("name", plugin->getProgramName(index));
-            programs.add(juce::var(program));
-        }
+        result.names.reserve(static_cast<std::size_t>(std::max(0, programCount)));
+        for (int index = 0; index < programCount; ++index)
+            result.names.push_back(plugin->getProgramName(index));
         const auto currentIndex = plugin->getCurrentProgram();
-        result->setProperty("supported", programCount > 0);
-        result->setProperty("currentIndex", currentIndex);
-        result->setProperty("currentName", currentIndex >= 0 && currentIndex < programCount
-                                               ? plugin->getProgramName(currentIndex)
-                                               : juce::String());
-        result->setProperty("programs", programs);
+        result.currentIndex = currentIndex >= 0 && currentIndex < programCount ? currentIndex : -1;
     } catch (const std::exception& exception) {
-        result->setProperty("error",
-                            "VST3 program enumeration failed: " + juce::String(exception.what()));
+        result = {};
+        result.error = "VST3 program enumeration failed: " + juce::String(exception.what());
     } catch (...) {
-        result->setProperty("error", "VST3 program enumeration failed.");
+        result = {};
+        result.error = "VST3 program enumeration failed.";
     }
-    return juce::var(result);
+    return result;
 }
 
 bool PluginRack::hasEditor() const noexcept {

@@ -124,25 +124,16 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
 
     ASSERT_TRUE(playbackState.setParameter("device-state", 0, 0.75f, error));
     const auto captured = playbackState.persistedState("device-state", error);
-    ASSERT_TRUE(captured.isObject()) << error;
-    PluginStateSpec persistedState;
-    const auto stateData = captured.getProperty("stateData", {});
-    if (stateData.isString()) persistedState.stateData = stateData.toString();
-    persistedState.bypassed = static_cast<bool>(captured.getProperty("bypassed", false));
-    const auto parameterValues = captured.getProperty("parameterValues", {});
-    if (parameterValues.isArray())
-        for (const auto& value : *parameterValues.getArray())
-            persistedState.parameterValues.push_back(
-                static_cast<float>(static_cast<double>(value)));
+    ASSERT_TRUE(captured.has_value()) << error;
     const std::vector<PluginDeviceSpec> persistedDevices{
-        {"device-state", "test-device.vst3", std::move(persistedState)}};
+        {"device-state", "test-device.vst3", *captured}};
 
     ASSERT_TRUE(liveState.applyState(persistedDevices, error)) << error;
     const auto liveCaptured = liveState.persistedState("device-state", error);
-    const auto liveValues = liveCaptured.getProperty("parameterValues", juce::Array<juce::var>{});
-    ASSERT_TRUE(liveValues.isArray());
-    ASSERT_EQ(liveValues.size(), 700);
-    EXPECT_NEAR(static_cast<float>(liveValues[0]), 0.75f, 0.0001f);
+    ASSERT_TRUE(liveCaptured.has_value()) << error;
+    const auto& liveValues = liveCaptured->parameterValues;
+    ASSERT_EQ(liveValues.size(), 700u);
+    EXPECT_NEAR(liveValues[0], 0.75f, 0.0001f);
 
     liveState.prepare(kSampleRate, kBlockSize);
     recordingState.prepare(kSampleRate, kBlockSize);
@@ -164,17 +155,16 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
     liveState.process(nullptr, 0, outputs.data(), 2, kBlockSize);
     recordingState.process(nullptr, 0, outputs.data(), 2, kBlockSize);
-    const auto liveQueued = liveState.persistedState("device-state", error)
-                                .getProperty("parameterValues", juce::Array<juce::var>{});
-    const auto recordingQueued = recordingState.persistedState("device-state", error)
-                                     .getProperty("parameterValues", juce::Array<juce::var>{});
-    ASSERT_TRUE(liveQueued.isArray());
-    ASSERT_TRUE(recordingQueued.isArray());
-    ASSERT_EQ(liveQueued.size(), 700);
-    ASSERT_EQ(recordingQueued.size(), 700);
+    const auto liveQueued = liveState.persistedState("device-state", error);
+    const auto recordingQueued = recordingState.persistedState("device-state", error);
+    ASSERT_TRUE(liveQueued.has_value());
+    ASSERT_TRUE(recordingQueued.has_value());
+    ASSERT_EQ(liveQueued->parameterValues.size(), 700u);
+    ASSERT_EQ(recordingQueued->parameterValues.size(), 700u);
     for (const auto [index, value] : queuedParameters) {
-        EXPECT_NEAR(static_cast<float>(liveQueued[index]), value, 0.0001f);
-        EXPECT_NEAR(static_cast<float>(recordingQueued[index]), value, 0.0001f);
+        const auto offset = static_cast<std::size_t>(index);
+        EXPECT_NEAR(liveQueued->parameterValues[offset], value, 0.0001f);
+        EXPECT_NEAR(recordingQueued->parameterValues[offset], value, 0.0001f);
     }
 }
 

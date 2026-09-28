@@ -1,0 +1,7 @@
+{
+  "command": {
+    "trackId": "track-1",
+    "type": "setLiveMidiTarget"
+  },
+  "requestId": 1
+}

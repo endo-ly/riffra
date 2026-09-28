@@ -1,0 +1,12 @@
+{
+  "command": {
+    "bytes": [
+      144,
+      60,
+      100
+    ],
+    "trackId": "track-1",
+    "type": "sendTrackMidi"
+  },
+  "requestId": 1
+}

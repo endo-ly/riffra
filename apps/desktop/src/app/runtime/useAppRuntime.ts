@@ -8,7 +8,7 @@ import type {
   ProjectState,
 } from '@/model/domain';
 import { startingAudioStatus } from '@/shared/audio/audio-defaults';
-import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
+import type { AudioMeterFrame } from '@/model/domain';
 import {
   markAudioMetersUnavailable,
   publishAudioMeterSummary,

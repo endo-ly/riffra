@@ -205,11 +205,11 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
     // Assert
     ASSERT_NE(detached, nullptr);
     const auto processingStatus = callback.recording().status();
-    EXPECT_FALSE(static_cast<bool>(processingStatus.getProperty("active", false)));
-    EXPECT_TRUE(static_cast<bool>(processingStatus.getProperty("processing", false)));
+    EXPECT_FALSE(processingStatus.active);
+    EXPECT_TRUE(processingStatus.processing);
 
-    callback.recording().completeProcessing(detached->status(), {});
-    EXPECT_FALSE(static_cast<bool>(callback.recording().status().getProperty("processing", true)));
+    callback.recording().completeProcessing(detached->summary(), {});
+    EXPECT_FALSE(callback.recording().status().processing);
     detached.reset();
     directory.deleteRecursively();
 }
@@ -516,7 +516,7 @@ TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
 
     ASSERT_TRUE(callback.recording().start(directory, error));
     ASSERT_TRUE(callback.recording().cancel(error));
-    EXPECT_TRUE(callback.recording().status().getProperty("cancelled", false));
+    EXPECT_TRUE(callback.recording().status().cancelled);
 
     directory.deleteRecursively();
 }
@@ -524,16 +524,15 @@ TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
 TEST(AudioRenderPipelineTest, FinalizationFailurePreservesStatus) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
-    auto* status = new juce::DynamicObject();
-    status->setProperty("directory", "recording");
-    status->setProperty("active", true);
-    status->setProperty("processing", true);
+    ArrangeRecordingSummary summary;
+    summary.directory = "recording";
+    summary.active = true;
 
-    callback.recording().completeProcessing(juce::var(status), "finalization failed");
+    callback.recording().completeProcessing(summary, "finalization failed");
     const auto result = callback.recording().status();
 
-    EXPECT_FALSE(static_cast<bool>(result.getProperty("processing", true)));
-    EXPECT_EQ(result.getProperty("error", {}).toString(), "finalization failed");
+    EXPECT_FALSE(result.processing);
+    EXPECT_EQ(result.error, std::optional<juce::String>("finalization failed"));
 }
 
 TEST(AudioRenderPipelineTest, DeviceFaultEngagesDeviceFault) {

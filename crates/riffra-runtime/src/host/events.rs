@@ -1,7 +1,10 @@
-use crate::model::{AudioStatus, ProjectActivationResult, ProjectState, RuntimeProjectionStatus};
+use crate::model::{
+    AudioMeterFrame, AudioStatus, ProjectActivationResult, ProjectState, RecordingFinalized,
+    RuntimeProjectionStatus, RuntimeRestarted, RuntimeStartupFinished, TrackPluginParameterChanged,
+    TrackPluginStateChanged, TransportStatus,
+};
 use riffra_control::HostEventFrame;
 use riffra_core::CanonicalState;
-use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -17,27 +20,23 @@ pub enum HostEvent {
     /// A Project activation completed with its canonical and recovery state.
     ProjectActivated(ProjectActivationResult),
     /// Startup completed, with the result of the runtime handshake.
-    RuntimeStartupFinished { succeeded: bool },
+    RuntimeStartupFinished(RuntimeStartupFinished),
     /// The latest canonical arrangement projection state.
     RuntimeProjectionStatus(RuntimeProjectionStatus),
     /// Current audio device and safety state.
     AudioStatus(Box<AudioStatus>),
-    /// Raw native meters retained until a stable DTO is justified.
-    AudioMeters(Value),
-    /// Raw transport status from the native engine.
-    TransportStatus(Value),
+    /// Meters of the Project that owns the active native graph.
+    AudioMeters(AudioMeterFrame),
+    /// Transport position and state of the native timeline.
+    TransportStatus(TransportStatus),
     /// Canonical recording finalization completed after native offline processing.
-    RecordingFinalized {
-        directory: String,
-        succeeded: bool,
-        message: Option<String>,
-    },
+    RecordingFinalized(RecordingFinalized),
     /// A native runtime generation was replaced.
-    RuntimeRestarted { generation: u64 },
-    /// Raw plugin state event from the native engine.
-    TrackPluginStateChanged(Value),
-    /// Raw plugin parameter event from the native engine.
-    TrackPluginParameterChanged(Value),
+    RuntimeRestarted(RuntimeRestarted),
+    /// Plugin state captured from an open native plugin editor.
+    TrackPluginStateChanged(TrackPluginStateChanged),
+    /// One parameter changed in an open native plugin editor.
+    TrackPluginParameterChanged(TrackPluginParameterChanged),
 }
 
 impl HostEvent {
@@ -51,38 +50,24 @@ impl HostEvent {
                 ("project-state-changed", serde_json::to_value(value))
             }
             Self::ProjectActivated(value) => ("project-activated", serde_json::to_value(value)),
-            Self::RuntimeStartupFinished { succeeded } => (
-                "runtime-startup-finished",
-                Ok(serde_json::json!({"succeeded": succeeded})),
-            ),
+            Self::RuntimeStartupFinished(value) => {
+                ("runtime-startup-finished", serde_json::to_value(value))
+            }
             Self::RuntimeProjectionStatus(value) => {
                 ("runtime-projection-status", serde_json::to_value(value))
             }
             Self::AudioStatus(value) => ("audio-status", serde_json::to_value(value)),
-            Self::AudioMeters(value) => ("audio-meters", Ok(value.clone())),
-            Self::TransportStatus(value) => ("transport-status", Ok(value.clone())),
-            Self::RecordingFinalized {
-                directory,
-                succeeded,
-                message,
-            } => (
-                "recording-finalized",
-                Ok(serde_json::json!({
-                    "directory": directory,
-                    "succeeded": succeeded,
-                    "message": message,
-                })),
-            ),
-            Self::RuntimeRestarted { generation } => (
-                "runtime-restarted",
-                Ok(serde_json::json!({"generation": generation})),
-            ),
+            Self::AudioMeters(value) => ("audio-meters", serde_json::to_value(value)),
+            Self::TransportStatus(value) => ("transport-status", serde_json::to_value(value)),
+            Self::RecordingFinalized(value) => ("recording-finalized", serde_json::to_value(value)),
+            Self::RuntimeRestarted(value) => ("runtime-restarted", serde_json::to_value(value)),
             Self::TrackPluginStateChanged(value) => {
-                ("track-plugin-state-changed", Ok(value.clone()))
+                ("track-plugin-state-changed", serde_json::to_value(value))
             }
-            Self::TrackPluginParameterChanged(value) => {
-                ("track-plugin-parameter-changed", Ok(value.clone()))
-            }
+            Self::TrackPluginParameterChanged(value) => (
+                "track-plugin-parameter-changed",
+                serde_json::to_value(value),
+            ),
         };
         Ok(HostEventFrame::new(event, payload?))
     }
@@ -273,7 +258,6 @@ pub struct HostEventHub {
     shell: SharedHostEventSink,
     emit_gate: Mutex<()>,
     subscribers: Mutex<Vec<HostEventSubscriber>>,
-    plugin_project_id: std::sync::RwLock<Option<String>>,
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -284,17 +268,8 @@ impl HostEventHub {
             shell,
             emit_gate: Mutex::new(()),
             subscribers: Mutex::new(Vec::new()),
-            plugin_project_id: std::sync::RwLock::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
         })
-    }
-
-    /// Binds subsequent plugin persistence events to the active Project.
-    pub(crate) fn set_plugin_project_id(&self, project_id: Option<String>) {
-        *self
-            .plugin_project_id
-            .write()
-            .expect("Host event plugin Project lock was poisoned") = project_id;
     }
 
     /// Subscribes one local event consumer.
@@ -376,31 +351,6 @@ impl HostEventSink for HostEventHub {
                 tracing::warn!(error = %error, "local Host event could not be serialized");
                 return;
             }
-        };
-        let frame = if is_plugin_persistence_event(&frame.event)
-            && matches!(
-                &event,
-                HostEvent::TrackPluginStateChanged(_) | HostEvent::TrackPluginParameterChanged(_)
-            ) {
-            let project_id = self
-                .plugin_project_id
-                .read()
-                .expect("Host event plugin Project lock was poisoned")
-                .clone();
-            let mut frame = frame;
-            if let Some(payload) = frame.payload.as_object_mut()
-                && !payload
-                    .get("projectId")
-                    .is_some_and(serde_json::Value::is_string)
-            {
-                payload.insert(
-                    "projectId".into(),
-                    project_id.map_or(Value::Null, Value::String),
-                );
-            }
-            frame
-        } else {
-            frame
         };
         let telemetry = event.is_coalescible();
         let mut subscribers = self
@@ -502,6 +452,26 @@ impl HostEventSink for RecordingHostEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{RecordingPhase, TransportState};
+
+    fn transport(timeline_tick: u64) -> TransportStatus {
+        TransportStatus {
+            state: TransportState::Playing,
+            revision: Some(1),
+            timeline_tick,
+            timeline_sample: 0,
+            audio_clock_sample: 0,
+            sample_rate: Some(48_000.0),
+            sequence: 0,
+            recording_phase: RecordingPhase::Idle,
+            recording_start_tick: 0,
+            recording_pass_ordinal: 0,
+            armed_track_ids: Vec::new(),
+            instrument_faults: Vec::new(),
+            clock_generation: 0,
+            discontinuity: 0,
+        }
+    }
 
     #[test]
     fn event_hub_fans_out_shell_and_local_frames() {
@@ -509,7 +479,9 @@ mod tests {
         let hub = HostEventHub::new(shell.clone());
         let subscription = hub.subscribe().unwrap();
 
-        hub.emit(HostEvent::RuntimeRestarted { generation: 4 });
+        hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted {
+            generation: 4,
+        }));
 
         let frame = subscription.recv().unwrap();
         assert_eq!(frame.event, "runtime-restarted");
@@ -518,26 +490,8 @@ mod tests {
         assert_eq!(shell_events.len(), 1);
         assert!(matches!(
             &shell_events[0],
-            HostEvent::RuntimeRestarted { generation: 4 }
+            HostEvent::RuntimeRestarted(RuntimeRestarted { generation: 4 })
         ));
-    }
-
-    #[test]
-    fn plugin_events_keep_their_native_project_binding() {
-        let hub = HostEventHub::new(Arc::new(NoopHostEventSink));
-        let subscription = hub.subscribe_plugin_persistence().unwrap();
-        hub.set_plugin_project_id(Some("project:b".into()));
-
-        hub.emit(HostEvent::TrackPluginParameterChanged(serde_json::json!({
-            "projectId": "project:a",
-            "trackId": "track:1",
-            "deviceId": "device:1",
-            "parameterIndex": 0,
-            "value": 0.5,
-        })));
-
-        let frame = subscription.recv().unwrap();
-        assert_eq!(frame.payload["projectId"], "project:a");
     }
 
     #[test]
@@ -547,9 +501,9 @@ mod tests {
         let subscription = hub.subscribe().unwrap();
 
         for generation in 0..HOST_EVENT_QUEUE_CAPACITY as u64 {
-            hub.emit(HostEvent::RuntimeRestarted { generation });
+            hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted { generation }));
         }
-        hub.emit(HostEvent::AudioMeters(serde_json::json!({ "tick": 999 })));
+        hub.emit(HostEvent::TransportStatus(transport(999)));
 
         let mut received = Vec::new();
         while let Ok(frame) = subscription.try_recv() {
@@ -564,7 +518,9 @@ mod tests {
 
         // Dropping telemetry from a full critical queue does not disconnect
         // the subscriber.
-        hub.emit(HostEvent::RuntimeRestarted { generation: 999 });
+        hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted {
+            generation: 999,
+        }));
         assert_eq!(subscription.try_recv().unwrap().payload["generation"], 999);
     }
 
@@ -575,11 +531,11 @@ mod tests {
         let subscription = hub.subscribe().unwrap();
 
         for generation in 0..HOST_EVENT_QUEUE_CAPACITY as u64 {
-            hub.emit(HostEvent::RuntimeRestarted { generation });
+            hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted { generation }));
         }
-        hub.emit(HostEvent::RuntimeRestarted {
+        hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted {
             generation: HOST_EVENT_QUEUE_CAPACITY as u64,
-        });
+        }));
 
         assert!(matches!(
             subscription.try_recv(),
@@ -594,14 +550,12 @@ mod tests {
         let subscription = hub.subscribe().unwrap();
 
         for tick in 0..(HOST_EVENT_QUEUE_CAPACITY as u64 * 2) {
-            hub.emit(HostEvent::TransportStatus(
-                serde_json::json!({ "tick": tick }),
-            ));
+            hub.emit(HostEvent::TransportStatus(transport(tick)));
         }
-        hub.emit(HostEvent::RuntimeRestarted { generation: 7 });
-        hub.emit(HostEvent::TransportStatus(
-            serde_json::json!({ "tick": 10_000 }),
-        ));
+        hub.emit(HostEvent::RuntimeRestarted(RuntimeRestarted {
+            generation: 7,
+        }));
+        hub.emit(HostEvent::TransportStatus(transport(10_000)));
 
         let mut frames = Vec::new();
         while let Ok(frame) = subscription.try_recv() {
@@ -611,7 +565,7 @@ mod tests {
         // never dropped by the flood.
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].event, "transport-status");
-        assert_eq!(frames[0].payload["tick"], 10_000);
+        assert_eq!(frames[0].payload["timelineTick"], 10_000);
         assert_eq!(frames[1].event, "runtime-restarted");
     }
 

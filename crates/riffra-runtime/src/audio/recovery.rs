@@ -1,5 +1,7 @@
-use super::AudioSupervisor;
 use super::error::{NativeAudioError, NativeAudioResult};
+use super::lifecycle::remaining_timeout;
+use super::wire::SidecarCommand;
+use super::{AudioSupervisor, COMMAND_ACK_TIMEOUT};
 use crate::model::AudioStatus;
 use crate::preferences::AudioPreferences;
 use std::collections::HashMap;
@@ -108,19 +110,19 @@ impl AudioSupervisor {
                 resource: "Runtime control",
             })?
             .clone();
-        self.wait_for_command(
-            serde_json::json!({
-                "type": if controls.midi_listening {
-                    "enableMidiListening"
-                } else {
-                    "disableMidiListening"
-                },
-            }),
-            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        self.request_ack(
+            if controls.midi_listening {
+                SidecarCommand::EnableMidiListening
+            } else {
+                SidecarCommand::DisableMidiListening
+            },
+            remaining_timeout(deadline, COMMAND_ACK_TIMEOUT)?,
         )?;
-        self.wait_for_command(
-            super::commands::emergency_mute_command(controls.user_emergency_muted),
-            super::lifecycle::remaining_timeout(deadline, std::time::Duration::from_secs(3))?,
+        self.request_ack(
+            SidecarCommand::SetEmergencyMute {
+                muted: controls.user_emergency_muted,
+            },
+            remaining_timeout(deadline, COMMAND_ACK_TIMEOUT)?,
         )?;
         Ok(())
     }

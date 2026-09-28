@@ -1,0 +1,12 @@
+{
+  "command": {
+    "processedEndFrame": 48000,
+    "processedPath": "takes/processed.wav",
+    "processedStartFrame": 0,
+    "rawEndFrame": 48000,
+    "rawPath": "takes/raw.wav",
+    "rawStartFrame": 0,
+    "type": "startTakeComparison"
+  },
+  "requestId": 1
+}

@@ -1,0 +1,27 @@
+{
+  "command": {
+    "snapshot": {
+      "graph": {
+        "loopRange": {
+          "enabled": false,
+          "endTick": 0,
+          "startTick": 0
+        },
+        "masterGainDb": 0.0,
+        "metronomeEnabled": false,
+        "punchRange": null,
+        "timebase": {
+          "bpm": 120.0,
+          "ppq": 960,
+          "timeSignatureDenominator": 4,
+          "timeSignatureNumerator": 4
+        },
+        "tracks": []
+      },
+      "projectId": "project-1",
+      "revision": 3
+    },
+    "type": "prepareTimelineSnapshot"
+  },
+  "requestId": 1
+}

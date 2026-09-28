@@ -1,0 +1,9 @@
+{
+  "kind": "event",
+  "event": {
+    "type": "recordingComplete",
+    "directory": "recordings/take-1",
+    "success": false,
+    "message": "processing failed"
+  }
+}

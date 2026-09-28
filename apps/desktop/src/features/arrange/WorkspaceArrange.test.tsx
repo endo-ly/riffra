@@ -11,7 +11,8 @@ import {
   type RuntimeProjectionStatus,
 } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
-import { toAssetId, type TransportStatus } from '@/native/contracts';
+import { toAssetId } from '@/native/contracts';
+import type { TransportStatus } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
@@ -1204,7 +1205,6 @@ describe('WorkspaceArrange', () => {
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const status: TransportStatus = {
-      type: 'transportStatus',
       state: 'stopped',
       revision: session.arrangement.revision,
       timelineTick: 0,
@@ -1214,12 +1214,11 @@ describe('WorkspaceArrange', () => {
       sequence: 1,
       recordingPhase: 'idle',
       recordingStartTick: 0,
-      recordingCurrentTick: 0,
       recordingPassOrdinal: 0,
       armedTrackIds: [],
+      instrumentFaults: [],
       clockGeneration: 1,
       discontinuity: 1,
-      instrumentFaults: [],
     };
     const runtimeProjectionStatus = {
       ...api.runtimeProjection,

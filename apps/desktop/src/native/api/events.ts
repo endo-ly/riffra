@@ -1,15 +1,17 @@
 import { listen } from '@tauri-apps/api/event';
 import type {
+  AudioMeterFrame,
   AudioStatus,
   CanonicalState,
   ProjectActivationResult,
   ProjectState,
+  RecordingFinalized,
   RuntimeProjectionStatus,
+  RuntimeRestarted,
+  TransportStatus,
 } from '@/model/domain';
-import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
-import type { NativeEventApi, RecordingFinalizedEvent } from '../native-api';
+import type { NativeEventApi } from '../native-api';
 import { isNativeRuntime } from '../invoke';
-import type { TransportStatus } from '../contracts';
 
 function subscribe<T>(eventName: string, callback: (payload: T) => void): () => void {
   if (!isNativeRuntime()) return () => undefined;
@@ -39,9 +41,7 @@ export const eventApi: NativeEventApi = {
   onRuntimeProjectionStatus: (callback) =>
     subscribe<RuntimeProjectionStatus>('runtime-projection-status', callback),
   onRuntimeRestarted: (callback) =>
-    subscribe<{ generation: number }>('runtime-restarted', ({ generation }) =>
-      callback(generation),
-    ),
+    subscribe<RuntimeRestarted>('runtime-restarted', ({ generation }) => callback(generation)),
   onRecordingFinalized: (callback) =>
-    subscribe<RecordingFinalizedEvent>('recording-finalized', callback),
+    subscribe<RecordingFinalized>('recording-finalized', callback),
 };

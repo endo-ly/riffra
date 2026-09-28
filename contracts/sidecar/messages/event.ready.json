@@ -1,0 +1,106 @@
+{
+  "kind": "event",
+  "event": {
+    "type": "ready",
+    "protocolVersion": 3,
+    "status": {
+      "state": "muted",
+      "message": "Native audio is connected and muted.",
+      "driver": "ASIO",
+      "inputDevice": "Interface",
+      "inputChannel": 0,
+      "inputChannels": [
+        {
+          "index": 0,
+          "name": "Input 1"
+        },
+        {
+          "index": 1,
+          "name": "Input 2"
+        }
+      ],
+      "activeInputChannels": [
+        0,
+        1
+      ],
+      "outputDevice": null,
+      "outputChannels": [
+        {
+          "index": 0,
+          "name": "Output 1"
+        }
+      ],
+      "activeOutputChannels": [
+        0
+      ],
+      "sampleRate": 48000.0,
+      "bufferSize": 256,
+      "roundTripMs": 10.5,
+      "timelineTick": 960,
+      "recording": {
+        "active": true,
+        "processing": false,
+        "cancelled": false,
+        "directory": "recordings/take-1",
+        "sampleRate": 48000.0,
+        "samplesWritten": 4800,
+        "droppedMidiEvents": 0,
+        "droppedBlocks": 1,
+        "missingSamples": 0,
+        "rawAttemptedSamples": 0,
+        "processedAttemptedSamples": 0,
+        "rawDroppedBlocks": 0,
+        "processedDroppedBlocks": 0,
+        "rawMissingSamples": 32,
+        "processedMissingSamples": 0,
+        "rawDropoutStartSample": 100,
+        "rawDropoutEndSample": 132,
+        "processedDropoutStartSample": null,
+        "processedDropoutEndSample": null,
+        "recoveryStatus": "partial",
+        "error": null
+      },
+      "midiInputs": [
+        {
+          "id": "midi-in-1",
+          "name": "Keyboard"
+        }
+      ],
+      "midiOutputs": [],
+      "midiInputActive": true,
+      "midiMessages": 12,
+      "lastMidiNote": 60,
+      "inputPeak": 0.25,
+      "outputPeak": 0.5,
+      "invalidSamples": 3,
+      "feedbackSuspected": false,
+      "previewing": true,
+      "instrumentPreviewing": false,
+      "muteReasons": 1,
+      "diagnostics": {
+        "callbackCount": 1000,
+        "averageCallbackDurationUs": 120,
+        "maximumCallbackDurationUs": 800,
+        "callbackOverruns": 2,
+        "preLimiterPeak": 0.75,
+        "limiterGainReductionDb": 1.5,
+        "hardClipSamples": 4,
+        "liveMidiDrops": 1,
+        "graphRevision": 7,
+        "graphPublishCount": 3,
+        "trackCount": 2,
+        "instrumentRuntimeCount": 1,
+        "pluginCount": 1,
+        "maximumLatencySamples": 64,
+        "instrumentFaults": [
+          {
+            "trackId": "track-1",
+            "instrumentType": "vst3",
+            "faultCode": 0,
+            "droppedMidiEvents": 1
+          }
+        ]
+      }
+    }
+  }
+}

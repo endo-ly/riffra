@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import type { BootstrapState, RecoveryCandidate } from '@/model/domain';
+import type { BootstrapState, RecoveryCandidate, RuntimeStartupFinished } from '@/model/domain';
 import { defaultProjectState, defaultSession } from '../browser-defaults';
 import {
   getHostGeneration,
@@ -8,7 +8,6 @@ import {
   setHostConnectionAvailability,
   setHostGeneration,
 } from '../invoke';
-import type { RuntimeStartupFinishedEvent } from '../native-api';
 import { defaultVst3Root } from './constants';
 
 export async function bootstrap(): Promise<BootstrapState> {
@@ -49,10 +48,10 @@ export async function bootstrap(): Promise<BootstrapState> {
 }
 
 export async function onRuntimeStartupFinished(
-  callback: (event: RuntimeStartupFinishedEvent) => void,
+  callback: (event: RuntimeStartupFinished) => void,
 ): Promise<() => void> {
   if (!isNativeRuntime()) return () => undefined;
-  return listen<RuntimeStartupFinishedEvent>('runtime-startup-finished', ({ payload }) => {
+  return listen<RuntimeStartupFinished>('runtime-startup-finished', ({ payload }) => {
     callback(payload);
   });
 }

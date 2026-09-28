@@ -1,0 +1,10 @@
+{
+  "command": {
+    "deviceId": "device-1",
+    "parameterIndex": 2,
+    "trackId": "track-1",
+    "type": "setTrackDeviceParameter",
+    "value": 0.5
+  },
+  "requestId": 1
+}

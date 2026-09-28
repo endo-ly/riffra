@@ -1,0 +1,6 @@
+{
+  "command": {
+    "type": "stopTimeline"
+  },
+  "requestId": 1
+}

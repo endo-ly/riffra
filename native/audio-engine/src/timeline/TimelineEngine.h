@@ -16,6 +16,7 @@
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
 #include "contract/ExecutionGraph.h"
+#include "contract/SidecarMessages.h"
 #include "instruments/InstrumentRuntime.h"
 #include "plugins/PluginChain.h"
 #include "recording/ArrangementCaptureSink.h"
@@ -26,6 +27,40 @@ namespace riffra {
 class TimelineEngineTestPeer;
 class AudioRenderPipeline;
 class TimelineSnapshotBuilder;
+
+enum class TransportState { stopped, starting, playing, faulted };
+enum class RecordingPhase { idle, countingIn, recording, stopping };
+
+/// Values derived from the active graph.
+struct TimelineGraphStatus final {
+    std::uint64_t revision = 0;
+    double sampleRate = 0.0;
+    std::uint64_t timelineTick = 0;
+    std::uint64_t trackCount = 0;
+    std::uint64_t instrumentRuntimeCount = 0;
+    std::uint64_t pluginCount = 0;
+    std::uint64_t maximumLatencySamples = 0;
+    std::uint64_t liveMidiDrops = 0;
+    std::vector<juce::String> armedTrackIds;
+    std::vector<InstrumentFaultSpec> instrumentFaults;
+};
+
+/// Transport and graph state reported by the timeline.
+struct TimelineStatus final {
+    TransportState transportState = TransportState::stopped;
+    RecordingPhase recordingPhase = RecordingPhase::idle;
+    std::int64_t timelineSample = 0;
+    std::uint64_t audioClockSample = 0;
+    std::uint64_t sequence = 0;
+    std::uint64_t recordingStartTick = 0;
+    std::uint32_t recordingPassOrdinal = 0;
+    std::uint64_t clockGeneration = 0;
+    std::uint64_t discontinuity = 0;
+    std::uint64_t graphPublishCount = 0;
+    /// Present when a graph is active and `timelineLock` was free; `status()`
+    /// never waits for the lock.
+    std::optional<TimelineGraphStatus> graph;
+};
 
 /// Envelope multiplier for a normalized fade progress in [0, 1].
 ///
@@ -83,7 +118,7 @@ public:
     bool setTrackMixControl(const juce::String& trackId, std::optional<float> gainDb,
                             std::optional<float> pan, juce::String& error) noexcept;
     /// Consumes the latest post-fader stereo meter snapshot for each active track.
-    [[nodiscard]] juce::Array<juce::var> meterSnapshot();
+    [[nodiscard]] std::vector<TrackMeterSpec> meterSnapshot();
     /// Returns the Project that owns the active realtime graph.
     [[nodiscard]] juce::String activeProjectId() const;
     [[nodiscard]] float activeMasterGainDb() const noexcept;
@@ -101,14 +136,13 @@ public:
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
                                  const PluginStateSpec& persistedState, juce::String& error);
-    [[nodiscard]] juce::var deviceStatus(const juce::String& trackId, const juce::String& deviceId,
-                                         juce::String& error) const;
-    [[nodiscard]] juce::var deviceParameterStatus(const juce::String& trackId,
-                                                  const juce::String& deviceId,
-                                                  juce::String& error) const;
-    [[nodiscard]] juce::var deviceProgramStatus(const juce::String& trackId,
-                                                const juce::String& deviceId,
-                                                juce::String& error) const;
+    [[nodiscard]] std::optional<TrackDeviceStatusSpec> deviceStatus(const juce::String& trackId,
+                                                                    const juce::String& deviceId,
+                                                                    juce::String& error) const;
+    [[nodiscard]] std::optional<TrackDeviceParametersSpec> deviceParameterStatus(
+        const juce::String& trackId, const juce::String& deviceId, juce::String& error) const;
+    [[nodiscard]] std::optional<TrackDeviceProgramsSpec> deviceProgramStatus(
+        const juce::String& trackId, const juce::String& deviceId, juce::String& error) const;
     [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
                                          const juce::String& deviceId) noexcept;
     bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,
@@ -116,9 +150,9 @@ public:
                                  juce::String& error) noexcept;
     bool mirrorEditorDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
                                      int parameterIndex, float value, juce::String& error) noexcept;
-    [[nodiscard]] juce::var devicePersistedState(const juce::String& trackId,
-                                                 const juce::String& deviceId,
-                                                 juce::String& error) const;
+    [[nodiscard]] std::optional<PluginStateSpec> devicePersistedState(const juce::String& trackId,
+                                                                      const juce::String& deviceId,
+                                                                      juce::String& error) const;
     [[nodiscard]] bool preparedTrackReusesRuntimeDevices(
         const juce::String& trackId) const noexcept;
     [[nodiscard]] bool hasPreparedSnapshot() const noexcept;
@@ -135,7 +169,7 @@ public:
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
              int outputChannelCount, int sampleCount) noexcept;
-    [[nodiscard]] juce::var status() const;
+    [[nodiscard]] TimelineStatus status() const;
 
 private:
     friend class TimelineEngineTestPeer;
@@ -143,9 +177,6 @@ private:
     friend class TimelineSnapshotBuilder;
 
     void setProjectBoundaryCallback(std::function<void(std::uint64_t)> callback);
-
-    enum class State { stopped, starting, playing, faulted };
-    enum class RecordingPhase { idle, countingIn, recording, stopping };
 
     struct Clip final {
         juce::String id;
@@ -262,6 +293,10 @@ private:
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     [[nodiscard]] bool isLiveMidiTarget(const juce::String& trackId) const noexcept;
+    /// Finds a plugin rack in the active graph. The caller holds `timelineLock`.
+    [[nodiscard]] const PluginRack* findActiveRack(const juce::String& trackId,
+                                                   const juce::String& deviceId, const char* noun,
+                                                   juce::String& error) const;
     bool beginAudioRead(PreparedTimeline*& active) noexcept;
     void endAudioRead() noexcept;
     bool waitForAudioReaders(std::chrono::milliseconds timeout) noexcept;
@@ -312,7 +347,7 @@ private:
     double finalizedRecordingSampleRate = 0.0;
     int finalizedRecordingBlockSize = 0;
     juce::String liveMidiTargetTrackId;
-    std::atomic<State> state{State::stopped};
+    std::atomic<TransportState> state{TransportState::stopped};
     std::atomic<std::int64_t> timelineSample{0};
     std::atomic<std::uint64_t> audioClockSample{0};
     std::atomic<std::uint64_t> callbackAudioStartSample{0};

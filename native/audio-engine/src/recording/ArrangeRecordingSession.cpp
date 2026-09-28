@@ -411,31 +411,41 @@ bool ArrangeRecordingSession::cancel(juce::String& error) {
     return true;
 }
 
-juce::var ArrangeRecordingSession::status() const {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("active", !finished.load(std::memory_order_acquire));
-    result->setProperty("directory", directory.getFullPathName());
-    result->setProperty("sampleRate", sampleRate);
-    std::uint64_t written = 0;
-    std::uint64_t dropped = 0;
-    std::uint64_t rawMissing = 0;
-    std::uint64_t processedMissing = 0;
+ArrangeRecordingSummary ArrangeRecordingSession::summary() const {
+    ArrangeRecordingSummary result;
+    result.active = !finished.load(std::memory_order_acquire);
+    result.directory = directory.getFullPathName();
+    result.sampleRate = sampleRate;
+    result.droppedMidiEvents = droppedMidiEvents();
     for (const auto& track : tracks) {
-        if (track.audio != nullptr) {
-            written = std::max(written, track.audio->getSamplesWritten());
-            dropped += track.audio->getDroppedBlocks();
-            rawMissing += track.audio->getRawMissingSamples();
-            processedMissing += track.audio->getProcessedMissingSamples();
+        if (track.audio == nullptr) continue;
+        const auto& audio = *track.audio;
+        result.samplesWritten = std::max(result.samplesWritten, audio.getSamplesWritten());
+        result.droppedBlocks += audio.getDroppedBlocks();
+        result.missingSamples += audio.getMissingSamples();
+        result.rawAttemptedSamples += audio.getRawAttemptedSamples();
+        result.processedAttemptedSamples += audio.getProcessedAttemptedSamples();
+        result.rawDroppedBlocks += audio.getRawDroppedBlocks();
+        result.processedDroppedBlocks += audio.getProcessedDroppedBlocks();
+        result.rawMissingSamples += audio.getRawMissingSamples();
+        result.processedMissingSamples += audio.getProcessedMissingSamples();
+        if (audio.getRawMissingSamples() > 0) {
+            result.rawDropoutStartSample =
+                std::min(result.rawDropoutStartSample.value_or(audio.getRawFirstMissingSample()),
+                         audio.getRawFirstMissingSample());
+            result.rawDropoutEndSample =
+                std::max(result.rawDropoutEndSample.value_or(0), audio.getRawLastMissingSample());
+        }
+        if (audio.getProcessedMissingSamples() > 0) {
+            result.processedDropoutStartSample = std::min(
+                result.processedDropoutStartSample.value_or(audio.getProcessedFirstMissingSample()),
+                audio.getProcessedFirstMissingSample());
+            result.processedDropoutEndSample =
+                std::max(result.processedDropoutEndSample.value_or(0),
+                         audio.getProcessedLastMissingSample());
         }
     }
-    const auto midiDropped = droppedMidiEvents();
-    result->setProperty("samplesWritten", static_cast<juce::int64>(written));
-    result->setProperty("droppedBlocks", static_cast<juce::int64>(dropped));
-    result->setProperty("droppedMidiEvents", static_cast<juce::int64>(midiDropped));
-    result->setProperty("rawMissingSamples", static_cast<juce::int64>(rawMissing));
-    result->setProperty("processedMissingSamples", static_cast<juce::int64>(processedMissing));
-    result->setProperty("recoveryStatus", dropped == 0 && midiDropped == 0 ? "clean" : "partial");
-    return juce::var(result);
+    return result;
 }
 
 std::uint64_t ArrangeRecordingSession::droppedMidiEvents() const noexcept {
@@ -471,72 +481,29 @@ bool ArrangeRecordingSession::writeManifest(const juce::String& state, juce::Str
         "recordEndTimelineSample",
         static_cast<juce::int64>(recordEndTimelineSample.load(std::memory_order_acquire)));
     root->setProperty("timelineStartTick", static_cast<juce::int64>(timelineStartTick));
-    std::uint64_t samplesWritten = 0;
-    std::uint64_t droppedBlocks = 0;
-    std::uint64_t missingSamples = 0;
-    std::uint64_t rawAttemptedSamples = 0;
-    std::uint64_t processedAttemptedSamples = 0;
-    std::uint64_t rawDroppedBlocks = 0;
-    std::uint64_t processedDroppedBlocks = 0;
-    std::uint64_t rawMissingSamples = 0;
-    std::uint64_t processedMissingSamples = 0;
-    const auto droppedMidiEventsCount = droppedMidiEvents();
-    std::optional<std::uint64_t> rawFirstMissingSample;
-    std::optional<std::uint64_t> rawLastMissingSample;
-    std::optional<std::uint64_t> processedFirstMissingSample;
-    std::optional<std::uint64_t> processedLastMissingSample;
-    for (const auto& track : tracks) {
-        if (track.audio != nullptr) {
-            samplesWritten = std::max(samplesWritten, track.audio->getSamplesWritten());
-            droppedBlocks += track.audio->getDroppedBlocks();
-            missingSamples += track.audio->getMissingSamples();
-            rawAttemptedSamples += track.audio->getRawAttemptedSamples();
-            processedAttemptedSamples += track.audio->getProcessedAttemptedSamples();
-            rawDroppedBlocks += track.audio->getRawDroppedBlocks();
-            processedDroppedBlocks += track.audio->getProcessedDroppedBlocks();
-            rawMissingSamples += track.audio->getRawMissingSamples();
-            processedMissingSamples += track.audio->getProcessedMissingSamples();
-            const auto rawFirst = track.audio->getRawFirstMissingSample();
-            const auto processedFirst = track.audio->getProcessedFirstMissingSample();
-            if (track.audio->getRawMissingSamples() > 0)
-                rawFirstMissingSample = rawFirstMissingSample.has_value()
-                                            ? std::min(*rawFirstMissingSample, rawFirst)
-                                            : rawFirst;
-            if (track.audio->getProcessedMissingSamples() > 0)
-                processedFirstMissingSample =
-                    processedFirstMissingSample.has_value()
-                        ? std::min(*processedFirstMissingSample, processedFirst)
-                        : processedFirst;
-            const auto rawLast = track.audio->getRawLastMissingSample();
-            const auto processedLast = track.audio->getProcessedLastMissingSample();
-            if (track.audio->getRawMissingSamples() > 0)
-                rawLastMissingSample = std::max(rawLastMissingSample.value_or(0), rawLast);
-            if (track.audio->getProcessedMissingSamples() > 0)
-                processedLastMissingSample =
-                    std::max(processedLastMissingSample.value_or(0), processedLast);
-        }
-    }
-    root->setProperty("samplesWritten", static_cast<juce::int64>(samplesWritten));
-    root->setProperty("droppedBlocks", static_cast<juce::int64>(droppedBlocks));
-    root->setProperty("droppedMidiEvents", static_cast<juce::int64>(droppedMidiEventsCount));
-    root->setProperty("missingSamples", static_cast<juce::int64>(missingSamples));
-    root->setProperty("rawAttemptedSamples", static_cast<juce::int64>(rawAttemptedSamples));
+    const auto totals = summary();
+    root->setProperty("samplesWritten", static_cast<juce::int64>(totals.samplesWritten));
+    root->setProperty("droppedBlocks", static_cast<juce::int64>(totals.droppedBlocks));
+    root->setProperty("droppedMidiEvents", static_cast<juce::int64>(totals.droppedMidiEvents));
+    root->setProperty("missingSamples", static_cast<juce::int64>(totals.missingSamples));
+    root->setProperty("rawAttemptedSamples", static_cast<juce::int64>(totals.rawAttemptedSamples));
     root->setProperty("processedAttemptedSamples",
-                      static_cast<juce::int64>(processedAttemptedSamples));
-    root->setProperty("rawDroppedBlocks", static_cast<juce::int64>(rawDroppedBlocks));
-    root->setProperty("processedDroppedBlocks", static_cast<juce::int64>(processedDroppedBlocks));
-    root->setProperty("rawMissingSamples", static_cast<juce::int64>(rawMissingSamples));
-    root->setProperty("processedMissingSamples", static_cast<juce::int64>(processedMissingSamples));
+                      static_cast<juce::int64>(totals.processedAttemptedSamples));
+    root->setProperty("rawDroppedBlocks", static_cast<juce::int64>(totals.rawDroppedBlocks));
+    root->setProperty("processedDroppedBlocks",
+                      static_cast<juce::int64>(totals.processedDroppedBlocks));
+    root->setProperty("rawMissingSamples", static_cast<juce::int64>(totals.rawMissingSamples));
+    root->setProperty("processedMissingSamples",
+                      static_cast<juce::int64>(totals.processedMissingSamples));
     root->setProperty("rawDropoutStartSample",
-                      static_cast<juce::int64>(rawFirstMissingSample.value_or(0)));
+                      static_cast<juce::int64>(totals.rawDropoutStartSample.value_or(0)));
     root->setProperty("rawDropoutEndSample",
-                      static_cast<juce::int64>(rawLastMissingSample.value_or(0)));
+                      static_cast<juce::int64>(totals.rawDropoutEndSample.value_or(0)));
     root->setProperty("processedDropoutStartSample",
-                      static_cast<juce::int64>(processedFirstMissingSample.value_or(0)));
+                      static_cast<juce::int64>(totals.processedDropoutStartSample.value_or(0)));
     root->setProperty("processedDropoutEndSample",
-                      static_cast<juce::int64>(processedLastMissingSample.value_or(0)));
-    root->setProperty("recoveryStatus",
-                      droppedBlocks == 0 && droppedMidiEventsCount == 0 ? "clean" : "partial");
+                      static_cast<juce::int64>(totals.processedDropoutEndSample.value_or(0)));
+    root->setProperty("recoveryStatus", totals.clean() ? "clean" : "partial");
     juce::Array<juce::var> segments;
     const auto segmentCount =
         std::min(captureSegmentCount.load(std::memory_order_acquire), captureSegments.size());

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
-import type { TransportStatus } from '@/native/contracts';
+import type { TransportStatus } from '@/model/domain';
 import { TRACK_HEADER_WIDTH, BASE_PIXELS_PER_QUARTER } from '../model/arrange-timeline';
 
 interface UseArrangeViewportOptions {

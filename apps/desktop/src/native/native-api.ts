@@ -37,9 +37,12 @@ import type {
   HostConnectionState,
   HostTarget,
   LocalHostInfo,
+  AudioMeterFrame,
+  RecordingFinalized,
+  RuntimeStartupFinished,
+  TransportStatus,
 } from '@/model/domain';
-import type { AudioMeterFrame } from '@/shared/audio/audio-meters';
-import type { AssetPreviewOptions, ScanJobStatus, TransportStatus } from './contracts';
+import type { AssetPreviewOptions, ScanJobStatus } from './contracts';
 
 export interface MidiNoteInput {
   pitch: number;
@@ -50,16 +53,6 @@ export interface MidiNoteInput {
 }
 
 /** Result delivered when the native Session runtime restoration attempt ends. */
-export interface RuntimeStartupFinishedEvent {
-  succeeded: boolean;
-}
-
-export interface RecordingFinalizedEvent {
-  directory: string;
-  succeeded: boolean;
-  message: string | null;
-}
-
 export interface HostConnectionBootstrap {
   state: HostConnectionState;
   bootstrap: BootstrapState;
@@ -94,9 +87,7 @@ export interface HostConnectionApi {
 export interface BootstrapApi {
   bootstrap(): Promise<BootstrapState>;
   /** Subscribes to completion of a Session audio-graph restoration attempt. */
-  onRuntimeStartupFinished(
-    callback: (event: RuntimeStartupFinishedEvent) => void,
-  ): Promise<() => void>;
+  onRuntimeStartupFinished(callback: (event: RuntimeStartupFinished) => void): Promise<() => void>;
 }
 
 export interface ProjectApi {
@@ -453,7 +444,7 @@ export interface NativeEventApi {
   /** Subscribes to the latest asynchronous Audio Runtime projection status. */
   onRuntimeProjectionStatus(callback: (status: RuntimeProjectionStatus) => void): () => void;
   onRuntimeRestarted(callback: (generation: number) => void): () => void;
-  onRecordingFinalized(callback: (event: RecordingFinalizedEvent) => void): () => void;
+  onRecordingFinalized(callback: (event: RecordingFinalized) => void): () => void;
 }
 
 export interface NativeApi

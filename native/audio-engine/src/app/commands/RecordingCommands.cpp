@@ -1,61 +1,44 @@
 #include "../AudioCommandDispatcher.h"
-#include "midi/MidiInputService.h"
-#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
 
-CommandResult AudioCommandDispatcher::dispatchRecording(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    if (type == "startArrangeRecording") {
-        const auto directory = command.getProperty("directory", {}).toString();
-        juce::String recordingError;
-        const auto started = context.pipeline.startArrangeRecording(
-            juce::File(directory), context.timelineEngine, recordingError);
-        if (directory.isEmpty() || !started) {
-            writeJson(makeError("recording", directory.isEmpty()
-                                                 ? "Recording directory is required."
-                                                 : recordingError));
-            return {};
-        }
-        if (!context.timelineEngine.startRecording(
-                static_cast<int>(command.getProperty("countInBeats", 0)), recordingError)) {
-            juce::String rollbackError;
-            (void)context.pipeline.stopArrangeRecording(context.timelineEngine, rollbackError);
-            writeJson(makeError("recording", recordingError));
-            return {};
-        }
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
+void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
+                                    CommandResponder responder) {
+    if (command.directory.isEmpty()) {
+        responder.fail("recording", "Recording directory is required.", "recording.start");
+        return;
     }
-
-    if (type == "stopArrangeRecording") {
-        const auto cancelledCountIn = context.timelineEngine.cancelRecordingIfCountingIn();
-
-        juce::String recordingError;
-
-        if (cancelledCountIn) {
-            context.timelineEngine.stop();
-
-            if (!context.pipeline.cancelArrangeRecording(context.timelineEngine, recordingError)) {
-                writeJson(makeError("recording", recordingError));
-                return {};
-            }
-        } else {
-            if (!context.pipeline.stopArrangeRecording(context.timelineEngine, recordingError)) {
-                writeJson(makeError("recording", recordingError));
-                return {};
-            }
-        }
-
-        writeJson(AudioStatusBuilder::currentStatus(context.deviceController.manager(),
-                                                    context.pipeline, &context.midiInputs.monitor(),
-                                                    {}, &context.timelineEngine));
-        return {};
+    juce::String recordingError;
+    if (!context.pipeline.startArrangeRecording(juce::File(command.directory),
+                                                context.timelineEngine, recordingError)) {
+        responder.fail("recording", recordingError, "recording.start");
+        return;
     }
-    return {};
+    if (!context.timelineEngine.startRecording(command.countInBeats, recordingError)) {
+        juce::String rollbackError;
+        (void)context.pipeline.stopArrangeRecording(context.timelineEngine, rollbackError);
+        responder.fail("recording", recordingError, "recording.start");
+        return;
+    }
+    responder.respond(currentStatus());
+}
+
+void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
+                                    CommandResponder responder) {
+    juce::String recordingError;
+    auto stopped = false;
+    if (context.timelineEngine.cancelRecordingIfCountingIn()) {
+        context.timelineEngine.stop();
+        stopped = context.pipeline.cancelArrangeRecording(context.timelineEngine, recordingError);
+    } else {
+        stopped = context.pipeline.stopArrangeRecording(context.timelineEngine, recordingError);
+    }
+    if (!stopped) {
+        responder.fail("recording", recordingError, "recording.stop");
+        return;
+    }
+    responder.respond(currentStatus());
 }
 
 }  // namespace riffra

@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::RuntimeStartupFinished;
 use crate::runtime::RuntimeReconciler;
 
 impl DawHost {
@@ -110,9 +111,6 @@ impl DawHost {
         if let Ok(canonical) = state.canonical() {
             library::index::refresh(&state.data_root, &storage, &canonical.session);
         }
-        if let Ok(project_id) = state.project_store.active_project_id() {
-            state.event_hub.set_plugin_project_id(Some(project_id));
-        }
         let plugin_persistence = persistence::PluginStatePersistenceCoordinator::start(
             Arc::downgrade(&state),
             state.event_hub.subscribe_plugin_persistence(),
@@ -181,7 +179,9 @@ fn queue_runtime_startup(
     if safe_mode {
         state
             .events
-            .emit(HostEvent::RuntimeStartupFinished { succeeded: false });
+            .emit(HostEvent::RuntimeStartupFinished(RuntimeStartupFinished {
+                succeeded: false,
+            }));
         return None;
     }
     let weak_state = Arc::downgrade(&state);
@@ -222,7 +222,9 @@ fn queue_runtime_startup(
             audio.emit_status();
             state
                 .events
-                .emit(HostEvent::RuntimeStartupFinished { succeeded });
+                .emit(HostEvent::RuntimeStartupFinished(RuntimeStartupFinished {
+                    succeeded,
+                }));
         })
         .map_err(|error| {
             tracing::warn!(error = %error, "shared runtime startup thread could not be created");

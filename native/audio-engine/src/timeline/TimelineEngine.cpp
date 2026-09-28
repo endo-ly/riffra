@@ -98,34 +98,17 @@ bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
     return true;
 }
 
-juce::Array<juce::var> TimelineEngine::meterSnapshot() {
-    struct MeterEntry final {
-        juce::String trackId;
-        TrackMeterSnapshot snapshot;
-    };
-
-    std::vector<MeterEntry> entries;
-    {
-        AudioReadScope read(*this);
-        const auto* active = read.get();
-        if (active == nullptr) return {};
-        entries.reserve(active->tracks.size());
-        for (const auto& track : active->tracks) {
-            if (track == nullptr || track->runtime == nullptr) continue;
-            entries.push_back({track->id, track->runtime->meter.consume()});
-        }
-    }
-
-    juce::Array<juce::var> meters;
-    meters.ensureStorageAllocated(static_cast<int>(entries.size()));
-    for (const auto& entry : entries) {
-        auto* value = new juce::DynamicObject();
-        value->setProperty("trackId", entry.trackId);
-        value->setProperty("peakLeft", entry.snapshot.peakLeft);
-        value->setProperty("peakRight", entry.snapshot.peakRight);
-        value->setProperty("rmsLeft", entry.snapshot.rmsLeft);
-        value->setProperty("rmsRight", entry.snapshot.rmsRight);
-        meters.add(juce::var(value));
+std::vector<TrackMeterSpec> TimelineEngine::meterSnapshot() {
+    std::vector<TrackMeterSpec> meters;
+    AudioReadScope read(*this);
+    const auto* active = read.get();
+    if (active == nullptr) return meters;
+    meters.reserve(active->tracks.size());
+    for (const auto& track : active->tracks) {
+        if (track == nullptr || track->runtime == nullptr) continue;
+        const auto snapshot = track->runtime->meter.consume();
+        meters.push_back({track->id, snapshot.peakLeft, snapshot.peakRight, snapshot.rmsLeft,
+                          snapshot.rmsRight});
     }
     return meters;
 }
@@ -294,17 +277,17 @@ void TimelineEngine::discardPreparedSnapshot() noexcept {
 }
 
 void TimelineEngine::startPreparing() noexcept {
-    state.store(State::starting, std::memory_order_release);
+    state.store(TransportState::starting, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TimelineEngine::play() noexcept {
-    state.store(State::playing, std::memory_order_release);
+    state.store(TransportState::playing, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TimelineEngine::stop() noexcept {
-    state.store(State::stopped, std::memory_order_release);
+    state.store(TransportState::stopped, std::memory_order_release);
     recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
@@ -328,102 +311,52 @@ void TimelineEngine::seekToTick(const std::uint64_t tick) noexcept {
     const auto sample = timeline->timebase.tickToSample(tick, timeline->outputSampleRate);
     pendingSeekSample.store(sample, std::memory_order_release);
     seekPending.store(true, std::memory_order_release);
-    seekRequestedWhileStopped.store(state.load(std::memory_order_acquire) != State::playing,
-                                    std::memory_order_release);
+    seekRequestedWhileStopped.store(
+        state.load(std::memory_order_acquire) != TransportState::playing,
+        std::memory_order_release);
     discontinuity.fetch_add(1, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_relaxed);
 }
 
-juce::var TimelineEngine::status() const {
-    auto* object = new juce::DynamicObject();
-    object->setProperty("type", "transportStatus");
-    const auto currentState = state.load(std::memory_order_acquire);
-    object->setProperty("state", currentState == State::playing    ? "playing"
-                                 : currentState == State::starting ? "starting"
-                                 : currentState == State::faulted  ? "faulted"
-                                                                   : "stopped");
-    const auto reportedTimelineSample = seekPending.load(std::memory_order_acquire)
-                                            ? pendingSeekSample.load(std::memory_order_acquire)
-                                            : timelineSample.load(std::memory_order_acquire);
-    object->setProperty("timelineSample", static_cast<juce::int64>(reportedTimelineSample));
-    object->setProperty("audioClockSample",
-                        static_cast<juce::int64>(audioClockSample.load(std::memory_order_acquire)));
-    object->setProperty(
-        "sequence", static_cast<juce::int64>(sequence.fetch_add(1, std::memory_order_relaxed) + 1));
-    object->setProperty("graphRevision", 0);
-    object->setProperty(
-        "graphPublishCount",
-        static_cast<juce::int64>(graphPublishCount.load(std::memory_order_acquire)));
-    object->setProperty("trackCount", 0);
-    object->setProperty("instrumentRuntimeCount", 0);
-    object->setProperty("pluginCount", 0);
-    object->setProperty("maximumLatencySamples", 0);
-    object->setProperty("liveMidiDrops", 0);
-    object->setProperty("clockGeneration",
-                        static_cast<juce::int64>(clockGeneration.load(std::memory_order_acquire)));
-    object->setProperty("discontinuity",
-                        static_cast<juce::int64>(discontinuity.load(std::memory_order_acquire)));
-    object->setProperty("revision", 0);
-    object->setProperty("sampleRate", 0.0);
-    object->setProperty("timelineTick", 0);
-    const auto phase = recordingPhase.load(std::memory_order_acquire);
-    object->setProperty("recordingPhase", phase == RecordingPhase::countingIn  ? "countingIn"
-                                          : phase == RecordingPhase::recording ? "recording"
-                                          : phase == RecordingPhase::stopping  ? "stopping"
-                                                                               : "idle");
-    object->setProperty(
-        "recordingStartTick",
-        static_cast<juce::int64>(recordingStartTick.load(std::memory_order_acquire)));
-    object->setProperty("recordingPassOrdinal",
-                        static_cast<int>(recordingPassOrdinal.load(std::memory_order_acquire)));
-    object->setProperty("recordingCaptureErrors",
-                        static_cast<juce::int64>(recordingCapture->captureErrors()));
-    object->setProperty("instrumentFaults", juce::Array<juce::var>{});
-    juce::Array<juce::var> armedTrackIds;
-    juce::Array<juce::var> instrumentFaults;
+TimelineStatus TimelineEngine::status() const {
+    TimelineStatus status;
+    status.transportState = state.load(std::memory_order_acquire);
+    status.recordingPhase = recordingPhase.load(std::memory_order_acquire);
+    status.timelineSample = seekPending.load(std::memory_order_acquire)
+                                ? pendingSeekSample.load(std::memory_order_acquire)
+                                : timelineSample.load(std::memory_order_acquire);
+    status.audioClockSample = audioClockSample.load(std::memory_order_acquire);
+    status.sequence = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    status.recordingStartTick = recordingStartTick.load(std::memory_order_acquire);
+    status.recordingPassOrdinal = recordingPassOrdinal.load(std::memory_order_acquire);
+    status.clockGeneration = clockGeneration.load(std::memory_order_acquire);
+    status.discontinuity = discontinuity.load(std::memory_order_acquire);
+    status.graphPublishCount = graphPublishCount.load(std::memory_order_acquire);
     const juce::SpinLock::ScopedTryLockType lock(timelineLock);
-    if (lock.isLocked() && timeline != nullptr) {
-        object->setProperty("revision", static_cast<juce::int64>(timeline->revision));
-        object->setProperty("graphRevision", static_cast<juce::int64>(timeline->revision));
-        object->setProperty("sampleRate", timeline->outputSampleRate);
-        std::uint64_t liveMidiDrops = 0;
-        int instrumentRuntimeCount = 0;
-        int pluginCount = 0;
-        int maximumLatencySamples = 0;
-        const auto tick = static_cast<juce::int64>(timeline->timebase.sampleToTick(
-            timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate));
-        object->setProperty("timelineTick", tick);
-        object->setProperty("recordingCurrentTick", tick);
-        for (const auto& track : timeline->tracks) {
-            if (track == nullptr) continue;
-            if (track->runtime != nullptr) {
-                if (track->runtime->instrument() != nullptr) ++instrumentRuntimeCount;
-                pluginCount += track->runtime->effects().size();
-                maximumLatencySamples =
-                    std::max(maximumLatencySamples, track->runtime->pluginLatencySamples());
-                if (track->runtime->instrument() != nullptr)
-                    liveMidiDrops += track->runtime->instrument()->droppedMidiEvents();
-            }
-            if (track->runtime != nullptr && track->runtime->armed) armedTrackIds.add(track->id);
-            if (track->runtime == nullptr || track->runtime->instrument() == nullptr) continue;
-            auto* fault = new juce::DynamicObject();
-            fault->setProperty("trackId", track->id);
-            fault->setProperty("instrumentType", track->runtime->instrument()->typeName());
-            fault->setProperty("faultCode",
-                               static_cast<juce::int64>(track->runtime->instrument()->faultCode()));
-            const auto droppedMidi = track->runtime->instrument()->droppedMidiEvents();
-            fault->setProperty("droppedMidiEvents", static_cast<juce::int64>(droppedMidi));
-            instrumentFaults.add(juce::var(fault));
-        }
-        object->setProperty("trackCount", static_cast<int>(timeline->tracks.size()));
-        object->setProperty("instrumentRuntimeCount", instrumentRuntimeCount);
-        object->setProperty("pluginCount", pluginCount);
-        object->setProperty("maximumLatencySamples", maximumLatencySamples);
-        object->setProperty("liveMidiDrops", static_cast<juce::int64>(liveMidiDrops));
+    if (!lock.isLocked() || timeline == nullptr) return status;
+    auto& graph = status.graph.emplace();
+    graph.revision = timeline->revision;
+    graph.sampleRate = timeline->outputSampleRate;
+    graph.timelineTick = timeline->timebase.sampleToTick(
+        timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate);
+    graph.trackCount = timeline->tracks.size();
+    for (const auto& track : timeline->tracks) {
+        if (track == nullptr || track->runtime == nullptr) continue;
+        const auto& runtime = *track->runtime;
+        graph.pluginCount += static_cast<std::uint64_t>(runtime.effects().size());
+        graph.maximumLatencySamples =
+            std::max<std::uint64_t>(graph.maximumLatencySamples,
+                                    static_cast<std::uint64_t>(runtime.pluginLatencySamples()));
+        if (runtime.armed) graph.armedTrackIds.push_back(track->id);
+        const auto* instrument = runtime.instrument();
+        if (instrument == nullptr) continue;
+        ++graph.instrumentRuntimeCount;
+        graph.liveMidiDrops += instrument->droppedMidiEvents();
+        graph.instrumentFaults.push_back({track->id, instrument->typeName(),
+                                          instrument->faultCode(),
+                                          instrument->droppedMidiEvents()});
     }
-    object->setProperty("armedTrackIds", armedTrackIds);
-    object->setProperty("instrumentFaults", instrumentFaults);
-    return juce::var(object);
+    return status;
 }
 
 }  // namespace riffra

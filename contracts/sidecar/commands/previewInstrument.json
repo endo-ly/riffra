@@ -1,0 +1,25 @@
+{
+  "command": {
+    "definitionBaseDir": "instruments/piano",
+    "definitionJson": "{}",
+    "preview": {
+      "lengthTicks": 1920,
+      "notes": [
+        {
+          "durationTicks": 480,
+          "note": 60,
+          "tick": 0,
+          "velocity": 100
+        }
+      ],
+      "tempoBpm": 120.0,
+      "ticksPerBeat": 480,
+      "timeSignature": {
+        "denominator": 4,
+        "numerator": 4
+      }
+    },
+    "type": "previewInstrument"
+  },
+  "requestId": 1
+}

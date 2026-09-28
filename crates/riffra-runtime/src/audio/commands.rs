@@ -1,9 +1,12 @@
 use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::AudioDeviceReopenOutcome;
-use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor};
-use crate::execution::TimelineSnapshot;
+use super::wire::{SidecarCommand, SidecarResponse, TakeComparisonVariant, WirePluginState};
+use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor, COMMAND_ACK_TIMEOUT};
+use crate::execution::{GraphPluginState, TimelineSnapshot};
 use crate::instrument::InstrumentPreviewDefinition;
-use crate::model::AudioStatus;
+use crate::model::{
+    AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
+};
 use crate::preferences::AudioDriverConfig;
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
@@ -11,11 +14,14 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
-pub(super) fn emergency_mute_command(muted: bool) -> Value {
-    serde_json::json!({
-        "type": "setEmergencyMute",
-        "muted": muted,
-    })
+const TRACK_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Programs exposed by a Track Device plugin.
+#[derive(Clone, Debug)]
+pub(crate) struct PluginPrograms {
+    /// Selected program; `None` when the plugin reports none.
+    pub(crate) current_index: Option<u32>,
+    pub(crate) presets: Vec<PluginPresetInfo>,
 }
 
 fn device_command_requires_restart(error: &NativeAudioError) -> bool {
@@ -69,36 +75,64 @@ fn validate_midi_bytes(bytes: &[u8]) -> NativeAudioResult<()> {
     Ok(())
 }
 
-fn set_track_device_parameter_command(
-    track_id: &str,
-    device_id: &str,
-    parameter_index: u32,
-    value: f32,
-) -> serde_json::Value {
-    serde_json::json!({
-        "type": "setTrackDeviceParameter",
-        "trackId": track_id,
-        "deviceId": device_id,
-        "parameterIndex": parameter_index,
-        "value": value.clamp(0.0, 1.0),
-    })
+fn plugin_state(state: WirePluginState) -> GraphPluginState {
+    GraphPluginState {
+        state_data: state.state_data,
+        parameter_values: state.parameter_values,
+        bypassed: state.bypassed,
+    }
 }
 
-fn start_arrange_recording_command(directory: &Path, count_in_beats: u8) -> serde_json::Value {
-    serde_json::json!({
-        "type": "startArrangeRecording",
-        "directory": directory.to_string_lossy(),
-        "countInBeats": count_in_beats,
-    })
+fn unexpected(response: &SidecarResponse) -> NativeAudioError {
+    NativeAudioError::protocol(format!(
+        "unexpected response {:?} was accepted by the command bus",
+        response.kind()
+    ))
 }
 
 impl AudioSupervisor {
-    pub fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(serde_json::json!({"type": "status"}), "")
+    /// Sends a command whose response is the full audio status and returns the
+    /// retained status, optionally replacing its message.
+    fn request_status(
+        &self,
+        command: SidecarCommand,
+        message: &str,
+        timeout: Duration,
+    ) -> NativeAudioResult<AudioStatus> {
+        self.request(command, timeout)?;
+        let mut status = self
+            .status
+            .lock()
+            .map_err(|_| NativeAudioError::LockPoisoned {
+                resource: "Audio status",
+            })?;
+        if !message.is_empty() {
+            status.message = message.into();
+        }
+        Ok(status.clone())
     }
 
-    pub fn refresh_meters(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(serde_json::json!({"type": "meterStatus"}), "")
+    /// Sends a command that only needs its acknowledgement.
+    pub(super) fn request_ack(
+        &self,
+        command: SidecarCommand,
+        timeout: Duration,
+    ) -> NativeAudioResult<()> {
+        self.request(command, timeout).map(drop)
+    }
+
+    fn request_plugin_state(&self, command: SidecarCommand) -> NativeAudioResult<GraphPluginState> {
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::TrackPluginState(response)
+            | SidecarResponse::TrackDeviceProgramChanged(response) => {
+                Ok(plugin_state(response.state))
+            }
+            response => Err(unexpected(&response)),
+        }
+    }
+
+    pub fn refresh_status(&self) -> NativeAudioResult<AudioStatus> {
+        self.request_status(SidecarCommand::Status, "", COMMAND_ACK_TIMEOUT)
     }
 
     pub(crate) fn prepare_timeline_snapshot(
@@ -106,72 +140,51 @@ impl AudioSupervisor {
         snapshot: &TimelineSnapshot,
         timeout: Duration,
     ) -> NativeAudioResult<()> {
-        let snapshot =
-            serde_json::to_value(snapshot).map_err(|error| NativeAudioError::Protocol {
-                message: format!("Timeline snapshot could not be encoded: {error}"),
-            })?;
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "prepareTimelineSnapshot",
-                "protocolVersion": 2,
-                "snapshot": snapshot,
-            }),
-            "",
+        self.request_ack(
+            SidecarCommand::PrepareTimelineSnapshot {
+                snapshot: snapshot.clone(),
+            },
             timeout.min(TIMELINE_PREPARE_TIMEOUT),
         )
     }
 
     pub fn commit_timeline_snapshot(&self, timeout: Duration) -> NativeAudioResult<()> {
-        self.send_command_ack(
-            serde_json::json!({"type": "commitTimelineSnapshot"}),
-            "",
-            timeout.min(Duration::from_secs(3)),
+        self.request_ack(
+            SidecarCommand::CommitTimelineSnapshot,
+            timeout.min(COMMAND_ACK_TIMEOUT),
         )
     }
 
     pub fn discard_timeline_snapshot(&self, timeout: Duration) -> NativeAudioResult<()> {
-        self.send_command_ack(
-            serde_json::json!({"type": "discardTimelineSnapshot"}),
-            "",
-            timeout.min(Duration::from_secs(3)),
+        self.request_ack(
+            SidecarCommand::DiscardTimelineSnapshot,
+            timeout.min(COMMAND_ACK_TIMEOUT),
         )
     }
 
     pub fn wait_for_timeline_idle(&self, timeout: Duration) -> NativeAudioResult<()> {
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "waitForTimelineIdle",
-                "timeoutMs": timeout.as_millis().min(u64::MAX as u128) as u64,
-            }),
-            "",
+        self.request_ack(
+            SidecarCommand::WaitForTimelineIdle {
+                timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            },
             timeout,
         )
     }
 
     pub fn play_timeline(&self) -> NativeAudioResult<()> {
-        self.send_command(serde_json::json!({"type": "playTimeline"}), "")?;
-        Ok(())
+        self.request_ack(SidecarCommand::PlayTimeline, COMMAND_ACK_TIMEOUT)
     }
 
     pub fn set_transport_starting(&self) -> NativeAudioResult<()> {
-        self.send_command_ack(
-            serde_json::json!({"type": "setTransportStarting"}),
-            "",
-            Duration::from_secs(3),
-        )
+        self.request_ack(SidecarCommand::SetTransportStarting, COMMAND_ACK_TIMEOUT)
     }
 
     pub fn stop_timeline(&self) -> NativeAudioResult<()> {
-        self.send_command(serde_json::json!({"type": "stopTimeline"}), "")?;
-        Ok(())
+        self.request_ack(SidecarCommand::StopTimeline, COMMAND_ACK_TIMEOUT)
     }
 
     pub fn seek_timeline(&self, tick: u64) -> NativeAudioResult<()> {
-        self.send_command(
-            serde_json::json!({"type": "seekTimeline", "tick": tick}),
-            "",
-        )?;
-        Ok(())
+        self.request_ack(SidecarCommand::SeekTimeline { tick }, COMMAND_ACK_TIMEOUT)
     }
 
     pub fn set_track_device_bypassed(
@@ -180,16 +193,14 @@ impl AudioSupervisor {
         device_id: &str,
         bypassed: bool,
     ) -> NativeAudioResult<()> {
-        self.send_command(
-            serde_json::json!({
-                "type": "setTrackDeviceBypassed",
-                "trackId": track_id,
-                "deviceId": device_id,
-                "bypassed": bypassed,
-            }),
-            "",
-        )?;
-        Ok(())
+        self.request_ack(
+            SidecarCommand::SetTrackDeviceBypassed {
+                track_id: track_id.into(),
+                device_id: device_id.into(),
+                bypassed,
+            },
+            COMMAND_ACK_TIMEOUT,
+        )
     }
 
     pub fn set_track_device_parameter(
@@ -204,106 +215,134 @@ impl AudioSupervisor {
                 "Track Device parameter value must be finite.",
             ));
         }
-        self.send_command(
-            set_track_device_parameter_command(track_id, device_id, parameter_index, value),
-            "",
-        )?;
-        Ok(())
-    }
-
-    pub fn inspect_track_device(
-        &self,
-        track_id: &str,
-        device_id: &str,
-    ) -> NativeAudioResult<Value> {
-        self.send_command_value(
-            serde_json::json!({
-                "type": "getTrackDeviceStatus",
-                "trackId": track_id,
-                "deviceId": device_id,
-            }),
-            Duration::from_secs(10),
+        self.request_ack(
+            SidecarCommand::SetTrackDeviceParameter {
+                track_id: track_id.into(),
+                device_id: device_id.into(),
+                parameter_index,
+                value: value.clamp(0.0, 1.0),
+            },
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
-    pub fn list_track_device_parameters(
+    pub(crate) fn inspect_track_device(
         &self,
         track_id: &str,
         device_id: &str,
-    ) -> NativeAudioResult<Value> {
-        self.send_command_value(
-            serde_json::json!({
-                "type": "getTrackDeviceParameters",
-                "trackId": track_id,
-                "deviceId": device_id,
+    ) -> NativeAudioResult<DeviceInspection> {
+        let command = SidecarCommand::GetTrackDeviceStatus {
+            track_id: track_id.into(),
+            device_id: device_id.into(),
+        };
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::TrackDeviceStatus(status) => Ok(DeviceInspection {
+                id: device_id.into(),
+                name: status.name,
+                source: "vst3".into(),
+                bypassed: status.bypassed,
+                capabilities: DeviceCapabilities {
+                    parameters: status.capabilities.parameters,
+                    state: status.capabilities.state,
+                    presets: status.capabilities.presets,
+                    editor: status.capabilities.editor,
+                },
+                parameter_count: status.parameter_count as usize,
+                state_persisted: true,
             }),
-            Duration::from_secs(10),
-        )
+            response => Err(unexpected(&response)),
+        }
     }
 
-    pub fn get_track_plugin_state(
+    pub(crate) fn list_track_device_parameters(
         &self,
         track_id: &str,
         device_id: &str,
-    ) -> NativeAudioResult<Value> {
-        self.send_command_value(
-            serde_json::json!({
-                "type": "getTrackPluginState",
-                "trackId": track_id,
-                "deviceId": device_id,
-            }),
-            Duration::from_secs(10),
-        )
+    ) -> NativeAudioResult<Vec<DeviceParameterInfo>> {
+        let command = SidecarCommand::GetTrackDeviceParameters {
+            track_id: track_id.into(),
+            device_id: device_id.into(),
+        };
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::TrackDeviceParameters(status) => Ok(status
+                .parameters
+                .into_iter()
+                .map(|parameter| DeviceParameterInfo {
+                    index: parameter.index,
+                    name: Some(parameter.name),
+                    value: parameter.value,
+                    default_value: parameter.default_value,
+                    automatable: parameter.automatable,
+                })
+                .collect()),
+            response => Err(unexpected(&response)),
+        }
     }
 
-    pub fn set_track_plugin_state(
+    pub(crate) fn get_track_plugin_state(
         &self,
         track_id: &str,
         device_id: &str,
-        state: Value,
+    ) -> NativeAudioResult<GraphPluginState> {
+        self.request_plugin_state(SidecarCommand::GetTrackPluginState {
+            track_id: track_id.into(),
+            device_id: device_id.into(),
+        })
+    }
+
+    pub(crate) fn set_track_plugin_state(
+        &self,
+        track_id: &str,
+        device_id: &str,
+        state: GraphPluginState,
     ) -> NativeAudioResult<()> {
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "setTrackPluginState",
-                "trackId": track_id,
-                "deviceId": device_id,
-                "state": state,
-            }),
-            "",
-            Duration::from_secs(10),
+        self.request_ack(
+            SidecarCommand::SetTrackPluginState {
+                track_id: track_id.into(),
+                device_id: device_id.into(),
+                state,
+            },
+            TRACK_DEVICE_COMMAND_TIMEOUT,
         )
     }
 
-    pub fn list_track_plugin_programs(
+    pub(crate) fn list_track_plugin_programs(
         &self,
         track_id: &str,
         device_id: &str,
-    ) -> NativeAudioResult<Value> {
-        self.send_command_value(
-            serde_json::json!({
-                "type": "getTrackDevicePrograms",
-                "trackId": track_id,
-                "deviceId": device_id,
+    ) -> NativeAudioResult<PluginPrograms> {
+        let command = SidecarCommand::GetTrackDevicePrograms {
+            track_id: track_id.into(),
+            device_id: device_id.into(),
+        };
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::TrackDevicePrograms(programs) => Ok(PluginPrograms {
+                current_index: programs.current_index,
+                presets: programs
+                    .programs
+                    .into_iter()
+                    .map(|program| PluginPresetInfo {
+                        index: program.index,
+                        name: program.name,
+                    })
+                    .collect(),
             }),
-            Duration::from_secs(10),
-        )
+            response => Err(unexpected(&response)),
+        }
     }
 
-    pub fn set_track_plugin_program(
+    /// Selects a plugin program and returns the resulting plugin state.
+    pub(crate) fn set_track_plugin_program(
         &self,
         track_id: &str,
         device_id: &str,
         program_index: u32,
-    ) -> NativeAudioResult<Value> {
-        self.send_command_value(
-            serde_json::json!({
-                "type": "setTrackDeviceProgram",
-                "trackId": track_id,
-                "deviceId": device_id,
-                "programIndex": program_index,
-            }),
-            Duration::from_secs(10),
-        )
+    ) -> NativeAudioResult<GraphPluginState> {
+        self.request_plugin_state(SidecarCommand::SetTrackDeviceProgram {
+            track_id: track_id.into(),
+            device_id: device_id.into(),
+            program_index,
+        })
     }
 
     pub fn open_track_plugin_editor(
@@ -312,17 +351,14 @@ impl AudioSupervisor {
         track_id: &str,
         device_id: &str,
     ) -> NativeAudioResult<()> {
-        self.send_command_with_timeout(
-            serde_json::json!({
-                "type": "openTrackPluginEditor",
-                "projectId": project_id,
-                "trackId": track_id,
-                "deviceId": device_id,
-            }),
-            "",
-            Duration::from_secs(10),
-        )?;
-        Ok(())
+        self.request_ack(
+            SidecarCommand::OpenTrackPluginEditor {
+                project_id: project_id.into(),
+                track_id: track_id.into(),
+                device_id: device_id.into(),
+            },
+            TRACK_DEVICE_COMMAND_TIMEOUT,
+        )
     }
 
     pub fn start_arrange_recording(
@@ -335,27 +371,31 @@ impl AudioSupervisor {
                 "The previous recording is still being finalized.",
             ));
         }
-        self.send_command(
-            start_arrange_recording_command(directory, count_in_beats),
+        self.request_status(
+            SidecarCommand::StartArrangeRecording {
+                directory: directory.to_string_lossy().into_owned(),
+                count_in_beats,
+            },
             "Arrange recording scheduled on the Native Audio Clock.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn stop_arrange_recording(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "stopArrangeRecording"}),
+        self.request_status(
+            SidecarCommand::StopArrangeRecording,
             "Arrange recording stopped on the Native Audio Clock.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn preview_master_gain_db(&self, gain_db: f64) -> NativeAudioResult<()> {
-        let safe_gain = gain_db.clamp(-90.0, 0.0);
-        self.send_command_ack(
-            serde_json::json!({"type": "previewMasterGainDb", "gainDb": safe_gain}),
-            "",
-            Duration::from_secs(3),
-        )?;
-        Ok(())
+        self.request_ack(
+            SidecarCommand::PreviewMasterGainDb {
+                gain_db: gain_db.clamp(-90.0, 0.0),
+            },
+            COMMAND_ACK_TIMEOUT,
+        )
     }
 
     /// Applies a transient Track mix change to the active Native graph.
@@ -385,15 +425,13 @@ impl AudioSupervisor {
                 "Track mix values must be finite.",
             ));
         }
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "setTrackMix",
-                "trackId": track_id,
-                "gainDb": gain_db.map(|value| value.clamp(-90.0, 24.0)),
-                "pan": pan.map(|value| value.clamp(-1.0, 1.0)),
-            }),
-            "",
-            Duration::from_secs(3),
+        self.request_ack(
+            SidecarCommand::SetTrackMix {
+                track_id: track_id.into(),
+                gain_db: gain_db.map(|value| value.clamp(-90.0, 24.0)),
+                pan: pan.map(|value| value.clamp(-1.0, 1.0)),
+            },
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
@@ -405,19 +443,16 @@ impl AudioSupervisor {
         looped: bool,
         gain: f32,
     ) -> NativeAudioResult<AudioStatus> {
-        let mut command = serde_json::json!({
-            "type": "previewSample",
-            "path": path.to_string_lossy(),
-            "startMs": start_ms,
-            "gain": gain.clamp(0.0, 2.0),
-            "loop": looped,
-        });
-        if let Some(end_ms) = end_ms {
-            command["endMs"] = serde_json::json!(end_ms);
-        }
-        self.send_command(
-            command,
+        self.request_status(
+            SidecarCommand::PreviewSample {
+                path: path.to_string_lossy().into_owned(),
+                start_ms,
+                end_ms,
+                gain: gain.clamp(0.0, 2.0),
+                looped,
+            },
             "Sample preview queued through the safety limiter; output remains muted until unmuted.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
@@ -427,28 +462,30 @@ impl AudioSupervisor {
         definition_base_dir: &Path,
         preview: &InstrumentPreviewDefinition,
     ) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({
-                "type": "previewInstrument",
-                "definitionJson": definition_json,
-                "definitionBaseDir": definition_base_dir.to_string_lossy(),
-                "preview": preview,
-            }),
+        self.request_status(
+            SidecarCommand::PreviewInstrument {
+                definition_json: definition_json.into(),
+                definition_base_dir: definition_base_dir.to_string_lossy().into_owned(),
+                preview: preview.clone(),
+            },
             "Instrument preview started through the realtime runtime.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn stop_preview(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "stopPreview"}),
+        self.request_status(
+            SidecarCommand::StopPreview,
             "Sample preview stopped; the source file remains unchanged.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn stop_instrument_preview(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "stopInstrumentPreview"}),
+        self.request_status(
+            SidecarCommand::StopInstrumentPreview,
             "Instrument preview stopped; other previews remain active.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
@@ -461,17 +498,17 @@ impl AudioSupervisor {
         processed_start_frame: u64,
         processed_end_frame: u64,
     ) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({
-                "type": "startTakeComparison",
-                "rawPath": raw_path.to_string_lossy(),
-                "processedPath": processed_path.to_string_lossy(),
-                "rawStartFrame": raw_start_frame,
-                "rawEndFrame": raw_end_frame,
-                "processedStartFrame": processed_start_frame,
-                "processedEndFrame": processed_end_frame,
-            }),
+        self.request_status(
+            SidecarCommand::StartTakeComparison {
+                raw_path: raw_path.to_string_lossy().into_owned(),
+                processed_path: processed_path.to_string_lossy().into_owned(),
+                raw_start_frame,
+                raw_end_frame,
+                processed_start_frame,
+                processed_end_frame,
+            },
             "Take comparison started with one synchronized audition voice.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
@@ -479,29 +516,31 @@ impl AudioSupervisor {
         &self,
         variant: AudioTakeVariant,
     ) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({
-                "type": "switchTakeComparisonVariant",
-                "variant": match variant {
-                    AudioTakeVariant::Raw => "raw",
-                    AudioTakeVariant::Processed => "processed",
+        self.request_status(
+            SidecarCommand::SwitchTakeComparisonVariant {
+                variant: match variant {
+                    AudioTakeVariant::Raw => TakeComparisonVariant::Raw,
+                    AudioTakeVariant::Processed => TakeComparisonVariant::Processed,
                 },
-            }),
+            },
             "Take comparison variant switched without moving its audition cursor.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn stop_take_comparison(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "stopTakeComparison"}),
+        self.request_status(
+            SidecarCommand::StopTakeComparison,
             "Take comparison stopped.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn enable_midi_listening(&self) -> NativeAudioResult<AudioStatus> {
-        let status = self.send_command(
-            serde_json::json!({"type": "enableMidiListening"}),
+        let status = self.request_status(
+            SidecarCommand::EnableMidiListening,
             "MIDI listening enabled; all detected inputs are routed to the rack.",
+            COMMAND_ACK_TIMEOUT,
         )?;
         self.recovery
             .runtime_controls
@@ -514,9 +553,10 @@ impl AudioSupervisor {
     }
 
     pub fn disable_midi_listening(&self) -> NativeAudioResult<AudioStatus> {
-        let status = self.send_command(
-            serde_json::json!({"type": "disableMidiListening"}),
+        let status = self.request_status(
+            SidecarCommand::DisableMidiListening,
             "MIDI listening disabled; no external MIDI device is being consumed.",
+            COMMAND_ACK_TIMEOUT,
         )?;
         self.recovery
             .runtime_controls
@@ -535,15 +575,12 @@ impl AudioSupervisor {
             ));
         }
         validate_midi_bytes(bytes)?;
-        let payload_bytes: Vec<u64> = bytes.iter().map(|byte| *byte as u64).collect();
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "sendTrackMidi",
-                "trackId": track_id,
-                "bytes": payload_bytes,
-            }),
-            "MIDI message enqueued for the target Instrument Track.",
-            Duration::from_secs(3),
+        self.request_ack(
+            SidecarCommand::SendTrackMidi {
+                track_id: track_id.into(),
+                bytes: bytes.to_vec(),
+            },
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
@@ -553,14 +590,14 @@ impl AudioSupervisor {
                 "A live MIDI target must be an Instrument Track.",
             ));
         }
-        self.send_command_ack(
-            serde_json::json!({
-                "type": "setLiveMidiTarget",
-                "trackId": track_id.unwrap_or(""),
-            }),
+        self.request_status(
+            SidecarCommand::SetLiveMidiTarget {
+                track_id: track_id.map(str::to_owned),
+            },
             "Live MIDI target updated.",
-            Duration::from_secs(3),
+            COMMAND_ACK_TIMEOUT,
         )
+        .map(drop)
     }
 
     pub fn panic_track_midi(&self, track_id: &str) -> NativeAudioResult<()> {
@@ -569,18 +606,18 @@ impl AudioSupervisor {
                 "A target track is required for MIDI panic.",
             ));
         }
-        self.send_command_ack(
-            serde_json::json!({"type": "panicTrackMidi", "trackId": track_id}),
-            "Target Instrument Track MIDI panic requested.",
-            Duration::from_secs(3),
+        self.request_ack(
+            SidecarCommand::PanicTrackMidi {
+                track_id: track_id.into(),
+            },
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn recover_audio_device(&self) -> NativeAudioResult<AudioDeviceReopenOutcome> {
-        let command = serde_json::json!({"type": "recoverAudioDevice"});
         let expected_generation = self.sidecar_generation();
-        match self.send_command_with_timeout(
-            command,
+        match self.request_status(
+            SidecarCommand::RecoverAudioDevice,
             "Audio device recovery requested; output remains muted until the device is ready.",
             AUDIO_DEVICE_COMMAND_TIMEOUT,
         ) {
@@ -604,22 +641,16 @@ impl AudioSupervisor {
         &self,
         config: &AudioDriverConfig,
     ) -> NativeAudioResult<AudioDeviceReopenOutcome> {
-        let mut command = serde_json::json!({"type": "setAudioDriver", "driver": config.driver});
-        if let Some(input_device) = config.input_device.as_deref() {
-            command["inputDevice"] = serde_json::json!(input_device);
-        }
-        command["inputChannel"] = serde_json::json!(config.input_channel);
-        if let Some(output_device) = config.output_device.as_deref() {
-            command["outputDevice"] = serde_json::json!(output_device);
-        }
-        if let Some(sample_rate) = config.sample_rate {
-            command["sampleRate"] = serde_json::json!(sample_rate);
-        }
-        if let Some(buffer_size) = config.buffer_size {
-            command["bufferSize"] = serde_json::json!(buffer_size);
-        }
+        let command = SidecarCommand::SetAudioDriver {
+            driver: config.driver.clone(),
+            input_device: config.input_device.clone(),
+            input_channel: config.input_channel,
+            output_device: config.output_device.clone(),
+            sample_rate: config.sample_rate,
+            buffer_size: config.buffer_size,
+        };
         let expected_generation = self.sidecar_generation();
-        match self.send_command_with_timeout(
+        match self.request_status(
             command,
             "Audio driver switch requested; output remains muted until the new device is ready.",
             AUDIO_DEVICE_COMMAND_TIMEOUT,
@@ -643,7 +674,15 @@ impl AudioSupervisor {
     /// Applies a user-selected mute state and records only that user intent
     /// for future sidecar recovery.
     pub fn set_emergency_mute_from_user(&self, muted: bool) -> NativeAudioResult<AudioStatus> {
-        let status = self.send_emergency_mute_command(muted)?;
+        let status = self.request_status(
+            SidecarCommand::SetEmergencyMute { muted },
+            if muted {
+                "User mute is engaged; saved and recorded data is unaffected."
+            } else {
+                "User mute was released through the safety limiter."
+            },
+            COMMAND_ACK_TIMEOUT,
+        )?;
         self.recovery
             .runtime_controls
             .lock()
@@ -657,53 +696,29 @@ impl AudioSupervisor {
     /// Explicitly releases the feedback detector's safety latch while
     /// preserving every other mute owner.
     pub fn reset_feedback_protection(&self) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "setFeedbackProtection", "active": false}),
+        self.request_status(
+            SidecarCommand::SetFeedbackProtection { active: false },
             "Feedback protection was released through the safety control.",
+            COMMAND_ACK_TIMEOUT,
         )
     }
 
     pub fn set_engine_transition_mute(&self, active: bool) -> NativeAudioResult<AudioStatus> {
-        self.send_command(
-            serde_json::json!({"type": "setEngineTransitionMute", "active": active}),
+        self.request_status(
+            SidecarCommand::SetEngineTransitionMute { active },
             if active {
                 "Audio engine transition started; output is muted until the graph is active."
             } else {
                 "Audio engine transition completed."
             },
+            COMMAND_ACK_TIMEOUT,
         )
-    }
-
-    pub(super) fn send_emergency_mute_command(
-        &self,
-        muted: bool,
-    ) -> NativeAudioResult<AudioStatus> {
-        let status = self.send_command(
-            emergency_mute_command(muted),
-            if muted {
-                "User mute is engaged; saved and recorded data is unaffected."
-            } else {
-                "User mute was released through the safety limiter."
-            },
-        )?;
-        Ok(status)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn emergency_mute_command_uses_only_the_muted_field() {
-        let unmuted = emergency_mute_command(false);
-        let muted = emergency_mute_command(true);
-
-        assert_eq!(unmuted["type"], "setEmergencyMute");
-        assert_eq!(unmuted["muted"], false);
-        assert!(unmuted.get("active").is_none());
-        assert_eq!(muted["muted"], true);
-    }
 
     #[test]
     fn device_timeout_becomes_a_failed_restore_result() {

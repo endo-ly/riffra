@@ -38,9 +38,10 @@ use riffra_runtime::projects::ProjectExport;
 use riffra_runtime::{
     ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
-    DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
-    PluginStateSnapshot, ProjectionDiagnostics, RuntimeProjectionState, TrackDeviceSummary,
-    TrackRackSummary, TrackSummary,
+    AudioMeterFrame, DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
+    PluginStateSnapshot, ProjectionDiagnostics, RecordingFinalized, RecordingPhase,
+    RuntimeProjectionState, RuntimeRestarted, RuntimeStartupFinished, TrackAudioMeter,
+    TrackDeviceSummary, TrackRackSummary, TrackSummary, TransportState, TransportStatus,
 };
 use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
@@ -114,6 +115,14 @@ fn export_types() {
     RuntimeProjectionState::export_all(&cfg).expect("RuntimeProjectionState bindings");
     ProjectionDiagnostics::export_all(&cfg).expect("ProjectionDiagnostics bindings");
     RuntimeProjectionStatus::export_all(&cfg).expect("RuntimeProjectionStatus bindings");
+    TransportState::export_all(&cfg).expect("TransportState bindings");
+    RecordingPhase::export_all(&cfg).expect("RecordingPhase bindings");
+    TransportStatus::export_all(&cfg).expect("TransportStatus bindings");
+    TrackAudioMeter::export_all(&cfg).expect("TrackAudioMeter bindings");
+    AudioMeterFrame::export_all(&cfg).expect("AudioMeterFrame bindings");
+    RecordingFinalized::export_all(&cfg).expect("RecordingFinalized bindings");
+    RuntimeRestarted::export_all(&cfg).expect("RuntimeRestarted bindings");
+    RuntimeStartupFinished::export_all(&cfg).expect("RuntimeStartupFinished bindings");
     RecordingStopResult::export_all(&cfg).expect("RecordingStopResult bindings");
     RecordingFinalizationOutcome::export_all(&cfg).expect("RecordingFinalizationOutcome bindings");
     ArrangementMutationResult::export_all(&cfg).expect("ArrangementMutationResult bindings");

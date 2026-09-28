@@ -1,188 +1,22 @@
-use super::error::{NativeAudioError, NativeAudioResult};
-use crate::model::{
-    AudioChannelInfo, AudioDiagnostics, AudioInstrumentFault, AudioState, AudioStatus,
-    RecordingStatus,
+//! Translation of sidecar messages into Host state and events.
+
+use super::AudioSupervisor;
+use super::command_bus::{awaits_response, complete_request};
+use super::error::NativeAudioError;
+use super::wire::{
+    SIDECAR_PROTOCOL_VERSION, SidecarError, SidecarEvent, SidecarMessage, SidecarResponse,
+    WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault, WireRecordingPhase,
+    WireRecoveryStatus, WireTrackPluginParameterChanged, WireTrackPluginStateChanged,
+    WireTransportState, WireTransportStatus, decode_message, diagnostic_prefix,
 };
-use serde::Deserialize;
-use serde_json::Value;
+use crate::HostEvent;
+use crate::model::{
+    AudioChannelInfo, AudioDiagnostics, AudioInstrumentFault, AudioMeterFrame, AudioState,
+    AudioStatus, MidiDeviceInfo, RecordingPhase, RecordingStatus, TrackAudioMeter,
+    TrackPluginParameterChanged, TrackPluginStateChanged, TransportState, TransportStatus,
+};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-
-#[derive(Clone, Copy)]
-pub(super) enum NativeEvent {
-    AudioStatus,
-    AudioMeters,
-    RecordingCompletion,
-    None,
-}
-
-pub(super) struct NativeReply {
-    pub(super) request_id: Option<u64>,
-    pub(super) result: NativeAudioResult<()>,
-    pub(super) event: NativeEvent,
-    pub(super) value: serde_json::Value,
-}
-
-/// JSON message body for the audio sidecar IPC.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeStatus {
-    state: String,
-    driver: Option<String>,
-    input_device: Option<String>,
-    input_channel: Option<u32>,
-    input_channels: Option<Vec<NativeAudioChannelInfo>>,
-    active_input_channels: Option<Vec<u32>>,
-    output_device: Option<String>,
-    output_channels: Option<Vec<NativeAudioChannelInfo>>,
-    active_output_channels: Option<Vec<u32>>,
-    sample_rate: Option<f64>,
-    buffer_size: Option<u32>,
-    round_trip_ms: Option<f64>,
-    timeline_tick: Option<u64>,
-    recording: Option<NativeRecordingStatus>,
-    midi_inputs: Option<Vec<crate::model::MidiDeviceInfo>>,
-    midi_outputs: Option<Vec<crate::model::MidiDeviceInfo>>,
-    midi_input_active: Option<bool>,
-    midi_messages: Option<u64>,
-    last_midi_note: Option<i32>,
-    input_peak: Option<f64>,
-    output_peak: Option<f64>,
-    invalid_samples: Option<u64>,
-    mute_reasons: u32,
-    diagnostics: Option<NativeDiagnostics>,
-    feedback_suspected: Option<bool>,
-    previewing: Option<bool>,
-    #[serde(default)]
-    instrument_previewing: bool,
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeMeters {
-    project_id: String,
-    input_peak: Option<f64>,
-    output_peak: Option<f64>,
-    output_peak_left: Option<f64>,
-    output_peak_right: Option<f64>,
-    invalid_samples: Option<u64>,
-    mute_reasons: Option<u32>,
-    feedback_suspected: Option<bool>,
-    previewing: Option<bool>,
-    instrument_previewing: Option<bool>,
-    pre_limiter_peak: Option<f64>,
-    limiter_gain_reduction_db: Option<f64>,
-    hard_clip_samples: Option<u64>,
-    #[serde(default)]
-    track_meters: Vec<NativeTrackMeter>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeTrackMeter {
-    track_id: String,
-    peak_left: Option<f64>,
-    peak_right: Option<f64>,
-    rms_left: Option<f64>,
-    rms_right: Option<f64>,
-}
-
-impl NativeMeters {
-    fn has_valid_track_meters(&self) -> bool {
-        let valid_value =
-            |value: Option<f64>| value.is_none_or(|value| value.is_finite() && value >= 0.0);
-        !self.project_id.trim().is_empty()
-            && self.output_peak_left.is_none_or(|value| value.is_finite())
-            && self.output_peak_right.is_none_or(|value| value.is_finite())
-            && self.track_meters.iter().all(|meter| {
-                !meter.track_id.trim().is_empty()
-                    && valid_value(meter.peak_left)
-                    && valid_value(meter.peak_right)
-                    && valid_value(meter.rms_left)
-                    && valid_value(meter.rms_right)
-            })
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeDiagnostics {
-    callback_count: Option<u64>,
-    average_callback_duration_us: Option<u64>,
-    maximum_callback_duration_us: Option<u64>,
-    callback_overruns: Option<u64>,
-    pre_limiter_peak: Option<f64>,
-    limiter_gain_reduction_db: Option<f64>,
-    hard_clip_samples: Option<u64>,
-    live_midi_drops: Option<u64>,
-    graph_revision: Option<u64>,
-    graph_publish_count: Option<u64>,
-    track_count: Option<u64>,
-    instrument_runtime_count: Option<u64>,
-    plugin_count: Option<u64>,
-    maximum_latency_samples: Option<u64>,
-    projection_duration_ms: Option<u64>,
-    audio_environment_revision: Option<u64>,
-    instrument_faults: Option<Vec<NativeInstrumentFault>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeInstrumentFault {
-    track_id: String,
-    #[serde(default)]
-    instrument_type: String,
-    fault_code: u32,
-    dropped_midi_events: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeErrorPayload {
-    kind: String,
-    message: String,
-    operation: String,
-    details: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeRecordingStatus {
-    active: bool,
-    #[serde(default)]
-    processing: bool,
-    #[serde(default)]
-    cancelled: bool,
-    directory: Option<String>,
-    sample_rate: Option<f64>,
-    raw_channels: Option<u32>,
-    processed_channels: Option<u32>,
-    samples_written: Option<u64>,
-    dropped_midi_events: Option<u64>,
-    dropped_blocks: Option<u64>,
-    missing_samples: Option<u64>,
-    dropout_start_sample: Option<u64>,
-    dropout_end_sample: Option<u64>,
-    raw_attempted_samples: Option<u64>,
-    processed_attempted_samples: Option<u64>,
-    raw_dropped_blocks: Option<u64>,
-    processed_dropped_blocks: Option<u64>,
-    raw_missing_samples: Option<u64>,
-    processed_missing_samples: Option<u64>,
-    raw_dropout_start_sample: Option<u64>,
-    raw_dropout_end_sample: Option<u64>,
-    processed_dropout_start_sample: Option<u64>,
-    processed_dropout_end_sample: Option<u64>,
-    recovery_status: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeAudioChannelInfo {
-    index: u32,
-    name: String,
-}
 
 fn normalize_sample_rate(rate: f64) -> Option<u32> {
     if !rate.is_finite() || rate <= 0.0 || rate > f64::from(u32::MAX) {
@@ -195,188 +29,244 @@ fn normalize_sample_rate(rate: f64) -> Option<u32> {
     Some(rounded as u32)
 }
 
-fn native_status_to_audio_status(native: NativeStatus) -> AudioStatus {
-    let state = match native.state.as_str() {
-        "ready" => AudioState::Ready,
-        "muted" => AudioState::Muted,
-        "starting" => AudioState::Starting,
-        "faulted" => AudioState::Faulted,
-        _ => AudioState::Offline,
-    };
-    let mute_reasons = native.mute_reasons;
-    let state = if mute_reasons != 0 && !matches!(state, AudioState::Faulted | AudioState::Offline)
-    {
-        AudioState::Muted
-    } else if mute_reasons == 0 && state == AudioState::Muted {
-        AudioState::Ready
-    } else {
-        state
-    };
-    let fallback_message = match state {
-        AudioState::Ready => "Native audio is ready through the safety chain.".into(),
-        AudioState::Muted => "Native audio is connected and muted.".into(),
-        AudioState::Starting => "Native audio is starting safely.".into(),
-        AudioState::Faulted => "Native audio reported a fault; saved data is safe.".into(),
-        AudioState::Offline => "Native audio is offline; saved data is safe.".into(),
-    };
-    let message = native
-        .message
-        .filter(|m| !m.is_empty())
-        .unwrap_or(fallback_message);
-    AudioStatus {
-        state,
-        driver: native.driver,
-        input_device: native.input_device,
-        input_channel: native.input_channel,
-        input_channels: native
-            .input_channels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|channel| AudioChannelInfo {
-                index: channel.index,
-                name: channel.name,
-            })
-            .collect(),
-        active_input_channels: native.active_input_channels.unwrap_or_default(),
-        output_device: native.output_device,
-        output_channels: native
-            .output_channels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|channel| AudioChannelInfo {
-                index: channel.index,
-                name: channel.name,
-            })
-            .collect(),
-        active_output_channels: native.active_output_channels.unwrap_or_default(),
-        sample_rate: native.sample_rate.and_then(normalize_sample_rate),
-        buffer_size: native.buffer_size,
-        round_trip_ms: native.round_trip_ms,
-        timeline_tick: native.timeline_tick,
-        recording: native
-            .recording
-            .map(|recording| RecordingStatus {
-                active: recording.active,
-                processing: recording.processing,
-                cancelled: recording.cancelled,
-                directory: recording.directory,
-                sample_rate: recording.sample_rate.and_then(normalize_sample_rate),
-                raw_channels: recording.raw_channels,
-                processed_channels: recording.processed_channels,
-                samples_written: recording.samples_written.unwrap_or_default(),
-                dropped_midi_events: recording.dropped_midi_events.unwrap_or_default(),
-                dropped_blocks: recording.dropped_blocks.unwrap_or_default(),
-                missing_samples: recording.missing_samples.unwrap_or_default(),
-                dropout_start_sample: recording.dropout_start_sample,
-                dropout_end_sample: recording.dropout_end_sample,
-                raw_attempted_samples: recording.raw_attempted_samples.unwrap_or_default(),
-                processed_attempted_samples: recording
-                    .processed_attempted_samples
-                    .unwrap_or_default(),
-                raw_dropped_blocks: recording.raw_dropped_blocks.unwrap_or_default(),
-                processed_dropped_blocks: recording.processed_dropped_blocks.unwrap_or_default(),
-                raw_missing_samples: recording.raw_missing_samples.unwrap_or_default(),
-                processed_missing_samples: recording.processed_missing_samples.unwrap_or_default(),
-                raw_dropout_start_sample: recording.raw_dropout_start_sample,
-                raw_dropout_end_sample: recording.raw_dropout_end_sample,
-                processed_dropout_start_sample: recording.processed_dropout_start_sample,
-                processed_dropout_end_sample: recording.processed_dropout_end_sample,
-                recovery_status: recording.recovery_status.unwrap_or_else(|| {
-                    if recording.dropped_blocks.unwrap_or_default() == 0
-                        && recording.dropped_midi_events.unwrap_or_default() == 0
-                    {
-                        "clean".into()
-                    } else {
-                        "partial".into()
-                    }
-                }),
-                error: recording.error,
-            })
-            .unwrap_or_default(),
-        midi_inputs: native.midi_inputs.unwrap_or_default(),
-        midi_outputs: native.midi_outputs.unwrap_or_default(),
-        midi_input_active: native.midi_input_active.unwrap_or(false),
-        midi_messages: native.midi_messages.unwrap_or_default(),
-        last_midi_note: native
-            .last_midi_note
-            .and_then(|note| u8::try_from(note).ok()),
-        input_peak: native.input_peak.unwrap_or_default().clamp(0.0, 1.0),
-        output_peak: native.output_peak.unwrap_or_default().clamp(0.0, 1.0),
-        invalid_samples: native.invalid_samples.unwrap_or_default(),
-        feedback_suspected: native.feedback_suspected.unwrap_or(false),
-        previewing: native.previewing.unwrap_or(false),
-        instrument_previewing: native.instrument_previewing,
-        mute_reasons,
-        diagnostics: native
-            .diagnostics
-            .map_or_else(AudioDiagnostics::default, |diagnostics| AudioDiagnostics {
-                callback_count: diagnostics.callback_count.unwrap_or_default(),
-                average_callback_duration_us: diagnostics
-                    .average_callback_duration_us
-                    .unwrap_or_default(),
-                maximum_callback_duration_us: diagnostics
-                    .maximum_callback_duration_us
-                    .unwrap_or_default(),
-                callback_overruns: diagnostics.callback_overruns.unwrap_or_default(),
-                pre_limiter_peak: diagnostics.pre_limiter_peak.unwrap_or_default(),
-                limiter_gain_reduction_db: diagnostics
-                    .limiter_gain_reduction_db
-                    .unwrap_or_default(),
-                hard_clip_samples: diagnostics.hard_clip_samples.unwrap_or_default(),
-                live_midi_drops: diagnostics.live_midi_drops.unwrap_or_default(),
-                graph_revision: diagnostics.graph_revision.unwrap_or_default(),
-                graph_publish_count: diagnostics.graph_publish_count.unwrap_or_default(),
-                track_count: diagnostics.track_count.unwrap_or_default(),
-                instrument_runtime_count: diagnostics.instrument_runtime_count.unwrap_or_default(),
-                plugin_count: diagnostics.plugin_count.unwrap_or_default(),
-                maximum_latency_samples: diagnostics.maximum_latency_samples.unwrap_or_default(),
-                projection_duration_ms: diagnostics.projection_duration_ms.unwrap_or_default(),
-                audio_environment_revision: diagnostics
-                    .audio_environment_revision
-                    .unwrap_or_default(),
-                instrument_faults: diagnostics
-                    .instrument_faults
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|fault| AudioInstrumentFault {
-                        track_id: fault.track_id,
-                        instrument_type: fault.instrument_type,
-                        fault_code: fault.fault_code,
-                        dropped_midi_events: fault.dropped_midi_events,
-                    })
-                    .collect(),
-            }),
-        message,
+/// Derives the Host output state: a fault wins, otherwise any mute owner
+/// keeps the output muted.
+fn audio_state_from_wire(state: WireAudioState, mute_reasons: u32) -> AudioState {
+    match state {
+        WireAudioState::Faulted => AudioState::Faulted,
+        WireAudioState::Ready | WireAudioState::Muted if mute_reasons != 0 => AudioState::Muted,
+        WireAudioState::Ready | WireAudioState::Muted => AudioState::Ready,
     }
 }
 
-/// One parsed sidecar line: a status update or a structured native error.
-/// Parsing is pure; applying the effect to shared state happens in
-/// `handle_native_stdout`, so the protocol is reproducible without a live child.
-#[allow(clippy::large_enum_variant)]
-enum ParsedNativeLine {
-    Status {
-        request_id: Option<u64>,
-        status: NativeStatus,
-    },
-    Meters {
-        request_id: Option<u64>,
-        meters: NativeMeters,
-    },
-    Acknowledgement {
-        request_id: Option<u64>,
-    },
-    Response {
-        request_id: Option<u64>,
-    },
-    RecordingCompletion {
-        request_id: Option<u64>,
-    },
-    Error {
-        request_id: Option<u64>,
-        fault: bool,
-        error: NativeAudioError,
-    },
+fn channels(channels: Vec<super::wire::WireAudioChannel>) -> Vec<AudioChannelInfo> {
+    channels
+        .into_iter()
+        .map(|channel| AudioChannelInfo {
+            index: channel.index,
+            name: channel.name,
+        })
+        .collect()
+}
+
+fn midi_devices(devices: Vec<super::wire::WireMidiDevice>) -> Vec<MidiDeviceInfo> {
+    devices
+        .into_iter()
+        .map(|device| MidiDeviceInfo {
+            id: device.id,
+            name: device.name,
+        })
+        .collect()
+}
+
+fn audio_status_from_wire(status: WireAudioStatus) -> AudioStatus {
+    let recording = status.recording;
+    let diagnostics = status.diagnostics;
+    AudioStatus {
+        state: audio_state_from_wire(status.state, status.mute_reasons),
+        driver: status.driver,
+        input_device: status.input_device,
+        input_channel: status.input_channel,
+        input_channels: channels(status.input_channels),
+        active_input_channels: status.active_input_channels,
+        output_device: status.output_device,
+        output_channels: channels(status.output_channels),
+        active_output_channels: status.active_output_channels,
+        sample_rate: status.sample_rate.and_then(normalize_sample_rate),
+        buffer_size: status.buffer_size,
+        round_trip_ms: status.round_trip_ms,
+        timeline_tick: status.timeline_tick,
+        recording: RecordingStatus {
+            active: recording.active,
+            processing: recording.processing,
+            cancelled: recording.cancelled,
+            directory: recording.directory,
+            sample_rate: recording.sample_rate.and_then(normalize_sample_rate),
+            samples_written: recording.samples_written,
+            dropped_midi_events: recording.dropped_midi_events,
+            dropped_blocks: recording.dropped_blocks,
+            missing_samples: recording.missing_samples,
+            raw_attempted_samples: recording.raw_attempted_samples,
+            processed_attempted_samples: recording.processed_attempted_samples,
+            raw_dropped_blocks: recording.raw_dropped_blocks,
+            processed_dropped_blocks: recording.processed_dropped_blocks,
+            raw_missing_samples: recording.raw_missing_samples,
+            processed_missing_samples: recording.processed_missing_samples,
+            raw_dropout_start_sample: recording.raw_dropout_start_sample,
+            raw_dropout_end_sample: recording.raw_dropout_end_sample,
+            processed_dropout_start_sample: recording.processed_dropout_start_sample,
+            processed_dropout_end_sample: recording.processed_dropout_end_sample,
+            recovery_status: match recording.recovery_status {
+                WireRecoveryStatus::Clean => "clean",
+                WireRecoveryStatus::Partial => "partial",
+            }
+            .into(),
+            error: recording.error,
+        },
+        midi_inputs: midi_devices(status.midi_inputs),
+        midi_outputs: midi_devices(status.midi_outputs),
+        midi_input_active: status.midi_input_active,
+        midi_messages: status.midi_messages,
+        last_midi_note: status.last_midi_note,
+        input_peak: status.input_peak.clamp(0.0, 1.0),
+        output_peak: status.output_peak.clamp(0.0, 1.0),
+        invalid_samples: status.invalid_samples,
+        feedback_suspected: status.feedback_suspected,
+        previewing: status.previewing,
+        instrument_previewing: status.instrument_previewing,
+        mute_reasons: status.mute_reasons,
+        diagnostics: AudioDiagnostics {
+            callback_count: diagnostics.callback_count,
+            average_callback_duration_us: diagnostics.average_callback_duration_us,
+            maximum_callback_duration_us: diagnostics.maximum_callback_duration_us,
+            callback_overruns: diagnostics.callback_overruns,
+            pre_limiter_peak: diagnostics.pre_limiter_peak,
+            limiter_gain_reduction_db: diagnostics.limiter_gain_reduction_db,
+            hard_clip_samples: diagnostics.hard_clip_samples,
+            live_midi_drops: diagnostics.live_midi_drops,
+            graph_revision: diagnostics.graph_revision,
+            graph_publish_count: diagnostics.graph_publish_count,
+            track_count: diagnostics.track_count,
+            instrument_runtime_count: diagnostics.instrument_runtime_count,
+            plugin_count: diagnostics.plugin_count,
+            maximum_latency_samples: diagnostics.maximum_latency_samples,
+            projection_duration_ms: 0,
+            audio_environment_revision: 0,
+            protocol_errors: 0,
+            instrument_faults: diagnostics
+                .instrument_faults
+                .into_iter()
+                .map(instrument_fault)
+                .collect(),
+        },
+        message: status.message,
+    }
+}
+
+/// Applies the meter summary to the retained status and reports whether a
+/// status event is required.
+fn apply_meters(current: &mut AudioStatus, meters: &WireAudioMeters) -> bool {
+    let mut changed = current.previewing != meters.previewing
+        || current.instrument_previewing != meters.instrument_previewing;
+    current.previewing = meters.previewing;
+    current.instrument_previewing = meters.instrument_previewing;
+    if matches!(current.state, AudioState::Ready | AudioState::Muted) {
+        let next_state = audio_state_from_wire(WireAudioState::Ready, meters.mute_reasons);
+        if current.state != next_state || current.mute_reasons != meters.mute_reasons {
+            changed = true;
+            current.message = match next_state {
+                AudioState::Muted => "Native audio is connected and muted.",
+                _ => "Native audio is ready through the safety chain.",
+            }
+            .into();
+        }
+        current.state = next_state;
+        current.mute_reasons = meters.mute_reasons;
+    }
+    current.input_peak = meters.input_peak.clamp(0.0, 1.0);
+    current.output_peak = meters.output_peak.clamp(0.0, 1.0);
+    current.invalid_samples = meters.invalid_samples;
+    current.feedback_suspected = meters.feedback_suspected;
+    current.diagnostics.pre_limiter_peak = meters.pre_limiter_peak;
+    current.diagnostics.limiter_gain_reduction_db = meters.limiter_gain_reduction_db;
+    current.diagnostics.hard_clip_samples = meters.hard_clip_samples;
+    changed
+}
+
+/// Returns the Host meter frame, or `None` before a Project graph is active.
+fn meter_frame(meters: WireAudioMeters) -> Option<AudioMeterFrame> {
+    Some(AudioMeterFrame {
+        project_id: meters.project_id?,
+        input_peak: meters.input_peak,
+        output_peak: meters.output_peak,
+        output_peak_left: meters.output_peak_left,
+        output_peak_right: meters.output_peak_right,
+        pre_limiter_peak: meters.pre_limiter_peak,
+        limiter_gain_reduction_db: meters.limiter_gain_reduction_db,
+        hard_clip_samples: meters.hard_clip_samples,
+        invalid_samples: meters.invalid_samples,
+        feedback_suspected: meters.feedback_suspected,
+        track_meters: meters
+            .track_meters
+            .into_iter()
+            .map(|meter| TrackAudioMeter {
+                track_id: meter.track_id,
+                peak_left: meter.peak_left,
+                peak_right: meter.peak_right,
+                rms_left: meter.rms_left,
+                rms_right: meter.rms_right,
+            })
+            .collect(),
+    })
+}
+
+fn instrument_fault(fault: WireInstrumentFault) -> AudioInstrumentFault {
+    AudioInstrumentFault {
+        track_id: fault.track_id,
+        instrument_type: fault.instrument_type,
+        fault_code: fault.fault_code,
+        dropped_midi_events: fault.dropped_midi_events,
+    }
+}
+
+fn transport_status(status: WireTransportStatus) -> TransportStatus {
+    TransportStatus {
+        state: match status.state {
+            WireTransportState::Stopped => TransportState::Stopped,
+            WireTransportState::Starting => TransportState::Starting,
+            WireTransportState::Playing => TransportState::Playing,
+            WireTransportState::Faulted => TransportState::Faulted,
+        },
+        revision: status.revision,
+        timeline_tick: status.timeline_tick,
+        timeline_sample: status.timeline_sample,
+        audio_clock_sample: status.audio_clock_sample,
+        sample_rate: status.sample_rate,
+        sequence: status.sequence,
+        recording_phase: match status.recording_phase {
+            WireRecordingPhase::Idle => RecordingPhase::Idle,
+            WireRecordingPhase::CountingIn => RecordingPhase::CountingIn,
+            WireRecordingPhase::Recording => RecordingPhase::Recording,
+            WireRecordingPhase::Stopping => RecordingPhase::Stopping,
+        },
+        recording_start_tick: status.recording_start_tick,
+        recording_pass_ordinal: status.recording_pass_ordinal,
+        armed_track_ids: status.armed_track_ids,
+        instrument_faults: status
+            .instrument_faults
+            .into_iter()
+            .map(instrument_fault)
+            .collect(),
+        clock_generation: status.clock_generation,
+        discontinuity: status.discontinuity,
+    }
+}
+
+fn plugin_state_changed(changed: WireTrackPluginStateChanged) -> TrackPluginStateChanged {
+    TrackPluginStateChanged {
+        project_id: changed.project_id,
+        track_id: changed.track_id,
+        device_id: changed.device_id,
+        parameter_values: changed.state.parameter_values,
+        state_data: changed.state.state_data,
+        bypassed: changed.state.bypassed,
+    }
+}
+
+fn plugin_parameter_changed(
+    changed: WireTrackPluginParameterChanged,
+) -> TrackPluginParameterChanged {
+    TrackPluginParameterChanged {
+        project_id: changed.project_id,
+        track_id: changed.track_id,
+        device_id: changed.device_id,
+        parameter_index: changed.parameter_index,
+        value: changed.value,
+    }
+}
+
+fn native_error(error: SidecarError) -> NativeAudioError {
+    NativeAudioError::structured(error.kind, error.message, error.operation, error.details)
 }
 
 fn native_error_is_device_fault(error: &NativeAudioError) -> bool {
@@ -392,181 +282,6 @@ fn native_error_is_device_fault(error: &NativeAudioError) -> bool {
                 != Some(true)
         }
         _ => false,
-    }
-}
-
-fn apply_mute_reasons(current: &mut AudioStatus, mute_reasons: u32) -> bool {
-    if matches!(current.state, AudioState::Faulted | AudioState::Offline) {
-        return false;
-    }
-    let next_state = if mute_reasons != 0 {
-        AudioState::Muted
-    } else if current.state == AudioState::Muted {
-        AudioState::Ready
-    } else {
-        return false;
-    };
-    let changed = current.state != next_state || current.mute_reasons != mute_reasons;
-    current.state = next_state;
-    current.mute_reasons = mute_reasons;
-    current.message = if mute_reasons != 0 {
-        "Native audio is connected and muted.".into()
-    } else {
-        "Native audio is ready through the safety chain.".into()
-    };
-    changed
-}
-
-/// Classifies one parsed sidecar payload. Returns `None` for unrecognized
-/// message types so the caller can ignore them.
-fn parse_native_value(payload: &serde_json::Value) -> Option<ParsedNativeLine> {
-    let request_id = payload.get("requestId").and_then(serde_json::Value::as_u64);
-    match payload.get("type").and_then(serde_json::Value::as_str) {
-        Some("audioStatus") => {
-            let status = serde_json::from_value::<NativeStatus>(payload.clone()).ok()?;
-            Some(ParsedNativeLine::Status { request_id, status })
-        }
-        Some("audioMeters") => {
-            let meters = serde_json::from_value::<NativeMeters>(payload.clone()).ok()?;
-            if !meters.has_valid_track_meters() {
-                return None;
-            }
-            Some(ParsedNativeLine::Meters { request_id, meters })
-        }
-        Some("transportStatus" | "timelineAck" | "timelineIdleAck" | "trackMixAck" | "midiAck") => {
-            Some(ParsedNativeLine::Acknowledgement { request_id })
-        }
-        Some("recordingComplete") => Some(ParsedNativeLine::RecordingCompletion { request_id }),
-        Some("error") => {
-            let error = serde_json::from_value::<NativeErrorPayload>(payload.clone()).ok()?;
-            let native_error = NativeAudioError::structured(
-                error.kind,
-                error.message,
-                error.operation,
-                error.details,
-            );
-            let fault = native_error_is_device_fault(&native_error);
-            Some(ParsedNativeLine::Error {
-                request_id,
-                fault,
-                error: native_error,
-            })
-        }
-        Some(
-            "audioDeviceProbe"
-            | "deviceChannels"
-            | "trackDeviceStatus"
-            | "trackDeviceParameters"
-            | "trackDevicePrograms"
-            | "trackPluginState"
-            | "trackDeviceProgramChanged",
-        ) => Some(ParsedNativeLine::Response { request_id }),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-fn parse_native_line(bytes: &[u8]) -> Option<ParsedNativeLine> {
-    let payload = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
-    parse_native_value(&payload)
-}
-
-pub(super) fn handle_native_stdout(
-    status: &Arc<Mutex<AudioStatus>>,
-    bytes: &[u8],
-) -> Option<NativeReply> {
-    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
-    let parsed = parse_native_value(&value)?;
-    match parsed {
-        ParsedNativeLine::Status {
-            request_id,
-            status: native_status,
-        } => {
-            if let Ok(mut current) = status.lock() {
-                *current = native_status_to_audio_status(native_status);
-            }
-            Some(NativeReply {
-                request_id,
-                result: Ok(()),
-                event: NativeEvent::AudioStatus,
-                value,
-            })
-        }
-        ParsedNativeLine::Meters { request_id, meters } => {
-            let mut status_changed = false;
-            if let Ok(mut current) = status.lock() {
-                if let Some(previewing) = meters.previewing
-                    && current.previewing != previewing
-                {
-                    current.previewing = previewing;
-                    status_changed = true;
-                }
-                if let Some(instrument_previewing) = meters.instrument_previewing
-                    && current.instrument_previewing != instrument_previewing
-                {
-                    current.instrument_previewing = instrument_previewing;
-                    status_changed = true;
-                }
-                if let Some(mute_reasons) = meters.mute_reasons {
-                    status_changed |= apply_mute_reasons(&mut current, mute_reasons);
-                }
-                current.input_peak = meters.input_peak.unwrap_or_default().clamp(0.0, 1.0);
-                current.output_peak = meters.output_peak.unwrap_or_default().clamp(0.0, 1.0);
-                current.invalid_samples = meters.invalid_samples.unwrap_or_default();
-                current.feedback_suspected = meters.feedback_suspected.unwrap_or(false);
-                current.diagnostics.pre_limiter_peak = meters.pre_limiter_peak.unwrap_or_default();
-                current.diagnostics.limiter_gain_reduction_db =
-                    meters.limiter_gain_reduction_db.unwrap_or_default();
-                current.diagnostics.hard_clip_samples =
-                    meters.hard_clip_samples.unwrap_or_default();
-            }
-            Some(NativeReply {
-                request_id,
-                result: Ok(()),
-                event: if status_changed {
-                    NativeEvent::AudioStatus
-                } else {
-                    NativeEvent::AudioMeters
-                },
-                value,
-            })
-        }
-        ParsedNativeLine::Acknowledgement { request_id } => Some(NativeReply {
-            request_id,
-            result: Ok(()),
-            event: NativeEvent::None,
-            value,
-        }),
-        ParsedNativeLine::Response { request_id } => Some(NativeReply {
-            request_id,
-            result: Ok(()),
-            event: NativeEvent::None,
-            value,
-        }),
-        ParsedNativeLine::RecordingCompletion { request_id } => Some(NativeReply {
-            request_id,
-            result: Ok(()),
-            event: NativeEvent::RecordingCompletion,
-            value,
-        }),
-        ParsedNativeLine::Error {
-            request_id,
-            fault,
-            error,
-        } => {
-            let detail = error.to_string();
-            if fault {
-                set_faulted(status, detail.clone());
-            } else if error.descriptor().kind != "timelineBusy" {
-                set_command_error(status, detail.clone());
-            }
-            Some(NativeReply {
-                request_id,
-                result: Err(error),
-                event: NativeEvent::AudioStatus,
-                value,
-            })
-        }
     }
 }
 
@@ -590,84 +305,320 @@ pub(super) fn set_faulted(status: &Arc<Mutex<AudioStatus>>, message: String) {
     }
 }
 
+impl AudioSupervisor {
+    /// Applies one stdout line of a sidecar generation.
+    ///
+    /// A line that does not match the protocol is logged, counted, and fails
+    /// the request it names instead of leaving that request to time out.
+    pub(super) fn handle_sidecar_line(&self, generation: u64, line: &[u8]) {
+        match decode_message(line) {
+            Ok(SidecarMessage::Response {
+                request_id,
+                response,
+            }) => {
+                if awaits_response(&self.command_bus.pending, request_id, response.kind()) {
+                    self.apply_response(&response);
+                }
+                complete_request(&self.command_bus.pending, request_id, Ok(response));
+            }
+            Ok(SidecarMessage::Error { request_id, error }) => {
+                let error = native_error(error);
+                self.apply_error(&error);
+                complete_request(&self.command_bus.pending, request_id, Err(error));
+            }
+            Ok(SidecarMessage::Event { event }) => self.apply_event(generation, event),
+            Err(failure) => {
+                tracing::error!(
+                    line = %diagnostic_prefix(line),
+                    error = %failure.error,
+                    "native audio output did not match the sidecar protocol"
+                );
+                self.protocol_errors.fetch_add(1, Ordering::AcqRel);
+                if let Some(request_id) = failure.request_id {
+                    complete_request(
+                        &self.command_bus.pending,
+                        request_id,
+                        Err(NativeAudioError::protocol(format!(
+                            "Native audio response could not be decoded: {}",
+                            failure.error
+                        ))),
+                    );
+                }
+            }
+        }
+    }
+
+    fn apply_response(&self, response: &SidecarResponse) {
+        match response {
+            SidecarResponse::AudioStatus(status) => self.replace_status(status.as_ref().clone()),
+            SidecarResponse::TransportStatus(status) => self
+                .events
+                .emit(HostEvent::TransportStatus(transport_status(status.clone()))),
+            SidecarResponse::TimelineAck {}
+            | SidecarResponse::TimelineIdleAck {}
+            | SidecarResponse::MidiAck {}
+            | SidecarResponse::TrackMixAck {}
+            | SidecarResponse::TrackDeviceAck {}
+            | SidecarResponse::TrackDeviceStatus(_)
+            | SidecarResponse::TrackDeviceParameters(_)
+            | SidecarResponse::TrackDevicePrograms(_)
+            | SidecarResponse::TrackPluginState(_)
+            | SidecarResponse::TrackDeviceProgramChanged(_) => {}
+        }
+    }
+
+    fn apply_error(&self, error: &NativeAudioError) {
+        if native_error_is_device_fault(error) {
+            set_faulted(&self.status, error.to_string());
+        } else if error.descriptor().kind != "timelineBusy" {
+            set_command_error(&self.status, error.to_string());
+        }
+        self.emit_status();
+    }
+
+    fn apply_event(&self, generation: u64, event: SidecarEvent) {
+        match event {
+            SidecarEvent::Ready {
+                protocol_version,
+                status,
+            } => {
+                if protocol_version != SIDECAR_PROTOCOL_VERSION {
+                    let error = NativeAudioError::protocol(format!(
+                        "sidecar protocol version mismatch: expected {SIDECAR_PROTOCOL_VERSION}, got {protocol_version}"
+                    ));
+                    set_faulted(&self.status, error.to_string());
+                    self.process.fail_startup(generation, error);
+                    self.emit_status();
+                    return;
+                }
+                self.replace_status(*status);
+                self.process.mark_ready(generation);
+            }
+            SidecarEvent::AudioStatus(status) => self.replace_status(*status),
+            SidecarEvent::AudioMeters(meters) => {
+                let changed = self
+                    .status
+                    .lock()
+                    .map(|mut current| apply_meters(&mut current, &meters))
+                    .unwrap_or(false);
+                if changed {
+                    self.emit_status();
+                }
+                if let Some(frame) = meter_frame(meters) {
+                    self.events.emit(HostEvent::AudioMeters(frame));
+                }
+            }
+            SidecarEvent::TransportStatus(status) => self
+                .events
+                .emit(HostEvent::TransportStatus(transport_status(status))),
+            SidecarEvent::RecordingComplete(completion) => {
+                self.record_recording_completion(completion)
+            }
+            SidecarEvent::TrackPluginStateChanged(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events
+                        .emit(HostEvent::TrackPluginStateChanged(plugin_state_changed(
+                            changed,
+                        )));
+                }
+            }
+            SidecarEvent::TrackPluginParameterChanged(changed) => {
+                if self.process.current_generation() == generation {
+                    self.events.emit(HostEvent::TrackPluginParameterChanged(
+                        plugin_parameter_changed(changed),
+                    ));
+                }
+            }
+            SidecarEvent::Fault(error) => self.apply_error(&native_error(error)),
+        }
+    }
+
+    fn replace_status(&self, status: WireAudioStatus) {
+        if let Ok(mut current) = self.status.lock() {
+            *current = audio_status_from_wire(status);
+        }
+        self.emit_status();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RecordingHostEventSink;
+    use std::path::Path;
 
-    fn test_status() -> Arc<Mutex<AudioStatus>> {
-        Arc::new(Mutex::new(AudioStatus {
-            state: AudioState::Ready,
-            driver: Some("Test".into()),
-            input_device: Some("Input".into()),
-            input_channel: Some(0),
-            input_channels: vec![AudioChannelInfo {
-                index: 0,
-                name: "Input 1".into(),
-            }],
-            active_input_channels: vec![0],
-            output_device: Some("Output".into()),
-            output_channels: vec![AudioChannelInfo {
-                index: 0,
-                name: "Output 1".into(),
-            }],
-            active_output_channels: vec![0],
-            sample_rate: Some(44_100),
-            buffer_size: Some(441),
-            round_trip_ms: Some(20.0),
-            timeline_tick: None,
-            recording: RecordingStatus::default(),
-            midi_inputs: Vec::new(),
-            midi_outputs: Vec::new(),
-            midi_input_active: false,
-            midi_messages: 0,
-            last_midi_note: None,
-            input_peak: 0.0,
-            output_peak: 0.0,
-            invalid_samples: 0,
-            feedback_suspected: false,
-            previewing: false,
-            instrument_previewing: false,
-            mute_reasons: 0,
-            diagnostics: Default::default(),
-            message: "ready".into(),
-        }))
+    fn supervisor() -> (AudioSupervisor, Arc<RecordingHostEventSink>) {
+        let events = Arc::new(RecordingHostEventSink::default());
+        let supervisor = AudioSupervisor::offline_with_events("test", events.clone());
+        (supervisor, events)
+    }
+
+    fn fixture(name: &str) -> String {
+        std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../contracts/sidecar/messages")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    fn line(value: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&value).unwrap()
     }
 
     #[test]
-    fn classifies_native_errors_and_preserves_runtime_state() {
-        for (payload, faulted, message) in [
-            (
-                br#"{"type":"error","kind":"pluginRejected","operation":"plugin.load","message":"load failed"}"#
-                    .as_slice(),
-                false,
-                "load failed",
-            ),
-            (
-                br#"{"type":"error","kind":"deviceLost","operation":"audioDevice.recover","message":"device missing"}"#
-                    .as_slice(),
-                true,
-                "device missing",
-            ),
-        ] {
-            let status = test_status();
-            let reply = handle_native_stdout(&status, payload).expect("native error reply");
-            let current = status.lock().unwrap();
-            assert!(reply.result.is_err());
-            assert_eq!(matches!(current.state, AudioState::Faulted), faulted);
-            assert!(current.message.contains(message));
+    fn a_ready_event_with_another_protocol_version_fails_the_generation() {
+        let (supervisor, _) = supervisor();
+        let generation = supervisor.process.next_generation();
+        let mut ready: serde_json::Value =
+            serde_json::from_str(&fixture("event.ready.json")).unwrap();
+        ready["event"]["protocolVersion"] = serde_json::json!(2);
+
+        supervisor.handle_sidecar_line(generation, &line(ready));
+
+        assert!(!supervisor.process.is_ready(generation));
+        assert!(matches!(
+            supervisor.process.startup_failure(generation),
+            Some(NativeAudioError::Protocol { message })
+                if message == "sidecar protocol version mismatch: expected 3, got 2"
+        ));
+    }
+
+    #[test]
+    fn only_the_ready_event_marks_a_generation_ready() {
+        let (supervisor, _) = supervisor();
+        let generation = supervisor.process.next_generation();
+
+        supervisor.handle_sidecar_line(generation, fixture("event.audioStatus.json").as_bytes());
+        assert!(!supervisor.process.is_ready(generation));
+
+        supervisor.handle_sidecar_line(generation, fixture("event.ready.json").as_bytes());
+        assert!(supervisor.process.is_ready(generation));
+    }
+
+    #[test]
+    fn an_undecodable_response_is_counted() {
+        let (supervisor, _) = supervisor();
+
+        supervisor.handle_sidecar_line(
+            1,
+            br#"{"kind":"response","requestId":3,"response":{"type":"audioStatus"}}"#,
+        );
+
+        assert_eq!(supervisor.status().unwrap().diagnostics.protocol_errors, 1);
+    }
+
+    #[test]
+    fn device_faults_and_command_errors_update_the_status_message() {
+        for (kind, faulted) in [("deviceLost", true), ("pluginRejected", false)] {
+            let (supervisor, events) = supervisor();
+            let fault = serde_json::json!({
+                "kind": "event",
+                "event": {
+                    "type": "fault",
+                    "kind": kind,
+                    "message": "device missing",
+                    "operation": "audioDevice.recover",
+                    "details": null,
+                },
+            });
+
+            supervisor.handle_sidecar_line(1, &line(fault));
+
+            let status = supervisor.status().unwrap();
+            assert_eq!(status.state == AudioState::Faulted, faulted, "{kind}");
+            assert_eq!(status.message, "device missing");
+            assert!(matches!(
+                events.events().last(),
+                Some(HostEvent::AudioStatus(_))
+            ));
         }
+    }
 
-        let status = test_status();
-        let reply = handle_native_stdout(
-            &status,
-            br#"{"type":"error","kind":"timelineBusy","operation":"timeline.prepare","message":"Another Arrangement Graph is still loading a VST3."}"#,
-        )
-        .expect("timeline busy reply");
-        let current = status.lock().unwrap();
-        assert!(reply.result.is_err());
-        assert!(matches!(current.state, AudioState::Ready));
-        assert_eq!(current.message, "ready");
+    #[test]
+    fn a_busy_timeline_error_keeps_the_status_message() {
+        let (supervisor, _) = supervisor();
+        let before = supervisor.status().unwrap().message;
 
+        supervisor.handle_sidecar_line(
+            1,
+            &line(serde_json::json!({
+                "kind": "error",
+                "requestId": 9,
+                "error": {
+                    "kind": "timelineBusy",
+                    "message": "Another Arrangement Graph is still loading a VST3.",
+                    "operation": "runtime.timeline",
+                    "details": null,
+                },
+            })),
+        );
+
+        assert_eq!(supervisor.status().unwrap().message, before);
+    }
+
+    #[test]
+    fn meter_mute_reasons_move_between_ready_and_muted() {
+        let (supervisor, events) = supervisor();
+        supervisor.handle_sidecar_line(1, fixture("event.ready.json").as_bytes());
+        let mut meters: serde_json::Value =
+            serde_json::from_str(&fixture("event.audioMeters.json")).unwrap();
+
+        meters["event"]["muteReasons"] = serde_json::json!(16);
+        supervisor.handle_sidecar_line(1, &line(meters.clone()));
+        assert_eq!(supervisor.status().unwrap().state, AudioState::Muted);
+
+        meters["event"]["muteReasons"] = serde_json::json!(0);
+        supervisor.handle_sidecar_line(1, &line(meters));
+        assert_eq!(supervisor.status().unwrap().state, AudioState::Ready);
+        assert!(matches!(
+            events.events().last(),
+            Some(HostEvent::AudioMeters(_))
+        ));
+    }
+
+    #[test]
+    fn meters_without_an_active_project_update_only_the_status() {
+        let (supervisor, events) = supervisor();
+        let mut meters: serde_json::Value =
+            serde_json::from_str(&fixture("event.audioMeters.json")).unwrap();
+        meters["event"]["projectId"] = serde_json::Value::Null;
+
+        supervisor.handle_sidecar_line(1, &line(meters));
+
+        assert!(
+            !events
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::AudioMeters(_)))
+        );
+    }
+
+    #[test]
+    fn the_status_state_follows_its_mute_reasons() {
+        assert_eq!(
+            audio_state_from_wire(WireAudioState::Ready, 2),
+            AudioState::Muted
+        );
+        assert_eq!(
+            audio_state_from_wire(WireAudioState::Muted, 0),
+            AudioState::Ready
+        );
+        assert_eq!(
+            audio_state_from_wire(WireAudioState::Faulted, 2),
+            AudioState::Faulted
+        );
+    }
+
+    #[test]
+    fn normalizes_native_floating_sample_rates_safely() {
+        assert_eq!(normalize_sample_rate(44_100.0), Some(44_100));
+        assert_eq!(normalize_sample_rate(f64::NAN), None);
+        assert_eq!(normalize_sample_rate(f64::INFINITY), None);
+    }
+
+    #[test]
+    fn restored_device_rejections_are_not_faults() {
         let restored = NativeAudioError::structured(
             "deviceRejected",
             "requested device was rejected",
@@ -680,299 +631,8 @@ mod tests {
             "audioDevice.activate",
             Some(serde_json::json!({"restoredPreviousDevice": false})),
         );
+
         assert!(!native_error_is_device_fault(&restored));
         assert!(native_error_is_device_fault(&unrecovered));
-
-        let generic =
-            NativeAudioError::structured("pluginRejected", "load failed", "plugin.load", None);
-        assert!(!native_error_is_device_fault(&generic));
-        assert!(generic.to_string().contains("load failed"));
-    }
-
-    #[test]
-    fn tracks_meter_and_status_transitions() {
-        let status = test_status();
-
-        let started = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":1,"projectId":"project:test","previewing":true}"#,
-        )
-        .expect("preview start meter reply");
-        assert!(matches!(started.event, NativeEvent::AudioStatus));
-        assert!(status.lock().unwrap().previewing);
-
-        let finished = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":2,"projectId":"project:test","previewing":false,"instrumentPreviewing":false}"#,
-        )
-        .expect("preview finish meter reply");
-        assert!(matches!(finished.event, NativeEvent::AudioStatus));
-        assert!(!status.lock().unwrap().previewing);
-        assert!(!status.lock().unwrap().instrument_previewing);
-
-        let status = test_status();
-        let started = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":3,"projectId":"project:test","previewing":true,"instrumentPreviewing":true}"#,
-        )
-        .expect("built-in preview start meter reply");
-        assert!(matches!(started.event, NativeEvent::AudioStatus));
-        {
-            let current = status.lock().unwrap();
-            assert!(current.previewing);
-            assert!(current.instrument_previewing);
-        }
-        let finished = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":4,"projectId":"project:test","previewing":true,"instrumentPreviewing":false}"#,
-        )
-        .expect("built-in preview finish meter reply");
-        assert!(matches!(finished.event, NativeEvent::AudioStatus));
-        {
-            let current = status.lock().unwrap();
-            assert!(current.previewing);
-            assert!(!current.instrument_previewing);
-        }
-
-        let status = test_status();
-        handle_native_stdout(
-            &status,
-            br#"{"type":"audioStatus","state":"ready","muteReasons":0,"midiInputActive":true,"midiMessages":12,"lastMidiNote":60,"inputPeak":0.2,"outputPeak":0.3}"#,
-        )
-        .expect("midi status reply");
-        {
-            let current = status.lock().unwrap();
-            assert!(matches!(current.state, AudioState::Ready));
-            assert!(current.midi_input_active);
-            assert_eq!(current.midi_messages, 12);
-            assert_eq!(current.last_midi_note, Some(60));
-            assert_eq!(current.output_peak, 0.3);
-        }
-
-        let status = test_status();
-        let reply = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","requestId":12,"projectId":"project:test","inputPeak":0.7,"outputPeak":0.4,"outputPeakLeft":0.35,"outputPeakRight":0.4,"invalidSamples":3,"muteReasons":16,"feedbackSuspected":true,"trackMeters":[{"trackId":"track:one","peakLeft":0.3,"peakRight":0.4,"rmsLeft":0.1,"rmsRight":0.2}]}"#,
-        )
-        .expect("feedback meter reply");
-        {
-            let current = status.lock().unwrap();
-            assert_eq!(reply.request_id, Some(12));
-            assert!(matches!(reply.event, NativeEvent::AudioStatus));
-            assert!(matches!(current.state, AudioState::Muted));
-            assert_eq!(current.driver.as_deref(), Some("Test"));
-            assert_eq!(current.input_peak, 0.7);
-            assert_eq!(current.output_peak, 0.4);
-            assert_eq!(current.invalid_samples, 3);
-            assert!(current.feedback_suspected);
-        }
-        assert_eq!(reply.value["outputPeakLeft"], 0.35);
-        assert_eq!(reply.value["outputPeakRight"], 0.4);
-        assert_eq!(reply.value["trackMeters"][0]["trackId"], "track:one");
-
-        let status = test_status();
-        handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","projectId":"project:test","muteReasons":16,"feedbackSuspected":true}"#,
-        )
-        .expect("mute meter reply");
-        let reply = handle_native_stdout(
-            &status,
-            br#"{"type":"audioMeters","projectId":"project:test","muteReasons":0,"feedbackSuspected":false}"#,
-        )
-        .expect("release meter reply");
-        {
-            let current = status.lock().unwrap();
-            assert!(matches!(reply.event, NativeEvent::AudioStatus));
-            assert!(matches!(current.state, AudioState::Ready));
-            assert!(!current.feedback_suspected);
-        }
-
-        let native: NativeStatus = serde_json::from_value(serde_json::json!({
-            "state": "ready",
-            "muteReasons": 1,
-        }))
-        .expect("native status");
-        assert!(matches!(
-            native_status_to_audio_status(native).state,
-            AudioState::Muted
-        ));
-    }
-
-    #[test]
-    fn normalizes_native_floating_sample_rates_safely() {
-        assert_eq!(normalize_sample_rate(44_100.0), Some(44_100));
-        assert_eq!(normalize_sample_rate(f64::NAN), None);
-        assert_eq!(normalize_sample_rate(f64::INFINITY), None);
-    }
-
-    #[test]
-    fn parses_status_and_preserves_request_ids() {
-        let status = test_status();
-        let success = handle_native_stdout(
-            &status,
-            br#"{"type":"audioStatus","requestId":42,"state":"ready","muteReasons":0}"#,
-        )
-        .expect("status reply");
-        assert_eq!(success.request_id, Some(42));
-        assert!(success.result.is_ok());
-
-        let failure = handle_native_stdout(
-            &status,
-            br#"{"type":"error","requestId":43,"kind":"recordingRejected","operation":"recording.start","message":"no input"}"#,
-        )
-        .expect("error reply");
-        assert_eq!(failure.request_id, Some(43));
-        assert!(failure.result.is_err());
-
-        let parsed = parse_native_line(
-            br#"{"type":"audioStatus","requestId":7,"state":"ready","muteReasons":0,"midiInputActive":true}"#,
-        )
-        .expect("status line");
-        match parsed {
-            ParsedNativeLine::Status { request_id, status } => {
-                assert_eq!(request_id, Some(7));
-                assert_eq!(status.state, "ready");
-                assert_eq!(status.midi_input_active, Some(true));
-            }
-            ParsedNativeLine::Meters { .. }
-            | ParsedNativeLine::Acknowledgement { .. }
-            | ParsedNativeLine::Response { .. }
-            | ParsedNativeLine::RecordingCompletion { .. }
-            | ParsedNativeLine::Error { .. } => {
-                panic!("expected a status line")
-            }
-        }
-    }
-
-    #[test]
-    fn parses_error_and_native_message_boundaries() {
-        let parsed = parse_native_line(
-            br#"{"type":"error","requestId":9,"kind":"recordingRejected","operation":"recording.start","message":"no input"}"#,
-        )
-            .expect("error line");
-        match parsed {
-            ParsedNativeLine::Error {
-                request_id, fault, ..
-            } => {
-                assert_eq!(request_id, Some(9));
-                assert!(!fault);
-            }
-            ParsedNativeLine::Status { .. }
-            | ParsedNativeLine::Meters { .. }
-            | ParsedNativeLine::Acknowledgement { .. }
-            | ParsedNativeLine::Response { .. }
-            | ParsedNativeLine::RecordingCompletion { .. } => {
-                panic!("expected an error line")
-            }
-        }
-
-        let reply = handle_native_stdout(
-            &Arc::new(Mutex::new(AudioStatus::default())),
-            br#"{"type":"recordingComplete","directory":"C:\\takes\\take-1","success":true}"#,
-        )
-        .expect("recording completion line");
-        assert!(reply.request_id.is_none());
-        assert!(matches!(reply.event, NativeEvent::RecordingCompletion));
-
-        for message_type in [
-            "trackDeviceStatus",
-            "trackDeviceParameters",
-            "trackDevicePrograms",
-            "trackPluginState",
-            "trackDeviceProgramChanged",
-        ] {
-            let line = format!(r#"{{"type":"{message_type}","requestId":11}}"#);
-            let parsed = parse_native_line(line.as_bytes()).expect("known response line");
-            assert!(matches!(
-                parsed,
-                ParsedNativeLine::Response {
-                    request_id: Some(11)
-                }
-            ));
-        }
-        assert!(matches!(
-            parse_native_line(br#"{"type":"trackMixAck","requestId":11}"#),
-            Some(ParsedNativeLine::Acknowledgement {
-                request_id: Some(11)
-            })
-        ));
-        assert!(matches!(
-            parse_native_line(br#"{"type":"midiAck","requestId":12}"#),
-            Some(ParsedNativeLine::Acknowledgement {
-                request_id: Some(12)
-            })
-        ));
-        assert!(
-            parse_native_line(
-                br#"{"type":"audioMeters","projectId":"project:test","trackMeters":[{"trackId":"","peakLeft":0.1}]}"#
-            )
-            .is_none()
-        );
-        assert!(parse_native_line(br#"{"type":"somethingUnexpected","requestId":42}"#).is_none());
-        assert!(parse_native_line(b"not json").is_none());
-        assert!(parse_native_line(br#"{"type":"keepAlive"}"#).is_none());
-    }
-
-    #[test]
-    fn maps_unknown_state_to_offline_and_clamps_peaks() {
-        let native: NativeStatus = serde_json::from_value(serde_json::json!({
-            "state": "bogus",
-            "muteReasons": 0,
-            "inputPeak": 5.0,
-            "outputPeak": -1.0,
-        }))
-        .expect("native status");
-        let status = native_status_to_audio_status(native);
-        assert!(matches!(status.state, AudioState::Offline));
-        assert_eq!(status.input_peak, 1.0);
-        assert_eq!(status.output_peak, 0.0);
-        assert!(status.message.contains("offline"));
-    }
-
-    #[test]
-    fn device_disconnect_status_reports_faulted_state() {
-        let native: NativeStatus = serde_json::from_value(serde_json::json!({
-            "state": "faulted",
-            "muteReasons": 8,
-            "message": "Audio device disconnected; output is muted and any captured take is preserved."
-        }))
-        .expect("native status");
-        let status = native_status_to_audio_status(native);
-        assert!(matches!(status.state, AudioState::Faulted));
-        assert!(status.message.contains("device disconnected"));
-    }
-
-    #[test]
-    fn maps_audio_status_onto_pure_audio_status() {
-        let native: NativeStatus = serde_json::from_value(serde_json::json!({
-            "state": "muted",
-            "muteReasons": 2,
-            "driver": "ASIO",
-            "inputChannel": 1,
-            "inputChannels": [
-                { "index": 0, "name": "Analogue 1" },
-                { "index": 1, "name": "Analogue 2" }
-            ],
-            "outputChannels": [
-                { "index": 0, "name": "Monitor 1" },
-                { "index": 1, "name": "Monitor 2" }
-            ],
-            "sampleRate": 48000.0,
-            "bufferSize": 256,
-            "recording": { "active": true, "directory": "/tmp", "samplesWritten": 10 }
-        }))
-        .expect("native status");
-        let status = native_status_to_audio_status(native);
-        assert!(matches!(status.state, AudioState::Muted));
-        assert_eq!(status.driver.as_deref(), Some("ASIO"));
-        assert_eq!(status.sample_rate, Some(48_000));
-        assert_eq!(status.input_channel, Some(1));
-        assert_eq!(status.input_channels[1].name, "Analogue 2");
-        assert_eq!(status.output_channels.len(), 2);
-        assert!(status.recording.active);
-        assert_eq!(status.recording.samples_written, 10);
-        assert!(status.message.contains("muted"));
-        assert!(!status.feedback_suspected);
     }
 }

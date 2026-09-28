@@ -7,7 +7,6 @@
 
 #include "FaultInjection.h"
 #include "PluginRack.h"
-#include "contract/ExecutionGraphDecoder.h"
 
 namespace riffra {
 
@@ -259,11 +258,8 @@ void PluginEditorHost::publishStateIfDirty(const bool force) {
     opaqueStateDirty.store(false, std::memory_order_release);
     parameterStateDirty.store(false, std::memory_order_release);
     juce::String error;
-    const auto value = rack.persistedState(error);
-    if (error.isNotEmpty() || !value.isObject()) return;
-    PluginStateSpec state;
-    if (!decodePluginState(value, state, error)) return;
-    onStateChanged(state);
+    const auto state = rack.persistedState(error);
+    if (state.has_value()) onStateChanged(*state);
 }
 
 }  // namespace riffra

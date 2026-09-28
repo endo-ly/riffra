@@ -1,8 +1,8 @@
 //! Process adapter for device-independent Riffra offline rendering.
 
+use crate::audio::wire::{OfflineRenderEnvelope, RenderMessage, SIDECAR_PROTOCOL_VERSION};
 use crate::execution::OfflineRenderRequest as OfflineRenderRequestSpec;
 use crate::render::{OfflineRenderRequest, RenderRuntime};
-use serde_json::Value;
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -26,8 +26,6 @@ enum RenderWorkerError {
     Wait(#[source] std::io::Error),
     #[error("render worker returned an invalid response: {0}")]
     InvalidResponse(#[source] serde_json::Error),
-    #[error("render worker response did not contain a type")]
-    MissingResponseType,
     #[error("render worker failed: {0}")]
     Rejected(String),
     #[error("render worker exited without completing the render")]
@@ -60,10 +58,9 @@ impl RenderWorker {
         if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
             return Err(RenderWorkerError::Cancelled);
         }
-        let payload = serde_json::json!({
-            "type": "renderTimelineOffline",
-            "protocolVersion": 2,
-            "request": OfflineRenderRequestSpec {
+        let payload = OfflineRenderEnvelope::RenderTimelineOffline {
+            protocol_version: SIDECAR_PROTOCOL_VERSION,
+            request: OfflineRenderRequestSpec {
                 graph: request.graph,
                 destination: request.destination.to_string_lossy().into_owned(),
                 start_tick: request.start_tick,
@@ -72,7 +69,7 @@ impl RenderWorker {
                 block_size: request.block_size,
                 normalize: request.normalize,
             },
-        });
+        };
         let encoded = serde_json::to_vec(&payload).map_err(RenderWorkerError::Encode)?;
         tracing::info!("starting offline render worker");
         let mut child = Command::new(&self.executable)
@@ -143,22 +140,18 @@ impl RenderWorker {
     }
 
     fn handle_output(&self, output: Output) -> Result<(), RenderWorkerError> {
-        let response: Value =
+        let response: RenderMessage =
             serde_json::from_slice(&output.stdout).map_err(RenderWorkerError::InvalidResponse)?;
-        match response.get("type").and_then(Value::as_str) {
-            Some("offlineRenderComplete") if output.status.success() => {
-                tracing::info!("offline render worker completed");
+        match response {
+            RenderMessage::OfflineRenderComplete {
+                frames,
+                sample_rate,
+            } if output.status.success() => {
+                tracing::info!(frames, sample_rate, "offline render worker completed");
                 Ok(())
             }
-            Some("error") => Err(RenderWorkerError::Rejected(
-                response
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown render worker error")
-                    .to_owned(),
-            )),
-            Some(_) => Err(RenderWorkerError::Incomplete),
-            None => Err(RenderWorkerError::MissingResponseType),
+            RenderMessage::OfflineRenderComplete { .. } => Err(RenderWorkerError::Incomplete),
+            RenderMessage::Error(error) => Err(RenderWorkerError::Rejected(error.message)),
         }
     }
 

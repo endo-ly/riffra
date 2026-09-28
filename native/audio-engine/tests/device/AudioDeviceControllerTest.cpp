@@ -75,8 +75,8 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
     // Assert
     ASSERT_NE(detached, nullptr);
     const auto status = pipeline.recording().status();
-    EXPECT_FALSE(static_cast<bool>(status.getProperty("active", false)));
-    EXPECT_TRUE(static_cast<bool>(status.getProperty("processing", false)));
+    EXPECT_FALSE(status.active);
+    EXPECT_TRUE(status.processing);
 
     juce::String finalizationError;
     ASSERT_TRUE(timeline.processFinalizedRecording(detached.get(), finalizationError))
@@ -84,7 +84,7 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
     ASSERT_TRUE(detached->finish(true, finalizationError)) << finalizationError;
     EXPECT_TRUE(directory.getChildFile("tracks/0000/raw.wav").existsAsFile());
     EXPECT_TRUE(directory.getChildFile("tracks/0000/processed.wav").existsAsFile());
-    pipeline.recording().completeProcessing(detached->status(), finalizationError);
+    pipeline.recording().completeProcessing(detached->summary(), finalizationError);
     detached.reset();
     directory.deleteRecursively();
 }

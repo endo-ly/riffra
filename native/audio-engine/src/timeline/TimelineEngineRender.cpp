@@ -613,11 +613,11 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         renderTransportState != RenderTransportState::stopped &&
         renderTransportState != RenderTransportState::fadingOut) {
         beginTransportFade(false, sampleRate);
-    } else if (currentState == State::playing &&
+    } else if (currentState == TransportState::playing &&
                renderTransportState == RenderTransportState::stopped) {
         if (seekPending.load(std::memory_order_acquire)) applyPendingSeek(*active);
         beginTransportFade(true, sampleRate);
-    } else if (currentState != State::playing &&
+    } else if (currentState != TransportState::playing &&
                (renderTransportState == RenderTransportState::playing ||
                 renderTransportState == RenderTransportState::fadingIn))
         beginTransportFade(false, sampleRate);
@@ -656,7 +656,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         processStoppedRange(0, sampleCount, stoppedPosition);
         return;
     }
-    if (currentState == State::faulted) return;
+    if (currentState == TransportState::faulted) return;
     auto position = timelineSample.load(std::memory_order_relaxed);
     if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::stopping) {
         return;
@@ -747,7 +747,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                 finishTransportFade(*active);
                 position = timelineSample.load(std::memory_order_relaxed);
                 if (renderTransportState == RenderTransportState::stopped &&
-                    currentState == State::playing) {
+                    currentState == TransportState::playing) {
                     beginTransportFade(true, sampleRate);
                 }
             }

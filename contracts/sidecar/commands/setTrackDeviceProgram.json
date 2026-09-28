@@ -1,0 +1,9 @@
+{
+  "command": {
+    "deviceId": "device-1",
+    "programIndex": 1,
+    "trackId": "track-1",
+    "type": "setTrackDeviceProgram"
+  },
+  "requestId": 1
+}

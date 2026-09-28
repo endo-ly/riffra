@@ -1,0 +1,7 @@
+{
+  "kind": "renderRejected",
+  "message": "Offline Render request is invalid.",
+  "operation": "renderTimelineOffline",
+  "details": null,
+  "type": "error"
+}

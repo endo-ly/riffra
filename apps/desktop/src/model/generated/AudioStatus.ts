@@ -8,20 +8,20 @@ import type { RecordingStatus } from "./RecordingStatus";
 /**
  * A native audio status snapshot.
  */
-export type AudioStatus = { state: AudioState, driver: string | null, inputDevice: string | null, inputChannel: number | null, inputChannels: Array<AudioChannelInfo>,
+export type AudioStatus = { state: AudioState, driver: string | null, inputDevice: string | null, inputChannel: number | null, inputChannels: Array<AudioChannelInfo>, 
 /**
  * Physical input indices currently enabled in the native device setup.
  * This is routing state; `input_channels` remains the full capability list.
  */
-activeInputChannels: Array<number>, outputDevice: string | null, outputChannels: Array<AudioChannelInfo>,
+activeInputChannels: Array<number>, outputDevice: string | null, outputChannels: Array<AudioChannelInfo>, 
 /**
  * Physical output indices currently enabled in the native device setup.
  */
-activeOutputChannels: Array<number>, sampleRate: number | null, bufferSize: number | null, roundTripMs: number | null, timelineTick: number | null, recording: RecordingStatus, midiInputs: Array<MidiDeviceInfo>, midiOutputs: Array<MidiDeviceInfo>, midiInputActive: boolean, midiMessages: number, lastMidiNote: number | null, inputPeak: number, outputPeak: number, invalidSamples: number, feedbackSuspected: boolean, previewing: boolean,
+activeOutputChannels: Array<number>, sampleRate: number | null, bufferSize: number | null, roundTripMs: number | null, timelineTick: number | null, recording: RecordingStatus, midiInputs: Array<MidiDeviceInfo>, midiOutputs: Array<MidiDeviceInfo>, midiInputActive: boolean, midiMessages: number, lastMidiNote: number | null, inputPeak: number, outputPeak: number, invalidSamples: number, feedbackSuspected: boolean, previewing: boolean, 
 /**
  * Whether the prepared instrument preview is active.
  */
-instrumentPreviewing: boolean,
+instrumentPreviewing: boolean, 
 /**
  * Bitmask owned by the Native safety callback. Each bit identifies the
  * owner that currently keeps the output muted.

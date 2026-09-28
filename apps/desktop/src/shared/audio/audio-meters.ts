@@ -1,26 +1,5 @@
 import { useSyncExternalStore } from 'react';
-
-export interface TrackAudioMeter {
-  trackId: string;
-  peakLeft: number;
-  peakRight: number;
-  rmsLeft: number;
-  rmsRight: number;
-}
-
-export interface AudioMeterFrame {
-  projectId: string;
-  inputPeak: number;
-  outputPeak: number;
-  outputPeakLeft: number;
-  outputPeakRight: number;
-  preLimiterPeak: number;
-  limiterGainReductionDb: number;
-  hardClipSamples: number;
-  invalidSamples: number;
-  feedbackSuspected: boolean;
-  trackMeters: readonly TrackAudioMeter[];
-}
+import type { AudioMeterFrame } from '@/model/domain';
 
 export interface AudioMeters extends AudioMeterFrame {
   available: boolean;

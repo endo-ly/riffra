@@ -1,3 +1,4 @@
+use super::error::NativeAudioError;
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Child, ChildStdin};
@@ -38,6 +39,8 @@ pub(crate) struct SidecarProcess {
     pub(crate) command_gate: Arc<Mutex<()>>,
     pub(crate) terminated_generations: Arc<(Mutex<HashSet<u64>>, Condvar)>,
     pub(crate) planned_terminations: Arc<Mutex<HashSet<u64>>>,
+    /// The latest generation whose `ready` handshake was rejected.
+    startup_failure: Arc<Mutex<Option<(u64, NativeAudioError)>>>,
     pub(crate) shutting_down: Arc<AtomicBool>,
 }
 
@@ -53,6 +56,7 @@ impl SidecarProcess {
             command_gate: Arc::new(Mutex::new(())),
             terminated_generations: Arc::new((Mutex::new(HashSet::new()), Condvar::new())),
             planned_terminations: Arc::new(Mutex::new(HashSet::new())),
+            startup_failure: Arc::new(Mutex::new(None)),
             shutting_down: Arc::new(AtomicBool::new(shutting_down)),
         }
     }
@@ -89,6 +93,7 @@ impl SidecarProcess {
             !self.is_ready(generation)
                 && self.current_generation() == generation
                 && self.terminated_generation.load(Ordering::Acquire) != generation
+                && self.startup_failure(generation).is_none()
                 && !self.shutting_down.load(Ordering::Acquire)
         }) {
             Ok(result) => result,
@@ -124,6 +129,24 @@ impl SidecarProcess {
     pub(crate) fn mark_ready(&self, generation: u64) {
         self.ready_generation.store(generation, Ordering::Release);
         self.readiness.1.notify_all();
+    }
+
+    /// Records that a generation failed its handshake and will never be ready.
+    pub(crate) fn fail_startup(&self, generation: u64, error: NativeAudioError) {
+        if let Ok(mut failure) = self.startup_failure.lock() {
+            *failure = Some((generation, error));
+        }
+        self.readiness.1.notify_all();
+    }
+
+    /// Returns the handshake failure of a generation, if any.
+    pub(crate) fn startup_failure(&self, generation: u64) -> Option<NativeAudioError> {
+        self.startup_failure
+            .lock()
+            .ok()?
+            .as_ref()
+            .filter(|(failed, _)| *failed == generation)
+            .map(|(_, error)| error.clone())
     }
 
     pub(crate) fn mark_planned_termination(&self, generation: u64) {

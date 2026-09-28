@@ -5,7 +5,9 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 
+#include "contract/SidecarMessages.h"
 #include "recording/ArrangeRecordingSession.h"
 
 namespace riffra {
@@ -29,8 +31,8 @@ public:
     bool cancel(juce::String& error);
     void setFinalizationDispatcher(FinalizationDispatcher dispatcher);
     std::unique_ptr<ArrangeRecordingSession> takePendingFinalization() noexcept;
-    void completeProcessing(const juce::var& status, const juce::String& error);
-    [[nodiscard]] juce::var status() const;
+    void completeProcessing(const ArrangeRecordingSummary& summary, const juce::String& error);
+    [[nodiscard]] RecordingStatusSpec status() const;
 
 private:
     TimelineEngine& timeline;
@@ -38,7 +40,7 @@ private:
     std::unique_ptr<ArrangeRecordingSession> arrangeRecording;
     std::unique_ptr<ArrangeRecordingSession> pendingFinalization;
     FinalizationDispatcher finalizationDispatcher;
-    juce::var finalizationStatus;
+    std::optional<RecordingStatusSpec> finalizationStatus;
     bool processing = false;
     std::atomic<bool> cancelled{false};
 };

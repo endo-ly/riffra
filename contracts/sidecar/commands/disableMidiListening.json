@@ -1,0 +1,6 @@
+{
+  "command": {
+    "type": "disableMidiListening"
+  },
+  "requestId": 1
+}

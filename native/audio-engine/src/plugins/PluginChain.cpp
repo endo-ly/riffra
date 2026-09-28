@@ -119,11 +119,12 @@ bool PluginChain::applyState(const std::vector<PluginDeviceSpec>& values,
     return true;
 }
 
-juce::var PluginChain::persistedState(const juce::String& deviceId, juce::String& error) const {
+std::optional<PluginStateSpec> PluginChain::persistedState(const juce::String& deviceId,
+                                                           juce::String& error) const {
     const auto* rack = findDevice(deviceId);
     if (rack == nullptr) {
         error = "Plugin Chain device was not found.";
-        return {};
+        return std::nullopt;
     }
     return rack->persistedState(error);
 }

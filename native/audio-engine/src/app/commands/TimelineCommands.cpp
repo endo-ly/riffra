@@ -1,9 +1,8 @@
 #include <chrono>
+#include <memory>
 
 #include "../AudioCommandDispatcher.h"
-#include "contract/ExecutionGraphDecoder.h"
 #include "plugins/PluginEditorHost.h"
-#include "protocol/AudioProtocol.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
@@ -13,151 +12,115 @@ constexpr auto kTimelineVstLifecycleTimeout = std::chrono::seconds(45);
 
 }  // namespace
 
-CommandResult AudioCommandDispatcher::dispatchTimeline(const juce::var& command) {
-    const auto type = command.getProperty("type", {}).toString();
-    if (type == "waitForTimelineIdle") {
-        const auto requestId = currentRequestId();
-        const auto timeoutMs = command.getProperty("timeoutMs", 0).toString().getLargeIntValue();
-        if (timeoutMs <= 0) {
-            writeJson(
-                makeError("invalidCommand", "waitForTimelineIdle requires a positive timeoutMs.",
-                          "runtime.timeline.waitForIdle"),
-                requestId);
-            return {};
-        }
-        if (!context.runtimeLifecycle.waitForIdle(std::chrono::milliseconds(timeoutMs))) {
-            writeJson(makeError("runtimeLifecycle",
-                                "The VST lifecycle executor did not become idle in time.",
-                                "runtime.timeline.waitForIdle"),
-                      requestId);
-            return {};
-        }
-        auto* ack = new juce::DynamicObject();
-        ack->setProperty("type", "timelineIdleAck");
-        writeJson(juce::var(ack), requestId);
-        return {};
+void AudioCommandDispatcher::handle(const WaitForTimelineIdleCommand& command,
+                                    CommandResponder responder) {
+    if (!context.runtimeLifecycle.waitForIdle(
+            std::chrono::milliseconds(static_cast<std::int64_t>(command.timeoutMs)))) {
+        responder.fail("runtimeLifecycle",
+                       "The VST lifecycle executor did not become idle in time.",
+                       "runtime.timeline.waitForIdle");
+        return;
     }
+    responder.respond(TimelineIdleAckSpec{});
+}
 
-    if (type == "prepareTimelineSnapshot") {
-        if (static_cast<int>(command.getProperty("protocolVersion", 0)) != 2) {
-            writeJson(makeError("timelineProtocol", "Unsupported timeline protocol version."));
-            return {};
-        }
-        TimelineSnapshotSpec snapshot;
-        juce::String contractError;
-        if (!decodeTimelineSnapshot(command.getProperty("snapshot", {}), snapshot, contractError)) {
-            writeJson(makeError("timelineContract", contractError, "runtime.timeline.prepare"));
-            return {};
-        }
-        if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
-            writeJson(makeError("timelineBusy",
-                                "Another Arrangement Graph is still loading a VST3. The "
-                                "current runtime remains available."));
-            return {};
-        }
-        auto* device = context.deviceController.manager().getCurrentAudioDevice();
-        const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
-        const auto sampleRate = context.pipeline.getSampleRate();
-        const auto requestId = currentRequestId();
-        context.timelineOperationRunning.store(true, std::memory_order_release);
-        const auto submitted = context.runtimeLifecycle.submit(
-            [&, snapshot, requestId, sampleRate, blockSize] {
-                juce::String timelineError;
-                bool loaded = false;
-                try {
-                    loaded = context.timelineEngine.loadSnapshot(snapshot, context.formatManager,
-                                                                 sampleRate, blockSize,
-                                                                 timelineError, false);
-                } catch (const std::exception& exception) {
-                    timelineError = "Arrangement VST3 loading raised an exception: " +
-                                    juce::String(exception.what());
-                } catch (...) {
-                    timelineError = "Arrangement VST3 loading failed with an unknown exception.";
-                }
-                context.timelineOperationRunning.store(false, std::memory_order_release);
-                if (!loaded) {
-                    writeJson(makeError("timeline", timelineError), requestId);
-                } else {
-                    auto* ack = new juce::DynamicObject();
-                    ack->setProperty("type", "timelineAck");
-                    ack->setProperty("revision", static_cast<juce::int64>(snapshot.revision));
-                    ack->setProperty(
-                        "appliedAtAudioClockSample",
-                        context.timelineEngine.status().getProperty("audioClockSample", 0));
-                    writeJson(juce::var(ack), requestId);
-                }
-            },
-            kTimelineVstLifecycleTimeout);
-        if (!submitted) {
+void AudioCommandDispatcher::handle(const PrepareTimelineSnapshotCommand& command,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(responder,
+                                "Another Arrangement Graph is still loading a VST3. The current "
+                                "runtime remains available."))
+        return;
+    auto* device = context.deviceController.manager().getCurrentAudioDevice();
+    const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+    const auto sampleRate = context.pipeline.getSampleRate();
+    const auto pending = std::make_shared<CommandResponder>(std::move(responder));
+    context.timelineOperationRunning.store(true, std::memory_order_release);
+    const auto submitted = context.runtimeLifecycle.submit(
+        [this, snapshot = command.snapshot, pending, sampleRate, blockSize] {
+            juce::String timelineError;
+            bool loaded = false;
+            try {
+                loaded = context.timelineEngine.loadSnapshot(
+                    snapshot, context.formatManager, sampleRate, blockSize, timelineError, false);
+            } catch (const std::exception& exception) {
+                timelineError = "Arrangement VST3 loading raised an exception: " +
+                                juce::String(exception.what());
+            } catch (...) {
+                timelineError = "Arrangement VST3 loading failed with an unknown exception.";
+            }
             context.timelineOperationRunning.store(false, std::memory_order_release);
-            writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-        }
-        return {};
+            if (loaded)
+                pending->respond(TimelineAckSpec{});
+            else
+                pending->fail("timeline", timelineError, "runtime.timeline.prepare");
+        },
+        kTimelineVstLifecycleTimeout);
+    if (!submitted) {
+        context.timelineOperationRunning.store(false, std::memory_order_release);
+        pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
+                      "runtime.timeline.prepare");
     }
+}
 
-    if (type == "commitTimelineSnapshot") {
-        if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
-            writeJson(makeError("timelineBusy",
-                                "The Arrangement Graph is still loading a VST3 and cannot "
-                                "be committed yet."));
-            return {};
-        }
-        const auto requestId = currentRequestId();
-        context.timelineOperationRunning.store(true, std::memory_order_release);
-        const auto submitted = context.runtimeLifecycle.submit(
-            [&, requestId] {
-                const auto shouldCloseEditor =
-                    context.timelineEngine.hasPreparedSnapshot() &&
-                    context.trackPluginEditor != nullptr &&
-                    !context.timelineEngine.preparedTrackReusesRuntimeDevices(
-                        context.trackPluginEditorTrackId);
-                if (shouldCloseEditor) {
-                    context.trackPluginEditor->close();
-                    context.trackPluginEditor.reset();
-                    context.trackPluginEditorTrackId.clear();
-                    context.trackPluginEditorDeviceId.clear();
-                }
-                juce::String timelineError;
-                const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
-                context.timelineOperationRunning.store(false, std::memory_order_release);
-                if (!committed) {
-                    writeJson(makeError("timeline", timelineError), requestId);
-                    return;
-                }
-                context.pipeline.setMasterGainDb(context.timelineEngine.activeMasterGainDb());
-                writeJson(context.timelineEngine.status(), requestId);
-            },
-            kTimelineVstLifecycleTimeout);
-        if (!submitted) {
+void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(responder,
+                                "The Arrangement Graph is still loading a VST3 and cannot be "
+                                "committed yet."))
+        return;
+    const auto pending = std::make_shared<CommandResponder>(std::move(responder));
+    context.timelineOperationRunning.store(true, std::memory_order_release);
+    const auto submitted = context.runtimeLifecycle.submit(
+        [this, pending] {
+            const auto shouldCloseEditor =
+                context.timelineEngine.hasPreparedSnapshot() &&
+                context.trackPluginEditor != nullptr &&
+                !context.timelineEngine.preparedTrackReusesRuntimeDevices(
+                    context.trackPluginEditorTrackId);
+            if (shouldCloseEditor) {
+                context.trackPluginEditor->close();
+                context.trackPluginEditor.reset();
+                context.trackPluginEditorTrackId.clear();
+                context.trackPluginEditorDeviceId.clear();
+            }
+            juce::String timelineError;
+            const auto committed = context.timelineEngine.commitPreparedSnapshot(timelineError);
             context.timelineOperationRunning.store(false, std::memory_order_release);
-            writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-        }
-        return {};
+            if (!committed) {
+                pending->fail("timeline", timelineError, "runtime.timeline.commit");
+                return;
+            }
+            context.pipeline.setMasterGainDb(context.timelineEngine.activeMasterGainDb());
+            pending->respond(TimelineAckSpec{});
+        },
+        kTimelineVstLifecycleTimeout);
+    if (!submitted) {
+        context.timelineOperationRunning.store(false, std::memory_order_release);
+        pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
+                      "runtime.timeline.commit");
     }
+}
 
-    if (type == "discardTimelineSnapshot") {
-        if (context.timelineOperationRunning.load(std::memory_order_acquire)) {
-            writeJson(makeError("timelineBusy",
-                                "The Arrangement Graph is still loading a VST3 and cannot "
-                                "be discarded yet."));
-            return {};
-        }
-        const auto requestId = currentRequestId();
-        context.timelineOperationRunning.store(true, std::memory_order_release);
-        const auto submitted = context.runtimeLifecycle.submit(
-            [&, requestId] {
-                context.timelineEngine.discardPreparedSnapshot();
-                context.timelineOperationRunning.store(false, std::memory_order_release);
-                writeJson(context.timelineEngine.status(), requestId);
-            },
-            std::chrono::seconds(5));
-        if (!submitted) {
+void AudioCommandDispatcher::handle(const DiscardTimelineSnapshotCommand&,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(responder,
+                                "The Arrangement Graph is still loading a VST3 and cannot be "
+                                "discarded yet."))
+        return;
+    const auto pending = std::make_shared<CommandResponder>(std::move(responder));
+    context.timelineOperationRunning.store(true, std::memory_order_release);
+    const auto submitted = context.runtimeLifecycle.submit(
+        [this, pending] {
+            context.timelineEngine.discardPreparedSnapshot();
             context.timelineOperationRunning.store(false, std::memory_order_release);
-            writeJson(makeError("runtimeLifecycle", "The VST lifecycle executor is stopping."));
-        }
-        return {};
+            pending->respond(TimelineAckSpec{});
+        },
+        std::chrono::seconds(5));
+    if (!submitted) {
+        context.timelineOperationRunning.store(false, std::memory_order_release);
+        pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
+                      "runtime.timeline.discard");
     }
-    return {};
 }
 
 }  // namespace riffra

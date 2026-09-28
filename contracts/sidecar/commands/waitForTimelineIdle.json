@@ -1,0 +1,7 @@
+{
+  "command": {
+    "timeoutMs": 1500,
+    "type": "waitForTimelineIdle"
+  },
+  "requestId": 1
+}

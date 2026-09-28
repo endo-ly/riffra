@@ -36,7 +36,7 @@ use crate::jobs::JobRegistry;
 use crate::library;
 use crate::model::{
     ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus,
-    RecordingFinalizationOutcome, RecordingStopResult,
+    RecordingFinalizationOutcome, RecordingFinalized, RecordingStopResult,
 };
 use crate::recording::materialize;
 use crate::recording::{RecordingAsset, RecordingCapture};
@@ -305,22 +305,32 @@ fn queue_recording_finalization(
                     worker_context
                         .events
                         .emit(HostEvent::CanonicalStateChanged(mutation.canonical));
-                    worker_context.events.emit(HostEvent::RecordingFinalized {
-                        directory: worker_directory.to_string_lossy().into_owned(),
-                        succeeded: true,
-                        message: None,
-                    });
+                    worker_context
+                        .events
+                        .emit(HostEvent::RecordingFinalized(RecordingFinalized {
+                            directory: worker_directory.to_string_lossy().into_owned(),
+                            succeeded: true,
+                            message: None,
+                        }));
                 }
-                Ok(None) => worker_context.events.emit(HostEvent::RecordingFinalized {
-                    directory: worker_directory.to_string_lossy().into_owned(),
-                    succeeded: true,
-                    message: None,
-                }),
-                Err(error) => worker_context.events.emit(HostEvent::RecordingFinalized {
-                    directory: worker_directory.to_string_lossy().into_owned(),
-                    succeeded: false,
-                    message: Some(error),
-                }),
+                Ok(None) => {
+                    worker_context
+                        .events
+                        .emit(HostEvent::RecordingFinalized(RecordingFinalized {
+                            directory: worker_directory.to_string_lossy().into_owned(),
+                            succeeded: true,
+                            message: None,
+                        }))
+                }
+                Err(error) => {
+                    worker_context
+                        .events
+                        .emit(HostEvent::RecordingFinalized(RecordingFinalized {
+                            directory: worker_directory.to_string_lossy().into_owned(),
+                            succeeded: false,
+                            message: Some(error),
+                        }))
+                }
             }
         })
 }

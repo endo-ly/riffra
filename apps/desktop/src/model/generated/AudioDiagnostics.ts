@@ -4,4 +4,8 @@ import type { AudioInstrumentFault } from "./AudioInstrumentFault";
 /**
  * Realtime counters exposed for diagnosing an unsafe or overloaded callback.
  */
-export type AudioDiagnostics = { callbackCount: number, averageCallbackDurationUs: number, maximumCallbackDurationUs: number, callbackOverruns: number, preLimiterPeak: number, limiterGainReductionDb: number, hardClipSamples: number, liveMidiDrops: number, graphRevision: number, graphPublishCount: number, trackCount: number, instrumentRuntimeCount: number, pluginCount: number, maximumLatencySamples: number, projectionDurationMs: number, audioEnvironmentRevision: number, instrumentFaults: Array<AudioInstrumentFault>, };
+export type AudioDiagnostics = { callbackCount: number, averageCallbackDurationUs: number, maximumCallbackDurationUs: number, callbackOverruns: number, preLimiterPeak: number, limiterGainReductionDb: number, hardClipSamples: number, liveMidiDrops: number, graphRevision: number, graphPublishCount: number, trackCount: number, instrumentRuntimeCount: number, pluginCount: number, maximumLatencySamples: number, projectionDurationMs: number, audioEnvironmentRevision: number, 
+/**
+ * Sidecar output lines that did not match the protocol.
+ */
+protocolErrors: number, instrumentFaults: Array<AudioInstrumentFault>, };

@@ -186,9 +186,9 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     EXPECT_GT(liveAfterStopPeak, 0.0f);
     ASSERT_FALSE(processOrder.empty());
     EXPECT_EQ(processOrder.front(), 7);
-    const auto armedTrackIds = engine.status().getProperty("armedTrackIds", {});
-    ASSERT_TRUE(armedTrackIds.isArray());
-    EXPECT_EQ(armedTrackIds.size(), 1);
+    const auto status = engine.status();
+    ASSERT_TRUE(status.graph.has_value());
+    EXPECT_EQ(status.graph->armedTrackIds.size(), 1u);
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
@@ -412,14 +412,12 @@ TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
     engine.seekToTick(4);
     engine.play();
     engine.mix(outputs.data(), 2, kBlockSamples);
-    const auto beforeStop = static_cast<std::int64_t>(
-        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+    const auto beforeStop = engine.status().timelineSample;
     engine.stop();
     std::fill(left.begin(), left.end(), 0.0f);
     std::fill(right.begin(), right.end(), 0.0f);
     engine.mix(outputs.data(), 2, kBlockSamples);
-    const auto afterStop = static_cast<std::int64_t>(
-        engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1)));
+    const auto afterStop = engine.status().timelineSample;
 
     // Assert: the playhead advances by the 5 ms fade only, not by the 512
     // sample callback, and remains stable on subsequent stopped callbacks.
@@ -427,9 +425,7 @@ TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
     EXPECT_GT(left.front(), 0.01f);
     EXPECT_LT(std::abs(left.back()), 0.001f);
     engine.mix(outputs.data(), 2, kBlockSamples);
-    EXPECT_EQ(static_cast<std::int64_t>(
-                  engine.status().getProperty("timelineSample", static_cast<juce::int64>(-1))),
-              afterStop);
+    EXPECT_EQ(engine.status().timelineSample, afterStop);
 }
 
 }  // namespace riffra
