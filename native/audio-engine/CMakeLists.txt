@@ -89,6 +89,8 @@ target_sources(riffra-render-core PRIVATE
   src/timeline/TimelineEngine.h
   src/timeline/ControlGraphRegistry.cpp
   src/timeline/ControlGraphRegistry.h
+  src/timeline/MidiSourceRegistry.cpp
+  src/timeline/MidiSourceRegistry.h
   src/timeline/PreparedTimeline.h
   src/timeline/RealtimeCommand.h
   src/timeline/RealtimeFrame.h

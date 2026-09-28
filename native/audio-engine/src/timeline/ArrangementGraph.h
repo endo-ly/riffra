@@ -15,9 +15,9 @@ namespace riffra {
 /// and capture taps independent from the master/playback buses.
 class ArrangementGraph final {
 public:
-    [[nodiscard]] static bool midiRouteMatches(const juce::String& configuredDeviceId,
-                                               int configuredChannel,
-                                               const juce::String& sourceDeviceId,
+    /// Sources are MidiSourceRegistry indices; kAllSources accepts every device.
+    [[nodiscard]] static bool midiRouteMatches(std::uint16_t configuredSource,
+                                               int configuredChannel, std::uint16_t source,
                                                int messageChannel) noexcept;
     [[nodiscard]] static const float* audioInputSource(int configuredChannel,
                                                        const float* const* physicalInputChannels,

@@ -171,6 +171,10 @@ void TimelineEngine::setRealtimeOwner(const RealtimeOwner next) {
 void TimelineEngine::audioDeviceStarted() {
     graphRegistry.access(
         [](ControlGraphRegistry::State& graphs) { graphs.devicesNeedReprepare = true; });
+    // Input played while no device ran would sound late; it is counted as dropped.
+    LiveMidiEvent stale;
+    while (liveMidi.tryPopNonRealtime(stale))
+        liveMidiQueueDrops.fetch_add(1, std::memory_order_relaxed);
     RealtimeCommand started;
     started.kind = RealtimeCommand::Kind::deviceStarted;
     // The callback has not started yet, so the control side still owns the
@@ -255,6 +259,13 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
             if (state.graph != nullptr)
                 for (auto& track : state.graph->tracks) track->runtime->panic();
             break;
+        case RealtimeCommand::Kind::panicTrack:
+            if (auto* track = findTrackByKey(state, command.trackKey); track != nullptr)
+                track->runtime->panic();
+            break;
+        case RealtimeCommand::Kind::targetedMidi:
+            playTargetedMidi(state, command);
+            break;
         case RealtimeCommand::Kind::setLiveMidiTarget:
             state.liveMidiTargetTrackKey = command.trackKey;
             applyLowLatencyMonitoring(state);
@@ -314,6 +325,7 @@ void TimelineEngine::publishFrame(const RealtimeState& state) noexcept {
         frame.activeGraphSerial = state.graph->serial;
         frame.graphRevision = state.graph->revision;
         frame.sampleRate = state.graph->outputSampleRate;
+        frame.armedInstrumentTrack = state.graph->summary.armedInstrumentTrack;
     }
     realtimeFrame.write(frame);
 }
@@ -323,6 +335,7 @@ RealtimeBlock TimelineEngine::beginBlock(const int sampleCount) noexcept {
     // applied; the acquire load orders this block after that hand-over.
     if (owner.load(std::memory_order_acquire) == RealtimeOwner::audio)
         drainRealtimeCommands(realtime);
+    routeLiveMidi(realtime);
     advanceCountIn(realtime, sampleCount);
     publishFrame(realtime);
     // A graph published while the device was stopped hands its gain to the
@@ -354,7 +367,7 @@ TimelineStatus TimelineEngine::status() const {
     status.frame = realtimeFrame.read();
     status.graph = visitActiveGraph(
         std::optional<TimelineGraphStatus>{},
-        [&status](const PreparedTimeline& graph, const RealtimeFrame& frame) {
+        [this, &status](const PreparedTimeline& graph, const RealtimeFrame& frame) {
             status.frame = frame;
             TimelineGraphStatus result;
             result.revision = graph.revision;
@@ -366,6 +379,7 @@ TimelineStatus TimelineEngine::status() const {
             result.pluginCount = graph.summary.pluginCount;
             result.maximumLatencySamples = graph.summary.maximumLatencySamples;
             result.armedTrackIds = graph.summary.armedTrackIds;
+            result.liveMidiDrops = liveMidiQueueDrops.load(std::memory_order_relaxed);
             for (const auto& track : graph.tracks) {
                 const auto* instrument = track->runtime->instrument();
                 if (instrument == nullptr) continue;

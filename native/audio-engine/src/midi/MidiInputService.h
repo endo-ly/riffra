@@ -14,7 +14,7 @@ namespace riffra {
 class PreviewEngine;
 class TimelineEngine;
 
-class MidiMonitor final : public juce::MidiInputCallback {
+class MidiMonitor final {
 public:
     // Control thread only. The callback reads the installed targets without
     // taking a lock.
@@ -22,8 +22,8 @@ public:
     void setTimelineEngine(TimelineEngine* engine) noexcept;
 
     // JUCE MIDI callback threads. This path must remain non-blocking.
-    void handleIncomingMidiMessage(juce::MidiInput* source,
-                                   const juce::MidiMessage& message) override;
+    /// Routes one message from the device with the given MidiSourceRegistry index.
+    void receive(std::uint16_t sourceIndex, const juce::MidiMessage& message);
 
     void setActive(bool value) noexcept;
     [[nodiscard]] bool isActive() const noexcept;
@@ -55,9 +55,27 @@ public:
     [[nodiscard]] bool deviceSetChanged() const;
 
 private:
+    /// Forwards one opened device to the monitor together with its source index.
+    class SourceCallback final : public juce::MidiInputCallback {
+    public:
+        SourceCallback(MidiMonitor& monitorIn, std::uint16_t sourceIndexIn) noexcept;
+        void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override;
+
+    private:
+        MidiMonitor& monitor;
+        std::uint16_t sourceIndex;
+    };
+
+    struct OpenInput final {
+        std::unique_ptr<SourceCallback> callback;
+        // Declared after the callback so the device stops before it is destroyed.
+        std::unique_ptr<juce::MidiInput> input;
+    };
+
+    TimelineEngine& timeline;
     MidiMonitor midiMonitor;
     mutable std::mutex inputsLock;
-    std::vector<std::unique_ptr<juce::MidiInput>> inputs;
+    std::vector<OpenInput> inputs;
     std::atomic<bool> listening{false};
     std::set<juce::String> activeDeviceIds;
 };

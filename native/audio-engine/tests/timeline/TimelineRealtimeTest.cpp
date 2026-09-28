@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <thread>
 
 #include "TimelineTestSupport.h"
@@ -197,6 +198,59 @@ TEST(TimelineRealtimeTest, ReusedTracksShareTheirDeviceInstances) {
     ASSERT_NE(second, first);
     EXPECT_TRUE(second->tracks.front()->reuseRuntimeDevices);
     EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
+}
+
+TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeInstrumentSnapshot("track:live");
+    snapshot.graph.tracks.front().armed = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error));
+    InstrumentTrace trace;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSamples, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live",
+                                                               "instrument:live", std::move(rack)));
+    engine.setRealtimeOwner(RealtimeOwner::audio);
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    const auto routed = engine.enqueueLiveMidi(0, juce::MidiMessage::noteOn(1, 60, 0.8f));
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+
+    // Assert
+    EXPECT_TRUE(routed);
+    EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+}
+
+TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeInstrumentSnapshot("track:live");
+    snapshot.graph.tracks.front().armed = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error));
+    engine.setRealtimeOwner(RealtimeOwner::audio);
+    const auto note = juce::MidiMessage::noteOn(1, 60, 0.8f);
+    for (int event = 0; event < 1024; ++event) ASSERT_TRUE(engine.enqueueLiveMidi(0, note));
+
+    // Act
+    const auto routed = engine.enqueueLiveMidi(0, note);
+
+    // Assert
+    EXPECT_TRUE(routed);
+    const auto status = engine.status();
+    ASSERT_TRUE(status.graph.has_value());
+    EXPECT_EQ(status.graph->liveMidiDrops, 1u);
 }
 
 }  // namespace riffra

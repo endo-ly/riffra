@@ -681,8 +681,9 @@ public:
               RealtimeRequest::accepted))
             return false;
 
-        if (!engine.enqueueTargetedMidi("track:live-instrument",
-                                        juce::MidiMessage::noteOn(1, 60, 0.8f), error))
+        if (!(engine.enqueueTargetedMidi("track:live-instrument",
+                                         juce::MidiMessage::noteOn(1, 60, 0.8f),
+                                         error) == RealtimeRequest::accepted))
             return false;
 
         std::array<float, 32> left{};
@@ -743,7 +744,8 @@ public:
             if (graph == nullptr || graph->tracks.empty()) return false;
             graph->tracks.front()->runtime->compensationDelaySamples = 4;
         }
-        if (!engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f), error))
+        if (!(engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f),
+                                         error) == RealtimeRequest::accepted))
             return false;
 
         // Act

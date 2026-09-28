@@ -232,6 +232,8 @@ public:
     int audioInputChannel = -1;
     bool monitorInput = false;
     juce::String midiDeviceId;
+    /// MidiSourceRegistry index of `midiDeviceId`.
+    std::uint16_t midiSourceIndex = 0;
     int midiChannel = 0;
     juce::MidiBuffer midiBuffer;
 

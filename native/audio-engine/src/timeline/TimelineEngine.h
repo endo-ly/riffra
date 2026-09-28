@@ -16,11 +16,13 @@
 #include "AutomationRuntime.h"
 #include "ControlGraphRegistry.h"
 #include "MidiScheduler.h"
+#include "MidiSourceRegistry.h"
 #include "PreparedTimeline.h"
 #include "RealtimeCommand.h"
 #include "RealtimeFrame.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
+#include "concurrency/BoundedMpmcQueue.h"
 #include "concurrency/RealtimeCommandQueue.h"
 #include "concurrency/SeqLockFrame.h"
 #include "contract/ExecutionGraph.h"
@@ -137,12 +139,17 @@ public:
     void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
     void clearRecordingSink() noexcept;
 
-    [[nodiscard]] bool enqueueLiveMidi(const juce::MidiMessage& message,
-                                       const juce::String& deviceId = {}) noexcept;
-    [[nodiscard]] bool enqueueTargetedMidi(const juce::String& trackId,
-                                           const juce::MidiMessage& message,
-                                           juce::String& error) noexcept;
-    [[nodiscard]] bool panicTargetedMidi(const juce::String& trackId, juce::String& error) noexcept;
+    /// Control side. Returns the index live MIDI events of a device carry.
+    [[nodiscard]] std::uint16_t midiSourceIndex(const juce::String& deviceId);
+    /// MIDI input callback threads. Returns whether the message belongs to the
+    /// timeline, which is the case whenever an armed Instrument Track listens;
+    /// a message the full queue cannot take is counted in `liveMidiDrops`.
+    [[nodiscard]] bool enqueueLiveMidi(std::uint16_t sourceIndex,
+                                       const juce::MidiMessage& message) noexcept;
+    /// Plays a Play Surface message on an Instrument Track at the next block.
+    RealtimeRequest enqueueTargetedMidi(const juce::String& trackId,
+                                        const juce::MidiMessage& message, juce::String& error);
+    RealtimeRequest panicTargetedMidi(const juce::String& trackId, juce::String& error);
 
     // Committed-graph controls. Control threads.
     /// Applies a transient gain/pan change to the committed graph without changing
@@ -217,6 +224,7 @@ private:
     using Track = PreparedTimeline::Track;
 
     static constexpr std::size_t kRealtimeCommandCapacity = 256;
+    static constexpr std::size_t kLiveMidiCapacity = 1024;
 
     enum class RenderTransportState { stopped, fadingIn, playing, fadingOut };
 
@@ -265,6 +273,13 @@ private:
         int metronomeTransportSegmentCount = 0;
     };
 
+    /// One live MIDI input message on its way to the audio thread.
+    struct LiveMidiEvent final {
+        std::uint16_t sourceIndex = 0;
+        std::uint8_t bytes[3] = {};
+        std::uint8_t size = 0;
+    };
+
     struct OfflineRecordingTrack final {
         juce::String id;
         std::vector<PluginDeviceSpec> effects;
@@ -280,6 +295,14 @@ private:
     void advanceCountIn(RealtimeState& state, int sampleCount) noexcept;
     void applyLowLatencyMonitoring(const RealtimeState& state) noexcept;
     void startRecordingNow(RealtimeState& state, int countInBeats) noexcept;
+    void routeLiveMidi(RealtimeState& state) noexcept;
+    void playTargetedMidi(RealtimeState& state, const RealtimeCommand& command) noexcept;
+    [[nodiscard]] static Track* findTrackByKey(const RealtimeState& state,
+                                               std::uint32_t trackKey) noexcept;
+    /// Validates a Play Surface request against the committed graph and returns
+    /// the key of its Instrument Track.
+    [[nodiscard]] std::optional<std::uint32_t> playSurfaceTrackKey(const juce::String& trackId,
+                                                                   juce::String& error);
     void closeRecordingCaptures(RealtimeState& state) noexcept;
     /// Runs `visit` with the active graph under the registry lock, or returns
     /// `fallback` when no graph has been published.
@@ -343,6 +366,12 @@ private:
     std::atomic<RealtimeOwner> owner{RealtimeOwner::control};
     std::uint64_t nextCommandSequence = 1;
     RealtimeState realtime;
+    MidiSourceRegistry midiSources;
+    BoundedMpmcQueue<LiveMidiEvent, kLiveMidiCapacity> liveMidi;
+    std::atomic<std::uint64_t> liveMidiQueueDrops{0};
+    // Recorded as the source of Play Surface MIDI; built once so the audio
+    // thread never constructs a string.
+    const juce::String playSurfaceSourceId{"riffra:play-surface"};
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
     std::mutex finalizedRecordingMutex;
     std::vector<OfflineRecordingTrack> finalizedRecordingTracks;

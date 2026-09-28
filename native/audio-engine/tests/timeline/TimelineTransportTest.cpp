@@ -21,8 +21,9 @@ TEST(TimelineEngineTest, ProcessesAnInstrumentRuntimeOncePerTransportChunk) {
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(
         engine, "track:live-fade", "instrument:live-fade", std::move(instrument)));
     ASSERT_TRUE((engine.setLiveMidiTarget("track:live-fade", error) == RealtimeRequest::accepted));
-    ASSERT_TRUE(engine.enqueueTargetedMidi("track:live-fade",
-                                           juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+    ASSERT_TRUE(
+        (engine.enqueueTargetedMidi("track:live-fade", juce::MidiMessage::noteOn(1, 60, 0.8f),
+                                    error) == RealtimeRequest::accepted));
 
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};
@@ -93,13 +94,14 @@ TEST(TimelineEngineTest, LiveMidiTailIncludesEffectChainTail) {
     std::array<float, 32> left{};
     std::array<float, 32> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOn(1, 60, 0.8f), error));
+    ASSERT_TRUE((engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOn(1, 60, 0.8f),
+                                            error) == RealtimeRequest::accepted));
     engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
     const auto callsWithNoteHeld = effectCalls.size();
 
     // Act
-    ASSERT_TRUE(engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOff(1, 60), error));
+    ASSERT_TRUE((engine.enqueueTargetedMidi("track:tail", juce::MidiMessage::noteOff(1, 60),
+                                            error) == RealtimeRequest::accepted));
     engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
     const auto callsAtNoteOff = effectCalls.size();
     engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
@@ -163,16 +165,16 @@ TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughTimelineLiveAndLoopPaths
     // Stopped transport still accepts targeted live MIDI, including directly
     // after stop/reset.
     ASSERT_TRUE(engine.stop());
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 64, 0.8f), error))
+    ASSERT_TRUE((engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 64, 0.8f),
+                                            error) == RealtimeRequest::accepted))
         << error.toStdString();
     clearOutput();
     engine.mix(outputChannels.data(), 2, kBlockSamples);
     const auto livePeak = outputMagnitude();
 
     ASSERT_TRUE(engine.stop());
-    ASSERT_TRUE(
-        engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 67, 0.7f), error))
+    ASSERT_TRUE((engine.enqueueTargetedMidi("track:builtin", juce::MidiMessage::noteOn(1, 67, 0.7f),
+                                            error) == RealtimeRequest::accepted))
         << error.toStdString();
     clearOutput();
     engine.mix(outputChannels.data(), 2, kBlockSamples);

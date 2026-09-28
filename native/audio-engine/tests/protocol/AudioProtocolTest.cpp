@@ -116,7 +116,7 @@ TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
     auto& monitor = service.monitor();
 
     monitor.setActive(true);
-    monitor.handleIncomingMidiMessage(nullptr, juce::MidiMessage::noteOn(1, 60, 0.8f));
+    monitor.receive(0, juce::MidiMessage::noteOn(1, 60, 0.8f));
 
     EXPECT_TRUE(monitor.isActive());
     EXPECT_EQ(monitor.getMessageCount(), 1u);

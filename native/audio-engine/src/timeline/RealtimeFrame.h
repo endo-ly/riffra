@@ -30,6 +30,8 @@ struct RealtimeFrame final {
     double sampleRate = 0.0;
     /// Track key of the Play Surface target; 0 when there is none.
     std::uint32_t liveMidiTargetTrackKey = 0;
+    /// Whether the active graph routes live MIDI input to an armed Instrument Track.
+    bool armedInstrumentTrack = false;
 };
 
 }  // namespace riffra

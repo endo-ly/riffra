@@ -84,6 +84,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->instrumentTrack = trackSpec.kind == TrackKindSpec::instrument;
         track->runtime->armed = trackSpec.armed;
         track->runtime->midiDeviceId = trackSpec.midiInput.deviceId.value_or(juce::String());
+        track->runtime->midiSourceIndex = engine.midiSources.indexFor(track->runtime->midiDeviceId);
         track->runtime->midiChannel = trackSpec.midiInput.channel.has_value()
                                           ? static_cast<int>(*trackSpec.midiInput.channel)
                                           : 0;

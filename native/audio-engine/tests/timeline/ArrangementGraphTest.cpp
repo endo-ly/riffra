@@ -5,13 +5,15 @@
 
 #include "timeline/ArrangementGraph.h"
 #include "timeline/AutomationRuntime.h"
+#include "timeline/MidiSourceRegistry.h"
 
 namespace riffra {
 
 TEST(ArrangementGraphTest, ResolvesMidiAndPhysicalInputRouting) {
-    EXPECT_TRUE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-a", 2));
-    EXPECT_FALSE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-b", 2));
-    EXPECT_FALSE(ArrangementGraph::midiRouteMatches("device-a", 2, "device-a", 3));
+    EXPECT_TRUE(ArrangementGraph::midiRouteMatches(0, 2, 0, 2));
+    EXPECT_TRUE(ArrangementGraph::midiRouteMatches(MidiSourceRegistry::kAllSources, 2, 1, 2));
+    EXPECT_FALSE(ArrangementGraph::midiRouteMatches(0, 2, 1, 2));
+    EXPECT_FALSE(ArrangementGraph::midiRouteMatches(0, 2, 0, 3));
 
     std::array<float, 2> inputOne{0.25f, 0.5f};
     std::array<float, 2> inputTwo{-0.25f, -0.5f};

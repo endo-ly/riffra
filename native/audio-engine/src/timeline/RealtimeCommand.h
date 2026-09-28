@@ -18,7 +18,9 @@ struct RealtimeCommand final {
         stopRecording,
         cancelCountIn,
         panicAll,
+        panicTrack,
         setLiveMidiTarget,
+        targetedMidi,
         publishGraph,
         deviceStarted,
     };
@@ -30,8 +32,11 @@ struct RealtimeCommand final {
     std::uint64_t tick = 0;
     /// `startRecording` count-in length.
     std::int32_t countInBeats = 0;
-    /// `setLiveMidiTarget`; 0 clears the target.
+    /// `panicTrack`, `setLiveMidiTarget` (0 clears the target) and `targetedMidi`.
     std::uint32_t trackKey = 0;
+    /// `targetedMidi` message.
+    std::uint8_t midiBytes[3] = {};
+    std::uint8_t midiSize = 0;
     /// `publishGraph`.
     PreparedTimeline* graph = nullptr;
 };
