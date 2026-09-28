@@ -12,8 +12,7 @@ namespace riffra {
 
 /// Assigns every MIDI input device a small index that realtime events carry.
 ///
-/// Entries are appended on the control side and never change afterwards, so
-/// the audio thread reads a published entry without taking a lock.
+/// Entries are appended on the control side and copied into a graph before publication.
 class MidiSourceRegistry final {
 public:
     /// Index a Track uses to accept every MIDI input device.
@@ -26,14 +25,13 @@ public:
     /// Control side. Returns the index of a device, registering it on first
     /// use; an empty identifier means every device.
     [[nodiscard]] std::uint16_t indexFor(const juce::String& deviceId);
-    /// Any thread. Returns the identifier of a registered index, otherwise empty.
-    [[nodiscard]] const juce::String& deviceId(std::uint16_t index) const noexcept;
+    /// Copies the registered identifiers for an immutable graph snapshot.
+    [[nodiscard]] std::array<juce::String, kCapacity> snapshot() const;
 
 private:
     std::mutex appendMutex;
     std::array<juce::String, kCapacity> deviceIds;
     std::atomic<std::size_t> published{0};
-    const juce::String none;
 };
 
 }  // namespace riffra

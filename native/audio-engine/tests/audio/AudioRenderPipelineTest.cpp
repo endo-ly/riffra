@@ -198,9 +198,8 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
                                .getChildFile(juce::Uuid().toString());
 
     // Act
-    ASSERT_TRUE(callback.recording().start(directory, error));
-    ASSERT_TRUE((timeline.startRecording(0, error) == RealtimeRequest::accepted));
-    ASSERT_TRUE(callback.recording().stop(error));
+    ASSERT_EQ(callback.recording().start(directory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
 
     // Assert
     ASSERT_NE(detached, nullptr);
@@ -492,10 +491,9 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
                                     .getChildFile(juce::Uuid().toString());
     const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.recording().start(firstDirectory, error));
-    ASSERT_TRUE((timeline.startRecording(0, error) == RealtimeRequest::accepted));
-    ASSERT_TRUE(callback.recording().stop(error));
-    EXPECT_FALSE(callback.recording().start(secondDirectory, error));
+    ASSERT_EQ(callback.recording().start(firstDirectory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
+    EXPECT_EQ(callback.recording().start(secondDirectory, 0, error), RealtimeRequest::rejected);
 
     callback.recording().completeProcessing({}, {});
     firstDirectory.deleteRecursively();
@@ -514,8 +512,8 @@ TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
                                .getChildFile("riffra-recording-cancel-test")
                                .getChildFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.recording().start(directory, error));
-    ASSERT_TRUE(callback.recording().cancel(error));
+    ASSERT_EQ(callback.recording().start(directory, 1, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
     EXPECT_TRUE(callback.recording().status().cancelled);
 
     directory.deleteRecursively();

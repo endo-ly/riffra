@@ -33,9 +33,7 @@ RealtimeRequest TimelineEngine::setLiveMidiTarget(const juce::String& trackId,
                 const auto* track = graph != nullptr ? graph->findTrack(trackId) : nullptr;
                 return track != nullptr && track->runtime->instrumentTrack;
             };
-            if (!isInstrumentTrack(graphs.latestCommitted) &&
-                !isInstrumentTrack(graphs.pending.get()))
-                return false;
+            if (!isInstrumentTrack(graphs.latestCommitted)) return false;
             trackKey = graphs.trackKeys.keyFor(trackId);
             return true;
         });
@@ -87,9 +85,14 @@ void TimelineEngine::routeLiveMidi(RealtimeState& state) noexcept {
                                                     event.sourceIndex, message.getChannel()))
                 continue;
             if (runtime.hasLoadedInstrument()) (void)runtime.enqueueMidi(message);
-            if (state.recordingPhase == RecordingPhase::recording)
-                recordingCapture->writeMidiTrack(track.id, midiSources.deviceId(event.sourceIndex),
-                                                 message, state.audioClockSample);
+            if (state.recordingPhase == RecordingPhase::recording) {
+                const auto* const sourceId =
+                    event.sourceIndex < MidiSourceRegistry::kCapacity
+                        ? &state.graph->midiSourceDeviceIds[event.sourceIndex]
+                        : &state.graph->unregisteredMidiSourceId;
+                recordingCapture->writeMidiTrack(track.id, *sourceId, message,
+                                                 state.audioClockSample);
+            }
         }
     }
 }

@@ -152,8 +152,10 @@ public:
             loopBoundarySamples[static_cast<std::size_t>(loopBoundaryCount)] = audioClockSample;
         ++loopBoundaryCount;
     }
-    void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
-                        std::uint64_t) noexcept override {}
+    void writeMidiTrack(const juce::String&, const juce::String& sourceDeviceId,
+                        const juce::MidiMessage&, std::uint64_t) noexcept override {
+        receivedMidiSourceId = sourceDeviceId;
+    }
     void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
                          std::uint64_t) noexcept override {}
 
@@ -185,6 +187,7 @@ public:
     }
 
     juce::String receivedTrack;
+    juce::String receivedMidiSourceId;
     int receivedSamples = 0;
     int beginCount = 0;
     int endCount = 0;
@@ -449,6 +452,19 @@ public:
     static PreparedTimeline* pendingGraph(TimelineEngine& engine) {
         return engine.graphRegistry.access(
             [](ControlGraphRegistry::State& graphs) { return graphs.pending.get(); });
+    }
+
+    static bool hasRecordingSink(TimelineEngine& engine) {
+        return static_cast<bool>(engine.recordingCapture->acquireSink());
+    }
+
+    static std::uint64_t nextCommandSequence(TimelineEngine& engine) {
+        const std::lock_guard lock(engine.ownerMutex);
+        return engine.nextCommandSequence;
+    }
+
+    static std::size_t realtimeCommandCapacity() noexcept {
+        return TimelineEngine::kRealtimeCommandCapacity;
     }
 
     /// Opens one block as the audio callback does and reports its capture window.
@@ -1390,14 +1406,11 @@ public:
                         AudioRenderPipeline prodCallback(engine);
                         juce::String sessionError;
                         const auto prodArrangeStarted =
-                            prodCallback.recording().start(prodDir, sessionError);
-                        if (prodArrangeStarted) {
+                            prodCallback.recording().start(prodDir, 0, sessionError);
+                        if (prodArrangeStarted == RealtimeRequest::accepted) {
                             int prodOffset = 0;
                             int prodSamples = 0;
-                            const auto prodStarted =
-                                (engine.startRecording(0, error) == RealtimeRequest::accepted);
                             const auto prodWindowed =
-                                prodStarted &&
                                 recordingWindow(engine, kProdTotal, prodOffset, prodSamples);
                             std::array<float, kProdBlock> prodIn{};
                             prodIn.fill(0.06f);
@@ -1415,7 +1428,8 @@ public:
                             }
                             const auto preStopStatus = prodCallback.recording().status();
                             juce::String stopError;
-                            const auto stopOk = prodCallback.recording().stop(stopError);
+                            const auto stopOk = prodCallback.recording().stop(stopError) ==
+                                                RealtimeRequest::accepted;
                             auto detached = prodCallback.takeFinalizedRecording();
                             const auto processed =
                                 detached != nullptr &&
@@ -1427,8 +1441,6 @@ public:
                                 if (stopError.isNotEmpty()) stopError << " ";
                                 stopError << finishError;
                             }
-                            if (!engine.stop()) return false;
-
                             const auto rawFile = prodDir.getChildFile("tracks/0000/raw.wav");
                             const auto processedFile =
                                 prodDir.getChildFile("tracks/0000/processed.wav");
@@ -1652,8 +1664,7 @@ public:
                         int cancelledOffset = 0;
                         int cancelledSamples = 0;
                         countInCancelled =
-                            (engine.cancelRecordingIfCountingIn(error) ==
-                             RealtimeRequest::accepted) &&
+                            (engine.stopArrangeRecording(error) == RealtimeRequest::accepted) &&
                             engine.status().frame.recordingPhase == RecordingPhase::idle &&
                             !recordingWindow(engine, 512, cancelledOffset, cancelledSamples) &&
                             cancelledSamples == 0;

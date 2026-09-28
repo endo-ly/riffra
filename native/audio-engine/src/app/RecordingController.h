@@ -9,6 +9,7 @@
 
 #include "contract/SidecarMessages.h"
 #include "recording/ArrangeRecordingSession.h"
+#include "timeline/RealtimeCommand.h"
 
 namespace riffra {
 
@@ -26,9 +27,8 @@ public:
     RecordingController& operator=(const RecordingController&) = delete;
 
     // Control thread only.
-    bool start(const juce::File& directory, juce::String& error);
-    bool stop(juce::String& error);
-    bool cancel(juce::String& error);
+    RealtimeRequest start(const juce::File& directory, int countInBeats, juce::String& error);
+    RealtimeRequest stop(juce::String& error);
     void setFinalizationDispatcher(FinalizationDispatcher dispatcher);
     std::unique_ptr<ArrangeRecordingSession> takePendingFinalization() noexcept;
     void completeProcessing(const ArrangeRecordingSummary& summary, const juce::String& error);

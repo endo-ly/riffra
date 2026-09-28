@@ -116,8 +116,8 @@ public:
     [[nodiscard]] std::optional<std::uint64_t> seekToTick(std::uint64_t tick) noexcept;
     [[nodiscard]] std::optional<std::uint64_t> panicAllInstrumentTracks() noexcept;
     RealtimeRequest startRecording(int countInBeats, juce::String& error);
-    /// Cancels a running count-in; `rejected` means no count-in was running.
-    RealtimeRequest cancelRecordingIfCountingIn(juce::String& error);
+    /// Closes recording capture and stops transport in one realtime command.
+    RealtimeRequest stopArrangeRecording(juce::String& error);
     /// Closes the realtime capture segments and waits until the owner has done so.
     bool stopRecording(juce::String& error);
     RealtimeRequest setLiveMidiTarget(const juce::String& trackId, juce::String& error);

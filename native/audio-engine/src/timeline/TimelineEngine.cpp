@@ -91,6 +91,7 @@ RealtimeRequest TimelineEngine::commitPreparedSnapshot(juce::String& error) {
             return RealtimeRequest::queueFull;
         }
         auto& candidate = *graphs.pending;
+        candidate.midiSourceDeviceIds = midiSources.snapshot();
         const auto crossesProjectBoundary =
             graphs.latestCommitted == nullptr ||
             graphs.latestCommitted->projectId != candidate.projectId;
@@ -246,14 +247,18 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
         case RealtimeCommand::Kind::stopRecording:
             closeRecordingCaptures(state);
             break;
-        case RealtimeCommand::Kind::cancelCountIn:
-            if (state.recordingPhase != RecordingPhase::countingIn) break;
+        case RealtimeCommand::Kind::stopArrangeRecording:
+            if (state.recordingPhase == RecordingPhase::countingIn) {
+                state.countInRemainingSamples = 0;
+                state.countInBlockStartRemainingSamples = 0;
+                state.captureBlockOffset = 0;
+                state.captureBlockSamples = 0;
+                state.playbackBlockOffset = 0;
+            } else {
+                closeRecordingCaptures(state);
+            }
+            state.transport = TransportState::stopped;
             state.recordingPhase = RecordingPhase::idle;
-            state.countInRemainingSamples = 0;
-            state.countInBlockStartRemainingSamples = 0;
-            state.captureBlockOffset = 0;
-            state.captureBlockSamples = 0;
-            state.playbackBlockOffset = 0;
             break;
         case RealtimeCommand::Kind::panicAll:
             if (state.graph != nullptr)

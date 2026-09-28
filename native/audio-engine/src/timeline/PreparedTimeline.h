@@ -2,11 +2,13 @@
 
 #include <JuceHeader.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
 
+#include "MidiSourceRegistry.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
 #include "contract/ExecutionGraph.h"
@@ -95,6 +97,8 @@ struct PreparedTimeline final {
     std::uint16_t timeSignatureNumerator = 4;
     std::uint16_t timeSignatureDenominator = 4;
     GraphSummary summary;
+    std::array<juce::String, MidiSourceRegistry::kCapacity> midiSourceDeviceIds;
+    juce::String unregisteredMidiSourceId;
     std::vector<std::unique_ptr<Track>> tracks;
 
     [[nodiscard]] Track* findTrack(const juce::String& trackId) const noexcept {

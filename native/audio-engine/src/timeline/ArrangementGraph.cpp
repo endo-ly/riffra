@@ -9,6 +9,9 @@ namespace riffra {
 bool ArrangementGraph::midiRouteMatches(const std::uint16_t configuredSource,
                                         const int configuredChannel, const std::uint16_t source,
                                         const int messageChannel) noexcept {
+    if (source == MidiSourceRegistry::kUnregistered &&
+        configuredSource != MidiSourceRegistry::kAllSources)
+        return false;
     return (configuredSource == MidiSourceRegistry::kAllSources || configuredSource == source) &&
            (configuredChannel == 0 || configuredChannel == messageChannel);
 }

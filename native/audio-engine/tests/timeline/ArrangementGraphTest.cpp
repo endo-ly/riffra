@@ -12,6 +12,9 @@ namespace riffra {
 TEST(ArrangementGraphTest, ResolvesMidiAndPhysicalInputRouting) {
     EXPECT_TRUE(ArrangementGraph::midiRouteMatches(0, 2, 0, 2));
     EXPECT_TRUE(ArrangementGraph::midiRouteMatches(MidiSourceRegistry::kAllSources, 2, 1, 2));
+    EXPECT_TRUE(ArrangementGraph::midiRouteMatches(MidiSourceRegistry::kAllSources, 2,
+                                                   MidiSourceRegistry::kUnregistered, 2));
+    EXPECT_FALSE(ArrangementGraph::midiRouteMatches(0, 2, MidiSourceRegistry::kUnregistered, 2));
     EXPECT_FALSE(ArrangementGraph::midiRouteMatches(0, 2, 1, 2));
     EXPECT_FALSE(ArrangementGraph::midiRouteMatches(0, 2, 0, 3));
 

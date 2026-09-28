@@ -16,7 +16,7 @@ struct RealtimeCommand final {
         seek,
         startRecording,
         stopRecording,
-        cancelCountIn,
+        stopArrangeRecording,
         panicAll,
         panicTrack,
         setLiveMidiTarget,

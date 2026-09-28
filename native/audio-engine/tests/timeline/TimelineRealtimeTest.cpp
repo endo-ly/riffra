@@ -200,6 +200,58 @@ TEST(TimelineRealtimeTest, ReusedTracksShareTheirDeviceInstances) {
     EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
 }
 
+TEST(TimelineRealtimeTest, ValidatesLiveMidiTargetAgainstOnlyTheCommittedGraph) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, makeInstrumentSnapshot("track:committed"), formats,
+                                 kSampleRate, kBlockSamples, error))
+        << error;
+    auto pending = makeInstrumentSnapshot("track:pending");
+    ASSERT_TRUE(
+        loadTestSnapshot(engine, pending, formats, kSampleRate, kBlockSamples, error, false))
+        << error;
+
+    // Act
+    const auto pendingTarget = engine.setLiveMidiTarget("track:pending", error);
+    const auto committedTarget = engine.setLiveMidiTarget("track:committed", error);
+
+    // Assert
+    EXPECT_EQ(pendingTarget, RealtimeRequest::rejected);
+    EXPECT_EQ(committedTarget, RealtimeRequest::accepted);
+}
+
+TEST(TimelineRealtimeTest, RecordsMidiSourceIdFromThePublishedGraph) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeInstrumentSnapshot("track:live-midi-source");
+    auto& track = snapshot.graph.tracks.front();
+    track.armed = true;
+    track.midiInput.deviceId = "midi:keyboard";
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, kSampleRate, kBlockSamples, error))
+        << error;
+    const auto sourceIndex = engine.midiSourceIndex("midi:keyboard");
+    CaptureIsolationSink sink;
+    engine.setRecordingSink(&sink);
+    ASSERT_EQ(engine.startRecording(0, error), RealtimeRequest::accepted);
+    engine.setRealtimeOwner(RealtimeOwner::audio);
+
+    // Act
+    ASSERT_TRUE(engine.enqueueLiveMidi(sourceIndex, juce::MidiMessage::noteOn(1, 60, 0.8f)));
+    (void)engine.beginBlock(kBlockSamples);
+
+    // Assert
+    EXPECT_EQ(sink.receivedMidiSourceId, "midi:keyboard");
+    engine.setRealtimeOwner(RealtimeOwner::control);
+    EXPECT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+    engine.clearRecordingSink();
+}
+
 TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     // Arrange
     juce::AudioFormatManager formats;

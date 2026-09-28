@@ -78,31 +78,31 @@ void AudioCommandDispatcher::handle(const StatusCommand&, CommandResponder respo
 // Muting also silences instruments so held notes do not sound once unmuted.
 void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setUserEmergencyMute(command.muted);
     if (command.muted &&
         rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
                            "audio.emergencyMute"))
         return;
+    context.pipeline.setUserEmergencyMute(command.muted);
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setFeedbackProtection(command.active);
     if (command.active &&
         rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
                            "audio.feedbackProtection"))
         return;
+    context.pipeline.setFeedbackProtection(command.active);
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setEngineTransitionMute(command.active);
     if (command.active &&
         rejectUnlessQueued(responder, context.timelineEngine.panicAllInstrumentTracks().has_value(),
                            "audio.engineTransitionMute"))
         return;
+    context.pipeline.setEngineTransitionMute(command.active);
     responder.respond(currentStatus());
 }
 

@@ -94,17 +94,15 @@ public:
     [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
-    bool startArrangeRecording(const juce::File& directory, TimelineEngine& timeline,
-                               juce::String& error) {
-        juce::ignoreUnused(timeline);
-        return recordingController.start(directory, error);
+    RealtimeRequest startArrangeRecording(const juce::File& directory, int countInBeats,
+                                          juce::String& error) {
+        return recordingController.start(directory, countInBeats, error);
     }
     void setRecordingFinalizationDispatcher(
         RecordingController::FinalizationDispatcher dispatcher) {
         recordingController.setFinalizationDispatcher(std::move(dispatcher));
     }
-    bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
-        juce::ignoreUnused(timeline);
+    RealtimeRequest stopArrangeRecording(juce::String& error) {
         return recordingController.stop(error);
     }
     std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept {
@@ -113,10 +111,6 @@ public:
     void completeArrangeRecordingProcessing(const ArrangeRecordingSummary& summary,
                                             const juce::String& error) {
         recordingController.completeProcessing(summary, error);
-    }
-    bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error) {
-        juce::ignoreUnused(timeline);
-        return recordingController.cancel(error);
     }
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
                       bool loop, juce::String& error, int voiceKey = -1) {

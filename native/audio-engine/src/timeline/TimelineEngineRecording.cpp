@@ -22,18 +22,18 @@ RealtimeRequest TimelineEngine::startRecording(const int countInBeats, juce::Str
         error = "Arrange recording is already active.";
         return RealtimeRequest::rejected;
     }
-    {
-        const std::lock_guard lock(finalizedRecordingMutex);
-        finalizedRecordingTracks.clear();
-        finalizedRecordingSampleRate = 0.0;
-        finalizedRecordingBlockSize = 0;
-    }
     RealtimeCommand command;
     command.kind = RealtimeCommand::Kind::startRecording;
     command.countInBeats = countInBeats;
     if (!submit(command).has_value()) {
         error = "The realtime command queue is full.";
         return RealtimeRequest::queueFull;
+    }
+    {
+        const std::lock_guard lock(finalizedRecordingMutex);
+        finalizedRecordingTracks.clear();
+        finalizedRecordingSampleRate = 0.0;
+        finalizedRecordingBlockSize = 0;
     }
     return RealtimeRequest::accepted;
 }
@@ -89,14 +89,17 @@ void TimelineEngine::closeRecordingCaptures(RealtimeState& state) noexcept {
     }
 }
 
-RealtimeRequest TimelineEngine::cancelRecordingIfCountingIn(juce::String& error) {
-    if (realtimeFrame.read().recordingPhase != RecordingPhase::countingIn)
-        return RealtimeRequest::rejected;
+RealtimeRequest TimelineEngine::stopArrangeRecording(juce::String& error) {
     RealtimeCommand command;
-    command.kind = RealtimeCommand::Kind::cancelCountIn;
-    if (!submit(command).has_value()) {
+    command.kind = RealtimeCommand::Kind::stopArrangeRecording;
+    const auto sequence = submit(command);
+    if (!sequence.has_value()) {
         error = "The realtime command queue is full.";
         return RealtimeRequest::queueFull;
+    }
+    if (!waitUntilApplied(*sequence, kRecordingApplyTimeout)) {
+        error = "The audio thread did not stop arrange recording in time.";
+        return RealtimeRequest::rejected;
     }
     return RealtimeRequest::accepted;
 }

@@ -14,8 +14,11 @@ std::uint16_t MidiSourceRegistry::indexFor(const juce::String& deviceId) {
     return static_cast<std::uint16_t>(count);
 }
 
-const juce::String& MidiSourceRegistry::deviceId(const std::uint16_t index) const noexcept {
-    return index < published.load(std::memory_order_acquire) ? deviceIds[index] : none;
+std::array<juce::String, MidiSourceRegistry::kCapacity> MidiSourceRegistry::snapshot() const {
+    std::array<juce::String, kCapacity> result;
+    const auto count = published.load(std::memory_order_acquire);
+    for (std::size_t index = 0; index < count; ++index) result[index] = deviceIds[index];
+    return result;
 }
 
 }  // namespace riffra
