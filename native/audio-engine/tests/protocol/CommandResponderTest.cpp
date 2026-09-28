@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <vector>
 
 #include "protocol/CommandResponder.h"
@@ -14,9 +15,8 @@ CommandResponder::EnvelopeWriter recordInto(std::vector<juce::var>& written) {
 TEST(CommandResponderTest, ReportsNoResponseWhenDestroyedUnanswered) {
     std::vector<juce::var> written;
 
-    {
-        CommandResponder responder(7, recordInto(written));
-    }
+    auto responder = std::make_unique<CommandResponder>(7, recordInto(written));
+    responder.reset();
 
     ASSERT_EQ(written.size(), 1u);
     EXPECT_EQ(written[0].getProperty("kind", {}).toString(), "error");
