@@ -88,3 +88,11 @@ Rust と `riffra-audio` / `riffra-render` の間の全メッセージを、送�
 - 実プロセスとの往復は `apps/cli` の `headless_host_process` テストで確認する
 
 契約変更では両方向のフィクスチャを再生成し、差分をレビューの対象にする。
+
+## 6. 音声エンジンの並行性
+
+音声スレッドと制御スレッドの境界は、決定的な単体テストと ThreadSanitizer で確認する。
+
+- 命令の適用は、音声側の所有に切り替えた Engine へ命令を積み、ブロックの開始を 1 回呼んで `RealtimeFrame` を確認する。同じブロックに重なった Stop とカウントイン終了、Seek、キュー満杯、グラフの公開前後のステータス、退役したグラフだけの回収、回収スレッドの限定、共有デバイスの同一性を対象にする
+- `concurrency/`、`timeline/`、`AudioRenderPipelineTest`、`protocol/` のテストを `RIFFRA_SANITIZER=thread` のビルドで実行する（Linux の CI）。実デバイスと実 VST3 を使うテストは対象外とする
+- 抑制ファイル `native/audio-engine/tsan.supp` には JUCE 内部に起因する報告だけを理由付きで書く。Riffra のコードに対する報告は修正し、抑制しない

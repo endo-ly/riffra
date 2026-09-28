@@ -189,8 +189,8 @@ Attached CLI（apps/cli --attach）
 | 所有者                           | 範囲                                                                                                               |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `TrackRuntime`（Track ごと）     | Instrument Runtime、Effect Chain、MIDI Scheduler、ライブ MIDI 状態、Automation、PDC 用バッファ、録音キャプチャ状態 |
-| Device Runtime（TrackRuntime内） | プラグインインスタンス。投影間で再利用される単位                                                                   |
-| `TimelineEngine`                 | グラフの公開、処理順序、Transport、ループ、クロックの調停                                                          |
+| Device Runtime（TrackRuntime内） | プラグインインスタンス。投影間で共有される単位（§5.6）                                                             |
+| `TimelineEngine`                 | グラフの公開、処理順序、Transport、ループ、クロックの調停。スレッドごとの所有は §5.6                               |
 
 - Arrangement の MIDI と Play Surface / 外部 MIDI の入力は同じ Instrument Runtime へ合流する。ライブ入力専用の音源やエフェクト経路は設けない
 
@@ -258,9 +258,9 @@ setAudioDriver → 要求された設定（ドライバ・デバイス・サン�
 | ------------------------- | -------------------------------------------------- |
 | `AudioStatus`             | デバイスとコールバックの状態                       |
 | `RuntimeProjectionStatus` | グラフ投影の状態と現役グラフの `activeDiagnostics` |
-| `TransportStatus`         | 停止・準備中・再生中の状態と再生位置               |
+| `TransportStatus`         | トランスポート状態と再生位置、録音状態、適用済み命令番号、現役グラフの `instrumentFaults` |
 
-未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は再生状態・再生位置を表し、投影診断は持たない。
+未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は `timelineSample`（保留中の Seek 先を含む）、`audioClockSample`、録音状態、`appliedCommandSequence`、現役グラフの `instrumentFaults` を表し、投影診断は持たない。`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`sampleRate` と `instrumentFaults` は `GraphSummary` から読み、`AudioStatus.diagnostics.instrumentFaults` と同じグラフ診断を使う。
 
 Audio Status の診断値は、コールバック計測（回数・平均/最大処理時間・オーバーラン）、出力診断（準備前ピーク・リミッターのゲインリダクション・最終ハードクリップ数）、ライブ MIDI のドロップ数、規模（Track / Runtime / Plugin 数・最大レイテンシ）、投影時間、音声環境 revision を含む。これらは障害の推測材料ではなく、同じ世代の音声処理状態を確認するための値である。
 
@@ -272,7 +272,7 @@ Track の Gain、Pan、Mute、Solo、Record Arm は `CreativeSession.arrangement
 
 Gain と Pan の連続操作は、確定前の値を `setTrackMix` として Native の現行 `TrackRuntime` へ一時適用する。Native は次の Audio block の先頭で atomics を読み込み、プレビュー値を保存、履歴、Undo/Redo、Recovery state、Runtime 投影の入力へ戻さない。操作の確定時にのみ Host の `updateTrack` が Canonical state を変更し、次の投影で実行状態を再構築する。
 
-Master Gain の正準値は `ExecutionGraph.masterGainDb` を通じてサイドカーへ渡し、現役グラフのコミット時に出力へ適用する。`previewMasterGainDb` はドラッグ中の一時値であり、次のグラフコミットで正準値に戻る。デバイス環境の変更やサイドカー再起動後も、正準グラフの再投影で同じ値を復元する。
+Master Gain の正準値は `ExecutionGraph.masterGainDb` を通じてサイドカーへ渡し、音声スレッドがグラフを公開したブロックで出力へ適用する。`previewMasterGainDb` はドラッグ中の一時値であり、次のグラフ公開で正準値に戻る。デバイス環境の変更やサイドカー再起動後も、正準グラフの再投影で同じ値を復元する。
 
 ```text
 Desktop Mixer
@@ -291,6 +291,52 @@ audioMeters（約50 ms、Project ID付き） ── HostEventHub ── Desktop 
 Track Meter は Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に測る。Audio callback は固定された atomics の peak hold とブロック内のRMS集計だけを行い、ロック、ヒープ確保、IPCを行わない。Master の左右Peakは Safety limiter と最終ハードクリップ後の出力から測り、Limiter gain reduction、Hard clip、Feedback protection は同じ `audioMeters` frame の診断値として転送する。
 
 Meter frame は最新値で十分な通知として既存の coalescing event 経路を使う。各 frame は Runtime 投影の `projectId` を持ち、Host または Project の世代が変わったときは古い preview と meter frame を破棄する。Desktop は Active Project と一致する `projectId` の frame だけを表示状態へ反映する。
+
+### 5.6 音声スレッドの所有権
+
+`riffra-audio` の状態は、書き手が 1 つに決まる単位で所有者を分ける。2 つ以上の値が不変条件で結ばれた状態、または状態遷移を持つ状態は atomic の集まりで表さず、所有者だけが書く。
+
+| 状態                                                                                                          | 所有者                                                                        | 他スレッドからのアクセス                          |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| 現役グラフ、Transport、再生位置、録音フェーズ、カウントイン、キャプチャ窓、Play Surface の対象、保留中の Seek | 音声スレッド（`RealtimeState`）。デバイス停止中とオフラインレンダーでは制御側 | 変更は命令キュー、読み取りは `RealtimeFrame` だけ |
+| 準備済み・コミット済み・退役待ちのグラフ、Track key、MIDI 入力元の表                                          | 制御側（`ControlGraphRegistry`、mutex で保護）                                | 音声スレッドは触らない                            |
+| 公開後のグラフの不変部分（Track、ルーティング、クリップ、`GraphSummary`）                                     | なし（公開後は誰も書かない）                                                  | どのスレッドからも読める                          |
+| 単独で意味が完結するスカラー（Track の Gain / Pan プレビュー、ミュート理由、メーター、カウンタ）              | atomic                                                                        | 他の値と不変条件で結ばれないものに限る            |
+
+所有者の切り替えは `AudioDeviceController` の開始・停止コールバックで行う。音声コールバックが止まっている間は制御側が同じ適用関数で命令を処理するため、所有者が同時に 2 つになることはない。
+
+**命令と状態の公開**
+
+```text
+制御スレッド ── RealtimeCommand ──▶ RealtimeCommandQueue（256、生産側は mutex で直列化）
+                                          │ ブロックの先頭で全件を適用
+                                          ▼
+                                   音声スレッド: RealtimeState
+                                          │ ブロックごとに公開
+                                          ▼
+テレメトリ・命令処理 ◀── RealtimeFrame ── SeqLockFrame（単一の書き手、複数の読み手）
+```
+
+- 命令は確保を伴わない固定長の値で、Track は文字列 ID ではなくプロセス内で一意な Track key で指す。Seek はティックで送り、音声スレッドが現役グラフのタイムベースでサンプルへ変換する
+- ブロック内の命令はカウントインの進行より先に適用する。同じブロックでカウントインが終わっても Stop が優先される
+- キューが満杯なら命令は `realtimeQueueFull` で失敗し、黙って捨てない
+- ステータスは 1 つの `RealtimeFrame` と現役グラフの `GraphSummary` から組み立てる。フレームの `appliedCommandSequence` が、どの命令まで適用されたかを示す。テレメトリはこのスナップショットだけを読み、`timelineLock` や音声スレッド所有の `RealtimeState` へ直接触れない
+
+**グラフの公開・退役・回収**
+
+1. メッセージスレッドでグラフを準備し、コミットで `ControlGraphRegistry` に登録して `publishGraph` 命令を送る
+2. 音声スレッドは現役グラフを差し替え、同じブロックでグラフの Master Gain を出力へ適用し、外したグラフを `RetireQueue` で返す
+3. 制御側は返ってきたグラフだけを破棄する。破棄は Engine を構築したスレッド（メッセージスレッド）が、ライフサイクル処理の後と 100 ms ごとのタイマーで行う
+
+プラグインを含むグラフが音声スレッドや命令スレッドで破棄されることはない。
+
+**デバイスの共有**
+
+トポロジーと保存状態が一致する Track は、新しいグラフが前のグラフと同じ Device Runtime を `shared_ptr` で共有する。公開済みのインスタンスを制御側が準備し直すことはなく、必要な Timeline MIDI 容量が既存のインスタンスを超える Track には新しいインスタンスを準備する。音声スレッドは `shared_ptr` を複製・破棄しないため、最後の参照はメッセージスレッドでのグラフ破棄時に外れる。
+
+**ライブ MIDI**
+
+MIDI 入力コールバックは、入力元の index と 3 バイトまでのメッセージを固定容量（1024）のキューへ送るだけである。音声スレッドがブロックの先頭で現役グラフのルーティングに従い各 Track へ振り分け、録音中は同じ時刻で記録する。キューに入らなかったメッセージは `liveMidiDrops` に数える。Play Surface の送信とパニックは命令キューを通る。
 
 ---
 
