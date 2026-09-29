@@ -115,6 +115,13 @@ public:
     [[nodiscard]] std::optional<std::uint64_t> stop() noexcept;
     [[nodiscard]] std::optional<std::uint64_t> seekToTick(std::uint64_t tick) noexcept;
     [[nodiscard]] std::optional<std::uint64_t> panicAllInstrumentTracks() noexcept;
+    /// Enqueues the realtime recording stop and returns its apply sequence.
+    [[nodiscard]] std::optional<std::uint64_t> enqueueArrangeRecordingStop() noexcept;
+    /// Waits for a realtime command to apply, returning false when the timeout expires.
+    [[nodiscard]] bool waitForCommandApplied(std::uint64_t commandSequence,
+                                             std::chrono::milliseconds timeout) const;
+    /// Waits until a realtime command has applied.
+    void waitForCommandApplied(std::uint64_t commandSequence) const;
     RealtimeRequest startRecording(int countInBeats, juce::String& error);
     /// Closes recording capture and stops transport in one realtime command.
     RealtimeRequest stopArrangeRecording(juce::String& error);

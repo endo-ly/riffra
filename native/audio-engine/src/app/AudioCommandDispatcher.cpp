@@ -1,5 +1,6 @@
 #include "AudioCommandDispatcher.h"
 
+#include <chrono>
 #include <string>
 #include <utility>
 #include <variant>
@@ -9,6 +10,82 @@
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
+namespace {
+
+constexpr auto kSafetyMutePanicApplyTimeout = std::chrono::milliseconds(500);
+
+}  // namespace
+
+AudioCommandDispatcher::AudioCommandDispatcher(Context context) : context(context) {
+    recordingStopWorker = std::thread([this] { recordingStopWorkerLoop(); });
+}
+
+AudioCommandDispatcher::~AudioCommandDispatcher() {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        recordingStopWorkerStopping = true;
+    }
+    recordingStopWake.notify_all();
+    if (recordingStopWorker.joinable()) recordingStopWorker.join();
+}
+
+bool AudioCommandDispatcher::waitForBackgroundWork(const std::chrono::milliseconds timeout) {
+    std::unique_lock lock(recordingStopMutex);
+    return recordingStopFinished.wait_for(lock, timeout,
+                                          [this] { return !recordingStopScheduled; });
+}
+
+bool AudioCommandDispatcher::reserveRecordingStop(CommandResponder& responder) {
+    const std::lock_guard lock(recordingStopMutex);
+    if (!recordingStopScheduled && !recordingStopWorkerStopping) {
+        recordingStopScheduled = true;
+        return true;
+    }
+    responder.fail("recordingBusy", "A recording stop is already pending.", "recording.stop");
+    return false;
+}
+
+void AudioCommandDispatcher::releaseRecordingStopReservation() {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        recordingStopScheduled = false;
+    }
+    recordingStopFinished.notify_all();
+}
+
+void AudioCommandDispatcher::queueRecordingStop(const PendingRecordingStop& pending) {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        pendingRecordingStop = pending;
+    }
+    recordingStopWake.notify_one();
+}
+
+void AudioCommandDispatcher::recordingStopWorkerLoop() {
+    for (;;) {
+        PendingRecordingStop pending;
+        {
+            std::unique_lock lock(recordingStopMutex);
+            recordingStopWake.wait(lock, [this] {
+                return recordingStopWorkerStopping || pendingRecordingStop.has_value();
+            });
+            if (recordingStopWorkerStopping && !pendingRecordingStop.has_value()) return;
+            pending = *pendingRecordingStop;
+            pendingRecordingStop.reset();
+        }
+
+        juce::String error;
+        const auto completed = context.pipeline.completeArrangeRecordingStop(pending, error);
+        if (completed != RealtimeRequest::accepted)
+            writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
+
+        {
+            const std::lock_guard lock(recordingStopMutex);
+            recordingStopScheduled = false;
+        }
+        recordingStopFinished.notify_all();
+    }
+}
 
 void AudioCommandDispatcher::run(std::istream& input) {
     std::string line;
@@ -82,10 +159,13 @@ void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
         context.pipeline.setUserEmergencyMute(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
     } else if (context.pipeline.hasMuteReason(MuteReason::UserEmergency)) {
-        if (rejectUnlessQueued(responder,
-                               context.timelineEngine.panicAllInstrumentTracks().has_value(),
-                               "audio.emergencyMute"))
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.emergencyMute")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.emergencyMute");
             return;
+        }
     }
     if (!command.muted) context.pipeline.setUserEmergencyMute(false);
     responder.respond(currentStatus());
@@ -97,10 +177,13 @@ void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
         context.pipeline.setFeedbackProtection(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
     } else if (context.pipeline.hasMuteReason(MuteReason::FeedbackProtection)) {
-        if (rejectUnlessQueued(responder,
-                               context.timelineEngine.panicAllInstrumentTracks().has_value(),
-                               "audio.feedbackProtection"))
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.feedbackProtection")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.feedbackProtection");
             return;
+        }
     }
     if (!command.active) context.pipeline.setFeedbackProtection(false);
     responder.respond(currentStatus());
@@ -112,10 +195,13 @@ void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& comman
         context.pipeline.setEngineTransitionMute(true);
         (void)context.timelineEngine.panicAllInstrumentTracks();
     } else if (context.pipeline.hasMuteReason(MuteReason::EngineTransition)) {
-        if (rejectUnlessQueued(responder,
-                               context.timelineEngine.panicAllInstrumentTracks().has_value(),
-                               "audio.engineTransitionMute"))
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.engineTransitionMute")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.engineTransitionMute");
             return;
+        }
     }
     if (!command.active) context.pipeline.setEngineTransitionMute(false);
     responder.respond(currentStatus());

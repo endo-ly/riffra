@@ -169,4 +169,105 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
 }
 
+TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), timeline);
+    RuntimeLifecycleExecutor runtimeLifecycle;
+    std::shared_ptr<PluginEditorHost> trackPluginEditor;
+    juce::String trackPluginEditorTrackId;
+    juce::String trackPluginEditorDeviceId;
+    juce::AudioBuffer<float> comparisonRaw;
+    juce::AudioBuffer<float> comparisonProcessed;
+    std::atomic<bool> timelineOperationRunning{false};
+    AudioCommandDispatcher dispatcher({
+        formats,
+        timeline,
+        pipeline,
+        deviceController,
+        midiInputs,
+        runtimeLifecycle,
+        trackPluginEditor,
+        trackPluginEditorTrackId,
+        trackPluginEditorDeviceId,
+        comparisonRaw,
+        comparisonProcessed,
+        timelineOperationRunning,
+    });
+    timeline.setRealtimeOwner(RealtimeOwner::audio);
+    auto requestId = std::uint64_t{1};
+    const auto send = [&](const SidecarCommandSpec& command) {
+        juce::var reply;
+        dispatcher.dispatch(
+            {requestId, command},
+            CommandResponder(requestId, [&reply](const juce::var& value) { reply = value; }));
+        ++requestId;
+        return reply;
+    };
+
+    // Act
+    EXPECT_NE(send(SetEmergencyMuteCommand{true}).getProperty("kind", {}).toString(), "error");
+    const auto delayedRelease = send(SetEmergencyMuteCommand{false});
+
+    // Assert
+    EXPECT_EQ(delayedRelease.getProperty("kind", {}).toString(), "error");
+    EXPECT_EQ(delayedRelease.getProperty("error", {}).getProperty("kind", {}).toString(),
+              "timeout");
+    EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+
+    timeline.setRealtimeOwner(RealtimeOwner::control);
+    EXPECT_NE(send(SetEmergencyMuteCommand{false}).getProperty("kind", {}).toString(), "error");
+    EXPECT_FALSE(pipeline.hasMuteReason(MuteReason::UserEmergency));
+}
+
+TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), timeline);
+    RuntimeLifecycleExecutor runtimeLifecycle;
+    std::shared_ptr<PluginEditorHost> trackPluginEditor;
+    juce::String trackPluginEditorTrackId;
+    juce::String trackPluginEditorDeviceId;
+    juce::AudioBuffer<float> comparisonRaw;
+    juce::AudioBuffer<float> comparisonProcessed;
+    std::atomic<bool> timelineOperationRunning{false};
+    AudioCommandDispatcher dispatcher({
+        formats,
+        timeline,
+        pipeline,
+        deviceController,
+        midiInputs,
+        runtimeLifecycle,
+        trackPluginEditor,
+        trackPluginEditorTrackId,
+        trackPluginEditorDeviceId,
+        comparisonRaw,
+        comparisonProcessed,
+        timelineOperationRunning,
+    });
+    timeline.setRealtimeOwner(RealtimeOwner::audio);
+    juce::var stopReply;
+    dispatcher.dispatch(
+        {1, StopArrangeRecordingCommand{}},
+        CommandResponder(1, [&stopReply](const juce::var& value) { stopReply = value; }));
+
+    // Act
+    juce::var statusReply;
+    dispatcher.dispatch(
+        {2, StatusCommand{}},
+        CommandResponder(2, [&statusReply](const juce::var& value) { statusReply = value; }));
+
+    // Assert
+    EXPECT_FALSE(stopReply.isVoid());
+    EXPECT_FALSE(statusReply.isVoid());
+    timeline.setRealtimeOwner(RealtimeOwner::control);
+    EXPECT_TRUE(dispatcher.waitForBackgroundWork(std::chrono::seconds(2)));
+}
+
 }  // namespace riffra

@@ -19,11 +19,20 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
 
 void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
                                     CommandResponder responder) {
+    if (!reserveRecordingStop(responder)) return;
+
     juce::String recordingError;
-    const auto stopped = context.pipeline.stopArrangeRecording(recordingError);
-    if (rejectUnlessAccepted(responder, stopped, "recording", recordingError, "recording.stop"))
+    PendingRecordingStop pending;
+    const auto requested = context.pipeline.requestArrangeRecordingStop(pending, recordingError);
+    if (rejectUnlessAccepted(responder, requested, "recording", recordingError, "recording.stop")) {
+        releaseRecordingStopReservation();
         return;
-    responder.respond(currentStatus());
+    }
+
+    queueRecordingStop(pending);
+    auto status = currentStatus();
+    if (pending.cancelCountIn) status.recording.cancelled = true;
+    responder.respond(status);
 }
 
 }  // namespace riffra

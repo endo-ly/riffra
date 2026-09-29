@@ -203,25 +203,30 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
             writeEvent(currentStatus());
         };
 
-    pipeline.setRecordingFinalizationDispatcher(
-        [&](std::unique_ptr<riffra::ArrangeRecordingSession> session) {
-            if (session == nullptr) return;
-            auto owned = std::shared_ptr<riffra::ArrangeRecordingSession>(std::move(session));
-            const auto submitted = runtimeLifecycle.submitWithProgress(
-                [&, owned] {
-                    runtimeLifecycle.reportProgress();
-                    juce::String processingError;
-                    const auto processed = timelineEngine.processFinalizedRecording(
+    pipeline.setRecordingFinalizationDispatcher([&](std::unique_ptr<riffra::ArrangeRecordingSession>
+                                                        session,
+                                                    const juce::String& finalizationError) {
+        if (session == nullptr) return;
+        auto owned = std::shared_ptr<riffra::ArrangeRecordingSession>(std::move(session));
+        const auto submitted = runtimeLifecycle.submitWithProgress(
+            [&, owned, finalizationError] {
+                runtimeLifecycle.reportProgress();
+                auto processingError = finalizationError;
+                const auto processed =
+                    processingError.isEmpty() &&
+                    timelineEngine.processFinalizedRecording(
                         owned.get(), processingError, [&] { runtimeLifecycle.reportProgress(); });
-                    publishRecordingCompletion(owned, processed, processingError);
-                },
-                kRecordingFinalizationStallTimeout);
-            if (!submitted) {
-                publishRecordingCompletion(
-                    owned, false,
-                    "The recording finalization worker stopped before processing could begin.");
-            }
-        });
+                publishRecordingCompletion(owned, processed, processingError);
+            },
+            kRecordingFinalizationStallTimeout);
+        if (!submitted) {
+            publishRecordingCompletion(
+                owned, false,
+                finalizationError.isNotEmpty()
+                    ? finalizationError
+                    : "The recording finalization worker stopped before processing could begin.");
+        }
+    });
 
     std::thread commandThread([this] {
         commandDispatcher->run(std::cin);
@@ -247,6 +252,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
     juce::MessageManager::getInstance()->runDispatchLoop();
     graphReclaimTimer.stopTimer();
     if (commandThread.joinable()) commandThread.join();
+    if (!commandDispatcher->waitForBackgroundWork(std::chrono::milliseconds(1500))) std::_Exit(125);
     if (!runtimeLifecycle.waitForIdle(std::chrono::milliseconds(1500))) std::_Exit(125);
     pipeline.setRecordingFinalizationDispatcher({});
     runtimeLifecycle.requestStop();

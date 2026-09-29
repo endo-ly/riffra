@@ -159,6 +159,15 @@ bool TimelineEngine::waitUntilApplied(const std::uint64_t commandSequence,
     return true;
 }
 
+bool TimelineEngine::waitForCommandApplied(const std::uint64_t commandSequence,
+                                           const std::chrono::milliseconds timeout) const {
+    return waitUntilApplied(commandSequence, timeout);
+}
+
+void TimelineEngine::waitForCommandApplied(const std::uint64_t commandSequence) const {
+    waitUntilApplied(commandSequence);
+}
+
 void TimelineEngine::waitUntilApplied(const std::uint64_t commandSequence) const {
     while (realtimeFrame.read().appliedCommandSequence < commandSequence)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

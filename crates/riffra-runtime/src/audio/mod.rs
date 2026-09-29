@@ -169,8 +169,7 @@ impl AudioSupervisor {
         status.diagnostics.projection_duration_ms =
             self.projection_duration_ms.load(Ordering::Acquire);
         status.diagnostics.protocol_errors = self.protocol_errors.load(Ordering::Acquire);
-        if self.recording_finalization_pending() {
-            status.recording.active = false;
+        if self.recording_finalization_pending() && !status.recording.active {
             status.recording.processing = true;
         }
     }
@@ -333,5 +332,25 @@ mod tests {
 
         supervisor.finish_recording_finalization();
         assert!(!supervisor.status().unwrap().recording.processing);
+    }
+
+    #[test]
+    fn pending_finalization_preserves_capture_until_native_stop_applies() {
+        let supervisor = AudioSupervisor::offline("test");
+        let directory = std::path::Path::new("recordings/take-1");
+        let mut status = AudioStatus::default();
+        status.recording.active = true;
+
+        supervisor
+            .begin_recording_finalization(directory)
+            .expect("finalization should begin");
+        supervisor.overlay_diagnostics(&mut status);
+        assert!(status.recording.active);
+        assert!(!status.recording.processing);
+
+        status.recording.active = false;
+        supervisor.overlay_diagnostics(&mut status);
+        assert!(!status.recording.active);
+        assert!(status.recording.processing);
     }
 }

@@ -105,6 +105,14 @@ public:
     RealtimeRequest stopArrangeRecording(juce::String& error) {
         return recordingController.stop(error);
     }
+    RealtimeRequest requestArrangeRecordingStop(PendingRecordingStop& pending,
+                                                juce::String& error) {
+        return recordingController.requestStop(pending, error);
+    }
+    RealtimeRequest completeArrangeRecordingStop(const PendingRecordingStop& pending,
+                                                 juce::String& error) {
+        return recordingController.completeStop(pending, error);
+    }
     std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept {
         return recordingController.takePendingFinalization();
     }

@@ -45,7 +45,8 @@ RecordingController::~RecordingController() {
 RealtimeRequest RecordingController::start(const juce::File& directory, const int countInBeats,
                                            juce::String& error) {
     const juce::ScopedLock guard(lock);
-    if (arrangeRecording != nullptr || pendingFinalization != nullptr || processing) {
+    if (arrangeRecording != nullptr || pendingFinalization != nullptr || processing ||
+        stopInProgress) {
         error = "A recording is already active.";
         return RealtimeRequest::rejected;
     }
@@ -74,9 +75,8 @@ void RecordingController::setFinalizationDispatcher(FinalizationDispatcher dispa
     finalizationDispatcher = std::move(dispatcher);
 }
 
-RealtimeRequest RecordingController::stop(juce::String& error) {
-    std::unique_ptr<ArrangeRecordingSession> detached;
-    FinalizationDispatcher dispatcher;
+RealtimeRequest RecordingController::requestStop(PendingRecordingStop& pending,
+                                                 juce::String& error) {
     {
         const juce::ScopedLock guard(lock);
         if (processing) {
@@ -87,27 +87,56 @@ RealtimeRequest RecordingController::stop(juce::String& error) {
             error = "The previous recording is waiting for finalization.";
             return RealtimeRequest::rejected;
         }
+        if (stopInProgress) {
+            error = "The previous recording stop is still pending.";
+            return RealtimeRequest::rejected;
+        }
+        stopInProgress = true;
+    }
 
-        const auto cancelCountIn =
-            timeline.status().frame.recordingPhase == RecordingPhase::countingIn;
-        const auto stopped = timeline.stopArrangeRecording(error);
-        if (stopped != RealtimeRequest::accepted) return stopped;
+    pending.cancelCountIn = timeline.status().frame.recordingPhase == RecordingPhase::countingIn;
+    const auto sequence = timeline.enqueueArrangeRecordingStop();
+    if (!sequence.has_value()) {
+        const juce::ScopedLock guard(lock);
+        stopInProgress = false;
+        error = "The realtime command queue is full.";
+        return RealtimeRequest::queueFull;
+    }
+    pending.commandSequence = *sequence;
+    return RealtimeRequest::accepted;
+}
 
-        if (cancelCountIn) {
+RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pending,
+                                                  juce::String& error) {
+    timeline.waitForCommandApplied(pending.commandSequence);
+
+    std::unique_ptr<ArrangeRecordingSession> detached;
+    FinalizationDispatcher dispatcher;
+    juce::String finalizationError;
+    bool finalized = true;
+    {
+        const juce::ScopedLock guard(lock);
+        if (pending.cancelCountIn) {
             timeline.clearRecordingSink();
             if (arrangeRecording == nullptr) {
                 cancelled.store(true, std::memory_order_release);
+                stopInProgress = false;
                 return RealtimeRequest::accepted;
             }
             auto cancelling = std::move(arrangeRecording);
             const auto wasCancelled = cancelling->cancel(error);
             cancelled.store(wasCancelled, std::memory_order_release);
+            stopInProgress = false;
             return wasCancelled ? RealtimeRequest::accepted : RealtimeRequest::rejected;
         }
 
-        if (!timeline.finalizeRecording(error)) return RealtimeRequest::rejected;
+        finalized = timeline.finalizeRecording(finalizationError);
+        if (!finalized) error = finalizationError;
         timeline.clearRecordingSink();
-        if (arrangeRecording == nullptr) return RealtimeRequest::accepted;
+        if (arrangeRecording == nullptr) {
+            stopInProgress = false;
+            return finalized ? RealtimeRequest::accepted : RealtimeRequest::rejected;
+        }
 
         detached = std::move(arrangeRecording);
         processing = true;
@@ -115,15 +144,23 @@ RealtimeRequest RecordingController::stop(juce::String& error) {
         finalizationStatus->active = false;
         finalizationStatus->processing = true;
         dispatcher = finalizationDispatcher;
+        stopInProgress = false;
     }
 
     if (dispatcher != nullptr)
-        dispatcher(std::move(detached));
+        dispatcher(std::move(detached), finalizationError);
     else {
         const juce::ScopedLock guard(lock);
         pendingFinalization = std::move(detached);
     }
-    return RealtimeRequest::accepted;
+    return finalized ? RealtimeRequest::accepted : RealtimeRequest::rejected;
+}
+
+RealtimeRequest RecordingController::stop(juce::String& error) {
+    PendingRecordingStop pending;
+    const auto requested = requestStop(pending, error);
+    if (requested != RealtimeRequest::accepted) return requested;
+    return completeStop(pending, error);
 }
 
 std::unique_ptr<ArrangeRecordingSession> RecordingController::takePendingFinalization() noexcept {

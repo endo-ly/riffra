@@ -90,15 +90,19 @@ void TimelineEngine::closeRecordingCaptures(RealtimeState& state) noexcept {
 }
 
 RealtimeRequest TimelineEngine::stopArrangeRecording(juce::String& error) {
-    RealtimeCommand command;
-    command.kind = RealtimeCommand::Kind::stopArrangeRecording;
-    const auto sequence = submit(command);
+    const auto sequence = enqueueArrangeRecordingStop();
     if (!sequence.has_value()) {
         error = "The realtime command queue is full.";
         return RealtimeRequest::queueFull;
     }
-    waitUntilApplied(*sequence);
+    waitForCommandApplied(*sequence);
     return RealtimeRequest::accepted;
+}
+
+std::optional<std::uint64_t> TimelineEngine::enqueueArrangeRecordingStop() noexcept {
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::stopArrangeRecording;
+    return submit(command);
 }
 
 bool TimelineEngine::finalizeRecording(juce::String& error) {
