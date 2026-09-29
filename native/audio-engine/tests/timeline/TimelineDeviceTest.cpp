@@ -66,11 +66,12 @@ TEST(TimelineEngineTest, GraphPublicationRestoresCanonicalMasterGainAfterPreview
     // Act
     pipeline.setMasterGainDb(-3.0f);
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -3.0f);
-    ASSERT_EQ(timeline.commitPreparedSnapshot(error), RealtimeRequest::accepted) << error;
+    EXPECT_EQ(timeline.commitPreparedSnapshot(error), RealtimeRequest::accepted) << error;
     std::array<float, 32> left{};
     std::array<float, 32> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
     pipeline.processBlock(nullptr, 0, outputs.data(), 2, static_cast<int>(left.size()), {});
+    pipeline.deviceStopped();
 
     // Assert
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -12.0f);
