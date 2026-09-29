@@ -5,7 +5,6 @@
 //! any Host runtime implementation.
 
 mod client;
-mod command;
 mod endpoint;
 mod protocol;
 mod registry;
@@ -14,7 +13,6 @@ pub mod transport;
 pub use client::{
     LocalHostClient, LocalHostClientError, LocalHostEventStream, LocalHostEventStreamHandle,
 };
-pub use command::ControlCommand;
 pub use endpoint::{
     EndpointDescriptor, HostIdentity, LocalControlEndpoint, endpoint_path, new_instance_id,
     pipe_name, publish_endpoint, read_endpoint, remove_endpoint_if_matches,

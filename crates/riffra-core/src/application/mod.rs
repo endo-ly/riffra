@@ -64,7 +64,7 @@ impl ApplicationMutation {
 
 /// Partial update for session-wide production settings.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[ts(optional_fields)]
+#[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
     pub project_name: Option<Option<String>>,
@@ -77,7 +77,7 @@ pub struct SessionSettingsPatch {
 
 /// Partial update for one MIDI note.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
-#[ts(optional_fields)]
+#[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNotePatch {
     pub note: Option<u8>,

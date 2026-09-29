@@ -59,6 +59,7 @@ export type {
   MidiEventKind,
   MidiNote,
   MusicalNoteName,
+  MusicalPosition,
   MissingDependency,
   MonitoringState,
   PluginEntry,

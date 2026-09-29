@@ -1,5 +1,5 @@
 import type { AudioStatus } from '@/model/domain';
-import { HostConnectionChangedError, invokeHostOrFallback } from '../invoke';
+import { HostConnectionChangedError, dispatchControlOrFallback } from '../invoke';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
 
 function nativeErrorText(error: unknown): string {
@@ -18,9 +18,8 @@ export async function audioCommandError(
   safetyCritical = false,
 ): Promise<AudioStatus> {
   if (error instanceof HostConnectionChangedError) throw error;
-  const status = await invokeHostOrFallback<AudioStatus>(
-    'get_audio_status',
-    {},
+  const status = await dispatchControlOrFallback(
+    { command: 'audio.status', params: {} },
     offlineAudioStatus(),
   );
   return {

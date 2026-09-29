@@ -1,47 +1,46 @@
 import type { ArrangementMutationResult } from '@/model/domain';
-import { invokeHost } from '../invoke';
-
-async function invokeRack(command: string, args: Record<string, unknown>) {
-  return invokeHost<ArrangementMutationResult>(command, args);
-}
+import { dispatchControl } from '../invoke';
 
 export async function applyInstrument(
   trackId: string,
   instrumentId: string,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('apply_instrument', { trackId, instrumentId });
+  return dispatchControl({ command: 'instrument.apply', params: { trackId, instrumentId } });
 }
 
 export async function setTrackVst3Instrument(
   trackId: string,
   pluginPath: string,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('set_track_vst3_instrument', { trackId, pluginPath });
+  return dispatchControl({ command: 'instrument.vst3.set', params: { trackId, pluginPath } });
 }
 
 export async function clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult> {
-  return await invokeRack('clear_track_instrument', { trackId });
+  return dispatchControl({ command: 'instrument.clear', params: { trackId } });
 }
 
 export async function addTrackEffect(
   trackId: string,
   pluginPath: string,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('add_track_effect', { trackId, pluginPath });
+  return dispatchControl({ command: 'effect.add', params: { trackId, pluginPath } });
 }
 
 export async function removeTrackEffect(
   trackId: string,
   deviceId: string,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('remove_track_effect', { trackId, deviceId });
+  return dispatchControl({ command: 'effect.remove', params: { trackId, deviceId } });
 }
 
 export async function reorderTrackEffects(
   trackId: string,
   orderedDeviceIds: string[],
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('reorder_track_effects', { trackId, orderedDeviceIds });
+  return dispatchControl({
+    command: 'effect.reorder',
+    params: { trackId, deviceIds: orderedDeviceIds },
+  });
 }
 
 export async function setTrackDeviceBypassed(
@@ -49,7 +48,7 @@ export async function setTrackDeviceBypassed(
   deviceId: string,
   bypassed: boolean,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('set_track_device_bypassed', { trackId, deviceId, bypassed });
+  return dispatchControl({ command: 'device.bypass', params: { trackId, deviceId, bypassed } });
 }
 
 export async function setTrackDeviceParameter(
@@ -58,14 +57,12 @@ export async function setTrackDeviceParameter(
   parameterIndex: number,
   value: number,
 ): Promise<ArrangementMutationResult> {
-  return await invokeRack('set_track_device_parameter', {
-    trackId,
-    deviceId,
-    parameterIndex,
-    value,
+  return dispatchControl({
+    command: 'device.parameter.set',
+    params: { trackId, deviceId, parameterIndex, value },
   });
 }
 
 export async function openTrackPluginEditor(trackId: string, deviceId: string): Promise<void> {
-  await invokeHost<void>('open_track_plugin_editor', { trackId, deviceId });
+  await dispatchControl({ command: 'plugin.editor.open', params: { trackId, deviceId } });
 }

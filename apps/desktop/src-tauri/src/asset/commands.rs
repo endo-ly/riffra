@@ -1,62 +1,21 @@
-//! Tauri adapters for Host-owned Asset operations.
+//! Tauri adapter that stages WebView-supplied MIDI bytes for Host import.
 
 use riffra_control::new_instance_id;
-use riffra_core::AssetId;
-use serde_json::json;
+use riffra_runtime::api::params::AssetImportParams;
+use riffra_runtime::api::{CanonicalCommand, ControlOutput};
 use std::io::Write;
 use tauri::{AppHandle, Manager};
 
-use crate::asset::application::AssetPreviewOptions;
-use crate::model::AudioStatus;
 use crate::{AppState, NativeCommandError};
 
-#[tauri::command]
-pub async fn preview_asset(
-    asset_id: String,
-    options: AssetPreviewOptions,
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        app.state::<AppState>().host_connection.dispatch(
-            "asset.preview",
-            json!({
-                "assetId": asset_id,
-                "startMs": options.start_ms,
-                "endMs": options.end_ms,
-                "looped": options.looped,
-                "gain": options.gain,
-            }),
-        )
-    })
-    .await
-    .map_err(|error| {
-        NativeCommandError::command_failed(format!("Asset operation failed: {error}"))
-    })?
-}
-
-#[tauri::command]
-pub async fn import_midi_file(
-    path: String,
-    name: Option<String>,
-    app: AppHandle,
-) -> Result<AssetId, NativeCommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        app.state::<AppState>()
-            .host_connection
-            .dispatch("asset.import-midi", json!({ "path": path, "name": name }))
-    })
-    .await
-    .map_err(|error| {
-        NativeCommandError::command_failed(format!("MIDI import task failed: {error}"))
-    })?
-}
-
+/// Writes MIDI bytes to a private staging file, imports it as an Asset, and
+/// removes the staging file.
 #[tauri::command]
 pub async fn import_midi_bytes(
     name: String,
     bytes: Vec<u8>,
     app: AppHandle,
-) -> Result<AssetId, NativeCommandError> {
+) -> Result<riffra_core::AssetId, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let staging = std::env::temp_dir().join(format!("riffra-midi-{}.mid", new_instance_id()));
         let write_result = std::fs::OpenOptions::new()
@@ -71,11 +30,19 @@ pub async fn import_midi_bytes(
             )));
         }
         let result = app.state::<AppState>().host_connection.dispatch(
-            "asset.import-midi",
-            json!({ "path": staging, "name": name }),
+            CanonicalCommand::AssetImportMidi(AssetImportParams {
+                path: staging.clone(),
+                name: Some(name),
+            })
+            .into(),
         );
         let _ = std::fs::remove_file(&staging);
-        result
+        match result? {
+            ControlOutput::AssetId(asset_id) => Ok(asset_id),
+            _ => Err(NativeCommandError::command_failed(
+                "Host returned a non-Asset result for asset.import-midi",
+            )),
+        }
     })
     .await
     .map_err(|error| {

@@ -1,6 +1,6 @@
 use super::*;
-use riffra_runtime::api::output::{BackgroundJobStatus, ProjectExport};
-use serde_json::json;
+use riffra_runtime::api::ControlCommand;
+use serde_json::Value;
 
 /// Runs a synchronous Host operation without blocking the async worker pool.
 async fn run_blocking<T, F>(app: AppHandle, operation: F) -> Result<T, NativeCommandError>
@@ -28,233 +28,20 @@ pub(crate) async fn get_bootstrap_state(
     .await
 }
 
+/// Runs one Control Command through the current Host and returns the value
+/// of its result.
 #[tauri::command]
-pub(crate) async fn export_project(
-    path: String,
+pub(crate) async fn dispatch_control(
+    command: String,
+    params: Value,
     app: AppHandle,
-) -> Result<ProjectExport, NativeCommandError> {
+) -> Result<Value, NativeCommandError> {
     run_blocking(app, move |state| {
-        state
-            .host_connection
-            .dispatch("project.export", json!({ "output": path }))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) fn get_background_job(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<Option<BackgroundJobStatus>, NativeCommandError> {
-    state
-        .host_connection
-        .dispatch("job.get", json!({ "id": id }))
-}
-
-#[tauri::command]
-pub(crate) fn cancel_background_job(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<Option<BackgroundJobStatus>, NativeCommandError> {
-    state
-        .host_connection
-        .dispatch("job.cancel", json!({ "id": id }))
-}
-
-#[tauri::command]
-pub(crate) async fn probe_audio_devices(
-    app: AppHandle,
-) -> Result<AudioDeviceProbe, NativeCommandError> {
-    run_blocking(app, |state| {
-        state.host_connection.dispatch("audio.probe", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn probe_device_channels(
-    app: AppHandle,
-    driver: String,
-    input_device: String,
-    output_device: String,
-) -> Result<model::DeviceChannels, NativeCommandError> {
-    run_blocking(app, move |state| {
-        state.host_connection.dispatch(
-            "audio.channels.probe",
-            json!({
-                "driver": driver,
-                "inputDevice": input_device,
-                "outputDevice": output_device,
-            }),
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_audio_status(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state.host_connection.dispatch("audio.status", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn preview_master_gain_db(
-    gain_db: f64,
-    app: AppHandle,
-) -> Result<(), NativeCommandError> {
-    if !gain_db.is_finite() {
-        return Err(NativeCommandError::invalid_request(
-            "Master gain must be finite.",
-        ));
-    }
-    run_blocking(app, move |state| {
-        state
-            .host_connection
-            .dispatch("audio.master-gain.preview", json!({ "gainDb": gain_db }))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn preview_track_mix(
-    track_id: String,
-    gain_db: Option<f64>,
-    pan: Option<f64>,
-    app: AppHandle,
-) -> Result<(), NativeCommandError> {
-    if track_id.trim().is_empty() {
-        return Err(NativeCommandError::invalid_request("Track id is required."));
-    }
-    if gain_db.is_none() && pan.is_none() {
-        return Err(NativeCommandError::invalid_request(
-            "At least one Track mix value is required.",
-        ));
-    }
-    if gain_db.is_some_and(|value| !value.is_finite())
-        || pan.is_some_and(|value| !value.is_finite())
-    {
-        return Err(NativeCommandError::invalid_request(
-            "Track mix values must be finite.",
-        ));
-    }
-    run_blocking(app, move |state| {
-        state.host_connection.dispatch(
-            "track.mix.preview",
-            serde_json::json!({
-                "trackId": track_id,
-                "gainDb": gain_db,
-                "pan": pan,
-            }),
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn set_emergency_mute(
-    muted: bool,
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, move |state| {
-        state
-            .host_connection
-            .dispatch("audio.emergency-mute", json!({ "muted": muted }))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn reset_feedback_protection(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("audio.feedback-protection.reset", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn recover_audio_device(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state.host_connection.dispatch("audio.recover", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn retry_startup_runtime(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("audio.startup.retry", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn enable_midi_listening(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("midi.listening.enable", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn disable_midi_listening(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("midi.listening.disable", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn stop_preview(app: AppHandle) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("asset.preview.stop", json!({}))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn preview_instrument(
-    instrument_id: String,
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, move |state| {
-        state.host_connection.dispatch(
-            "instrument.preview",
-            json!({ "instrumentId": instrument_id }),
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn stop_instrument_preview(
-    app: AppHandle,
-) -> Result<AudioStatus, NativeCommandError> {
-    run_blocking(app, |state| {
-        state
-            .host_connection
-            .dispatch("instrument.preview.stop", json!({}))
+        let command = ControlCommand::decode(&command, params)?;
+        let output = state.host_connection.dispatch(command)?;
+        let mut result = serde_json::to_value(output)
+            .map_err(|error| NativeCommandError::command_failed(error.to_string()))?;
+        Ok(result["value"].take())
     })
     .await
 }

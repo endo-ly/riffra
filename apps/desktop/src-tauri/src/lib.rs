@@ -13,27 +13,21 @@
 //! Tauri command adapters, Desktop bootstrap DTOs, resource-path resolution,
 //! and the Host event bridge that forwards active Host events to the WebView.
 
-mod analysis;
 mod asset;
-mod audio_preferences;
 mod host_commands;
 mod host_connection;
-mod library;
 mod model;
-mod plugins;
-mod recording;
 mod render;
-mod session;
 #[cfg(test)]
 mod types;
 
 use host_commands::*;
 use host_connection::{EmbeddedHostSettings, HostConnectionManager, NativeCommandError};
-use model::{AudioDeviceProbe, AudioStatus, BootstrapState};
+use model::BootstrapState;
 use riffra_runtime::RuntimeBinaries;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 struct AppState {
     pub(crate) host_connection: Arc<HostConnectionManager>,
@@ -124,141 +118,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_state,
+            dispatch_control,
             host_connection::get_host_connection_state,
             host_connection::list_local_hosts,
             host_connection::switch_host,
             host_connection::reconnect_host,
-            export_project,
-            get_background_job,
-            cancel_background_job,
-            probe_audio_devices,
-            probe_device_channels,
-            get_audio_status,
-            preview_master_gain_db,
-            preview_track_mix,
-            set_emergency_mute,
-            reset_feedback_protection,
-            recover_audio_device,
-            retry_startup_runtime,
-            enable_midi_listening,
-            disable_midi_listening,
-            session::commands::send_midi_to_track,
-            session::commands::set_live_midi_target,
-            session::commands::panic_midi_track,
-            stop_preview,
-            preview_instrument,
-            stop_instrument_preview,
-            // Session Application Operations.
-            session::commands::undo_session,
-            session::commands::redo_session,
-            session::commands::get_history_state,
-            session::commands::restore_recovery_generation,
-            session::commands::import_project,
-            session::commands::list_projects,
-            session::commands::create_project,
-            session::commands::open_project,
-            session::commands::rename_project,
-            session::commands::add_audio_clip_to_arrangement,
-            session::commands::create_midi_clip,
-            session::commands::add_midi_clip_to_arrangement,
-            session::commands::update_audio_clip,
-            session::commands::remove_timeline_clips,
-            session::commands::trim_audio_clip,
-            session::commands::split_audio_clip,
-            session::commands::duplicate_audio_clip,
-            session::commands::move_audio_clips,
-            session::commands::update_midi_clip,
-            session::commands::move_midi_clips,
-            session::commands::trim_midi_clip,
-            session::commands::split_midi_clip,
-            session::commands::duplicate_midi_clip,
-            session::commands::paste_timeline_clips,
-            session::commands::crossfade_audio_clips,
-            session::commands::get_runtime_projection_status,
-            session::commands::retry_runtime_projection,
-            session::commands::play_timeline,
-            session::commands::stop_timeline,
-            session::commands::go_to_start_timeline,
-            session::commands::seek_timeline,
-            session::commands::update_arrangement_timebase,
-            session::commands::update_timeline_loop_range,
-            session::commands::update_timeline_punch_range,
-            session::commands::update_session_settings,
-            session::commands::add_track,
-            session::commands::update_track,
-            session::commands::set_track_automation,
-            session::commands::set_track_audio_input,
-            session::commands::set_track_midi_input,
-            session::commands::apply_instrument,
-            session::commands::set_track_vst3_instrument,
-            session::commands::clear_track_instrument,
-            session::commands::add_track_effect,
-            session::commands::remove_track_effect,
-            session::commands::reorder_track_effects,
-            session::commands::set_track_device_bypassed,
-            session::commands::set_track_device_parameter,
-            session::commands::open_track_plugin_editor,
-            session::commands::remove_track,
-            session::commands::duplicate_track,
-            session::commands::reorder_track,
-            session::commands::add_marker,
-            session::commands::update_marker,
-            session::commands::remove_marker,
-            session::commands::add_midi_note,
-            session::commands::insert_midi_notes,
-            session::commands::update_midi_note,
-            session::commands::update_midi_notes,
-            session::commands::remove_midi_note,
-            session::commands::remove_midi_notes,
-            session::commands::quantize_midi_notes,
-            session::commands::transform_midi_notes,
-            session::commands::duplicate_midi_notes,
-            session::commands::set_audio_clip_take_variant,
-            session::commands::start_take_comparison,
-            session::commands::switch_take_comparison_variant,
-            session::commands::stop_take_comparison,
-            session::commands::activate_take,
-            session::commands::place_take_as_separate_clip,
-            session::commands::set_master_gain_db,
-            audio_preferences::set_audio_driver,
-            session::commands::relink_missing_dependency,
-            session::commands::disable_missing_plugin,
-            session::commands::replace_missing_track_plugin,
-            session::commands::get_missing_dependencies,
-            // Asset Application Operations.
-            asset::commands::preview_asset,
-            asset::commands::import_midi_file,
             asset::commands::import_midi_bytes,
-            // Recording Application Operations.
-            recording::commands::list_recordings,
-            recording::commands::rename_recording,
-            recording::commands::delete_recording,
-            recording::commands::archive_recording,
-            recording::commands::promote_recording,
-            recording::commands::detect_duplicate_recordings,
-            recording::commands::tag_recording,
-            recording::commands::start_arrange_recording,
-            recording::commands::record_another_take,
-            recording::commands::stop_arrange_recording,
-            // Library Read Model queries / updates.
-            library::commands::search_library,
-            library::commands::update_library_asset,
-            library::commands::related_library_assets,
-            library::commands::list_instruments,
-            library::commands::set_instrument_favorite,
-            library::commands::set_instrument_category_override,
-            library::commands::set_instrument_user_tags,
-            library::commands::list_instrument_collections,
-            library::commands::create_instrument_collection,
-            library::commands::rename_instrument_collection,
-            library::commands::delete_instrument_collection,
-            library::commands::set_instrument_collection_membership,
-            // MIDI export.
-            // Background-job orchestration per feature.
-            analysis::commands::analyze_asset,
-            render::commands::render_timeline,
-            plugins::commands::scan_vst3_folder,
-            plugins::commands::start_scan_job
+            render::commands::render_timeline
         ])
         .run(tauri::generate_context!())
         .expect("Riffra failed to run");

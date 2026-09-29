@@ -6,19 +6,7 @@
 //! a boundary type and keep the generated files synchronized with the Rust
 //! definitions.
 
-use crate::analysis::AudioAnalysis;
-use crate::audio_preferences::AudioDriverConfig;
-use crate::library::LibraryAsset;
-use crate::model::{
-    ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
-    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, DeviceChannels,
-    MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState, ProjectState,
-    RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
-    RuntimeProjectionStatus,
-};
-use crate::recording::{
-    DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
-};
+use crate::model::BootstrapState;
 use riffra_core::{
     Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
     AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CanonicalState,
@@ -28,14 +16,19 @@ use riffra_core::{
     RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
     SessionSettings, TimelineLoopRange, TimelineRegion, Track, TrackKind,
 };
-use riffra_runtime::api::output::RenderResult;
 use riffra_runtime::api::output::{
-    BackgroundJobStatus, JobKind, JobState, MissingDependency, ProjectExport,
+    AudioAnalysis, BackgroundJobStatus, DropoutInformation, JobKind, JobState, LibraryAsset,
+    MissingDependency, PluginEntry, PluginFormat, PluginRole, PluginScanState, ProjectExport,
+    RecordingAsset, RecordingCapture, RecordingCaptureStatus, RenderResult, ScanIssue, ScanReport,
 };
-use riffra_runtime::api::output::{
-    PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanIssue, ScanReport,
+use riffra_runtime::api::params::{AudioDriverConfig, RenderOptions, RenderRange};
+use riffra_runtime::api::{ControlCommand, ControlOutput, typescript_result_map};
+use riffra_runtime::{
+    ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
+    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, DeviceChannels, MidiDeviceInfo,
+    ProjectActivationResult, ProjectRecoveryState, ProjectState, RecordingFinalizationOutcome,
+    RecordingStatus, RecordingStopResult, RecoveryCandidate, RuntimeProjectionStatus,
 };
-use riffra_runtime::api::params::{RenderOptions, RenderRange};
 use riffra_runtime::{
     ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
@@ -160,4 +153,11 @@ fn export_types() {
     DropoutInformation::export_all(&cfg).expect("DropoutInformation bindings");
     RecordingCapture::export_all(&cfg).expect("RecordingCapture bindings");
     RecordingAsset::export_all(&cfg).expect("RecordingAsset bindings");
+    ControlCommand::export_all(&cfg).expect("ControlCommand bindings");
+    ControlOutput::export_all(&cfg).expect("ControlOutput bindings");
+    std::fs::write(
+        "../src/model/generated/ControlCommandResults.ts",
+        typescript_result_map(),
+    )
+    .expect("ControlCommandResults bindings");
 }

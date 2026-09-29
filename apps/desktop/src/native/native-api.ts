@@ -28,6 +28,7 @@ import type {
   RecordingStopResult,
   MonitoringState,
   MidiInputRoute,
+  MusicalPosition,
   AudioTakeVariant,
   AutomationParameter,
   AutomationPoint,
@@ -322,10 +323,10 @@ export interface ArrangeApi {
   removeTrack(trackId: string): Promise<ArrangementMutationResult>;
   duplicateTrack(trackId: string): Promise<ArrangementMutationResult>;
   reorderTrack(trackId: string, targetIndex: number): Promise<ArrangementMutationResult>;
-  addMarker(tick: number, name: string): Promise<ArrangementMutationResult>;
+  addMarker(position: MusicalPosition, name: string): Promise<ArrangementMutationResult>;
   updateMarker(
     markerId: string,
-    patch: { name?: string; tick?: number },
+    patch: { name?: string; position?: MusicalPosition },
   ): Promise<ArrangementMutationResult>;
   removeMarker(markerId: string): Promise<ArrangementMutationResult>;
   addMidiNote(
@@ -379,13 +380,13 @@ export interface ArrangeApi {
   updateArrangementTimebase(timebase: ProjectTimebase): Promise<ArrangementMutationResult>;
   updateTimelineLoopRange(
     enabled: boolean,
-    startTick: number,
-    endTick: number,
+    start: MusicalPosition,
+    end: MusicalPosition,
   ): Promise<ArrangementMutationResult>;
   updateTimelinePunchRange(
     enabled: boolean,
-    startTick: number,
-    endTick: number,
+    start: MusicalPosition,
+    end: MusicalPosition,
   ): Promise<ArrangementMutationResult>;
 }
 

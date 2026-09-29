@@ -13,11 +13,14 @@ import {
   NativeCommandError,
   ProjectChangedError,
   advanceProjectEpoch,
+  dispatchLatestControl,
   invoke,
-  invokeLatestHost,
   setHostConnectionAvailability,
   setHostGeneration,
 } from '@/native/invoke';
+
+const mute = (muted: boolean) =>
+  ({ command: 'track.update', params: { trackId: 'track:1', muted } }) as const;
 
 describe('native invoke bridge', () => {
   beforeEach(() => {
@@ -39,13 +42,13 @@ describe('native invoke bridge', () => {
   it('sends only the latest payload in one click burst', async () => {
     tauriInvoke.mockResolvedValue({ revision: 7 });
 
-    const first = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
-    const second = invokeLatestHost('update_track', { value: 2 }, 'track:mute');
+    const first = dispatchLatestControl(mute(true), 'track:mute');
+    const second = dispatchLatestControl(mute(false), 'track:mute');
 
     await vi.advanceTimersByTimeAsync(20);
     await expect(Promise.all([first, second])).resolves.toEqual([{ revision: 7 }, { revision: 7 }]);
     expect(tauriInvoke).toHaveBeenCalledTimes(1);
-    expect(tauriInvoke).toHaveBeenCalledWith('update_track', { value: 2 });
+    expect(tauriInvoke).toHaveBeenCalledWith('dispatch_control', mute(false));
   });
 
   it('forwards independent commands without a frontend ordering policy', async () => {
@@ -75,7 +78,7 @@ describe('native invoke bridge', () => {
   });
 
   it('does not send a coalesced update to a newer Host generation', async () => {
-    const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const pending = dispatchLatestControl(mute(true), 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
     setHostGeneration(1);
 
@@ -86,7 +89,7 @@ describe('native invoke bridge', () => {
   });
 
   it('does not send a coalesced update to a newer Project', async () => {
-    const pending = invokeLatestHost('update_track', { value: 1 }, 'track:mute');
+    const pending = dispatchLatestControl(mute(true), 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(ProjectChangedError);
     advanceProjectEpoch();
 
