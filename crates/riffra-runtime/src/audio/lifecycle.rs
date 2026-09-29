@@ -325,25 +325,25 @@ impl AudioSupervisor {
             )));
         }
 
-        let stderr_status = Arc::clone(&self.status);
-        let stderr_events = Arc::clone(&self.events);
         let stderr_generation = Arc::clone(&self.process.generation);
         if let Err(error) = thread::Builder::new()
             .name("riffra-audio-stderr".into())
             .spawn(move || {
-                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let mut reader = BufReader::new(stderr);
+                let mut buffer = Vec::new();
+                loop {
+                    buffer.clear();
+                    match reader.read_until(b'\n', &mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
                     if stderr_generation.load(Ordering::Acquire) != generation {
                         break;
                     }
-                    set_faulted(
-                        &stderr_status,
-                        format!(
-                            "Native audio diagnostic: {line}. The engine is isolated and saved data is safe."
-                        ),
+                    tracing::warn!(
+                        line = %String::from_utf8_lossy(&buffer).trim_end(),
+                        "native audio diagnostic"
                     );
-                    if let Ok(status) = stderr_status.lock() {
-                        stderr_events.emit(HostEvent::AudioStatus(Box::new(status.clone())));
-                    }
                 }
             })
         {

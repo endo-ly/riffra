@@ -66,6 +66,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 使い分け: 低遅延の音声は C、時間のかかる一括処理は D、列挙は E、WebView 操作は A。F の利用者は Host 外部操作に限る。
 
+ストリームの予約: C・D・E の子プロセスは stdout をプロトコル専用とする。VST3 をロードする起動（`riffra-audio --serve`、`riffra-render`、`riffra-plugin-scan`）では、起動時にプロセス自身の出力を切り離して stderr へ回し、第三者コードの出力がプロトコル行に混ざらないようにする。切り離しに失敗した場合はプロトコルが成立しないため、プラグインをロードせずに起動を失敗させる。Rust 側は stderr をプロトコルとして解釈しない。
+
 ---
 
 ## 3. 境界 A: Tauri 命令（WebView → Rust）
@@ -332,7 +334,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 | 起動 | `render_timeline` 命令ごとに `riffra-runtime::render` が `RuntimeBinaries` の executable を 1 プロセス起動する。配置規則は Desktop / Headless 共通                                                                                                                                              |
 | 要求 | stdin へ JSON 1 行を書いて閉じる。`renderTimelineOffline` + `protocolVersion: 3` + `request`（`graph` / `destination` / `startTick` / `endTick` / `sampleRate` / `blockSize` / `normalize`）。Master Gain は `graph.masterGainDb` に含む                                                        |
 | 応答 | stdout へ JSON 1 行。成功は `offlineRenderComplete`（`frames`、`sampleRate`）、失敗は `error`（`operation: renderTimelineOffline`。`kind` は要求の契約違反 `renderContract`、版の不一致 `protocol`、レンダー失敗 `renderRejected`）。形は `contracts/sidecar/messages/render.*.json` で固定する |
-| 異常 | プロセス異常終了・応答の不一致・デコードできない応答はエラー扱いとし、部分的な WAV は破棄する                                                                                                                                                                                                   |
+| 異常 | プロセス異常終了・応答の不一致・デコードできない応答はエラー扱いとし、部分的な WAV は破棄する。失敗時のエラーには stdout / stderr の末尾を抜粋として含める                                                                                                                                      |
 | 分担 | 計画（範囲・出力先 `renders/render-{ms}/timeline.wav`・manifest）はシェル側で組み立て、ワーカーは実行のみ                                                                                                                                                                                       |
 
 ---
@@ -348,6 +350,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 - 直列化: 共有 Runtime の Probe Coordinator 経由。待機と実行の双方にタイムアウトを適用する
 - 失敗時: 「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用起動であり、実行中の `--serve` セッションとは独立する
 - 失敗は終了コードと stderr のメッセージで返し、stdout には成功時の結果だけを書く
+- 厳格性: スキャン結果は stdout 全体を 1 件の JSON としてパースし、単一に収まらない出力は候補を隔離して失敗とする。失敗メッセージには stdout / stderr の抜粋を含める
 
 ---
 

@@ -2,7 +2,6 @@
 
 #include <condition_variable>
 #include <deque>
-#include <iostream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -11,6 +10,7 @@
 
 #include "OutputQueue.h"
 #include "plugins/FaultInjection.h"
+#include "protocol/ProtocolChannel.h"
 
 namespace riffra {
 namespace {
@@ -85,7 +85,7 @@ private:
                     line = outputQueue.takeTelemetry();
                 }
             }
-            std::cout << line << '\n' << std::flush;
+            writeProtocolLine(line);
         }
     }
 

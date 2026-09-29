@@ -24,14 +24,41 @@ enum RenderWorkerError {
     Write(#[source] std::io::Error),
     #[error("render worker could not be awaited: {0}")]
     Wait(#[source] std::io::Error),
-    #[error("render worker returned an invalid response: {0}")]
-    InvalidResponse(#[source] serde_json::Error),
+    #[error(
+        "render worker returned an invalid response: {error}; stdout: {stdout}; stderr: {stderr}"
+    )]
+    InvalidResponse {
+        #[source]
+        error: serde_json::Error,
+        stdout: String,
+        stderr: String,
+    },
     #[error("render worker failed: {0}")]
     Rejected(String),
-    #[error("render worker exited without completing the render")]
-    Incomplete,
+    #[error("render worker exited without completing the render: {status}; stderr: {stderr}")]
+    Incomplete { status: String, stderr: String },
     #[error("render worker was cancelled")]
     Cancelled,
+}
+
+/// Bounded single-line view of the tail of a worker byte stream for error
+/// messages.
+fn excerpt(bytes: &[u8]) -> String {
+    const LIMIT: usize = 240;
+    let flattened = String::from_utf8_lossy(bytes)
+        .chars()
+        .map(|ch| match ch {
+            '\r' | '\n' => ' ',
+            other => other,
+        })
+        .collect::<String>();
+    let trimmed = flattened.trim();
+    let start = trimmed
+        .char_indices()
+        .rev()
+        .nth(LIMIT - 1)
+        .map_or(0, |(index, _)| index);
+    trimmed[start..].to_owned()
 }
 
 /// Launches one `riffra-render` process for each offline render request.
@@ -140,8 +167,13 @@ impl RenderWorker {
     }
 
     fn handle_output(&self, output: Output) -> Result<(), RenderWorkerError> {
-        let response: RenderMessage =
-            serde_json::from_slice(&output.stdout).map_err(RenderWorkerError::InvalidResponse)?;
+        let response: RenderMessage = serde_json::from_slice(&output.stdout).map_err(|source| {
+            RenderWorkerError::InvalidResponse {
+                error: source,
+                stdout: excerpt(&output.stdout),
+                stderr: excerpt(&output.stderr),
+            }
+        })?;
         match response {
             RenderMessage::OfflineRenderComplete {
                 frames,
@@ -150,7 +182,10 @@ impl RenderWorker {
                 tracing::info!(frames, sample_rate, "offline render worker completed");
                 Ok(())
             }
-            RenderMessage::OfflineRenderComplete { .. } => Err(RenderWorkerError::Incomplete),
+            RenderMessage::OfflineRenderComplete { .. } => Err(RenderWorkerError::Incomplete {
+                status: output.status.to_string(),
+                stderr: excerpt(&output.stderr),
+            }),
             RenderMessage::Error(error) => Err(RenderWorkerError::Rejected(error.message)),
         }
     }

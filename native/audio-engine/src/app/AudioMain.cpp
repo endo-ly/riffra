@@ -9,6 +9,7 @@
 #include "device/AudioConfiguration.h"
 #include "device/AudioDeviceService.h"
 #include "protocol/AudioProtocol.h"
+#include "protocol/ProtocolChannel.h"
 
 namespace {
 
@@ -18,7 +19,7 @@ using riffra::AudioEngine;
 
 /// Writes the one JSON line produced by a probe invocation.
 void writeProbeResult(const juce::var& value) {
-    std::cout << juce::JSON::toString(value, true) << std::endl;
+    riffra::writeProtocolLine(juce::JSON::toString(value, true).toStdString());
 }
 
 /// Rejects invalid process arguments before any protocol output exists.
@@ -70,6 +71,8 @@ int runMain(const juce::StringArray& arguments) {
         return 0;
     }
     if (command == "--serve") {
+        if (!riffra::isolateProtocolChannel())
+            return failServe("Could not isolate the protocol channel on standard output.");
         std::optional<std::uint32_t> parentPid;
         AudioConfiguration configuration;
         for (int index = 2; index < arguments.size(); ++index) {

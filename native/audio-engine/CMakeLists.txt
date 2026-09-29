@@ -86,6 +86,8 @@ target_sources(riffra-render-core PRIVATE
   src/contract/ExecutionGraphDecoder.h
   src/contract/SidecarMessages.cpp
   src/contract/SidecarMessages.h
+  src/protocol/ProtocolChannel.cpp
+  src/protocol/ProtocolChannel.h
   src/timeline/TimelineTimebase.h
   src/recording/RecordingCaptureRuntime.cpp
   src/recording/RecordingCaptureRuntime.h
@@ -173,6 +175,8 @@ target_sources(riffra-plugin-scan PRIVATE
   src/plugins/PluginRack.h
   src/plugins/FaultInjection.cpp
   src/plugins/FaultInjection.h
+  src/protocol/ProtocolChannel.cpp
+  src/protocol/ProtocolChannel.h
 )
 
 target_sources(riffra-render PRIVATE
@@ -403,6 +407,24 @@ if(BUILD_TESTING)
     COMMAND riffra-real-vst-runtime-test
       "${RIFFRA_TEST_EFFECT_BUNDLE}"
       "${RIFFRA_TEST_INSTRUMENT_BUNDLE}")
+
+  add_test(
+    NAME RenderProtocolIsolation.KeepsPluginOutputOutOfProtocolStdout
+    COMMAND ${CMAKE_COMMAND}
+      "-DRENDER=$<TARGET_FILE:riffra-render>"
+      "-DBUNDLE=${RIFFRA_TEST_EFFECT_BUNDLE}"
+      "-DDESTINATION=${CMAKE_CURRENT_BINARY_DIR}/render-protocol-isolation.wav"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/render/RenderProtocolIsolationTest.cmake")
+  add_test(
+    NAME PluginScanProtocolIsolation.KeepsPluginOutputOutOfProtocolStdout
+    COMMAND ${CMAKE_COMMAND}
+      "-DSCAN=$<TARGET_FILE:riffra-plugin-scan>"
+      "-DBUNDLE=${RIFFRA_TEST_EFFECT_BUNDLE}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugins/PluginScanProtocolIsolationTest.cmake")
+  set_tests_properties(
+    RenderProtocolIsolation.KeepsPluginOutputOutOfProtocolStdout
+    PluginScanProtocolIsolation.KeepsPluginOutputOutOfProtocolStdout
+    PROPERTIES ENVIRONMENT "RIFFRA_TEST_PLUGIN_STDOUT=1")
 
   FetchContent_Declare(
     googletest

@@ -1,14 +1,14 @@
 #include <JuceHeader.h>
 
-#include <iostream>
 #include <optional>
 
 #include "plugins/PluginRack.h"
+#include "protocol/ProtocolChannel.h"
 
 namespace {
 
 void writeJson(const juce::var& value) {
-    std::cout << juce::JSON::toString(value, true) << std::endl;
+    riffra::writeProtocolLine(juce::JSON::toString(value, true).toStdString());
 }
 
 juce::var makeError(const juce::String& path, const juce::String& message) {
@@ -129,6 +129,10 @@ int validateLoad(const juce::String& path) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    if (!riffra::isolateProtocolChannel()) {
+        writeJson(makeError({}, "Could not isolate the protocol channel on standard output."));
+        return 1;
+    }
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (argc < 2) {
         writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));

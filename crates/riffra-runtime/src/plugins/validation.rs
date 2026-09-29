@@ -158,45 +158,77 @@ fn read_to_end<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
 }
 
 fn interpret_result(stdout: &[u8], stderr: &[u8], succeeded: bool) -> ValidationOutcome {
-    let envelope = stdout
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .find_map(|line| serde_json::from_slice::<ScanEnvelope>(line).ok());
-    if let Some(envelope) = envelope {
-        if envelope.message_type == "pluginScanResult"
-            && succeeded
-            && let Some(plugin) = envelope
-                .plugins
-                .and_then(|plugins| plugins.into_iter().next())
-        {
-            if envelope.load_tested == Some(false) {
-                return ValidationOutcome::Quarantined(format!(
-                    "VST3 load validation failed: {} The plugin is quarantined to prevent the audio engine from freezing.",
-                    envelope
-                        .load_test_message
-                        .unwrap_or_else(|| "the plugin could not be safely instantiated.".into())
-                ));
-            }
-            return ValidationOutcome::Validated(plugin);
+    let envelope = match serde_json::from_slice::<ScanEnvelope>(stdout) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            return ValidationOutcome::Quarantined(scanner_failure(
+                &format!("the scanner did not return one JSON envelope ({error})"),
+                stdout,
+                stderr,
+            ));
         }
-        if envelope.message_type == "pluginScanError" {
-            return ValidationOutcome::Failed(envelope.message.unwrap_or_else(|| {
-                "The isolated scanner found no usable VST3 component. Other plugins and session data are unaffected.".into()
-            }));
+    };
+    if envelope.message_type == "pluginScanResult"
+        && succeeded
+        && let Some(plugin) = envelope
+            .plugins
+            .and_then(|plugins| plugins.into_iter().next())
+    {
+        if envelope.load_tested == Some(false) {
+            return ValidationOutcome::Quarantined(format!(
+                "VST3 load validation failed: {} The plugin is quarantined to prevent the audio engine from freezing.",
+                envelope
+                    .load_test_message
+                    .unwrap_or_else(|| "the plugin could not be safely instantiated.".into())
+            ));
+        }
+        return ValidationOutcome::Validated(plugin);
+    }
+    if envelope.message_type == "pluginScanError" {
+        return ValidationOutcome::Failed(envelope.message.unwrap_or_else(|| {
+            "The isolated scanner found no usable VST3 component. Other plugins and session data are unaffected.".into()
+        }));
+    }
+    ValidationOutcome::Quarantined(scanner_failure(
+        "the scanner did not return a usable scan result",
+        stdout,
+        stderr,
+    ))
+}
+
+/// Builds the quarantine message for a scanner that returned no usable scan
+/// result, with bounded views of both isolated streams.
+fn scanner_failure(reason: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let mut message = format!(
+        "Plugin scanner exited unexpectedly. The candidate is quarantined; session data is safe. Diagnostic: {reason}"
+    );
+    for (label, bytes) in [("stdout", stdout), ("stderr", stderr)] {
+        let excerpt = excerpt(bytes);
+        if !excerpt.is_empty() {
+            message.push_str(&format!(". {label}: {excerpt}"));
         }
     }
-    let detail = String::from_utf8_lossy(stderr).trim().to_owned();
-    let detail = if detail.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " Diagnostic: {}",
-            detail.chars().take(240).collect::<String>()
-        )
-    };
-    ValidationOutcome::Quarantined(format!(
-        "Plugin scanner exited unexpectedly. The candidate is quarantined; session data is safe.{detail}"
-    ))
+    message
+}
+
+/// Bounded single-line view of the tail of a scanner byte stream for error
+/// messages.
+fn excerpt(bytes: &[u8]) -> String {
+    const LIMIT: usize = 240;
+    let flattened = String::from_utf8_lossy(bytes)
+        .chars()
+        .map(|ch| match ch {
+            '\r' | '\n' => ' ',
+            other => other,
+        })
+        .collect::<String>();
+    let trimmed = flattened.trim();
+    let start = trimmed
+        .char_indices()
+        .rev()
+        .nth(LIMIT - 1)
+        .map_or(0, |(index, _)| index);
+    trimmed[start..].to_owned()
 }
 
 #[cfg(test)]
@@ -220,5 +252,19 @@ mod tests {
             interpret_result(output, b"", true),
             ValidationOutcome::Quarantined(_)
         ));
+    }
+
+    #[test]
+    fn quarantines_scanner_output_contaminated_by_plugin_stdout() {
+        // Arrange
+        let output = b"riffra-test-plugin-stdout-crt\n{\"type\":\"pluginScanResult\",\"plugins\":[{\"name\":\"Amp\",\"isInstrument\":false}],\"loadTested\":true}\n";
+
+        // Act
+        let ValidationOutcome::Quarantined(message) = interpret_result(output, b"", true) else {
+            panic!("contaminated scanner output must be quarantined");
+        };
+
+        // Assert
+        assert!(message.contains("riffra-test-plugin-stdout-crt"));
     }
 }
