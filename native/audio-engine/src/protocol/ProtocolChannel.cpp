@@ -37,10 +37,10 @@ FILE* reserveStandardOutput() {
     return stream;
 }
 
-void divertStandardOutput() {
+bool divertStandardOutput() {
     std::fflush(stdout);
-    ::SetStdHandle(STD_OUTPUT_HANDLE, ::GetStdHandle(STD_ERROR_HANDLE));
-    ::_dup2(::_fileno(stderr), ::_fileno(stdout));
+    if (::SetStdHandle(STD_OUTPUT_HANDLE, ::GetStdHandle(STD_ERROR_HANDLE)) == 0) return false;
+    return ::_dup2(::_fileno(stderr), ::_fileno(stdout)) >= 0;
 }
 
 #else
@@ -53,20 +53,21 @@ FILE* reserveStandardOutput() {
     return stream;
 }
 
-void divertStandardOutput() {
+bool divertStandardOutput() {
     std::fflush(stdout);
-    ::dup2(STDERR_FILENO, STDOUT_FILENO);
+    return ::dup2(STDERR_FILENO, STDOUT_FILENO) >= 0;
 }
 
 #endif
 
 }  // namespace
 
-void isolateProtocolChannel() {
+bool isolateProtocolChannel() {
     FILE* reserved = reserveStandardOutput();
-    if (reserved == nullptr) return;
-    divertStandardOutput();
+    if (reserved == nullptr) return false;
+    if (!divertStandardOutput()) return false;
     protocolStream = reserved;
+    return true;
 }
 
 void writeProtocolLine(const std::string_view line) {

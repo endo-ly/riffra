@@ -71,7 +71,8 @@ int runMain(const juce::StringArray& arguments) {
         return 0;
     }
     if (command == "--serve") {
-        riffra::isolateProtocolChannel();
+        if (!riffra::isolateProtocolChannel())
+            return failServe("Could not isolate the protocol channel on standard output.");
         std::optional<std::uint32_t> parentPid;
         AudioConfiguration configuration;
         for (int index = 2; index < arguments.size(); ++index) {

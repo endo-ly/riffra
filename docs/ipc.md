@@ -66,7 +66,7 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 使い分け: 低遅延の音声は C、時間のかかる一括処理は D、列挙は E、WebView 操作は A。F の利用者は Host 外部操作に限る。
 
-ストリームの予約: C・D・E の子プロセスは stdout をプロトコル専用とする。VST3 をロードする起動（`riffra-audio --serve`、`riffra-render`、`riffra-plugin-scan`）では、起動時にプロセス自身の出力を切り離して stderr へ回し、第三者コードの出力がプロトコル行に混ざらないようにする。Rust 側は stderr をプロトコルとして解釈しない。
+ストリームの予約: C・D・E の子プロセスは stdout をプロトコル専用とする。VST3 をロードする起動（`riffra-audio --serve`、`riffra-render`、`riffra-plugin-scan`）では、起動時にプロセス自身の出力を切り離して stderr へ回し、第三者コードの出力がプロトコル行に混ざらないようにする。切り離しに失敗した場合はプロトコルが成立しないため、プラグインをロードせずに起動を失敗させる。Rust 側は stderr をプロトコルとして解釈しない。
 
 ---
 

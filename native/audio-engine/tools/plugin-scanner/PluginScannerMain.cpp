@@ -127,7 +127,10 @@ int validateLoad(const juce::String& path) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    riffra::isolateProtocolChannel();
+    if (!riffra::isolateProtocolChannel()) {
+        writeJson(makeError({}, "Could not isolate the protocol channel on standard output."));
+        return 1;
+    }
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     if (argc < 2) {
         writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));

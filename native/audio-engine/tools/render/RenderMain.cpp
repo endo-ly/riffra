@@ -24,7 +24,9 @@ int reject(const juce::String& kind, const juce::String& message) {
 }
 
 int runRenderWorker() {
-    riffra::isolateProtocolChannel();
+    if (!riffra::isolateProtocolChannel())
+        return reject("renderRejected",
+                      "Could not isolate the protocol channel on standard output.");
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     std::string line;
     if (!std::getline(std::cin, line))
