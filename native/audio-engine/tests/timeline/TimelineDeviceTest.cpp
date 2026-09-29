@@ -56,42 +56,17 @@ TEST(TimelineEngineTest, GraphPublicationRestoresCanonicalMasterGainAfterPreview
     formatManager.registerBasicFormats();
     TimelineEngine timeline;
     AudioRenderPipeline pipeline(timeline);
-    AudioDeviceController deviceController(pipeline);
-    MidiInputService midiInputs(pipeline.preview(), timeline);
-    RuntimeLifecycleExecutor runtimeLifecycle;
-    std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    juce::String trackPluginEditorTrackId;
-    juce::String trackPluginEditorDeviceId;
-    juce::AudioBuffer<float> comparisonRaw;
-    juce::AudioBuffer<float> comparisonProcessed;
-    std::atomic<bool> timelineOperationRunning{false};
-    AudioCommandDispatcher dispatcher({
-        formatManager,
-        timeline,
-        pipeline,
-        deviceController,
-        midiInputs,
-        runtimeLifecycle,
-        trackPluginEditor,
-        trackPluginEditorTrackId,
-        trackPluginEditorDeviceId,
-        comparisonRaw,
-        comparisonProcessed,
-        timelineOperationRunning,
-    });
     pipeline.prepare(nullptr);
     auto snapshot = makeTestSnapshot();
     snapshot.graph.masterGainDb = -12.0;
     juce::String error;
     ASSERT_TRUE(timeline.loadSnapshot(snapshot, formatManager, 48'000.0, 32, error, false))
         << error;
-    const auto discard = [](const juce::var&) {};
 
     // Act
-    dispatcher.dispatch({1, PreviewMasterGainDbCommand{-3.0}}, CommandResponder(1, discard));
+    pipeline.setMasterGainDb(-3.0f);
     EXPECT_FLOAT_EQ(pipeline.getMasterGainDb(), -3.0f);
-    dispatcher.dispatch({2, CommitTimelineSnapshotCommand{}}, CommandResponder(2, discard));
-    ASSERT_TRUE(runtimeLifecycle.waitForIdle(std::chrono::seconds(5)));
+    ASSERT_EQ(timeline.commitPreparedSnapshot(error), RealtimeRequest::accepted) << error;
     std::array<float, 32> left{};
     std::array<float, 32> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
