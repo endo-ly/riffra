@@ -46,6 +46,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     }
 
     const auto& graph = snapshot.graph;
+    const auto processingMode =
+        engine.offlineMode ? PluginProcessingMode::offline : PluginProcessingMode::realtime;
     prepared = std::make_unique<PreparedTimeline>();
     prepared->projectId = snapshot.projectId;
     prepared->revision = snapshot.revision;
@@ -149,7 +151,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         }
         if (!track->reuseRuntimeDevices &&
             !track->runtime->effects().load(track->effects, outputSampleRate, maximumBlockSize,
-                                            error, track->id + "/track-effect"))
+                                            processingMode, error, track->id + "/track-effect"))
             return false;
         if (track->instrument.has_value() && !track->reuseRuntimeDevices) {
             const auto roleError = [&track, &error](const juce::String& role,
@@ -160,8 +162,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             };
             if (const auto* vst3 = std::get_if<Vst3InstrumentSpec>(&*track->instrument)) {
                 juce::String runtimeError;
-                track->runtime->setInstrument(Vst3InstrumentRuntime::create(
-                    vst3->path, outputSampleRate, maximumBlockSize, vst3->state, runtimeError));
+                track->runtime->setInstrument(
+                    Vst3InstrumentRuntime::create(vst3->path, outputSampleRate, maximumBlockSize,
+                                                  processingMode, vst3->state, runtimeError));
                 if (track->runtime->instrument() == nullptr)
                     return roleError("instrument", runtimeError);
             } else {

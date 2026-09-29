@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "contract/ContractReader.h"
 #include "contract/ExecutionGraphDecoder.h"
@@ -49,11 +50,19 @@ int runRenderWorker() {
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    riffra::OfflineRenderer renderer;
-    riffra::OfflineRenderer::Result result;
     juce::String error;
-    if (!renderer.render(renderRequest, formats, result, error))
-        return reject("renderRejected", error);
+    const auto renderer = riffra::OfflineRenderer::prepare(renderRequest, formats, error);
+    if (renderer == nullptr) return reject("renderRejected", error);
+
+    riffra::OfflineRenderer::Result result;
+    auto rendered = false;
+    std::thread renderThread([&] {
+        rendered = renderer->render(formats, result, error);
+        juce::MessageManager::getInstance()->stopDispatchLoop();
+    });
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    renderThread.join();
+    if (!rendered) return reject("renderRejected", error);
 
     writeLine(riffra::encodeOfflineRenderComplete(
         {result.frames, static_cast<std::uint32_t>(result.sampleRate)}));

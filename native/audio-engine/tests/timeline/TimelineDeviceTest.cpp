@@ -32,6 +32,15 @@ TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
     EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
 }
 
+TEST(TimelineEngineTest, WarmsUpAndResetsPluginDevices) {
+    // Arrange
+    // Act
+    const auto passed = TimelineEngineTestPeer::pluginDevicesWarmUpAndReset();
+
+    // Assert
+    EXPECT_TRUE(passed);
+}
+
 TEST(TimelineEngineTest, SendsEmergencyPanicToTheInstrumentRuntime) {
     // Arrange
     // Act

@@ -127,6 +127,18 @@ void TimelineEngine::panicAllInstrumentTracks() noexcept {
     panicAllPending.store(true, std::memory_order_release);
 }
 
+void TimelineEngine::resetPluginDevices() noexcept {
+    AudioReadScope activeRead(*this);
+    auto* active = activeRead.get();
+    if (active == nullptr) return;
+    for (auto& track : active->tracks) {
+        auto& runtime = *track->runtime;
+        if (runtime.instrument() != nullptr)
+            if (auto* rack = runtime.instrument()->vst3Rack()) rack->reset();
+        runtime.effects().reset();
+    }
+}
+
 void TimelineEngine::servicePendingPanic() noexcept {
     AudioReadScope activeRead(*this);
     if (auto* active = activeRead.get(); active != nullptr) applyPendingPanic(*active);

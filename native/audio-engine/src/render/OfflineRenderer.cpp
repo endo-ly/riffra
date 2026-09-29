@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <memory>
+#include <thread>
 #include <utility>
+#include <variant>
 
 #include "timeline/TimelineEngine.h"
 #include "timeline/TimelineTimebase.h"
@@ -71,28 +74,57 @@ bool normalizeFile(const juce::File& source, const juce::File& destination,
     return true;
 }
 
+bool hostsPlugins(const ExecutionGraph& graph) noexcept {
+    return std::any_of(graph.tracks.begin(), graph.tracks.end(), [](const auto& track) {
+        return !track.effects.empty() ||
+               (track.instrument.has_value() &&
+                std::holds_alternative<Vst3InstrumentSpec>(*track.instrument));
+    });
+}
+
+// Plugins such as disk-streaming samplers keep loading their content after instantiation and
+// report no readiness to the host; they only become audible after being processed for a while
+// with the message thread dispatching. The interval covers such loading with margin.
+constexpr auto kPluginWarmUp = std::chrono::seconds(2);
+
+void warmUpPlugins(TimelineEngine& engine, const double sampleRate, const int blockSize) {
+    const auto blockDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(blockSize / sampleRate));
+    const auto deadline = std::chrono::steady_clock::now() + kPluginWarmUp;
+    for (auto next = std::chrono::steady_clock::now(); next < deadline; next += blockDuration) {
+        engine.warmUpPluginDevices(blockSize);
+        std::this_thread::sleep_until(next + blockDuration);
+    }
+}
+
 }  // namespace
 
-bool OfflineRenderer::render(const OfflineRenderRequestSpec& request,
-                             juce::AudioFormatManager& formats, Result& result,
-                             juce::String& error) {
+OfflineRenderer::OfflineRenderer(Plan renderPlan,
+                                 std::unique_ptr<TimelineEngine> timelineEngine) noexcept
+    : plan(std::move(renderPlan)), engine(std::move(timelineEngine)) {}
+
+OfflineRenderer::~OfflineRenderer() = default;
+
+std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderRequestSpec& request,
+                                                          juce::AudioFormatManager& formats,
+                                                          juce::String& error) {
     const auto sampleRate = static_cast<double>(request.sampleRate);
     const auto blockSize = static_cast<int>(request.blockSize);
     const auto destination = juce::File(request.destination);
     if (request.endTick <= request.startTick || sampleRate <= 0.0 || blockSize <= 0) {
         error = "Offline Render request is invalid.";
-        return false;
+        return nullptr;
     }
     const TimelineTimebase timelineTimebase{request.graph.timebase.ppq, request.graph.timebase.bpm};
     const auto startSample = timelineTimebase.tickToSample(request.startTick, sampleRate);
     const auto endSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
     if (startSample < 0 || endSample <= startSample) {
         error = "Offline Render range has no samples.";
-        return false;
+        return nullptr;
     }
     if (!destination.getParentDirectory().createDirectory()) {
         error = "Offline Render output directory could not be created.";
-        return false;
+        return nullptr;
     }
 
     auto renderGraph = request.graph;
@@ -100,31 +132,54 @@ bool OfflineRenderer::render(const OfflineRenderRequestSpec& request,
     renderGraph.loopRange.enabled = false;
     const TimelineSnapshotSpec renderSnapshot{{}, 0, std::move(renderGraph)};
 
-    TimelineEngine engine(true);
-    if (!engine.loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error)) return false;
-    engine.seekToTick(0);
-    engine.play();
+    auto timelineEngine = std::make_unique<TimelineEngine>(true);
+    if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
+        return nullptr;
+    Plan renderPlan{destination,
+                    sampleRate,
+                    blockSize,
+                    startSample,
+                    endSample,
+                    juce::Decibels::decibelsToGain(static_cast<float>(request.graph.masterGainDb)),
+                    request.normalize,
+                    hostsPlugins(request.graph)};
+    return std::unique_ptr<OfflineRenderer>(
+        new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
+}
 
+bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
+                             juce::String& error) {
+    if (plan.hostsPlugins) {
+        warmUpPlugins(*engine, plan.sampleRate, plan.blockSize);
+        // The warm-up advanced the plugins' processing state; rendering starts from reset state.
+        if (!juce::MessageManager::callSync([this] { engine->resetPluginDevices(); })) {
+            error = "Offline Render could not reset the warmed-up plugins.";
+            return false;
+        }
+    }
+    engine->seekToTick(0);
+    engine->play();
+
+    const auto& destination = plan.destination;
     const auto partial = destination.getSiblingFile(destination.getFileName() + ".partial");
     const auto normalized = destination.getSiblingFile(destination.getFileName() + ".normalized");
     partial.deleteFile();
     normalized.deleteFile();
     destination.deleteFile();
-    auto writer = createWriter(partial, sampleRate, error);
+    auto writer = createWriter(partial, plan.sampleRate, error);
     if (writer == nullptr) return false;
 
-    juce::AudioBuffer<float> buffer(2, blockSize);
+    juce::AudioBuffer<float> buffer(2, plan.blockSize);
     std::int64_t position = 0;
     float peak = 0.0f;
-    const auto masterGain =
-        juce::Decibels::decibelsToGain(static_cast<float>(request.graph.masterGainDb));
-    while (position < endSample) {
+    while (position < plan.endSample) {
         const auto count =
-            static_cast<int>(std::min<std::int64_t>(blockSize, endSample - position));
+            static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.endSample - position));
         buffer.clear();
-        engine.mix(buffer.getArrayOfWritePointers(), 2, count);
-        buffer.applyGain(0, count, masterGain);
-        const auto writeStart = static_cast<int>(std::max<std::int64_t>(0, startSample - position));
+        engine->mix(buffer.getArrayOfWritePointers(), 2, count);
+        buffer.applyGain(0, count, plan.masterGain);
+        const auto writeStart =
+            static_cast<int>(std::max<std::int64_t>(0, plan.startSample - position));
         const auto writeCount = count - writeStart;
         if (writeCount > 0) {
             for (int channel = 0; channel < 2; ++channel)
@@ -140,8 +195,8 @@ bool OfflineRenderer::render(const OfflineRenderRequestSpec& request,
     }
     writer.reset();
 
-    const auto normalizationGain = request.normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
-    if (request.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
+    const auto normalizationGain = plan.normalize && peak > 0.0f ? 0.98f / peak : 1.0f;
+    if (plan.normalize && std::abs(normalizationGain - 1.0f) > 0.000001f) {
         if (!normalizeFile(partial, normalized, formats, normalizationGain, error) ||
             !normalized.moveFileTo(destination)) {
             partial.deleteFile();
@@ -156,8 +211,8 @@ bool OfflineRenderer::render(const OfflineRenderRequestSpec& request,
         return false;
     }
 
-    result.frames = static_cast<std::uint64_t>(endSample - startSample);
-    result.sampleRate = sampleRate;
+    result.frames = static_cast<std::uint64_t>(plan.endSample - plan.startSample);
+    result.sampleRate = plan.sampleRate;
     return true;
 }
 

@@ -17,6 +17,14 @@ namespace riffra {
 class PluginEditorHost;
 class PluginRackTestPeer;
 
+/// Processing context a hosted plugin is prepared for (VST3 process mode).
+enum class PluginProcessingMode {
+    /// Blocks are processed inside a realtime audio callback.
+    realtime,
+    /// Blocks are processed ahead of realtime, so the plugin may take the time it needs.
+    offline,
+};
+
 struct PluginLoadError final {
     juce::String scope;
     juce::String message;
@@ -64,7 +72,7 @@ public:
     ~PluginRack();
 
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
-                                                      int blockSize);
+                                                      int blockSize, PluginProcessingMode mode);
     void clear() noexcept;
     void release() noexcept;
     void prepare(double sampleRate, int blockSize) noexcept;
@@ -117,7 +125,8 @@ private:
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
-        juce::AudioProcessor& processor, double sampleRate, int blockSize);
+        juce::AudioProcessor& processor, double sampleRate, int blockSize,
+        PluginProcessingMode mode);
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges(juce::AudioProcessor* processor,
                                      ParameterQueue* queue) noexcept;

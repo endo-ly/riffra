@@ -128,6 +128,9 @@ public:
     /// Instrument Track runtime so a host-level emergency mute also silences
     /// VST instruments instead of only hiding their output.
     void panicAllInstrumentTracks() noexcept;
+    /// Resets the processing state of every VST3 instrument and effect chain. Plugin activation
+    /// belongs to the message thread, so call this there while no audio is being processed.
+    void resetPluginDevices() noexcept;
     bool setDeviceBypassed(const juce::String& trackId, const juce::String& deviceId, bool bypassed,
                            juce::String& error) noexcept;
     bool setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
@@ -169,6 +172,9 @@ public:
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
              int outputChannelCount, int sampleCount) noexcept;
+    /// Processes every VST3 instrument and effect chain with silence and no MIDI, discarding the
+    /// output, so plugins that finish preparing while processing can do so before playback.
+    void warmUpPluginDevices(int sampleCount) noexcept;
     [[nodiscard]] TimelineStatus status() const;
 
 private:
