@@ -62,15 +62,15 @@
 ```text
 React フロントエンド
   ├─ 状態: CreativeSession を保持・描画する
-  ├─ 編集: 機能別の窓口（NativeApi capability）経由で Tauri 命令を呼ぶ
+  ├─ 編集: 機能別の窓口（NativeApi capability）経由で Control Command を送る
   ├─ app: 起動処理（bootstrap）/ アプリ全体の組み立て（Composition）/ 全体のRuntime寿命管理
   ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、browser、instruments、library、plugins、project、recording、transport）
   ├─ shared: 機能に属さない共通UI・汎用部品（Toast、ContextMenu、audio meters など）
   ├─ native: ReactとTauriの境界（窓口の定義・invoke実装・テスト用の偽装 FakeNativeApi）
   └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
 
-Tauri 命令層 (src-tauri/src/**/commands.rs)
-  └─ 受け取った命令を共有の処理役（Host service）へ委譲する（実行モードは ipc.md §3.1）
+Tauri 命令層 (src-tauri/src)
+  └─ Host への操作は dispatch_control 1 本で受け、Desktop 固有の命令だけを個別に持つ（ipc.md §3.1）
 
 Desktop adapter (apps/desktop/src-tauri/src)
   ├─ Tauri の命令・通知・窓（command / event / window）との境界を担当
@@ -79,6 +79,7 @@ Desktop adapter (apps/desktop/src-tauri/src)
   └─ 現在Hostの操作・起動情報・通知（operation、bootstrap、event）をWebViewへ接続
 
 riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
+  ├─ 頼める操作の定義（api: Control Command の表・Params・結果型・性質。ipc.md §3.2）
   ├─ Host本体・設定・利用権（DawHost / HostConfig / DataRootLease）を含むHostの構成
   ├─ 音声の監督（AudioSupervisor）/ 内蔵音源の実行基盤（Instrument Runtime）/ 正準と再生用複製の突き合わせ（RuntimeReconciler）/ 再生順の整理（Transport ordering）
   ├─ 同梱内蔵音源の一覧（Built-in instrument catalog。起動時の組み立て元から渡す）
@@ -107,7 +108,7 @@ riffra-core（crates/riffra-core）: プラットフォーム非依存のApplica
 CLI ホスト（apps/cli）
   ├─ 利用権・Project保存・楽曲保存（DataRootLease / ProjectStore / SessionStore）を取得する
   ├─ 決まりごと（AppCore）と保存口（SessionStorage Port）を直接利用する
-  ├─ 一回きりの起動引数も対話入力も同じ振り分け（Dispatcher）へ渡す
+  ├─ 一回きりの起動引数も対話入力も型付きの Control Command にして同じ振り分け（Dispatcher）へ渡す
   └─ ファイル編集専用の Standalone と、進行役を起動する serve の二つの使い方を持つ
 
 Attached CLI（apps/cli --attach）
