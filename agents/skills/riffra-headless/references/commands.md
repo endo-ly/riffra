@@ -4,10 +4,10 @@
 
 コマンド引数はロングフラグ(camelCase を kebab-case 化)で渡し、完全な一覧は `riffra <command> --help` で確認できる。各系統に含まれるコマンドと実行できる場所は次のとおり。
 
-| 系統             | 主なコマンド                                                                           | 実行できる場所                 |
-| ---------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / rack / missing 復旧 | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作    | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                                          | 実行できる場所                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧 | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作                   | Live Host(`serve`)+ `--attach` |
 
 Live Host が必要なコマンドを Standalone で実行すると、引数の内容にかかわらず `runtimeUnavailable` になる。
 

@@ -29,7 +29,7 @@
 | ----------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
 | セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
 | 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                       |
-| ラック（RackDevice / Macro）                    | `crates/riffra-core/src/domain/rack/`                                           | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
+| エフェクト / VST3（EffectDevice / Vst3Plugin）  | `crates/riffra-core/src/domain/plugin/`                                         | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
 | 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                       |
 | 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                       |
 | バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                       |
@@ -84,7 +84,7 @@ Render結果は音声書き出しの成果物であり、DataRootの `renders/` 
 | `ProjectTimebase`                                                                            | 拍子・テンポ・ppq からなる音楽クロック。ルーラー・スナップ・MIDI・トランスポートが共有                                                                                                                                                                                                                                                                                                                                                        |
 | `FrameRange` / `FrameDuration`                                                               | ソース素材のフレーム範囲／持続時間（サンプルレートを併せ持つ）                                                                                                                                                                                                                                                                                                                                                                                |
 | `TimelineLoopRange` / `TimelinePunchRange`                                                   | ループ区間（無効化しても端点保持）とパンチ録音区間                                                                                                                                                                                                                                                                                                                                                                                            |
-| `Track`                                                                                      | Audio / Instrument の2種類。ゲイン・パン・ミュート・ソロ・アーム・モニタリング・入力ルート・インストゥルメント・トラックラックを保持                                                                                                                                                                                                                                                                                                          |
+| `Track`                                                                                      | Audio / Instrument の2種類。ゲイン・パン・ミュート・ソロ・アーム・モニタリング・入力ルート・インストゥルメント・エフェクト列を保持                                                                                                                                                                                                                                                                                                            |
 | `AudioClip`                                                                                  | 非破壊オーディオクリップ。`asset_id` + `source_range` + `timeline_duration`、ゲイン・パン・フェード・ループ・ミュート。録音テイクへの関連（recording_take_id）と`take_variant`（raw/processed）を持つ                                                                                                                                                                                                                                         |
 | `MidiClip`                                                                                   | 非破壊 MIDI クリップ。`MidiNote`（ピアノロール編集対象）と `MidiEvent`（CC/ピッチベンド/チャンネルプレッシャーを忠実保持）を持つ。すべてのノートとイベントはクリップの相対範囲内に収まり、ノートの `start_tick + duration_ticks` はクリップの `duration_ticks` 以下、イベントの位置はクリップの `duration_ticks` 未満でなければならない。ノートとイベントはそれぞれ最大200,000件。`asset_id` は任意（セッション内で完結する MIDI は持たない） |
 | `AudioClipPatch` / `MidiClipPatch`                                                           | 部分更新。None のフィールドは現値を維持                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -123,25 +123,19 @@ Render結果は音声書き出しの成果物であり、DataRootの `renders/` 
 | `Provenance` / `ProvenanceOperation` | 素材がどう生まれたか。operation（recorded / processed / rendered / imported）と source_asset_ids（消費した素材）、parameters        |
 | 生成規則                             | `register`（新規IDを mint）と `derive`（source から派生物を mint）。コンテンツ変更は決して既存IDを上書きしない                      |
 
-### 4.6 Instrument とラック
+### 4.6 Instrument とエフェクト
 
-| エンティティ                 | 役割                                                                                                                |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceを持つ                                              |
-| `TrackInstrumentSource`      | `internal`（同梱definition本文とBuilt-in preset ID）または `vst3`（外部path、parameter、state）を表す判別付きsource |
-| `InternalInstrumentResource` | 同梱されたBuilt-in presetの識別子。definition本文も正準状態に保存し、resourceの絶対pathは保存しない                 |
+| エンティティ                 | 役割                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceを持つ                                                                     |
+| `TrackInstrumentSource`      | `internal`（同梱definition本文とBuilt-in preset ID）または `vst3`（`Vst3Plugin`）を表す判別付きsource                                      |
+| `InternalInstrumentResource` | 同梱されたBuilt-in presetの識別子。definition本文も正準状態に保存し、resourceの絶対pathは保存しない                                        |
+| `EffectDevice`               | Trackの信号チェーンに並ぶエフェクト。id、name、bypassed、`Vst3Plugin` を持つ。`Track.effects` の順に処理する                               |
+| `Vst3Plugin`                 | VST3プラグインの永続状態。path、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインを無効化した状態（disabled_placeholder） |
 
-`TrackInstrument`はEffect用の`RackDevice`とは別に管理する。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathを割り当てない。
+`TrackInstrument`と`EffectDevice`は別に管理し、VST3の永続状態はどちらも`Vst3Plugin`で表す。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathを割り当てない。
 
-### 4.7 ラック
-
-| エンティティ   | 役割                                                                                                                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RackInstance` | Trackで現在使われている信号チェーン（devices + macros）                                                                                                                                            |
-| `RackDevice`   | チェーンの1スロット。`input` / `plugin` / `utility` / `output`。パス、バイパス、ゲイン、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインのプレースホルダ（disabled_placeholder） |
-| `RackMacro`    | パラメータに割り当てる名前付きマクロコントロール                                                                                                                                                   |
-
-### 4.8 バックグラウンドジョブ
+### 4.7 バックグラウンドジョブ
 
 | エンティティ          | 役割                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------- |
@@ -170,8 +164,10 @@ flowchart TD
     RT -->|raw/processed source| AS[Asset]
     AC -->|asset_id| AS
     MC -->|任意 asset_id| AS
-    TR --> RI[RackInstance]
-    RI --> RD[RackDevice]
+    TR --> TI[TrackInstrument]
+    TR --> ED[EffectDevice]
+    TI -->|vst3| VP[Vst3Plugin]
+    ED --> VP
     CS --> SE[SessionSettings]
     RC[RecordingCapture] -->|生成物| AS
     RC -->|ドロップアウト診断| DI[DropoutInformation]
@@ -187,31 +183,34 @@ flowchart TD
 
 `validate_and_normalize`（`CreativeSession`）と `normalize_fields`（`AudioClip`）が守る規則。ロードと保存の両方の境界で適用される。
 
-| 対象           | ルール                                                                                                                                                                                     |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| session_id     | 空文字禁止。新規は `session-<ms>`                                                                                                                                                          |
-| ProjectId      | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession`へ埋め込まない                                                                                      |
-| タイムベース   | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                          |
-| 音楽操作値     | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する    |
-| TimelineRegion | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                          |
-| HarmonyEvent   | idはArrangement内で一意、和声名とtonesは空文字・空集合を禁止、`end_tick > start_tick`。最大16,384件で、イベント同士の重複・入れ子・gapを許可し、`start_tick`・`end_tick`・id順に正規化する |
-| ゲイン         | マスター `-90.0..=0.0`、クリップ・トラック・デバイス `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化                                                                       |
-| パン           | `-1.0..=1.0`、非有限値は 0.0                                                                                                                                                               |
-| フェード       | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                    |
-| カウントイン   | `0..=8` 拍                                                                                                                                                                                 |
-| AssetId        | `asset:<UUIDv7>` のみ有効                                                                                                                                                                  |
-| 素材コンテンツ | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                      |
-| 参照整合       | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                          |
-| 録音遷移       | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                      |
-| 更新時刻       | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                                                                                     |
+| 対象            | ルール                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| session_id      | 空文字禁止。新規は `session-<ms>`                                                                                                                                                          |
+| ProjectId       | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession`へ埋め込まない                                                                                      |
+| タイムベース    | `ppq` は常に `960`（`TIMELINE_PPQ`）。`bpm` は有限かつ `20.0..=400.0`。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                                                          |
+| 音楽操作値      | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する    |
+| TimelineRegion  | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                          |
+| HarmonyEvent    | idはArrangement内で一意、和声名とtonesは空文字・空集合を禁止、`end_tick > start_tick`。最大16,384件で、イベント同士の重複・入れ子・gapを許可し、`start_tick`・`end_tick`・id順に正規化する |
+| ゲイン          | マスター `-90.0..=0.0`、クリップ・トラック `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化                                                                                 |
+| パン            | `-1.0..=1.0`、非有限値は 0.0                                                                                                                                                               |
+| フェード        | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                    |
+| エフェクト      | idとnameは空文字禁止、id はTrack内で一意、1 Trackあたり最大256件                                                                                                                           |
+| VST3 プラグイン | pathは空文字禁止。パラメータ値は `0.0..=1.0` にクランプし、非有限値は 0.0。状態データは4,000,000文字まで                                                                                   |
+| カウントイン    | `0..=8` 拍                                                                                                                                                                                 |
+| AssetId         | `asset:<UUIDv7>` のみ有効                                                                                                                                                                  |
+| 素材コンテンツ  | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                      |
+| 参照整合        | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                          |
+| 録音遷移        | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                      |
+| 更新時刻        | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                                                                                     |
 
 ---
 
 ## 7. スキーマ進化の方針
 
-| 方針         | 内容                                                                                                        |
-| ------------ | ----------------------------------------------------------------------------------------------------------- |
-| 現行スキーマ | `deserialize_session` は現行のCreativeSessionだけを受け入れる。対応しない形のデータは正準状態へ取り込まない |
-| 世代回復     | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む            |
-| DataRoot     | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                     |
-| 言語間の同期 | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                 |
+| 方針           | 内容                                                                                                                                                                             |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| セッション文書 | `session.json`・世代ファイル・`.riffra` の `session.json` は `{"schemaVersion": 1, "session": {...}}` 形式。版を先に読み、現行の版（`SESSION_SCHEMA_VERSION`）以外は読み込まない |
+| 現行スキーマ   | 永続化する型は未知のキーを拒否し、`Option` 以外のフィールドに既定値を持たない。欠けたキーや対応しない形のデータは正準状態へ取り込まない                                          |
+| 世代回復       | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む                                                                                 |
+| DataRoot       | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                                                                                          |
+| 言語間の同期   | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                                                                                      |

@@ -98,8 +98,8 @@ riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
   └─ 多重起動を防ぐ利用権（DataRootLease）
 
 riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
-  ├─ 楽曲データの形（domain: CreativeSession / Arrangement / Recording / Asset / Rack）
-  ├─ 操作の手順（application: Session / Arrangement / Recording / Rack / Transport / History）
+  ├─ 楽曲データの形（domain: CreativeSession / Arrangement / Recording / Asset / Plugin）
+  ├─ 操作の手順（application: Session / Arrangement / Recording / Devices / Transport / History）
   ├─ 永続化との接続口（ports: SessionStorage）
   ├─ 正準・順番・履歴・投影順の中枢（AppCore）
   ├─ 保存前の検査と整形（validate_and_normalize）
@@ -133,7 +133,7 @@ Attached CLI（apps/cli --attach）
 
 ### 4.1 単一の正準状態
 
-- 正準モデルは CreativeSession（`riffra-core/src/domain/session`）。アレンジ、クリップ、テイク、トラック、ラック、設定など永続化される制作状態を一体として表す
+- 正準モデルは CreativeSession（`riffra-core/src/domain/session`）。アレンジ、クリップ、テイク、トラック、エフェクト、設定など永続化される制作状態を一体として表す
 - `AppCore` は CreativeSession・正準シーケンス・Undo/Redo 履歴を一体の状態として管理する
 - フロントエンドと音声サイドカーが扱うのは正準の投影のみである
 
@@ -213,12 +213,13 @@ MIDI とライブ入力の扱いは次の通り。
 - Timeline と Live は同一 Track DSP を同一時間文脈で通り、Track 出力にソース固有の準備済み PDC を適用する。Play Surface で選択された Instrument Track のみ、遅延バッファの更新を続けながらトラック間補償遅延を迂回する
 - ライブ MIDI は固定容量のキューで受け、超過分は破棄して診断値へ記録する
 - Audio Track の入力監視は、その Track の Effect Chain を一度だけ通る
+- Audio Track の入力を監視するかは、モニタリング設定（`on`、またはアーム中の `auto`）から投影時に決め、グラフの `monitorInput` として渡す。Instrument Track の低遅延監視（アーム中、または Play Surface の演奏先）は実行中に変わるため、サイドカーが判断する
 
 録音キャプチャの扱いは次の通り。
 
 - リアルタイム中は入力の Raw テイクのみ保存する
-- 停止時は短いグラフ境界でキャプチャ終了と Rack 状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
-- 生成は正準 Rack 状態から一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
+- 停止時は短いグラフ境界でキャプチャ終了とエフェクト状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
+- 生成は正準のトラックエフェクトから一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
 
 ### 5.2 投影の整合性
 
@@ -356,7 +357,7 @@ MIDI 入力コールバックは、入力元の index と 3 バイトまでの�
 ├─ .riffra.lock              # DataRoot の排他所有
 ├─ projects/
 │  └─ <project-id>/          # UUID形式のProject container
-│     ├─ session.json        # Projectの現行CreativeSession
+│     ├─ session.json        # Projectの現行CreativeSession（セッション文書）
 │     └─ generations/        # 世代スナップショット（最大20件）
 ├─ library/riffra.db        # ライブラリ索引（SQLite リードモデル）
 ├─ recordings/
@@ -382,9 +383,11 @@ MIDI 入力コールバックは、入力元の index と 3 バイトまでの�
 
 ### 6.3 ロードと回復
 
+`session.json` と世代ファイルは `{"schemaVersion": 1, "session": {...}}` 形式のセッション文書である。`deserialize_session_document` は版を先に読み、現行の版でなければセッションを読まずに版の不一致として拒否する。
+
 `ProjectStore` はDataRootの初期化時に最初のProjectを作成するか、`workspace.json` のActive Projectを選ぶ。各Projectの `SessionStore` は以下の順で解決する。
 
-1. `session.json` を読み、`deserialize_session` → `validate_and_normalize` → **アセット参照検証** を通れば採用
+1. `session.json` を読み、`deserialize_session_document` → `validate_and_normalize` → **アセット参照検証** を通れば採用
 2. 破損・参照不正なら同じProjectの `generations/` を新しい順に読み、**スキーマ検証に通る最新世代** を `recovered_from_generation: true` として採用
 3. 新規DataRootにProjectが無い場合だけ、空のCreativeSessionを作成して保存
 
@@ -393,6 +396,8 @@ MIDI 入力コールバックは、入力元の index と 3 バイトまでの�
 - `recovery_candidates()` が世代ファイルからメタデータのみ軽量に読み、一覧として提示する
 - ユーザー選択の `restore_generation()` が指定世代を正準状態として復元・保存する
 - Active Project 以外の読込不能 Project も一覧に残し、読込エラー付きで表示する
+
+Active Project の `session.json` と世代がすべて読めない場合（版の不一致・破損）、`ProjectStore` はその Project のファイルに一切触れず、新しい空の Project を作成して Active にし、`workspace.json` を更新する。読めなかった Project の ID とエラーは警告ログに記録し、Project 一覧には読込エラー付きで残る。
 
 ### 6.4 参照整合
 
