@@ -156,7 +156,8 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
             << presetId.toStdString();
         ASSERT_TRUE(presetRoot().getChildFile(resourceBasePath).isDirectory())
             << presetId.toStdString();
-        manifestDefinitionPaths.push_back(definitionPath);
+        manifestDefinitionPaths.push_back(
+            presetRoot().getChildFile(definitionPath).getRelativePathFrom(presetRoot()));
     }
     const auto comparePresetIds = [](const juce::String& left, const juce::String& right) {
         return left.compare(right) < 0;
