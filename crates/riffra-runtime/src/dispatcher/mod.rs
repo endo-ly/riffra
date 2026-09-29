@@ -372,13 +372,18 @@ impl HostDispatcher<'static, ()> {
         )
     }
 
-    /// Executes one command in Standalone mode without request preconditions.
+    /// Executes one typed command in Standalone mode.
     ///
     /// # Errors
     ///
-    /// Returns an error when the command requires a live Host or fails.
-    pub fn dispatch(&self, command: ControlCommand) -> Result<DispatchResult, DispatchError> {
-        self.dispatch_checked(command, None, None)
+    /// Returns an error when the command requires a live Host, the canonical
+    /// sequence differs from `expected_sequence`, or the command fails.
+    pub fn dispatch(
+        &self,
+        command: ControlCommand,
+        expected_sequence: Option<u64>,
+    ) -> Result<DispatchResult, DispatchError> {
+        self.dispatch_checked(command, expected_sequence, None)
     }
 
     fn dispatch_checked(
@@ -771,7 +776,10 @@ mod tests {
 
         // Act
         let result = dispatcher
-            .dispatch(command("audio.master-gain.set", json!({"gainDb": -6.0})))
+            .dispatch(
+                command("audio.master-gain.set", json!({"gainDb": -6.0})),
+                None,
+            )
             .unwrap();
 
         // Assert
@@ -784,17 +792,20 @@ mod tests {
     fn track_and_midi_note_edits_share_core_and_persist() {
         let (dispatcher, root) = open("persist");
         let track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(command(
-                "midi-clip.create",
-                json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
-            ))
+            .dispatch(
+                command(
+                    "midi-clip.create",
+                    json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
+                ),
+                None,
+            )
             .unwrap();
         drop(dispatcher);
 
@@ -805,7 +816,7 @@ mod tests {
         .unwrap();
         let session = output_value(
             &reopened
-                .dispatch(command("session.get", json!({})))
+                .dispatch(command("session.get", json!({})), None)
                 .unwrap(),
         );
         assert_eq!(
@@ -823,7 +834,7 @@ mod tests {
         let (dispatcher, root) = open("invalid");
         let projects = output_value(
             &dispatcher
-                .dispatch(command("project.list", json!({})))
+                .dispatch(command("project.list", json!({})), None)
                 .unwrap(),
         );
         let project_id = projects["activeProjectId"].as_str().unwrap();
@@ -831,7 +842,10 @@ mod tests {
         let before = fs::read(&current).unwrap();
         assert!(
             dispatcher
-                .dispatch(command("track.remove", json!({"trackId":"track:missing"})))
+                .dispatch(
+                    command("track.remove", json!({"trackId":"track:missing"})),
+                    None
+                )
                 .is_err()
         );
         assert_eq!(fs::read(current).unwrap(), before);

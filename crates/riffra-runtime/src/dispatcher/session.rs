@@ -198,35 +198,41 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let clip = dispatcher
-            .dispatch(command(
-                "music.midi-clip.create",
-                json!({"trackId":track_id,"start":"1:1","end":"5:1"}),
-            ))
+            .dispatch(
+                command(
+                    "music.midi-clip.create",
+                    json!({"trackId":track_id,"start":"1:1","end":"5:1"}),
+                ),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&clip);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
         dispatcher
-            .dispatch(command(
-                "music.note.insert",
-                json!({
-                    "clipId":clip_id,
-                    "notes":[{"pitch":"C4","position":"2:1","duration":"1/4"}]
-                }),
-            ))
+            .dispatch(
+                command(
+                    "music.note.insert",
+                    json!({
+                        "clipId":clip_id,
+                        "notes":[{"pitch":"C4","position":"2:1","duration":"1/4"}]
+                    }),
+                ),
+                None,
+            )
             .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         let inspected = dispatcher
-            .dispatch(command("session.inspect", json!({})))
+            .dispatch(command("session.inspect", json!({})), None)
             .unwrap();
 
         assert_eq!(output_type(&inspected), "sessionInspection");
@@ -257,10 +263,13 @@ mod tests {
         }
 
         let focused = dispatcher
-            .dispatch(command(
-                "session.inspect",
-                json!({"start":"3:1","end":"4:1","trackId":track_id}),
-            ))
+            .dispatch(
+                command(
+                    "session.inspect",
+                    json!({"start":"3:1","end":"4:1","trackId":track_id}),
+                ),
+                None,
+            )
             .unwrap();
         assert_eq!(output_value(&focused)["selection"]["start"], "3:1");
         assert_eq!(output_value(&focused)["selection"]["end"], "4:1");
@@ -272,7 +281,7 @@ mod tests {
         );
 
         let after = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
@@ -288,13 +297,15 @@ mod tests {
         )
         .unwrap();
         dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
             .unwrap();
 
-        let undone = dispatcher.dispatch(command("undo", json!({}))).unwrap();
+        let undone = dispatcher
+            .dispatch(command("undo", json!({})), None)
+            .unwrap();
         assert_eq!(output_type(&undone), "arrangementMutation");
         assert_eq!(
             output_value(&undone)["canonical"]["session"]["arrangement"]["tracks"]
@@ -304,7 +315,9 @@ mod tests {
             0
         );
 
-        let redone = dispatcher.dispatch(command("redo", json!({}))).unwrap();
+        let redone = dispatcher
+            .dispatch(command("redo", json!({})), None)
+            .unwrap();
         assert_eq!(output_type(&redone), "arrangementMutation");
         assert_eq!(
             output_value(&redone)["canonical"]["session"]["arrangement"]["tracks"]
@@ -334,25 +347,28 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
 
         let listed = dispatcher
-            .dispatch(command("instrument.list", json!({})))
+            .dispatch(command("instrument.list", json!({})), None)
             .unwrap();
         assert_eq!(output_type(&listed), "instrumentLibrary");
         assert_eq!(output_value(&listed)[0]["id"], "builtin:01-clean-sub-bass");
         assert_eq!(output_value(&listed)[0]["name"], "Clean Sub Bass");
 
         let track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let assigned = dispatcher
-            .dispatch(command(
-                "instrument.apply",
-                json!({"trackId":track_id,"instrumentId":"builtin:01-clean-sub-bass"}),
-            ))
+            .dispatch(
+                command(
+                    "instrument.apply",
+                    json!({"trackId":track_id,"instrumentId":"builtin:01-clean-sub-bass"}),
+                ),
+                None,
+            )
             .unwrap();
         assert_eq!(output_type(&assigned), "arrangementMutation");
         assert_eq!(
@@ -367,15 +383,18 @@ mod tests {
         );
 
         let before = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
-        let unknown = dispatcher.dispatch(command(
-            "instrument.apply",
-            json!({"trackId":track_id,"instrumentId":"builtin:99-unknown"}),
-        ));
+        let unknown = dispatcher.dispatch(
+            command(
+                "instrument.apply",
+                json!({"trackId":track_id,"instrumentId":"builtin:99-unknown"}),
+            ),
+            None,
+        );
         assert!(unknown.is_err());
         let after = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
@@ -411,18 +430,21 @@ mod tests {
         let dispatcher = Dispatcher::open(root.clone(), resources).unwrap();
 
         let first_track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"First","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"First","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let first_session = mutated_session(&first_track);
         let first_track_id = first_session.arrangement.tracks[0].id.clone();
         let first = dispatcher
-            .dispatch(command(
-                "instrument.apply",
-                json!({"trackId":first_track_id,"instrumentId":user_id.clone()}),
-            ))
+            .dispatch(
+                command(
+                    "instrument.apply",
+                    json!({"trackId":first_track_id,"instrumentId":user_id.clone()}),
+                ),
+                None,
+            )
             .unwrap();
         let first_instrument =
             &output_value(&first)["canonical"]["session"]["arrangement"]["tracks"][0]["instrument"];
@@ -461,18 +483,21 @@ mod tests {
         .unwrap();
         fs::write(package.join("samples/attack.wav"), b"v2").unwrap();
         let second_track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Second","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Second","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let second_session = mutated_session(&second_track);
         let second_track_id = second_session.arrangement.tracks[1].id.clone();
         let second = dispatcher
-            .dispatch(command(
-                "instrument.apply",
-                json!({"trackId":second_track_id,"instrumentId":user_id}),
-            ))
+            .dispatch(
+                command(
+                    "instrument.apply",
+                    json!({"trackId":second_track_id,"instrumentId":user_id}),
+                ),
+                None,
+            )
             .unwrap();
         let second = output_value(&second);
         let tracks = second["canonical"]["session"]["arrangement"]["tracks"]
@@ -534,7 +559,7 @@ mod tests {
                         {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
                     ]
                 }),
-            ))
+            ), None)
             .unwrap();
 
         assert_eq!(output_type(&result), "batchMutation");
@@ -566,7 +591,9 @@ mod tests {
         );
         assert_eq!(result.sequence, 1);
 
-        let undone = dispatcher.dispatch(command("undo", json!({}))).unwrap();
+        let undone = dispatcher
+            .dispatch(command("undo", json!({})), None)
+            .unwrap();
         assert_eq!(
             output_value(&undone)["canonical"]["session"]["arrangement"]["tracks"]
                 .as_array()
@@ -588,14 +615,17 @@ mod tests {
         .unwrap();
 
         let result = dispatcher
-            .dispatch(command(
-                "session.apply",
-                json!({
-                    "operations": [
-                        {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
-                    ]
-                }),
-            ))
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "operations": [
+                            {"command":"track.add","params":{"name":"Lead","kind":"instrument"}}
+                        ]
+                    }),
+                ),
+                None,
+            )
             .unwrap();
 
         assert_eq!(output_type(&result), "batchMutation");
@@ -686,7 +716,7 @@ mod tests {
 
         for (params, operation_index, name, message) in cases {
             let error = dispatcher
-                .dispatch(command("session.apply", params))
+                .dispatch(command("session.apply", params), None)
                 .unwrap_err()
                 .protocol_error();
             assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -716,18 +746,21 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Lead","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Lead","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(command(
-                "effect.add",
-                json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
-            ))
+            .dispatch(
+                command(
+                    "effect.add",
+                    json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
+                ),
+                None,
+            )
             .unwrap();
         let existing_id = dispatcher
             .core
@@ -750,7 +783,7 @@ mod tests {
                         {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"second.vst3"}}
                     ]
                 }),
-            ))
+            ), None)
             .unwrap();
         let result = output_value(&result);
         let ids = result["createdEntityIds"]["devices"].as_array().unwrap();
@@ -773,7 +806,7 @@ mod tests {
         )
         .unwrap();
         let before = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         let error = dispatcher.dispatch(command(
                 "session.apply",
@@ -783,7 +816,7 @@ mod tests {
                         {"command":"music.note.insert","params":{"clipId":"midi-clip:missing","notes":[{"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}]}}
                     ]
                 }),
-            ))
+            ), None)
             .unwrap_err()
             .protocol_error();
         assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -799,7 +832,7 @@ mod tests {
         assert!(error.details.as_ref().unwrap()["value"].is_null());
 
         let after = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(output_value(&after), output_value(&before));
@@ -815,7 +848,7 @@ mod tests {
             .protocol_error();
         assert_eq!(conflict.code, ErrorCode::Conflict);
         let unchanged = dispatcher
-            .dispatch(command("session.get", json!({})))
+            .dispatch(command("session.get", json!({})), None)
             .unwrap();
         assert_eq!(output_value(&unchanged), output_value(&before));
         let _ = fs::remove_dir_all(root);
@@ -831,10 +864,13 @@ mod tests {
         )
         .unwrap();
         let error = dispatcher
-            .dispatch(command(
-                "session.apply",
-                json!({"operations":[{"command":"render.start","params":{}}]}),
-            ))
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({"operations":[{"command":"render.start","params":{}}]}),
+                ),
+                None,
+            )
             .unwrap_err()
             .protocol_error();
         assert_eq!(error.code, ErrorCode::InvalidRequest);
@@ -843,15 +879,18 @@ mod tests {
         assert!(error.message.contains("batch operation failed"));
 
         let user_instrument_error = dispatcher
-            .dispatch(command(
-                "session.apply",
-                json!({
-                    "operations":[{
-                        "command":"instrument.apply",
-                        "params":{"trackId":"track:missing","instrumentId":"user:example"}
-                    }]
-                }),
-            ))
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "operations":[{
+                            "command":"instrument.apply",
+                            "params":{"trackId":"track:missing","instrumentId":"user:example"}
+                        }]
+                    }),
+                ),
+                None,
+            )
             .unwrap_err()
             .protocol_error();
         assert_eq!(

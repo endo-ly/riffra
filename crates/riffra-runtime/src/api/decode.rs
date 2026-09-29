@@ -36,7 +36,13 @@ impl From<CommandDecodeError> for ProtocolError {
     }
 }
 
-pub(super) fn decode_params<T: DeserializeOwned>(params: Value) -> Result<T, CommandDecodeError> {
+/// Decodes params, or a params fragment, reporting a rejected value by its JSON
+/// pointer as [`ControlCommand::decode`](super::ControlCommand::decode) does.
+///
+/// # Errors
+///
+/// Returns [`CommandDecodeError::InvalidParams`] when `params` does not match `T`.
+pub fn decode_params<T: DeserializeOwned>(params: Value) -> Result<T, CommandDecodeError> {
     let input = serde_json::to_vec(&params).expect("JSON values must serialize");
     let mut deserializer = serde_json::Deserializer::from_slice(&input);
     serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {

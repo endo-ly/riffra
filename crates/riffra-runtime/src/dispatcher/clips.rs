@@ -105,43 +105,49 @@ mod tests {
         )
         .unwrap();
         let track = dispatcher
-            .dispatch(command(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
-            ))
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         let created = dispatcher
-            .dispatch(command(
-                "midi-clip.create",
-                json!({
-                    "trackId": track_id,
-                    "startTick": 480,
-                    "durationTicks": 1920,
-                    "name": "Lead"
-                }),
-            ))
+            .dispatch(
+                command(
+                    "midi-clip.create",
+                    json!({
+                        "trackId": track_id,
+                        "startTick": 480,
+                        "durationTicks": 1920,
+                        "name": "Lead"
+                    }),
+                ),
+                None,
+            )
             .unwrap();
         let original_clip = mutated_session(&created).arrangement.midi_clips[0].clone();
         let clip_id = original_clip.id.clone();
         dispatcher
-            .dispatch(command(
-                "midi-note.insert",
-                json!({
-                    "clipId": clip_id,
-                    "notes": [{
-                        "pitch": 60,
-                        "startTick": 0,
-                        "durationTicks": 480,
-                        "velocity": 100,
-                        "channel": 1
-                    }]
-                }),
-            ))
+            .dispatch(
+                command(
+                    "midi-note.insert",
+                    json!({
+                        "clipId": clip_id,
+                        "notes": [{
+                            "pitch": 60,
+                            "startTick": 0,
+                            "durationTicks": 480,
+                            "velocity": 100,
+                            "channel": 1
+                        }]
+                    }),
+                ),
+                None,
+            )
             .unwrap();
 
         let cleared = dispatcher
-            .dispatch(command("midi-note.clear", json!({"clipId": clip_id})))
+            .dispatch(command("midi-note.clear", json!({"clipId": clip_id})), None)
             .unwrap();
         let session = mutated_session(&cleared);
         let cleared_clip = &session.arrangement.midi_clips[0];
@@ -151,7 +157,9 @@ mod tests {
         assert_eq!(cleared_clip.start_tick, original_clip.start_tick);
         assert_eq!(cleared_clip.duration_ticks, original_clip.duration_ticks);
 
-        let undone = dispatcher.dispatch(command("undo", json!({}))).unwrap();
+        let undone = dispatcher
+            .dispatch(command("undo", json!({})), None)
+            .unwrap();
         assert_eq!(
             mutated_session(&undone).arrangement.midi_clips[0]
                 .notes

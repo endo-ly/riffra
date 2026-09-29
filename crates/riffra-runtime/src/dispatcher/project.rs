@@ -104,7 +104,7 @@ mod tests {
         .unwrap();
 
         let initial = dispatcher
-            .dispatch(request("project.list", json!({})))
+            .dispatch(request("project.list", json!({})), None)
             .unwrap();
         let initial_id = output_value(&initial)["activeProjectId"]
             .as_str()
@@ -112,7 +112,7 @@ mod tests {
             .to_owned();
 
         let created = dispatcher
-            .dispatch(request("project.create", json!({"name": "Second"})))
+            .dispatch(request("project.create", json!({"name": "Second"})), None)
             .unwrap();
         let second_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
@@ -121,18 +121,21 @@ mod tests {
         assert_ne!(second_id, initial_id);
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})))
+                .dispatch(request("session.get", json!({})), None)
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Second"
         );
 
         dispatcher
-            .dispatch(request("project.open", json!({"projectId": initial_id})))
+            .dispatch(
+                request("project.open", json!({"projectId": initial_id})),
+                None,
+            )
             .unwrap();
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})))
+                .dispatch(request("session.get", json!({})), None)
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             Value::Null
@@ -159,22 +162,25 @@ mod tests {
         )
         .unwrap();
         let initial_id = dispatcher
-            .dispatch(request("project.list", json!({})))
+            .dispatch(request("project.list", json!({})), None)
             .map(|result| output_value(&result))
             .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
         dispatcher
-            .dispatch(request("project.rename", json!({"name": "Source"})))
+            .dispatch(request("project.rename", json!({"name": "Source"})), None)
             .unwrap();
         let export_path = root.join("source.riffra");
         let exported = dispatcher
-            .dispatch(request("project.export", json!({"output": export_path})))
+            .dispatch(
+                request("project.export", json!({"output": export_path})),
+                None,
+            )
             .unwrap();
         let manifest = output_value(&exported)["path"].as_str().unwrap().to_owned();
         let before = dispatcher
-            .dispatch(request("project.list", json!({})))
+            .dispatch(request("project.list", json!({})), None)
             .map(|result| output_value(&result))
             .unwrap()["projects"]
             .as_array()
@@ -182,7 +188,7 @@ mod tests {
             .len();
 
         let imported = dispatcher
-            .dispatch(request("project.import", json!({"path": manifest})))
+            .dispatch(request("project.import", json!({"path": manifest})), None)
             .unwrap();
         let imported = output_value(&imported);
         let imported_id = imported["projectState"]["activeProjectId"]
@@ -205,17 +211,20 @@ mod tests {
         );
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})))
+                .dispatch(request("session.get", json!({})), None)
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Source"
         );
         dispatcher
-            .dispatch(request("project.open", json!({"projectId": initial_id})))
+            .dispatch(
+                request("project.open", json!({"projectId": initial_id})),
+                None,
+            )
             .unwrap();
         assert_eq!(
             dispatcher
-                .dispatch(request("session.get", json!({})))
+                .dispatch(request("session.get", json!({})), None)
                 .map(|result| output_value(&result))
                 .unwrap()["projectName"],
             "Source"
@@ -236,14 +245,17 @@ mod tests {
         )
         .unwrap();
         let initial_id = dispatcher
-            .dispatch(request("project.list", json!({})))
+            .dispatch(request("project.list", json!({})), None)
             .map(|result| output_value(&result))
             .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
         let created = dispatcher
-            .dispatch(request("project.create", json!({"name": "Recovered"})))
+            .dispatch(
+                request("project.create", json!({"name": "Recovered"})),
+                None,
+            )
             .unwrap();
         let recovered_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
@@ -264,7 +276,10 @@ mod tests {
         .unwrap();
 
         let recovered = dispatcher
-            .dispatch(request("project.open", json!({"projectId": recovered_id})))
+            .dispatch(
+                request("project.open", json!({"projectId": recovered_id})),
+                None,
+            )
             .unwrap();
         assert_eq!(
             output_value(&recovered)["recovery"]["recoveredFromGeneration"],
@@ -276,7 +291,10 @@ mod tests {
         );
 
         let normal = dispatcher
-            .dispatch(request("project.open", json!({"projectId": initial_id})))
+            .dispatch(
+                request("project.open", json!({"projectId": initial_id})),
+                None,
+            )
             .unwrap();
         assert_eq!(
             output_value(&normal)["recovery"]["recoveredFromGeneration"],

@@ -3,7 +3,11 @@ use riffra_control::{
     ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
     LocalHostDiscovery, ProtocolError, new_instance_id,
 };
-use riffra_runtime::api::{CommandScope, ControlCommand};
+use riffra_runtime::api::output::{BackgroundJobStatus, JobState};
+use riffra_runtime::api::params::{EmptyParams, IdParams};
+use riffra_runtime::api::{
+    CommandScope, ControlCommand, ControlOutput, ProjectCommand, RuntimeCommand,
+};
 use serde_json::Value;
 use std::io::{BufRead, Write};
 use std::thread;
@@ -22,18 +26,29 @@ impl AttachedBackend {
         }
     }
 
-    /// Sends one request and waits for its ordered response.
-    pub fn request(&self, request: &ControlRequest) -> Result<ControlResponse, String> {
-        let project_bound = ControlCommand::decode(&request.command, request.params.clone())
-            .is_ok_and(|command| command.policy().scope != CommandScope::Host);
-        let request = if project_bound && request.expected_project_id.is_none() {
-            request
-                .clone()
-                .with_expected_project_id(self.active_project_id()?)
-        } else {
-            request.clone()
+    /// Sends one command and waits for its ordered response.
+    ///
+    /// A Project-bound command without `expected_project_id` is bound to the
+    /// active Project of the Host.
+    pub fn request(
+        &self,
+        request_id: String,
+        command: ControlCommand,
+        expected_sequence: Option<u64>,
+        expected_project_id: Option<String>,
+    ) -> Result<ControlResponse, String> {
+        let expected_project_id = match (command.policy().scope, expected_project_id) {
+            (_, Some(project_id)) => Some(project_id),
+            (CommandScope::Project { .. }, None) => Some(self.active_project_id()?),
+            (CommandScope::Host, None) => None,
         };
-        self.client.request(&request).map_err(|error| match error {
+        let mut request = command.into_request(request_id, expected_sequence);
+        request.expected_project_id = expected_project_id;
+        self.send(&request)
+    }
+
+    fn send(&self, request: &ControlRequest) -> Result<ControlResponse, String> {
+        self.client.request(request).map_err(|error| match error {
             LocalHostClientError::InvalidRequest(message) => {
                 format!("{}: {message}", ErrorCode::InvalidRequest)
             }
@@ -50,25 +65,36 @@ impl AttachedBackend {
         let deadline =
             timeout_ms.map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
         loop {
-            let response = self.request(&ControlRequest::new(
+            let response = self.request(
                 format!("cli-job-wait-{}", new_instance_id()),
-                "job.get",
-                serde_json::json!({"id": job_id}),
+                RuntimeCommand::JobGet(IdParams {
+                    id: job_id.to_owned(),
+                })
+                .into(),
                 None,
-            ))?;
+                None,
+            )?;
             if !response.ok {
                 return Ok(response);
             }
-            let Some(result) = response.result.as_ref() else {
-                return Err("job.get response did not contain a result".into());
-            };
-            let Some(state) = result.value.get("state").and_then(Value::as_str) else {
-                if result.value.is_null() {
+            let result = response
+                .result
+                .clone()
+                .ok_or_else(|| "job.get response did not contain a result".to_string())?;
+            let state = match ControlOutput::try_from(result) {
+                Ok(ControlOutput::Job(Some(
+                    BackgroundJobStatus::Scan { state, .. }
+                    | BackgroundJobStatus::Render { state, .. },
+                ))) => state,
+                Ok(ControlOutput::Job(None)) => {
                     return Err(format!("background job was not found: {job_id}"));
                 }
-                return Err("job.get response did not contain a job state".into());
+                _ => return Err("job.get response did not contain a job".into()),
             };
-            if matches!(state, "cancelled" | "completed" | "failed") {
+            if matches!(
+                state,
+                JobState::Cancelled | JobState::Completed | JobState::Failed
+            ) {
                 return Ok(response);
             }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -79,15 +105,10 @@ impl AttachedBackend {
     }
 
     fn active_project_id(&self) -> Result<String, String> {
-        let response = self
-            .client
-            .request(&ControlRequest::new(
-                format!("cli-project-state-{}", new_instance_id()),
-                "project.list",
-                serde_json::json!({}),
-                None,
-            ))
-            .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))?;
+        let response = self.send(
+            &ControlCommand::from(ProjectCommand::ProjectList(EmptyParams {}))
+                .into_request(format!("cli-project-state-{}", new_instance_id()), None),
+        )?;
         if !response.ok {
             let error = response
                 .error
@@ -95,10 +116,10 @@ impl AttachedBackend {
                 .unwrap_or_else(|| "Host project state request failed".into());
             return Err(error);
         }
-        response
-            .result
-            .and_then(|result| result.value["activeProjectId"].as_str().map(str::to_owned))
-            .ok_or_else(|| "Host project state did not contain activeProjectId".into())
+        match response.result.map(ControlOutput::try_from) {
+            Some(Ok(ControlOutput::ProjectState(state))) => Ok(state.active_project_id),
+            _ => Err("Host project state did not contain activeProjectId".into()),
+        }
     }
 
     /// Forwards JSON Lines from stdin as framed control requests.
@@ -110,32 +131,7 @@ impl AttachedBackend {
             if line.trim().is_empty() {
                 continue;
             }
-            let input_line = Some(line_index + 1);
-            let response = match serde_json::from_str::<ControlRequest>(&line) {
-                Err(error) => ControlResponse::failure(
-                    request_id_from_json(&line),
-                    None,
-                    with_input_line(
-                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
-                        input_line,
-                    ),
-                ),
-                Ok(request) => match request.validate() {
-                    Err(error) => ControlResponse::failure(
-                        request.request_id,
-                        None,
-                        with_input_line(error, input_line),
-                    ),
-                    Ok(()) => match self.request(&request) {
-                        Ok(response) => compact_agent_response(&request.command, response, None),
-                        Err(error) => ControlResponse::failure(
-                            request.request_id,
-                            None,
-                            ProtocolError::new(ErrorCode::HostUnavailable, error),
-                        ),
-                    },
-                },
-            };
+            let response = self.interactive_response(&line, line_index + 1);
             serde_json::to_writer(&mut stdout, &response)
                 .map_err(|error| format!("response could not be encoded: {error}"))?;
             stdout
@@ -146,6 +142,53 @@ impl AttachedBackend {
                 .map_err(|error| format!("response could not be flushed: {error}"))?;
         }
         Ok(())
+    }
+
+    fn interactive_response(&self, line: &str, input_line: usize) -> ControlResponse {
+        let input_line = Some(input_line);
+        let request = match serde_json::from_str::<ControlRequest>(line) {
+            Ok(request) => request,
+            Err(error) => {
+                return ControlResponse::failure(
+                    request_id_from_json(line),
+                    None,
+                    with_input_line(
+                        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string()),
+                        input_line,
+                    ),
+                );
+            }
+        };
+        if let Err(error) = request.validate() {
+            return ControlResponse::failure(
+                request.request_id,
+                None,
+                with_input_line(error, input_line),
+            );
+        }
+        let command = match ControlCommand::decode(&request.command, request.params) {
+            Ok(command) => command,
+            Err(error) => {
+                return ControlResponse::failure(
+                    request.request_id,
+                    None,
+                    with_input_line(error.into(), input_line),
+                );
+            }
+        };
+        match self.request(
+            request.request_id.clone(),
+            command,
+            request.expected_sequence,
+            request.expected_project_id,
+        ) {
+            Ok(response) => compact_agent_response(response),
+            Err(error) => ControlResponse::failure(
+                request.request_id,
+                None,
+                ProtocolError::new(ErrorCode::HostUnavailable, error),
+            ),
+        }
     }
 }
 
@@ -174,6 +217,7 @@ fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> Proto
 mod tests {
     use super::*;
     use riffra_control::{CommandResult, EndpointDescriptor, HelloRequest, HelloResponse};
+    use riffra_runtime::api::CanonicalCommand;
     use std::thread;
 
     #[test]
@@ -188,8 +232,9 @@ mod tests {
             riffra_control::now_ms(),
         );
 
-        let request = ControlRequest::new("42", "session.get", serde_json::json!({}), Some(7));
-        let expected_request = request.clone().with_expected_project_id("project:a");
+        let expected_request =
+            ControlRequest::new("42", "session.get", serde_json::json!({}), Some(7))
+                .with_expected_project_id("project:a");
         let instance_id = descriptor.instance_id.clone();
         let server = thread::spawn(move || {
             let mut stream = listener.accept().unwrap();
@@ -211,7 +256,7 @@ mod tests {
                     7,
                     CommandResult {
                         result_type: "projectState".into(),
-                        value: serde_json::json!({"activeProjectId": "project:a"}),
+                        value: serde_json::json!({"activeProjectId": "project:a", "projects": []}),
                     },
                 ),
             )
@@ -247,7 +292,14 @@ mod tests {
             client: LocalHostClient::connect_registration(&registration),
             registration,
         });
-        let response = backend.request(&request).unwrap();
+        let response = backend
+            .request(
+                "42".into(),
+                CanonicalCommand::SessionGet(EmptyParams {}).into(),
+                Some(7),
+                None,
+            )
+            .unwrap();
 
         assert_eq!(response.request_id, "42");
         assert_eq!(response.sequence, Some(12));

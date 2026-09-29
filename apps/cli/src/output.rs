@@ -137,38 +137,30 @@ fn display(value: Option<&Value>) -> String {
 
 /// Removes heavyweight canonical session data from successful CLI mutation
 /// responses while preserving the explicit mutation receipt.
-pub(crate) fn compact_agent_response(
-    command: &str,
-    mut response: ControlResponse,
-    created_entity_ids: Option<Value>,
-) -> ControlResponse {
-    if !response.ok || command == "session.get" || command == "host.bootstrap" {
-        return response;
-    }
-
+///
+/// Results that exist to deliver the canonical state (`session` and
+/// `hostBootstrap`) are returned unchanged.
+pub(crate) fn compact_agent_response(mut response: ControlResponse) -> ControlResponse {
     let Some(result) = response.result.take() else {
         return response;
     };
-    if canonical_session(&result.value, &result.result_type).is_none() {
+    if !response.ok
+        || matches!(result.result_type.as_str(), "session" | "hostBootstrap")
+        || !carries_canonical_session(&result.value)
+    {
         response.result = Some(result);
         return response;
     }
-    let result_created_entity_ids = result.value.get("createdEntityIds").cloned();
-    let mut receipt = if result.result_type == "session" {
-        Map::new()
-    } else {
-        match result.value {
-            Value::Object(mut value) => {
-                value.remove("canonical");
-                value
-            }
-            _ => Map::new(),
+    let mut receipt = match result.value {
+        Value::Object(mut value) => {
+            value.remove("canonical");
+            value
         }
+        _ => Map::new(),
     };
-    let created_entity_ids = created_entity_ids
-        .or(result_created_entity_ids)
+    let created_entity_ids = receipt
+        .remove("createdEntityIds")
         .unwrap_or_else(|| json!({}));
-    receipt.remove("createdEntityIds");
     receipt.insert("createdEntityIds".into(), created_entity_ids);
     receipt.insert(
         "sequence".into(),
@@ -183,14 +175,11 @@ pub(crate) fn compact_agent_response(
     response
 }
 
-fn canonical_session<'a>(value: &'a Value, result_type: &str) -> Option<&'a Value> {
-    if result_type == "session" {
-        return value.get("arrangement").map(|_| value);
-    }
+fn carries_canonical_session(value: &Value) -> bool {
     value
         .get("canonical")
         .and_then(|canonical| canonical.get("session"))
-        .filter(|session| session.get("arrangement").is_some())
+        .is_some_and(|session| session.get("arrangement").is_some())
 }
 
 #[cfg(test)]
@@ -224,18 +213,13 @@ mod tests {
                             }
                         }
                     },
-                    "projection": {"state": "queued"}
+                    "projection": {"state": "queued"},
+                    "createdEntityIds": {"midiNotes": ["note:new"]}
                 }),
             },
         );
 
-        let response = compact_agent_response(
-            "midi-note.add",
-            response,
-            Some(json!({
-                "midiNotes": ["note:new"]
-            })),
-        );
+        let response = compact_agent_response(response);
         let result = response.result.unwrap();
         assert_eq!(result.result_type, "mutation");
         assert_eq!(response.sequence, Some(7));
@@ -248,23 +232,16 @@ mod tests {
     }
 
     #[test]
-    fn read_results_are_not_compacted() {
+    fn canonical_state_deliveries_are_not_compacted() {
         let original = ControlResponse::success(
             "request-1",
             7,
             CommandResult {
-                result_type: "session".into(),
-                value: json!({"arrangement": {"tracks": []}}),
+                result_type: "hostBootstrap".into(),
+                value: json!({"canonical": {"session": {"arrangement": {"tracks": []}}}}),
             },
         );
 
-        assert_eq!(
-            compact_agent_response("session.get", original.clone(), None),
-            original
-        );
-        assert_eq!(
-            compact_agent_response("host.bootstrap", original.clone(), None),
-            original
-        );
+        assert_eq!(compact_agent_response(original.clone()), original);
     }
 }

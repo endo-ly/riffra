@@ -179,24 +179,30 @@ mod tests {
         let instrument_path = r"C:\Plugins\Synth.vst3";
         let effect_path = r"C:\Plugins\Reverb.vst3";
         let track = dispatcher
-            .dispatch(request(
-                "track.add",
-                json!({"name":"Lead","kind":"instrument"}),
-            ))
+            .dispatch(
+                request("track.add", json!({"name":"Lead","kind":"instrument"})),
+                None,
+            )
             .unwrap();
         let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(request(
-                "instrument.vst3.set",
-                json!({"trackId":track_id,"pluginPath":instrument_path}),
-            ))
+            .dispatch(
+                request(
+                    "instrument.vst3.set",
+                    json!({"trackId":track_id,"pluginPath":instrument_path}),
+                ),
+                None,
+            )
             .unwrap();
         dispatcher
-            .dispatch(request(
-                "effect.add",
-                json!({"trackId":track_id,"pluginPath":effect_path}),
-            ))
+            .dispatch(
+                request(
+                    "effect.add",
+                    json!({"trackId":track_id,"pluginPath":effect_path}),
+                ),
+                None,
+            )
             .unwrap();
 
         let session = dispatcher.core.canonical_state().unwrap().session;
