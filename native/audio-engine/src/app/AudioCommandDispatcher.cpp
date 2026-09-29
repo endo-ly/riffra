@@ -78,6 +78,8 @@ void AudioCommandDispatcher::recordingStopWorkerLoop() {
         const auto completed = context.pipeline.completeArrangeRecordingStop(pending, error);
         if (completed != RealtimeRequest::accepted)
             writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
+        // The stop response reported the state at acceptance; this reports the applied stop.
+        writeEvent(currentStatus());
 
         {
             const std::lock_guard lock(recordingStopMutex);

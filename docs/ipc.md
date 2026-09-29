@@ -289,11 +289,14 @@ Host: EngineTransition を有効化
 ### 5.7 録音フロー
 
 ```text
-stopArrangeRecording → Raw 確定＋Transport 停止 → recording.processing: true で即応答
+stopArrangeRecording → 停止を realtime 命令として受理し、受理時点の audioStatus で即応答
+  → realtime 状態の所有者が停止を適用（Raw 確定＋Transport 停止）→ audioStatus イベント（recording.processing: true）
   → グラフ外で Processed をブロック単位に逐次生成する
   → recordingComplete → Asset 登録＋Arrangement 確定 → recording-finalized（境界 B）
 ```
 
+- 応答は停止の受理を表し、適用前の `recording.active: true` を含みうる。適用後の状態は `audioStatus` イベントで届く
+- カウントイン中の停止は録音を取り消す。応答は `recording.cancelled: true` を持ち、確定処理は行わない
 - 失敗時は Raw あり → `recoverable`、Raw なし → `failed` へ必ず確定してから失敗を通知する
 - `processing` 中の新規録音と Project 切替は排他する
 - 進捗停滞（ブロック・VST 処理境界が一定時間停止）の場合のみ Native を終了して Rust の復旧経路へ移す

@@ -396,7 +396,7 @@ impl AudioSupervisor {
     pub fn stop_arrange_recording(&self) -> NativeAudioResult<AudioStatus> {
         self.request_status(
             SidecarCommand::StopArrangeRecording,
-            "Arrange recording stopped on the Native Audio Clock.",
+            "Arrange recording stop accepted on the Native Audio Clock.",
             COMMAND_ACK_TIMEOUT,
         )
     }
