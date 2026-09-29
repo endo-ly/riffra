@@ -1,10 +1,9 @@
 use super::lifecycle::default_plugin_root;
 use super::project;
 use super::*;
+use crate::api::output::InstrumentPreviewDefinition;
 use crate::execution::GraphPluginState;
-use crate::instrument::{
-    BuiltInInstrumentCatalog, InstrumentPreviewDefinition, UserInstrumentStore,
-};
+use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
 
 impl HostState {
     fn response(
@@ -1639,7 +1638,7 @@ impl HostState {
 
     pub(super) fn after_canonical_commit(
         &self,
-    ) -> Result<crate::model::ArrangementMutationResult, ProtocolError> {
+    ) -> Result<crate::api::output::ArrangementMutationResult, ProtocolError> {
         let canonical = self
             .canonical()
             .map_err(|error| command_error(error.to_string()))?;
@@ -1843,7 +1842,7 @@ fn canonical_non_plugin_device_inspection(
     canonical: &CanonicalState,
     track_id: &str,
     device_id: &str,
-) -> Result<Option<crate::model::DeviceInspection>, ProtocolError> {
+) -> Result<Option<crate::api::output::DeviceInspection>, ProtocolError> {
     let track = canonical
         .session
         .arrangement
@@ -1859,12 +1858,12 @@ fn canonical_non_plugin_device_inspection(
         if instrument.as_vst3().is_some() {
             return Ok(None);
         }
-        return Ok(Some(crate::model::DeviceInspection {
+        return Ok(Some(crate::api::output::DeviceInspection {
             id: instrument.id.clone(),
             name: instrument.name.clone(),
             source: "builtin".into(),
             bypassed: instrument.bypassed,
-            capabilities: crate::model::DeviceCapabilities::default(),
+            capabilities: crate::api::output::DeviceCapabilities::default(),
             parameter_count: 0,
             state_persisted: false,
         }));
@@ -1878,12 +1877,12 @@ fn canonical_non_plugin_device_inspection(
     if device.kind == riffra_core::DeviceKind::Plugin {
         return Ok(None);
     }
-    Ok(Some(crate::model::DeviceInspection {
+    Ok(Some(crate::api::output::DeviceInspection {
         id: device.id.clone(),
         name: device.name.clone(),
         source: "rack".into(),
         bypassed: device.bypassed,
-        capabilities: crate::model::DeviceCapabilities::default(),
+        capabilities: crate::api::output::DeviceCapabilities::default(),
         parameter_count: 0,
         state_persisted: false,
     }))
@@ -1892,8 +1891,8 @@ fn canonical_non_plugin_device_inspection(
 fn plugin_state_snapshot(
     plugin_path: &str,
     state: GraphPluginState,
-) -> Result<crate::model::PluginStateSnapshot, ProtocolError> {
-    let snapshot = crate::model::PluginStateSnapshot {
+) -> Result<crate::api::output::PluginStateSnapshot, ProtocolError> {
+    let snapshot = crate::api::output::PluginStateSnapshot {
         schema_version: 1,
         plugin_path: plugin_path.into(),
         parameter_values: state.parameter_values,
@@ -1912,7 +1911,7 @@ fn plugin_state_snapshot(
 }
 
 fn plugin_state_value(
-    state: &crate::model::PluginStateSnapshot,
+    state: &crate::api::output::PluginStateSnapshot,
     bypassed: bool,
 ) -> GraphPluginState {
     GraphPluginState {
@@ -1923,7 +1922,7 @@ fn plugin_state_value(
 }
 
 fn validate_plugin_state(
-    state: &crate::model::PluginStateSnapshot,
+    state: &crate::api::output::PluginStateSnapshot,
     plugin_path: &str,
 ) -> Result<(), ProtocolError> {
     if state.schema_version != 1 {
@@ -1949,7 +1948,7 @@ fn validate_plugin_state(
 }
 
 fn resolve_plugin_preset(
-    presets: &[crate::model::PluginPresetInfo],
+    presets: &[crate::api::output::PluginPresetInfo],
     name: Option<&str>,
     index: Option<u32>,
 ) -> Result<u32, ProtocolError> {
@@ -2937,12 +2936,12 @@ mod tests {
                 .map(|result| result.result_type.as_str()),
             Some("arrangementMutation")
         );
-        let mutation_result: crate::model::ArrangementMutationResult =
+        let mutation_result: crate::api::output::ArrangementMutationResult =
             serde_json::from_value(mutation.result.unwrap().value).unwrap();
         assert_eq!(mutation_result.canonical.sequence, 1);
         assert!(matches!(
             mutation_result.projection,
-            crate::model::ArrangementProjectionOutcome::NotRequired
+            crate::api::output::ArrangementProjectionOutcome::NotRequired
         ));
         let event = events.recv().unwrap();
         assert_eq!(event.event, "canonical-state-changed");
@@ -3070,13 +3069,13 @@ mod tests {
                 .map(|result| result.result_type.as_str()),
             Some("arrangementMutation")
         );
-        let mutation: crate::model::ArrangementMutationResult =
+        let mutation: crate::api::output::ArrangementMutationResult =
             serde_json::from_value(response.result.unwrap().value).unwrap();
         assert_eq!(mutation.canonical.sequence, 1);
         assert!(matches!(
             mutation.projection,
-            crate::model::ArrangementProjectionOutcome::Queued
-                | crate::model::ArrangementProjectionOutcome::Failed { .. }
+            crate::api::output::ArrangementProjectionOutcome::Queued
+                | crate::api::output::ArrangementProjectionOutcome::Failed { .. }
         ));
 
         let marker = host.dispatch_control(
@@ -3098,12 +3097,12 @@ mod tests {
                 .map(|result| result.result_type.as_str()),
             Some("arrangementMutation")
         );
-        let marker: crate::model::ArrangementMutationResult =
+        let marker: crate::api::output::ArrangementMutationResult =
             serde_json::from_value(marker.result.unwrap().value).unwrap();
         assert_eq!(marker.canonical.sequence, 2);
         assert!(matches!(
             marker.projection,
-            crate::model::ArrangementProjectionOutcome::NotRequired
+            crate::api::output::ArrangementProjectionOutcome::NotRequired
         ));
 
         let settings = host.dispatch_control(
@@ -3125,12 +3124,12 @@ mod tests {
                 .map(|result| result.result_type.as_str()),
             Some("arrangementMutation")
         );
-        let settings: crate::model::ArrangementMutationResult =
+        let settings: crate::api::output::ArrangementMutationResult =
             serde_json::from_value(settings.result.unwrap().value).unwrap();
         assert_eq!(settings.canonical.sequence, 3);
         assert!(matches!(
             settings.projection,
-            crate::model::ArrangementProjectionOutcome::NotRequired
+            crate::api::output::ArrangementProjectionOutcome::NotRequired
         ));
 
         host.shutdown();
@@ -3177,14 +3176,14 @@ mod tests {
 
         // Assert
         assert!(response.ok);
-        let mutation: crate::model::ArrangementMutationResult =
+        let mutation: crate::api::output::ArrangementMutationResult =
             serde_json::from_value(response.result.unwrap().value).unwrap();
         assert_eq!(mutation.canonical.sequence, 1);
         assert_eq!(mutation.canonical.session.settings.master_db, -9.0);
         assert!(matches!(
             mutation.projection,
-            crate::model::ArrangementProjectionOutcome::Queued
-                | crate::model::ArrangementProjectionOutcome::Failed { .. }
+            crate::api::output::ArrangementProjectionOutcome::Queued
+                | crate::api::output::ArrangementProjectionOutcome::Failed { .. }
         ));
 
         host.shutdown();

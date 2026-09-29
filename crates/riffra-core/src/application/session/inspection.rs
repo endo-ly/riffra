@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 /// Optional scope applied to a session inspection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionInspectionQuery {
     /// Inclusive start of the requested musical range.
     pub start: Option<MusicalPosition>,
@@ -25,7 +26,7 @@ pub struct SessionInspectionQuery {
 }
 
 /// The lightweight session projection returned to an agent.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInspection {
     pub project: ProjectInspection,
@@ -39,7 +40,7 @@ pub struct SessionInspection {
 }
 
 /// Project-wide settings and extent represented in musical coordinates.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectInspection {
     pub project_name: Option<String>,
@@ -56,7 +57,7 @@ pub struct ProjectInspection {
 }
 
 /// The scope used to produce an inspection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionSelection {
     pub start: Option<MusicalPosition>,
@@ -65,7 +66,7 @@ pub struct InspectionSelection {
 }
 
 /// A musical range with an explicit enabled state.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalRangeInspection {
     pub enabled: bool,
@@ -74,7 +75,7 @@ pub struct MusicalRangeInspection {
 }
 
 /// Aggregate counts for the current inspection scope.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionCounts {
     pub tracks: usize,
@@ -90,7 +91,7 @@ pub struct InspectionCounts {
 }
 
 /// Lightweight projection of one Track and its arrangement activity.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackInspection {
     pub id: String,
@@ -105,7 +106,7 @@ pub struct TrackInspection {
     pub audio_input: Option<AudioInputRoute>,
     pub midi_input: MidiInputRoute,
     pub instrument: Option<InstrumentInspection>,
-    pub effects: Vec<DeviceInspection>,
+    pub effects: Vec<EffectInspection>,
     pub audio_clip_count: usize,
     pub midi_clip_count: usize,
     pub midi_note_count: usize,
@@ -116,9 +117,9 @@ pub struct TrackInspection {
 }
 
 /// Device metadata safe to expose in a lightweight inspection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-pub struct DeviceInspection {
+pub struct EffectInspection {
     pub id: String,
     pub name: String,
     pub kind: DeviceKind,
@@ -127,7 +128,7 @@ pub struct DeviceInspection {
 }
 
 /// Lightweight metadata for an Instrument Track assignment.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InstrumentInspection {
     pub id: String,
@@ -137,7 +138,7 @@ pub struct InstrumentInspection {
 }
 
 /// The implementation family of an Instrument Track assignment.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum InstrumentSourceKind {
     Internal,
@@ -145,7 +146,7 @@ pub enum InstrumentSourceKind {
 }
 
 /// A musical marker projection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalMarkerView {
     pub id: String,
@@ -154,7 +155,7 @@ pub struct MusicalMarkerView {
 }
 
 /// A lightweight, tagged clip projection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -475,7 +476,7 @@ fn inspect_track(
             .rack
             .devices
             .iter()
-            .map(DeviceInspection::from_device)
+            .map(EffectInspection::from_device)
             .collect(),
         audio_clip_count,
         midi_clip_count,
@@ -501,7 +502,7 @@ fn automation_counts<'a>(
     })
 }
 
-impl DeviceInspection {
+impl EffectInspection {
     fn from_device(device: &crate::RackDevice) -> Self {
         Self {
             id: device.id.clone(),

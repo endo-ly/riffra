@@ -191,8 +191,8 @@ impl HostState {
         })?;
         if include_debug {
             let projection = self.runtime.status();
-            let debug = crate::model::AudioDiagnosticsDebug {
-                projection: crate::model::AudioDiagnosticsProjection {
+            let debug = crate::api::output::AudioDiagnosticsDebug {
+                projection: crate::api::output::AudioDiagnosticsProjection {
                     state: projection.state,
                     target_sequence: projection.target_projection_sequence,
                     active_sequence: projection.active_projection_sequence,
@@ -202,7 +202,7 @@ impl HostState {
                     last_error: projection.last_error,
                     last_projection_duration_ms: status.diagnostics.projection_duration_ms,
                 },
-                timeline: crate::model::AudioDiagnosticsTimeline {
+                timeline: crate::api::output::AudioDiagnosticsTimeline {
                     track_count: status.diagnostics.track_count,
                     instrument_runtime_count: status.diagnostics.instrument_runtime_count,
                     plugin_count: status.diagnostics.plugin_count,
@@ -300,9 +300,9 @@ impl HostState {
     }
 }
 
-fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnosticsReport {
-    crate::model::AudioDiagnosticsReport {
-        device: crate::model::AudioDiagnosticsDevice {
+fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDiagnosticsReport {
+    crate::api::output::AudioDiagnosticsReport {
+        device: crate::api::output::AudioDiagnosticsDevice {
             state: status.state,
             driver: status.driver.clone(),
             input_device: status.input_device.clone(),
@@ -313,7 +313,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
             active_input_channels: status.active_input_channels.clone(),
             active_output_channels: status.active_output_channels.clone(),
         },
-        mute: crate::model::AudioDiagnosticsMute {
+        mute: crate::api::output::AudioDiagnosticsMute {
             state: status.state,
             raw_reasons: status.mute_reasons,
             user_emergency: status.mute_reasons & 1 != 0,
@@ -321,13 +321,13 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
             device_fault: status.mute_reasons & 4 != 0,
             feedback_protection: status.mute_reasons & 8 != 0,
         },
-        realtime: crate::model::AudioDiagnosticsRealtime {
+        realtime: crate::api::output::AudioDiagnosticsRealtime {
             callback_count: status.diagnostics.callback_count,
             average_callback_duration_us: status.diagnostics.average_callback_duration_us,
             maximum_callback_duration_us: status.diagnostics.maximum_callback_duration_us,
             callback_overruns: status.diagnostics.callback_overruns,
         },
-        output: crate::model::AudioDiagnosticsOutput {
+        output: crate::api::output::AudioDiagnosticsOutput {
             pre_limiter_peak: status.diagnostics.pre_limiter_peak,
             limiter_gain_reduction_db: status.diagnostics.limiter_gain_reduction_db,
             hard_clip_samples: status.diagnostics.hard_clip_samples,
@@ -409,7 +409,7 @@ mod tests {
         status
             .diagnostics
             .instrument_faults
-            .push(crate::model::AudioInstrumentFault {
+            .push(crate::api::output::AudioInstrumentFault {
                 track_id: "track:piano".into(),
                 instrument_type: "Built-in".into(),
                 fault_code: 0,

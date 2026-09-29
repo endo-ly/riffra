@@ -7,7 +7,7 @@ use super::*;
 pub fn set_master_gain_db(
     context: &SessionContext<'_>,
     gain_db: f64,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if !gain_db.is_finite() {
         return Err("Master gain must be finite.".into());
     }

@@ -1,10 +1,10 @@
 use super::HostError;
 use super::events::{HostEventHub, HostEventSubscription, SharedHostEventSink};
+pub use crate::api::output::HostBootstrap;
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::jobs::JobRegistry;
-use crate::model::{AudioStatus, ProjectRecoveryState, ProjectState, RuntimeProjectionStatus};
 use crate::projects;
 use crate::render;
 use crate::runtime::RuntimeReconciler;
@@ -12,26 +12,9 @@ use crate::{AudioPreferences, plugins};
 use riffra_control::HostIdentity;
 use riffra_core::{AppCore, CanonicalState};
 use riffra_host::{DataRootLease, ProjectStore};
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
-
-/// Host-owned state required to initialize an embedded or attached Desktop.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HostBootstrap {
-    pub canonical: CanonicalState,
-    pub project_state: ProjectState,
-    pub plugin_catalog: Vec<plugins::PluginEntry>,
-    pub runtime_started: bool,
-    pub runtime_startup_finished: bool,
-    pub runtime_projection: RuntimeProjectionStatus,
-    pub audio_status: AudioStatus,
-    pub recovery: ProjectRecoveryState,
-    pub safe_mode: bool,
-    pub data_root: PathBuf,
-}
 
 pub(crate) struct HostState {
     pub(super) _lease: DataRootLease,

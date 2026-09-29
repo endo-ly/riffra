@@ -69,8 +69,8 @@ use self::projection_coordinator::CanonicalSubmit;
 use self::projection_coordinator::ProjectionCoordinator;
 use self::transport::PlayDecision;
 use self::transport_executor::TransportExecutor;
+use crate::api::output::{RuntimeProjectionState, RuntimeProjectionStatus};
 use crate::execution::ProjectedTimeline;
-use crate::model::{RuntimeProjectionState, RuntimeProjectionStatus};
 use riffra_core::ProjectionKey;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -305,7 +305,7 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
 mod tests {
     use super::RuntimeError;
     use super::*;
-    use crate::model::RuntimeProjectionState;
+    use crate::api::output::RuntimeProjectionState;
     use crate::runtime::ports::{ProjectionDriver, TransportDriver};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};

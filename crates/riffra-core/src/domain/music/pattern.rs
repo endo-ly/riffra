@@ -6,16 +6,17 @@ use crate::DomainError;
 use serde::{Deserialize, Serialize};
 
 /// A repeated set of rhythm steps expressed in whole-note coordinates.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RhythmPattern {
     pub length: MusicalDuration,
     pub steps: Vec<RhythmStep>,
 }
 
 /// One onset and duration inside a [`RhythmPattern`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RhythmStep {
     pub offset: MusicalOffset,
     pub duration: MusicalDuration,
@@ -74,8 +75,9 @@ impl RhythmPattern {
 }
 
 /// A note relative to the anchor of a phrase placement.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhraseNote {
     pub offset: MusicalOffset,
     pub duration: MusicalDuration,
@@ -84,8 +86,8 @@ pub struct PhraseNote {
 }
 
 /// A reusable relative-pitch phrase.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhrasePattern {
     pub length: MusicalDuration,
     pub notes: Vec<PhraseNote>,
@@ -136,8 +138,8 @@ impl PhrasePattern {
 }
 
 /// A phrase placement and its absolute anchor pitch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PhrasePlacement {
     pub position: MusicalPosition,
     pub anchor: MusicalPitch,

@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::render::{RenderOptions, RenderResult};
 use crate::{AppState, NativeCommandError};
-use riffra_runtime::jobs::{BackgroundJobStatus, JobState};
+use riffra_runtime::api::output::{BackgroundJobStatus, JobState};
 
 #[tauri::command]
 pub async fn render_timeline(

@@ -5,10 +5,10 @@
 //! same sidecar generation is still alive. A failed candidate or a generation
 //! change never exposes partially restored audio.
 
+use crate::api::output::{AudioState, AudioStatus};
 use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR_READY_TIMEOUT};
 use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
-use crate::model::{AudioState, AudioStatus};
 use crate::runtime::RuntimeReconciler;
 use riffra_core::{AppCore, CanonicalSnapshot};
 use std::path::Path;
@@ -497,7 +497,7 @@ fn safe_for_startup_restore(status: &AudioStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::RecordingStatus;
+    use crate::api::output::RecordingStatus;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 

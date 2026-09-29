@@ -1,28 +1,7 @@
-use serde::{Deserialize, Serialize};
+use crate::api::output::AudioAnalysis;
 use std::{fs, path::Path};
-use ts_rs::TS;
 
 const WAVEFORM_BINS: usize = 128;
-
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioAnalysis {
-    pub path: String,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub bits_per_sample: u16,
-    pub samples: u64,
-    pub duration_ms: u64,
-    pub peak_db: f64,
-    pub true_peak_db: f64,
-    pub rms_db: f64,
-    pub clipping_samples: u64,
-    pub dynamic_range_db: f64,
-    pub zero_crossings: u64,
-    pub phase_correlation: Option<f64>,
-    pub spectrum_peak_hz: Option<f64>,
-    pub waveform: Vec<f64>,
-}
 
 pub use riffra_host::parse_wav;
 

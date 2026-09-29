@@ -8,19 +8,10 @@ pub(crate) use contract::*;
 pub(crate) use project::{project, project_graph};
 pub(crate) use resolve::{ResolvedResources, resolve};
 
+use crate::api::output::ProjectionDiagnostics;
 use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_core::CreativeSession;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
-use ts_rs::TS;
-
-/// Resources missing from an executable projection.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionDiagnostics {
-    pub unavailable_clip_ids: Vec<String>,
-    pub missing_device_ids: Vec<String>,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedTimeline {

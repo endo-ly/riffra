@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::plugins::ScanReport;
 use crate::{AppState, NativeCommandError};
-use riffra_runtime::jobs::BackgroundJobStatus;
+use riffra_runtime::api::output::BackgroundJobStatus;
 
 #[tauri::command]
 pub async fn scan_vst3_folder(

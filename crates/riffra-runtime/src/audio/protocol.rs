@@ -10,10 +10,13 @@ use super::wire::{
     WireTransportState, WireTransportStatus, decode_message, diagnostic_prefix,
 };
 use crate::HostEvent;
+use crate::api::output::{
+    AudioChannelInfo, AudioDiagnostics, AudioInstrumentFault, AudioState, AudioStatus,
+    MidiDeviceInfo, RecordingStatus,
+};
 use crate::model::{
-    AudioChannelInfo, AudioDiagnostics, AudioInstrumentFault, AudioMeterFrame, AudioState,
-    AudioStatus, MidiDeviceInfo, RecordingPhase, RecordingStatus, TrackAudioMeter,
-    TrackPluginParameterChanged, TrackPluginStateChanged, TransportState, TransportStatus,
+    AudioMeterFrame, RecordingPhase, TrackAudioMeter, TrackPluginParameterChanged,
+    TrackPluginStateChanged, TransportState, TransportStatus,
 };
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};

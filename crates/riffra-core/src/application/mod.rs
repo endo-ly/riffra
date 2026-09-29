@@ -30,7 +30,7 @@ pub use music::{
     RawMidiNoteView, ResolvedPhrase, ResolvedPhraseNote,
 };
 pub use session::{
-    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
+    ClipInspection, EffectInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
     InstrumentSourceKind, MusicalMarkerView, MusicalRangeInspection, ProjectInspection,
     SessionInspection, SessionInspectionQuery, TrackInspection, inspect_canonical_state,
 };
@@ -63,8 +63,9 @@ impl ApplicationMutation {
 }
 
 /// Partial update for session-wide production settings.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(optional_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
     pub project_name: Option<Option<String>>,
     pub master_db: Option<f64>,
@@ -75,10 +76,12 @@ pub struct SessionSettingsPatch {
 }
 
 /// Partial update for one MIDI note.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(optional_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNotePatch {
     pub note: Option<u8>,
+    #[ts(optional, type = "number")]
     pub start_tick: Option<TimelineTick>,
     pub duration_ticks: Option<u64>,
     pub velocity: Option<u8>,
@@ -86,18 +89,19 @@ pub struct MidiNotePatch {
 }
 
 /// One note update within an atomic MIDI edit.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteUpdate {
     pub note_id: String,
     pub patch: MidiNotePatch,
 }
 
 /// Identity-free MIDI note data accepted by a Core insertion operation.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteInput {
     pub pitch: u8,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub duration_ticks: u64,
     pub velocity: u8,

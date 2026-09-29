@@ -28,18 +28,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::HostEvent;
+use crate::api::output::{
+    ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus, LibraryAsset,
+    RecordingAsset, RecordingCapture, RecordingFinalizationOutcome, RecordingStopResult,
+};
 use crate::asset;
 use crate::audio::AudioSupervisor;
 use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::jobs::JobRegistry;
 use crate::library;
-use crate::model::{
-    ArrangementMutationResult, ArrangementProjectionOutcome, AudioStatus,
-    RecordingFinalizationOutcome, RecordingFinalized, RecordingStopResult,
-};
+use crate::model::RecordingFinalized;
 use crate::recording::materialize;
-use crate::recording::{RecordingAsset, RecordingCapture};
 use crate::runtime::RuntimeReconciler;
 use crate::session::commit;
 use riffra_core::AppCore;
@@ -1719,7 +1719,7 @@ pub fn tag_recording(
     id: &str,
     tag: Option<String>,
     note: Option<String>,
-) -> Result<library::LibraryAsset, String> {
+) -> Result<LibraryAsset, String> {
     library::update_metadata(
         &context.data_root,
         &library::recording_asset_id(id),

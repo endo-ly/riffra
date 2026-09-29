@@ -1,8 +1,8 @@
 //! Shared wiring for the Core canonical commit boundary.
 
+use crate::api::output::{ArrangementMutationResult, ArrangementProjectionOutcome};
 use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
-use crate::model::{ArrangementMutationResult, ArrangementProjectionOutcome};
 use crate::session::context::SessionContext;
 use crate::session::error::AdapterError;
 use crate::{AudioSupervisor, HostEvent, RuntimeDriver, RuntimeReconciler};

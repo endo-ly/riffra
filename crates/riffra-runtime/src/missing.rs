@@ -1,26 +1,7 @@
+use crate::api::output::MissingDependency;
 use crate::asset;
 use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice, TrackInstrument};
-use serde::{Deserialize, Serialize};
 use std::path::Path;
-use ts_rs::TS;
-
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct MissingDependency {
-    /// `file` for a missing audio asset, `plugin` for a missing VST3 binary.
-    pub kind: String,
-    pub id: String,
-    pub name: String,
-    /// Resolved content location (for files) or plugin path (for plugins), for
-    /// display only. Relink is driven by `asset_id`, not this path.
-    pub path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub asset_id: Option<AssetId>,
-    /// Where the missing dependency is referenced from, so the UI can point the
-    /// user at the exact clip, instrument, or effect slot.
-    pub used_by: Vec<String>,
-}
 
 fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
     asset::resolve_content_location(data_root, asset_id)

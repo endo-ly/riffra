@@ -1,8 +1,8 @@
 use crate::RuntimeBinaries;
-use crate::instrument::BuiltInInstrumentCatalog;
-use crate::model::{
+use crate::api::output::{
     ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
 };
+use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::{
     ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
@@ -1121,21 +1121,21 @@ mod tests {
         fs::create_dir_all(&plugin_path).unwrap();
         crate::plugins::save(
             &root,
-            &crate::plugins::ScanReport {
+            &crate::api::output::ScanReport {
                 root: root.to_string_lossy().into_owned(),
                 started_at_ms: 0,
                 finished_at_ms: 0,
-                plugins: vec![crate::plugins::PluginEntry {
+                plugins: vec![crate::api::output::PluginEntry {
                     id: "vst3-synth".into(),
                     name: "Synth".into(),
                     vendor: None,
                     version: None,
-                    format: crate::plugins::PluginFormat::Vst3,
-                    role: Some(crate::plugins::PluginRole::Instrument),
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Instrument),
                     path: plugin_path.to_string_lossy().into_owned(),
                     bundle: true,
                     modified_at_ms: None,
-                    scan_state: crate::plugins::PluginScanState::Validated,
+                    scan_state: crate::api::output::PluginScanState::Validated,
                 }],
                 issues: Vec::new(),
             },

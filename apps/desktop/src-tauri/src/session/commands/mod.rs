@@ -14,7 +14,7 @@ use riffra_core::{
     FrameRange, HistoryState, MidiClipMove, MidiClipPatch, MidiInputRoute, ProjectTimebase,
     TimelineTick, TrackKind,
 };
-use riffra_runtime::missing::MissingDependency;
+use riffra_runtime::api::output::MissingDependency;
 
 pub(super) async fn dispatch<T, P>(
     app: AppHandle,

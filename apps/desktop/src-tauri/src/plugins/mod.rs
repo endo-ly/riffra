@@ -1,2 +1,2 @@
 pub(crate) mod commands;
-pub(crate) use riffra_runtime::plugins::*;
+pub(crate) use riffra_runtime::api::output::{PluginEntry, ScanReport};

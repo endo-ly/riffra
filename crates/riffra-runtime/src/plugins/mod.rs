@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use crate::api::output::{PluginEntry, PluginFormat, PluginScanState, ScanIssue, ScanReport};
 use std::{
     collections::HashSet,
     fs,
@@ -6,7 +6,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-use ts_rs::TS;
 
 pub(crate) mod catalog;
 pub(crate) mod validation;
@@ -14,78 +13,6 @@ pub(crate) use catalog::{load, reuse_cached_scan_results, save, validated_plugin
 pub(crate) use validation::{validate_report, validate_report_with_cancel};
 
 const MAX_ENTRIES: usize = 100_000;
-
-/// Plugin container format. The runtime currently hosts VST3 only; the enum
-/// keeps the TS literal narrow and leaves room for future formats.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum PluginFormat {
-    Vst3,
-}
-
-/// Outcome of a plugin scan/validate pass, used as the Library stability label.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginScanState {
-    Discovered,
-    Validated,
-    Failed,
-    Quarantined,
-}
-
-/// The role a VST3 plug-in can serve in Riffra's signal graph.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginRole {
-    /// Generates audio from MIDI events on an instrument track.
-    Instrument,
-    /// Processes audio in a track's effect chain.
-    Effect,
-}
-
-impl PluginScanState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Discovered => "discovered",
-            Self::Validated => "validated",
-            Self::Failed => "failed",
-            Self::Quarantined => "quarantined",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginEntry {
-    pub id: String,
-    pub name: String,
-    pub vendor: Option<String>,
-    pub version: Option<String>,
-    pub format: PluginFormat,
-    /// The plug-in role reported by the VST3 scanner, when available.
-    pub role: Option<PluginRole>,
-    pub path: String,
-    pub bundle: bool,
-    pub modified_at_ms: Option<u64>,
-    pub scan_state: PluginScanState,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ScanIssue {
-    pub path: String,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ScanReport {
-    pub root: String,
-    pub started_at_ms: u64,
-    pub finished_at_ms: u64,
-    pub plugins: Vec<PluginEntry>,
-    pub issues: Vec<ScanIssue>,
-}
 
 pub fn discover(root: &Path) -> ScanReport {
     discover_with_cancel(root, None).unwrap_or_else(|message| ScanReport {

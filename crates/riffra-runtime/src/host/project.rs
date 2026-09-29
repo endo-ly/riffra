@@ -1,6 +1,6 @@
 use super::HostState;
+use crate::api::output::ProjectState;
 use crate::execution::project_session;
-use crate::model::ProjectState;
 use crate::projects;
 use riffra_control::{ErrorCode, ProtocolError};
 use riffra_core::CanonicalState;
@@ -208,7 +208,7 @@ fn activate_project_inner(
             ));
         }
     };
-    let activation = crate::model::ProjectActivationResult {
+    let activation = crate::api::output::ProjectActivationResult {
         project_state: activated.project_state.clone(),
         canonical: activated.canonical.clone(),
         recovery: activated.recovery.clone(),
@@ -493,7 +493,7 @@ mod tests {
         );
 
         assert!(response.ok);
-        let activation: crate::model::ProjectActivationResult =
+        let activation: crate::api::output::ProjectActivationResult =
             serde_json::from_value(response.result.unwrap().value).unwrap();
         let active_project_id = activation.project_state.active_project_id.clone();
         assert_ne!(active_project_id, initial_project_id);

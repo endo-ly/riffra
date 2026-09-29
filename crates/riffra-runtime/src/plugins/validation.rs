@@ -1,4 +1,4 @@
-use crate::plugins::{PluginRole, PluginScanState, ScanIssue, ScanReport};
+use crate::api::output::{PluginRole, PluginScanState, ScanIssue, ScanReport};
 use serde::Deserialize;
 use std::io::Read;
 use std::path::Path;

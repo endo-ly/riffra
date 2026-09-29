@@ -1,6 +1,7 @@
 //! device command family.
 
-use crate::plugins::{self, PluginRole};
+use crate::api::output::PluginRole;
+use crate::plugins;
 
 use super::*;
 
@@ -358,7 +359,7 @@ pub(crate) struct PluginPresetSetParams {
 pub(crate) struct PluginStateSetParams {
     pub(crate) track_id: String,
     pub(crate) device_id: String,
-    pub(crate) state: crate::model::PluginStateSnapshot,
+    pub(crate) state: crate::api::output::PluginStateSnapshot,
 }
 
 #[derive(Debug, Deserialize)]

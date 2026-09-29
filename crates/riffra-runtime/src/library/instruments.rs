@@ -1,52 +1,11 @@
-use crate::instrument::{
-    BuiltInInstrumentCatalog, InstrumentPreviewDefinition, InstrumentRecommendedRange,
-    UserInstrumentStore,
-};
+use crate::api::output::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
+use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
 use riffra_host::now_ms;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
-use ts_rs::TS;
 
 const BUILT_IN_ID_PREFIX: &str = "builtin:";
-
-/// The origin of an instrument exposed by the library.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum InstrumentOrigin {
-    BuiltIn,
-    User,
-}
-
-/// A user-visible instrument with persisted library preferences.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentLibraryItem {
-    pub id: String,
-    pub preset_id: Option<String>,
-    pub origin: InstrumentOrigin,
-    pub name: String,
-    pub author: Option<String>,
-    pub description: Option<String>,
-    pub default_category: Option<String>,
-    pub category: Option<String>,
-    pub default_tags: Vec<String>,
-    pub user_tags: Vec<String>,
-    pub tags: Vec<String>,
-    pub favorite: bool,
-    pub collection_ids: Vec<i64>,
-    pub recommended_range: Option<InstrumentRecommendedRange>,
-    pub preview: Option<InstrumentPreviewDefinition>,
-}
-
-/// A named user collection of instruments.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct InstrumentCollection {
-    pub id: i64,
-    pub name: String,
-}
 
 /// Creates the instrument preference tables in the shared library database.
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {

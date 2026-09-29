@@ -5,14 +5,14 @@ use super::*;
 fn plugin_device_role(
     session: &riffra_core::CreativeSession,
     device_id: &str,
-) -> Option<crate::plugins::PluginRole> {
+) -> Option<crate::api::output::PluginRole> {
     session.arrangement.tracks.iter().find_map(|track| {
         if track
             .instrument
             .as_ref()
             .is_some_and(|instrument| instrument.id == device_id)
         {
-            return Some(crate::plugins::PluginRole::Instrument);
+            return Some(crate::api::output::PluginRole::Instrument);
         }
 
         track
@@ -20,7 +20,7 @@ fn plugin_device_role(
             .devices
             .iter()
             .any(|device| device.id == device_id && device.kind == riffra_core::DeviceKind::Plugin)
-            .then_some(crate::plugins::PluginRole::Effect)
+            .then_some(crate::api::output::PluginRole::Effect)
     })
 }
 
@@ -43,7 +43,7 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_device_arrangement_with_created_ids(context, prepared, Default::default())
 }
 
@@ -51,7 +51,7 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
     created_entity_ids: std::collections::BTreeMap<String, Vec<String>>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if let Err(error) =
         prepare_arrangement_candidate(context, prepared.session(), prepared.sequence())
     {
@@ -138,7 +138,7 @@ pub fn set_track_audio_input(
     context: &SessionContext<'_>,
     track_id: &str,
     channel_index: Option<u32>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store)
             .set_track_audio_input(track_id, channel_index)
@@ -150,7 +150,7 @@ pub fn set_track_midi_input(
     context: &SessionContext<'_>,
     track_id: &str,
     route: MidiInputRoute,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store)
             .set_track_midi_input(track_id, route)
@@ -163,7 +163,7 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
     track_id: &str,
     path: &str,
     expected_sequence: Option<u64>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if context.safe_mode {
         return Err(AdapterError::runtime(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect instruments.",
@@ -172,7 +172,7 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
     let (name, validated_path) = plugins::validated_plugin(
         context.data_root,
         Path::new(path),
-        crate::plugins::PluginRole::Instrument,
+        crate::api::output::PluginRole::Instrument,
     )?;
     let snapshot = current_session(context)?;
     let existing_id = snapshot
@@ -210,7 +210,7 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
 pub fn clear_track_instrument(
     context: &SessionContext<'_>,
     track_id: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store).set_track_instrument(track_id, None)
     })?;
@@ -222,7 +222,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     track_id: &str,
     path: &str,
     expected_sequence: Option<u64>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if context.safe_mode {
         return Err(AdapterError::runtime(
             "Safe Mode blocks VST3 loading. Restart Riffra without --safe-mode to connect effects.",
@@ -231,7 +231,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     let (name, validated_path) = plugins::validated_plugin(
         context.data_root,
         Path::new(path),
-        crate::plugins::PluginRole::Effect,
+        crate::api::output::PluginRole::Effect,
     )?;
     let (prepared, device_id) = context
         .core
@@ -257,7 +257,7 @@ pub fn remove_track_effect(
     context: &SessionContext<'_>,
     track_id: &str,
     device_id: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store)
             .remove_track_effect(track_id, device_id)
@@ -269,7 +269,7 @@ pub fn reorder_track_effects(
     context: &SessionContext<'_>,
     track_id: &str,
     ordered_device_ids: &[String],
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store)
             .reorder_track_effects(track_id, ordered_device_ids.to_owned())
@@ -282,7 +282,7 @@ pub fn set_track_device_bypassed(
     track_id: &str,
     device_id: &str,
     bypassed: bool,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
     let device = session
         .arrangement
@@ -330,7 +330,7 @@ pub fn set_track_device_parameter(
     device_id: &str,
     parameter_index: u32,
     value: f32,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if !value.is_finite() {
         return Err("Track Device parameter value must be finite.".into());
     }
@@ -443,7 +443,7 @@ pub fn persist_track_plugin_state(
     parameter_values: Vec<f32>,
     state_data: Option<String>,
     bypassed: bool,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if parameter_values.iter().any(|value| !value.is_finite()) {
         return Err("Track Plugin Editor returned a non-finite parameter value.".into());
     }
@@ -468,7 +468,7 @@ pub fn persist_track_plugin_parameter(
     device_id: &str,
     parameter_index: i32,
     value: f32,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if parameter_index < 0 || !value.is_finite() {
         return Err("Track Plugin Editor returned an invalid parameter change.".into());
     }
@@ -489,7 +489,7 @@ pub fn relink_missing_dependency(
     context: &SessionContext<'_>,
     asset_id: AssetId,
     new_path: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
     if !session
         .arrangement
@@ -528,7 +528,7 @@ pub fn relink_missing_dependency(
 pub fn disable_missing_plugin(
     context: &SessionContext<'_>,
     device_id: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store).disable_missing_plugin(device_id)
     })?;
@@ -542,7 +542,7 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
     device_id: &str,
     new_path: &str,
     expected_sequence: Option<u64>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let path = Path::new(new_path.trim());
     let session = current_session(context).map_err(AdapterError::command)?;
     let role = plugin_device_role(&session, device_id).ok_or_else(|| {

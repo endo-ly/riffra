@@ -1,6 +1,5 @@
-use crate::plugins::ScanReport;
-use crate::render::RenderResult;
-use serde::{Deserialize, Serialize};
+use crate::api::output::{BackgroundJobStatus, JobKind, JobState, RenderResult, ScanReport};
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -11,29 +10,6 @@ use std::{
     },
     thread::{self, JoinHandle},
 };
-use ts_rs::TS;
-
-/// Lifecycle state of a background job. Terminal states (`Cancelled`,
-/// `Completed`, `Failed`) cannot return to `Running`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
-#[serde(rename_all = "lowercase")]
-pub enum JobState {
-    Queued,
-    Running,
-    Cancelling,
-    Cancelled,
-    Completed,
-    Failed,
-}
-
-/// Background job kind. Acts as the `kind` discriminator of
-/// [`BackgroundJobStatus`] and fixes the type of the result payload.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum JobKind {
-    Scan,
-    Render,
-}
 
 impl JobKind {
     fn label(self) -> &'static str {
@@ -56,27 +32,6 @@ pub struct JobStatus {
     pub progress: Option<f32>,
     pub message: String,
     pub result: Option<Value>,
-}
-
-/// Typed view of a background job, produced from [`JobStatus`] at the IPC
-/// boundary. `kind` is the discriminator and fixes the shape of `result`.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum BackgroundJobStatus {
-    Scan {
-        id: String,
-        state: JobState,
-        progress: Option<f32>,
-        message: String,
-        result: Option<ScanReport>,
-    },
-    Render {
-        id: String,
-        state: JobState,
-        progress: Option<f32>,
-        message: String,
-        result: Option<RenderResult>,
-    },
 }
 
 /// Promotes an opaque [`JobStatus`] to a typed [`BackgroundJobStatus`]. The

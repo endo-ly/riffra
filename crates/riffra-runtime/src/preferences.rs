@@ -1,11 +1,11 @@
 //! Persisted audio-device preferences and platform defaults.
 
+use crate::api::params::AudioDriverConfig;
 use crate::{AudioAccessMode, AudioState, AudioStatus};
 use riffra_host::replace_file;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use ts_rs::TS;
 
 #[cfg(windows)]
 const DEFAULT_DRIVER: &str = "Windows Audio (Low Latency Mode)";
@@ -18,24 +18,6 @@ const DEFAULT_DRIVER: &str = "Windows Audio (Low Latency Mode)";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioPreferences {
-    /// Native driver name.
-    pub driver: String,
-    /// Optional input device name.
-    pub input_device: Option<String>,
-    /// Input channel index.
-    pub input_channel: u32,
-    /// Optional output device name.
-    pub output_device: Option<String>,
-    /// Requested sample rate.
-    pub sample_rate: Option<u32>,
-    /// Requested buffer size.
-    pub buffer_size: Option<u32>,
-}
-
-/// Audio preference input shared by shell adapters and the Host workflow.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioDriverConfig {
     /// Native driver name.
     pub driver: String,
     /// Optional input device name.

@@ -1,32 +1,17 @@
-use crate::{asset, plugins::PluginEntry, recording::RecordingAsset};
+use crate::api::output::{LibraryAsset, PluginEntry, RecordingAsset};
+use crate::asset;
 use riffra_core::{AssetId, CreativeSession};
 use riffra_host::now_ms;
 use rusqlite::{Connection, Row, params};
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use ts_rs::TS;
 
 pub mod index;
 pub mod instruments;
 
 const SEARCH_LIMIT: i64 = 200;
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct LibraryAsset {
-    pub id: String,
-    pub name: String,
-    pub kind: String,
-    pub path: Option<String>,
-    pub tag: Option<String>,
-    pub note: Option<String>,
-    pub created_at_ms: Option<u64>,
-    pub updated_at_ms: Option<u64>,
-    pub stability: String,
-}
 
 fn database_path(data_root: &Path) -> PathBuf {
     data_root.join("library").join("riffra.db")

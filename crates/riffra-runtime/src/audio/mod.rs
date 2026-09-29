@@ -4,7 +4,7 @@
 //! construction, process lifecycle, protocol translation, recovery, and
 //! Runtime port adaptation live in responsibility-specific sibling modules.
 
-use crate::model::AudioStatus;
+use crate::api::output::AudioStatus;
 use crate::{RuntimeBinaries, SharedHostEventSink};
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};

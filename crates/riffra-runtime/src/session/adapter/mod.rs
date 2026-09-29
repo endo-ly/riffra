@@ -26,8 +26,8 @@ pub use runtime::*;
 use std::path::Path;
 
 use crate::RuntimeDriver;
+use crate::api::output::AudioStatus;
 use crate::asset;
-use crate::model::AudioStatus;
 use crate::plugins;
 use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
 
@@ -42,7 +42,7 @@ use riffra_core::application::SessionSettingsPatch;
 
 pub fn undo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = context
         .core
         .application(&context.storage)
@@ -55,7 +55,7 @@ pub fn undo(
 
 pub fn redo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = context
         .core
         .application(&context.storage)

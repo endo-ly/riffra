@@ -71,6 +71,7 @@ export type { MidiNote } from './MidiNote';
 export type { MissingDependency } from './MissingDependency';
 export type { MonitoringState } from './MonitoringState';
 export type { MusicalNoteName } from './MusicalNoteName';
+export type { MusicalPosition } from './MusicalPosition';
 export type { PluginEntry } from './PluginEntry';
 export type { PluginFormat } from './PluginFormat';
 export type { PluginPresetInfo } from './PluginPresetInfo';

@@ -13,8 +13,9 @@ use crate::ports::SessionStorage;
 use serde::{Deserialize, Serialize};
 
 /// Input for one harmony event, using either a chord symbol or explicit tones.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyEventInput {
     pub start: MusicalPosition,
     pub end: MusicalPosition,
@@ -63,7 +64,7 @@ pub struct HarmonyRealizeSelection {
 }
 
 /// A harmony event represented in musical coordinates for read operations.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalHarmonyEventView {
     pub id: String,

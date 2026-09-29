@@ -81,7 +81,8 @@ impl<'de> Deserialize<'de> for MusicalFraction {
 }
 
 /// A one-origin bar and beat position with an optional beat-relative offset.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct MusicalPosition {
     pub bar: u32,
     pub beat: u32,
@@ -175,7 +176,8 @@ impl<'de> Deserialize<'de> for MusicalPosition {
 }
 
 /// A positive duration expressed as a fraction of a whole note.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct MusicalDuration {
     pub numerator: u32,
     pub denominator: u32,
@@ -235,7 +237,8 @@ impl<'de> Deserialize<'de> for MusicalDuration {
 }
 
 /// A non-negative offset expressed as a fraction of a whole note.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct MusicalOffset {
     pub numerator: u32,
     pub denominator: u32,
@@ -292,7 +295,8 @@ impl<'de> Deserialize<'de> for MusicalOffset {
 }
 
 /// A signed whole-note fraction used to move musical events in either direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct MusicalTimeDelta {
     /// The reduced signed numerator.
     pub numerator: i32,
