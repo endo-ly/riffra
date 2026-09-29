@@ -1,0 +1,8 @@
+{
+  "kind": "response",
+  "requestId": 1,
+  "response": {
+    "type": "transportAccepted",
+    "commandSequence": 42
+  }
+}

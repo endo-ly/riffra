@@ -121,6 +121,18 @@ impl AudioSupervisor {
         self.request(command, timeout).map(drop)
     }
 
+    /// Sends a transport command. The audio thread applies it at its next block,
+    /// and the transport status reports it by its sequence.
+    fn request_transport(&self, command: SidecarCommand) -> NativeAudioResult<()> {
+        match self.request(command, COMMAND_ACK_TIMEOUT)? {
+            SidecarResponse::TransportAccepted { command_sequence } => {
+                tracing::debug!(command_sequence, "native transport command accepted");
+                Ok(())
+            }
+            response => Err(unexpected(&response)),
+        }
+    }
+
     fn request_plugin_state(&self, command: SidecarCommand) -> NativeAudioResult<GraphPluginState> {
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
             SidecarResponse::TrackPluginState(response)
@@ -172,19 +184,19 @@ impl AudioSupervisor {
     }
 
     pub fn play_timeline(&self) -> NativeAudioResult<()> {
-        self.request_ack(SidecarCommand::PlayTimeline, COMMAND_ACK_TIMEOUT)
+        self.request_transport(SidecarCommand::PlayTimeline)
     }
 
     pub fn set_transport_starting(&self) -> NativeAudioResult<()> {
-        self.request_ack(SidecarCommand::SetTransportStarting, COMMAND_ACK_TIMEOUT)
+        self.request_transport(SidecarCommand::SetTransportStarting)
     }
 
     pub fn stop_timeline(&self) -> NativeAudioResult<()> {
-        self.request_ack(SidecarCommand::StopTimeline, COMMAND_ACK_TIMEOUT)
+        self.request_transport(SidecarCommand::StopTimeline)
     }
 
     pub fn seek_timeline(&self, tick: u64) -> NativeAudioResult<()> {
-        self.request_ack(SidecarCommand::SeekTimeline { tick }, COMMAND_ACK_TIMEOUT)
+        self.request_transport(SidecarCommand::SeekTimeline { tick })
     }
 
     pub fn set_track_device_bypassed(
@@ -384,7 +396,7 @@ impl AudioSupervisor {
     pub fn stop_arrange_recording(&self) -> NativeAudioResult<AudioStatus> {
         self.request_status(
             SidecarCommand::StopArrangeRecording,
-            "Arrange recording stopped on the Native Audio Clock.",
+            "Arrange recording stop accepted on the Native Audio Clock.",
             COMMAND_ACK_TIMEOUT,
         )
     }

@@ -14,6 +14,12 @@ use thiserror::Error;
 /// Maximum time spent preparing one native graph.
 pub const TIMELINE_PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Returns whether a native failure kind left the runtime unchanged, so the same
+/// request may succeed when retried.
+pub(crate) fn is_retryable_native_kind(kind: &str) -> bool {
+    matches!(kind, "timelineBusy" | "realtimeQueueFull")
+}
+
 /// Errors raised by the live projection and transport boundary.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum RuntimeError {

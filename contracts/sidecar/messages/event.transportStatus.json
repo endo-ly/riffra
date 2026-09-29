@@ -7,7 +7,7 @@
     "timelineSample": 48000,
     "audioClockSample": 96000,
     "sampleRate": 48000.0,
-    "sequence": 42,
+    "appliedCommandSequence": 42,
     "recordingPhase": "recording",
     "recordingStartTick": 960,
     "recordingPassOrdinal": 1,

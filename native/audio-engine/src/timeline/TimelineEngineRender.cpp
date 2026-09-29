@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include "TimelineEngine.h"
 
@@ -16,27 +17,26 @@ constexpr double kTransportFadeSeconds = 0.005;
 void TimelineEngine::mixMetronome(float* const* outputChannels, const int channelCount,
                                   const int sampleCount) noexcept {
     if (sampleCount <= 0) return;
-    AudioReadScope activeRead(*this);
-    auto* active = activeRead.get();
+    const auto* active = realtime.graph;
     if (active == nullptr || !active->metronomeEnabled || active->beatSamples <= 0) return;
     const auto loopLength = active->loopEndSample - active->loopStartSample;
-    const auto playbackOffset =
-        juce::jlimit(0, sampleCount, lastMixPlaybackOffset.load(std::memory_order_acquire));
-    const auto countInRemaining = countInBlockStartRemainingSamples.load(std::memory_order_acquire);
-    const auto countingIn =
-        recordingPhase.load(std::memory_order_acquire) == RecordingPhase::countingIn;
+    const auto playbackOffset = juce::jlimit(0, sampleCount, realtime.lastMixPlaybackOffset);
+    const auto countInRemaining = realtime.countInBlockStartRemainingSamples;
+    const auto countingIn = realtime.recordingPhase == RecordingPhase::countingIn;
     constexpr std::int64_t clickSamples = 1'920;
     const auto segmentIndexAt = [this](const int destinationSample) noexcept {
-        for (int index = 0; index < metronomeTransportSegmentCount; ++index) {
-            const auto& segment = metronomeTransportSegments[static_cast<std::size_t>(index)];
+        for (int index = 0; index < realtime.metronomeTransportSegmentCount; ++index) {
+            const auto& segment =
+                realtime.metronomeTransportSegments[static_cast<std::size_t>(index)];
             if (destinationSample < segment.destinationStart ||
                 destinationSample >= segment.destinationStart + segment.sampleCount)
                 continue;
             return index;
         }
-        if (metronomeTransportSegmentCount > 0) {
-            const auto lastIndex = metronomeTransportSegmentCount - 1;
-            const auto& last = metronomeTransportSegments[static_cast<std::size_t>(lastIndex)];
+        if (realtime.metronomeTransportSegmentCount > 0) {
+            const auto lastIndex = realtime.metronomeTransportSegmentCount - 1;
+            const auto& last =
+                realtime.metronomeTransportSegments[static_cast<std::size_t>(lastIndex)];
             if (last.active && destinationSample >= last.destinationStart + last.sampleCount)
                 return lastIndex;
         }
@@ -56,7 +56,7 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
             const auto segmentIndex = segmentIndexAt(sample);
             if (segmentIndex < 0) continue;
             const auto& segment =
-                metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)];
+                realtime.metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)];
             const auto segmentOffset = std::max(0, sample - segment.destinationStart);
             const auto metronomeGain =
                 juce::jlimit(0.0f, 1.0f, segment.gainStart + segment.gainStep * segmentOffset);
@@ -227,9 +227,8 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                 mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart,
                                destinationStart, sampleCount);
             }
-            const auto captureStart = captureBlockOffset.load(std::memory_order_acquire);
-            const auto captureEnd =
-                captureStart + captureBlockSamples.load(std::memory_order_acquire);
+            const auto captureStart = realtime.captureBlockOffset;
+            const auto captureEnd = captureStart + realtime.captureBlockSamples;
             const auto [writeStart, writeEnd] = ArrangementGraph::captureIntersection(
                 destinationStart, sampleCount, captureStart, captureEnd - captureStart);
             if (runtime.armed) {
@@ -237,8 +236,7 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                 if (writeEnd > writeStart) {
                     const auto localOffset = writeStart - destinationStart;
                     const auto captureAudioStart =
-                        callbackAudioStartSample.load(std::memory_order_acquire) +
-                        static_cast<std::uint64_t>(writeStart);
+                        realtime.callbackAudioStartSample + static_cast<std::uint64_t>(writeStart);
                     const auto captureTimelineStart =
                         static_cast<std::uint64_t>(rangeStart + localOffset);
                     const auto discontinuous = capture.state != RecordingCaptureState::capturing ||
@@ -333,16 +331,15 @@ void TimelineEngine::processLiveInstrumentTrack(PreparedTimeline& prepared, Trac
 }
 
 void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
-    AudioReadScope activeRead(*this);
-    auto* active = activeRead.get();
-    if (active == nullptr) return;
-    for (auto& trackPtr : active->tracks) {
+    auto* graph = realtime.graph;
+    if (graph == nullptr) return;
+    for (auto& trackPtr : graph->tracks) {
         auto& runtime = *trackPtr->runtime;
         runtime.liveInputBuffer.clear(0, sampleCount);
         if (runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() != nullptr)
             runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2,
                                           sampleCount, nullptr,
-                                          instrumentProcessContext(*active, 0, false));
+                                          instrumentProcessContext(*graph, 0, false));
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   sampleCount);
@@ -512,14 +509,6 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
     }
 }
 
-void TimelineEngine::applyPendingPanic(PreparedTimeline& prepared) noexcept {
-    if (!panicAllPending.exchange(false, std::memory_order_acq_rel)) return;
-    for (auto& trackPtr : prepared.tracks) {
-        auto& track = *trackPtr;
-        if (track.runtime != nullptr) track.runtime->panic();
-    }
-}
-
 void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexcept {
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
@@ -527,68 +516,59 @@ void TimelineEngine::resetRecordingTrackState(PreparedTimeline& prepared) noexce
     }
 }
 
-void TimelineEngine::requestPlaybackReset() noexcept {
-    PreparedTimeline* active = nullptr;
-    if (!beginAudioRead(active)) return;
-    if (active != nullptr)
-        for (auto& trackPtr : active->tracks)
-            if (trackPtr != nullptr && trackPtr->runtime != nullptr)
-                trackPtr->runtime->requestTransportDiscontinuity();
-    endAudioRead();
-}
-
 void TimelineEngine::beginTransportFade(const bool fadeIn, const double sampleRate) noexcept {
     const auto fadeSamples =
         std::max(1, static_cast<int>(std::ceil(std::max(1.0, sampleRate) * kTransportFadeSeconds)));
     if (fadeIn) {
-        transportFadeStep = (1.0f - transportGain) / static_cast<float>(fadeSamples);
-        if (transportGain >= 1.0f) {
-            transportFadeRemaining = 0;
-            renderTransportState = RenderTransportState::playing;
+        realtime.transportFadeStep =
+            (1.0f - realtime.transportGain) / static_cast<float>(fadeSamples);
+        if (realtime.transportGain >= 1.0f) {
+            realtime.transportFadeRemaining = 0;
+            realtime.renderTransportState = RenderTransportState::playing;
         } else {
-            transportFadeRemaining = fadeSamples;
-            renderTransportState = RenderTransportState::fadingIn;
+            realtime.transportFadeRemaining = fadeSamples;
+            realtime.renderTransportState = RenderTransportState::fadingIn;
         }
     } else {
-        transportFadeStep = transportGain / static_cast<float>(fadeSamples);
-        if (transportGain <= 0.0f) {
-            transportFadeRemaining = 0;
-            renderTransportState = RenderTransportState::stopped;
+        realtime.transportFadeStep = realtime.transportGain / static_cast<float>(fadeSamples);
+        if (realtime.transportGain <= 0.0f) {
+            realtime.transportFadeRemaining = 0;
+            realtime.renderTransportState = RenderTransportState::stopped;
         } else {
-            transportFadeRemaining = fadeSamples;
-            renderTransportState = RenderTransportState::fadingOut;
+            realtime.transportFadeRemaining = fadeSamples;
+            realtime.renderTransportState = RenderTransportState::fadingOut;
         }
     }
 }
 
 void TimelineEngine::applyPendingSeek(PreparedTimeline& prepared) noexcept {
-    if (!seekPending.exchange(false, std::memory_order_acq_rel)) return;
-    const auto sample = pendingSeekSample.load(std::memory_order_acquire);
-    timelineSample.store(sample, std::memory_order_release);
+    if (!realtime.seekPending) return;
+    realtime.seekPending = false;
+    realtime.timelineSample = realtime.pendingSeekSample;
     resetPlaybackTrackState(prepared);
-    if (recordingPhase.load(std::memory_order_acquire) != RecordingPhase::recording)
-        resetRecordingTrackState(prepared);
+    if (realtime.recordingPhase != RecordingPhase::recording) resetRecordingTrackState(prepared);
 }
 
 void TimelineEngine::finishTransportFade(PreparedTimeline& prepared) noexcept {
-    if (renderTransportState == RenderTransportState::fadingIn &&
-        (transportGain >= 1.0f || transportFadeRemaining <= 0)) {
-        transportGain = 1.0f;
-        transportFadeStep = 0.0f;
-        transportFadeRemaining = 0;
-        renderTransportState = RenderTransportState::playing;
+    if (realtime.renderTransportState == RenderTransportState::fadingIn &&
+        (realtime.transportGain >= 1.0f || realtime.transportFadeRemaining <= 0)) {
+        realtime.transportGain = 1.0f;
+        realtime.transportFadeStep = 0.0f;
+        realtime.transportFadeRemaining = 0;
+        realtime.renderTransportState = RenderTransportState::playing;
         return;
     }
-    if (renderTransportState != RenderTransportState::fadingOut || transportGain > 0.0f) return;
-    transportGain = 0.0f;
-    transportFadeStep = 0.0f;
-    transportFadeRemaining = 0;
-    renderTransportState = RenderTransportState::stopped;
+    if (realtime.renderTransportState != RenderTransportState::fadingOut ||
+        realtime.transportGain > 0.0f)
+        return;
+    realtime.transportGain = 0.0f;
+    realtime.transportFadeStep = 0.0f;
+    realtime.transportFadeRemaining = 0;
+    realtime.renderTransportState = RenderTransportState::stopped;
     resetPlaybackTrackState(prepared);
-    if (recordingPhase.load(std::memory_order_acquire) != RecordingPhase::recording)
-        resetRecordingTrackState(prepared);
+    if (realtime.recordingPhase != RecordingPhase::recording) resetRecordingTrackState(prepared);
     applyPendingSeek(prepared);
-    seekRequestedWhileStopped.store(false, std::memory_order_release);
+    realtime.seekRequestedWhileStopped = false;
 }
 
 void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
@@ -599,44 +579,46 @@ void TimelineEngine::mix(float* const* outputChannels, const int channelCount,
 void TimelineEngine::mix(const float* const* inputChannels, const int inputChannelCount,
                          float* const* outputChannels, const int channelCount,
                          const int sampleCount) noexcept {
-    audioClockSample.fetch_add(static_cast<std::uint64_t>(sampleCount), std::memory_order_relaxed);
-    callbackAudioStartSample.store(
-        audioClockSample.load(std::memory_order_acquire) - static_cast<std::uint64_t>(sampleCount),
-        std::memory_order_release);
+    mixActiveGraph(inputChannels, inputChannelCount, outputChannels, channelCount, sampleCount);
+    publishFrame(realtime);
+}
+
+void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int inputChannelCount,
+                                    float* const* outputChannels, const int channelCount,
+                                    const int sampleCount) noexcept {
+    realtime.audioClockSample += static_cast<std::uint64_t>(sampleCount);
+    realtime.callbackAudioStartSample =
+        realtime.audioClockSample - static_cast<std::uint64_t>(sampleCount);
     const auto blockPlaybackOffset =
-        juce::jlimit(0, sampleCount, playbackBlockOffset.exchange(0, std::memory_order_acq_rel));
-    lastMixPlaybackOffset.store(blockPlaybackOffset, std::memory_order_release);
-    AudioReadScope activeRead(*this);
-    auto* active = activeRead.get();
+        juce::jlimit(0, sampleCount, std::exchange(realtime.playbackBlockOffset, 0));
+    realtime.lastMixPlaybackOffset = blockPlaybackOffset;
+    auto* active = realtime.graph;
     if (active == nullptr) return;
-    metronomeTransportSegmentCount = 0;
-    if (resetPlaybackPending.exchange(false, std::memory_order_acq_rel)) {
+    realtime.metronomeTransportSegmentCount = 0;
+    if (std::exchange(realtime.resetPlaybackPending, false)) {
         clearPlaybackTrackState(*active);
         resetRecordingTrackState(*active);
     }
-    applyPendingPanic(*active);
-    const auto currentState = state.load(std::memory_order_acquire);
+    const auto currentState = realtime.transport;
     const auto sampleRate = active->outputSampleRate;
-    if (seekPending.load(std::memory_order_acquire) &&
-        seekRequestedWhileStopped.load(std::memory_order_acquire) &&
-        renderTransportState != RenderTransportState::fadingOut) {
-        renderTransportState = RenderTransportState::stopped;
-        transportGain = 0.0f;
-        transportFadeStep = 0.0f;
+    if (realtime.seekPending && realtime.seekRequestedWhileStopped &&
+        realtime.renderTransportState != RenderTransportState::fadingOut) {
+        realtime.renderTransportState = RenderTransportState::stopped;
+        realtime.transportGain = 0.0f;
+        realtime.transportFadeStep = 0.0f;
         applyPendingSeek(*active);
-        seekRequestedWhileStopped.store(false, std::memory_order_release);
+        realtime.seekRequestedWhileStopped = false;
     }
-    if (seekPending.load(std::memory_order_acquire) &&
-        renderTransportState != RenderTransportState::stopped &&
-        renderTransportState != RenderTransportState::fadingOut) {
+    if (realtime.seekPending && realtime.renderTransportState != RenderTransportState::stopped &&
+        realtime.renderTransportState != RenderTransportState::fadingOut) {
         beginTransportFade(false, sampleRate);
     } else if (currentState == TransportState::playing &&
-               renderTransportState == RenderTransportState::stopped) {
-        if (seekPending.load(std::memory_order_acquire)) applyPendingSeek(*active);
+               realtime.renderTransportState == RenderTransportState::stopped) {
+        if (realtime.seekPending) applyPendingSeek(*active);
         beginTransportFade(true, sampleRate);
     } else if (currentState != TransportState::playing &&
-               (renderTransportState == RenderTransportState::playing ||
-                renderTransportState == RenderTransportState::fadingIn))
+               (realtime.renderTransportState == RenderTransportState::playing ||
+                realtime.renderTransportState == RenderTransportState::fadingIn))
         beginTransportFade(false, sampleRate);
 
     const auto processStoppedRange = [&](const int destinationStart, const int rangeSamples,
@@ -653,11 +635,11 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
     const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
                                             const std::int64_t rangeStart, const bool segmentActive,
                                             const float gainStart, const float gainStep) noexcept {
-        if (rangeSamples <= 0 ||
-            metronomeTransportSegmentCount >= static_cast<int>(metronomeTransportSegments.size()))
+        if (rangeSamples <= 0 || realtime.metronomeTransportSegmentCount >=
+                                     static_cast<int>(realtime.metronomeTransportSegments.size()))
             return;
-        auto& segment =
-            metronomeTransportSegments[static_cast<std::size_t>(metronomeTransportSegmentCount++)];
+        auto& segment = realtime.metronomeTransportSegments[static_cast<std::size_t>(
+            realtime.metronomeTransportSegmentCount++)];
         segment.rangeStart = rangeStart;
         segment.destinationStart = destinationStart;
         segment.sampleCount = rangeSamples;
@@ -666,32 +648,32 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         segment.active = segmentActive;
     };
 
-    if (renderTransportState == RenderTransportState::stopped) {
+    if (realtime.renderTransportState == RenderTransportState::stopped) {
         applyPendingSeek(*active);
-        const auto stoppedPosition = timelineSample.load(std::memory_order_acquire);
+        const auto stoppedPosition = realtime.timelineSample;
         appendMetronomeSegment(0, sampleCount, stoppedPosition, false, 0.0f, 0.0f);
         processStoppedRange(0, sampleCount, stoppedPosition);
         return;
     }
     if (currentState == TransportState::faulted) return;
-    auto position = timelineSample.load(std::memory_order_relaxed);
-    if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::stopping) {
+    auto position = realtime.timelineSample;
+    if (realtime.recordingPhase == RecordingPhase::stopping) {
         return;
     }
-    const auto captureWindowStart = captureBlockOffset.load(std::memory_order_acquire);
-    const auto captureWindowSamples = captureBlockSamples.load(std::memory_order_acquire);
+    const auto captureWindowStart = realtime.captureBlockOffset;
+    const auto captureWindowSamples = realtime.captureBlockSamples;
     auto capturedSamplesInCallback = 0;
     auto consumed = blockPlaybackOffset;
     while (consumed < sampleCount) {
         auto chunk = sampleCount - consumed;
-        if (renderTransportState == RenderTransportState::stopped) {
+        if (realtime.renderTransportState == RenderTransportState::stopped) {
             appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
             processStoppedRange(consumed, sampleCount - consumed, position);
             break;
         }
-        const auto fadingIn = renderTransportState == RenderTransportState::fadingIn;
-        const auto fadingOut = renderTransportState == RenderTransportState::fadingOut;
-        if (fadingIn || fadingOut) chunk = std::min(chunk, transportFadeRemaining);
+        const auto fadingIn = realtime.renderTransportState == RenderTransportState::fadingIn;
+        const auto fadingOut = realtime.renderTransportState == RenderTransportState::fadingOut;
+        if (fadingIn || fadingOut) chunk = std::min(chunk, realtime.transportFadeRemaining);
         if (!active->tracks.empty()) {
             const auto bufferSize = active->tracks.front()->runtime->mixBuffer.getNumSamples();
             if (bufferSize > 0) chunk = std::min(chunk, bufferSize);
@@ -699,9 +681,9 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         if (active->loopEnabled && position < active->loopEndSample)
             chunk = std::min<int>(chunk, static_cast<int>(active->loopEndSample - position));
         if (chunk <= 0) break;
-        appendMetronomeSegment(consumed, chunk, position, true, transportGain,
-                               fadingIn    ? transportFadeStep
-                               : fadingOut ? -transportFadeStep
+        appendMetronomeSegment(consumed, chunk, position, true, realtime.transportGain,
+                               fadingIn    ? realtime.transportFadeStep
+                               : fadingOut ? -realtime.transportFadeStep
                                            : 0.0f);
         for (auto& trackPtr : active->tracks) {
             trackPtr->runtime->mixBuffer.clear(0, chunk);
@@ -712,9 +694,9 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
         const auto [captureWriteStart, captureWriteEnd] = ArrangementGraph::captureIntersection(
             consumed, chunk, captureWindowStart, captureWindowSamples);
         if (captureWriteEnd > captureWriteStart &&
-            recordingPhase.load(std::memory_order_acquire) == RecordingPhase::recording) {
-            const auto callbackStart = audioClockSample.load(std::memory_order_acquire) -
-                                       static_cast<std::uint64_t>(sampleCount);
+            realtime.recordingPhase == RecordingPhase::recording) {
+            const auto callbackStart =
+                realtime.audioClockSample - static_cast<std::uint64_t>(sampleCount);
             const auto localOffset = captureWriteStart - consumed;
             recordingCapture->setCaptureRange(
                 callbackStart + static_cast<std::uint64_t>(captureWriteStart),
@@ -724,18 +706,18 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                     static_cast<std::uint64_t>(localOffset + captureWriteEnd - captureWriteStart));
         }
         processTracks(*active, inputChannels, inputChannelCount, outputChannels, channelCount,
-                      position, consumed, chunk, transportGain,
-                      fadingIn    ? transportFadeStep
-                      : fadingOut ? -transportFadeStep
+                      position, consumed, chunk, realtime.transportGain,
+                      fadingIn    ? realtime.transportFadeStep
+                      : fadingOut ? -realtime.transportFadeStep
                                   : 0.0f);
         capturedSamplesInCallback += captureWriteEnd - captureWriteStart;
         position += chunk;
         consumed += chunk;
-        timelineSample.store(position, std::memory_order_release);
+        realtime.timelineSample = position;
         if (active->loopEnabled && position >= active->loopEndSample) {
-            if (recordingPhase.load(std::memory_order_acquire) == RecordingPhase::recording) {
-                const auto callbackStart = audioClockSample.load(std::memory_order_acquire) -
-                                           static_cast<std::uint64_t>(sampleCount);
+            if (realtime.recordingPhase == RecordingPhase::recording) {
+                const auto callbackStart =
+                    realtime.audioClockSample - static_cast<std::uint64_t>(sampleCount);
                 recordingCapture->markLoopBoundary(callbackStart +
                                                    static_cast<std::uint64_t>(consumed));
                 for (auto& trackPtr : active->tracks) {
@@ -749,35 +731,30 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                 }
             }
             position = active->loopStartSample;
-            recordingPassOrdinal.fetch_add(1, std::memory_order_relaxed);
+            ++realtime.recordingPassOrdinal;
             resetPlaybackTrackState(*active);
-            discontinuity.fetch_add(1, std::memory_order_relaxed);
+            ++realtime.discontinuity;
         }
-        timelineSample.store(position, std::memory_order_release);
+        realtime.timelineSample = position;
         if (fadingIn || fadingOut) {
-            transportGain = juce::jlimit(
+            realtime.transportGain = juce::jlimit(
                 0.0f, 1.0f,
-                transportGain + (fadingIn ? transportFadeStep : -transportFadeStep) * chunk);
-            transportFadeRemaining -= chunk;
-            if (transportFadeRemaining <= 0) {
-                transportGain = fadingIn ? 1.0f : 0.0f;
+                realtime.transportGain +
+                    (fadingIn ? realtime.transportFadeStep : -realtime.transportFadeStep) * chunk);
+            realtime.transportFadeRemaining -= chunk;
+            if (realtime.transportFadeRemaining <= 0) {
+                realtime.transportGain = fadingIn ? 1.0f : 0.0f;
                 finishTransportFade(*active);
-                position = timelineSample.load(std::memory_order_relaxed);
-                if (renderTransportState == RenderTransportState::stopped &&
+                position = realtime.timelineSample;
+                if (realtime.renderTransportState == RenderTransportState::stopped &&
                     currentState == TransportState::playing) {
                     beginTransportFade(true, sampleRate);
                 }
             }
         }
     }
-    auto remainingCaptureSamples = captureBlockSamples.load(std::memory_order_acquire);
-    while (
-        capturedSamplesInCallback > 0 && remainingCaptureSamples > 0 &&
-        !captureBlockSamples.compare_exchange_weak(
-            remainingCaptureSamples,
-            remainingCaptureSamples - std::min(remainingCaptureSamples, capturedSamplesInCallback),
-            std::memory_order_release, std::memory_order_acquire)) {
-    }
+    realtime.captureBlockSamples -=
+        std::min(realtime.captureBlockSamples, capturedSamplesInCallback);
 }
 
 }  // namespace riffra

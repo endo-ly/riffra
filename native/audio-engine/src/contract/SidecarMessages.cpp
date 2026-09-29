@@ -235,7 +235,7 @@ ObjectBuilder transportStatusFields(const TransportStatusSpec& status) {
         .set("timelineSample", juce::var(static_cast<juce::int64>(status.timelineSample)))
         .set("audioClockSample", integer(status.audioClockSample))
         .set("sampleRate", optionalNumber(status.sampleRate))
-        .set("sequence", integer(status.sequence))
+        .set("appliedCommandSequence", integer(status.appliedCommandSequence))
         .set("recordingPhase", name(status.recordingPhase))
         .set("recordingStartTick", integer(status.recordingStartTick))
         .set("recordingPassOrdinal", integer(status.recordingPassOrdinal))
@@ -273,8 +273,11 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
             [](const AudioStatusSpec& status) {
                 return audioStatusFields(status).set("type", "audioStatus").build();
             },
-            [](const TransportStatusSpec& status) {
-                return transportStatusFields(status).set("type", "transportStatus").build();
+            [](const TransportAcceptedSpec& accepted) {
+                return ObjectBuilder{}
+                    .set("type", "transportAccepted")
+                    .set("commandSequence", integer(accepted.commandSequence))
+                    .build();
             },
             [](const TimelineAckSpec&) { return typeOnly("timelineAck"); },
             [](const TimelineIdleAckSpec&) { return typeOnly("timelineIdleAck"); },

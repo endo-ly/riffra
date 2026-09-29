@@ -22,11 +22,11 @@ void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
 void AudioCommandDispatcher::handle(const SetLiveMidiTargetCommand& command,
                                     CommandResponder responder) {
     juce::String timelineError;
-    if (!context.timelineEngine.setLiveMidiTarget(command.trackId.value_or(juce::String()),
-                                                  timelineError)) {
-        responder.fail("liveMidiTarget", timelineError, "midi.liveTarget");
+    const auto request = context.timelineEngine.setLiveMidiTarget(
+        command.trackId.value_or(juce::String()), timelineError);
+    if (rejectUnlessAccepted(responder, request, "liveMidiTarget", timelineError,
+                             "midi.liveTarget"))
         return;
-    }
     responder.respond(currentStatus());
 }
 
@@ -37,11 +37,10 @@ void AudioCommandDispatcher::handle(const SendTrackMidiCommand& command,
             "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."))
         return;
     juce::String timelineError;
-    if (!context.timelineEngine.enqueueTargetedMidi(command.trackId, command.message,
-                                                    timelineError)) {
-        responder.fail("targetedMidi", timelineError, "midi.send");
+    const auto request =
+        context.timelineEngine.enqueueTargetedMidi(command.trackId, command.message, timelineError);
+    if (rejectUnlessAccepted(responder, request, "targetedMidi", timelineError, "midi.send"))
         return;
-    }
     responder.respond(MidiAckSpec{});
 }
 
@@ -52,10 +51,9 @@ void AudioCommandDispatcher::handle(const PanicTrackMidiCommand& command,
             "The Arrangement Graph is still changing; targeted MIDI can be retried shortly."))
         return;
     juce::String timelineError;
-    if (!context.timelineEngine.panicTargetedMidi(command.trackId, timelineError)) {
-        responder.fail("targetedMidi", timelineError, "midi.panic");
+    const auto request = context.timelineEngine.panicTargetedMidi(command.trackId, timelineError);
+    if (rejectUnlessAccepted(responder, request, "targetedMidi", timelineError, "midi.panic"))
         return;
-    }
     responder.respond(MidiAckSpec{});
 }
 

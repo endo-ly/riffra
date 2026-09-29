@@ -719,7 +719,7 @@ export class FakeNativeApi implements NativeApi {
       timelineSample: 0,
       audioClockSample: 0,
       sampleRate: 48_000,
-      sequence: 0,
+      appliedCommandSequence: 0,
       recordingPhase: 'idle',
       recordingStartTick: 0,
       recordingPassOrdinal: 0,

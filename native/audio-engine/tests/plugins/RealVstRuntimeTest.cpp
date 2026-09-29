@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 1;
     }
-    if (!engine.commitPreparedSnapshot(error)) {
+    if (engine.commitPreparedSnapshot(error) != riffra::RealtimeRequest::accepted) {
         std::cerr << error << '\n';
         return 1;
     }

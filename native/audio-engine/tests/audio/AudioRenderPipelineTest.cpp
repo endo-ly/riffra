@@ -190,7 +190,7 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
     AudioRenderPipeline callback(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     callback.setRecordingFinalizationDispatcher(
-        [&detached](std::unique_ptr<ArrangeRecordingSession> session) {
+        [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
             detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
         });
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -198,9 +198,8 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
                                .getChildFile(juce::Uuid().toString());
 
     // Act
-    ASSERT_TRUE(callback.recording().start(directory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
-    ASSERT_TRUE(callback.recording().stop(error));
+    ASSERT_EQ(callback.recording().start(directory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
 
     // Assert
     ASSERT_NE(detached, nullptr);
@@ -486,16 +485,16 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                  kBlockSize, error));
     AudioRenderPipeline callback(timeline);
-    callback.recording().setFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
+    callback.recording().setFinalizationDispatcher(
+        [](std::unique_ptr<ArrangeRecordingSession>, const juce::String&) {});
     const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                     .getChildFile("riffra-recording-busy-test")
                                     .getChildFile(juce::Uuid().toString());
     const auto secondDirectory = firstDirectory.getSiblingFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.recording().start(firstDirectory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
-    ASSERT_TRUE(callback.recording().stop(error));
-    EXPECT_FALSE(callback.recording().start(secondDirectory, error));
+    ASSERT_EQ(callback.recording().start(firstDirectory, 0, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
+    EXPECT_EQ(callback.recording().start(secondDirectory, 0, error), RealtimeRequest::rejected);
 
     callback.recording().completeProcessing({}, {});
     firstDirectory.deleteRecursively();
@@ -514,8 +513,8 @@ TEST(AudioRenderPipelineTest, CancelClearsRecordingSink) {
                                .getChildFile("riffra-recording-cancel-test")
                                .getChildFile(juce::Uuid().toString());
 
-    ASSERT_TRUE(callback.recording().start(directory, error));
-    ASSERT_TRUE(callback.recording().cancel(error));
+    ASSERT_EQ(callback.recording().start(directory, 1, error), RealtimeRequest::accepted);
+    ASSERT_EQ(callback.recording().stop(error), RealtimeRequest::accepted);
     EXPECT_TRUE(callback.recording().status().cancelled);
 
     directory.deleteRecursively();

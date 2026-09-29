@@ -13,13 +13,10 @@ void MidiMonitor::setTimelineEngine(TimelineEngine* const engine) noexcept {
     timelineEngine = engine;
 }
 
-void MidiMonitor::handleIncomingMidiMessage(juce::MidiInput* source,
-                                            const juce::MidiMessage& message) {
+void MidiMonitor::receive(const std::uint16_t sourceIndex, const juce::MidiMessage& message) {
     messageCount.fetch_add(1, std::memory_order_relaxed);
     const auto routedToTimeline =
-        timelineEngine != nullptr &&
-        timelineEngine->enqueueLiveMidi(
-            message, source != nullptr ? source->getIdentifier() : juce::String{});
+        timelineEngine != nullptr && timelineEngine->enqueueLiveMidi(sourceIndex, message);
     if (routedToTimeline) {
         if (message.isNoteOn() || message.isNoteOff())
             lastNote.store(message.getNoteNumber(), std::memory_order_release);
@@ -50,7 +47,17 @@ std::uint64_t MidiMonitor::getMessageCount() const noexcept {
 
 int MidiMonitor::getLastNote() const noexcept { return lastNote.load(std::memory_order_acquire); }
 
-MidiInputService::MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine) {
+MidiInputService::SourceCallback::SourceCallback(MidiMonitor& monitorIn,
+                                                 const std::uint16_t sourceIndexIn) noexcept
+    : monitor(monitorIn), sourceIndex(sourceIndexIn) {}
+
+void MidiInputService::SourceCallback::handleIncomingMidiMessage(juce::MidiInput*,
+                                                                 const juce::MidiMessage& message) {
+    monitor.receive(sourceIndex, message);
+}
+
+MidiInputService::MidiInputService(PreviewEngine& previewEngine, TimelineEngine& timelineEngine)
+    : timeline(timelineEngine) {
     midiMonitor.setPreviewEngine(&previewEngine);
     midiMonitor.setTimelineEngine(&timelineEngine);
 }
@@ -72,19 +79,19 @@ bool MidiInputService::isListening() const noexcept {
 
 void MidiInputService::reopenAll() {
     const std::lock_guard lock(inputsLock);
-    for (auto& input : inputs) {
-        if (input != nullptr) input->stop();
-    }
+    for (auto& open : inputs) open.input->stop();
     inputs.clear();
     activeDeviceIds.clear();
     if (!isListening()) return;
     for (const auto& device : juce::MidiInput::getAvailableDevices()) {
         try {
-            auto input = juce::MidiInput::openDevice(device.identifier, &midiMonitor);
+            auto callback = std::make_unique<SourceCallback>(
+                midiMonitor, timeline.midiSourceIndex(device.identifier));
+            auto input = juce::MidiInput::openDevice(device.identifier, callback.get());
             if (input == nullptr) continue;
             input->start();
             activeDeviceIds.insert(device.identifier);
-            inputs.push_back(std::move(input));
+            inputs.push_back({std::move(callback), std::move(input)});
         } catch (...) {
             // A single MIDI device that fails to open must not block the others.
         }

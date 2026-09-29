@@ -46,7 +46,7 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     const std::array<float*, 2> outputChannels{left.data(), right.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     for (int block = 0; block < 8; ++block) {
         std::fill(left.begin(), left.end(), 0.0f);
         std::fill(right.begin(), right.end(), 0.0f);
@@ -64,11 +64,11 @@ TEST(TimelineEngineTest, KeepsProcessedTakesOutOfTheCurrentTrackEffectChain) {
     EXPECT_NEAR(right[31], expected, 0.002f);
 
     // Act: a transport discontinuity must clear both compensation lines.
-    engine.stop();
-    engine.seekToTick(0);
+    ASSERT_TRUE(engine.stop());
+    ASSERT_TRUE(engine.seekToTick(0));
     std::fill(left.begin(), left.end(), 0.0f);
     std::fill(right.begin(), right.end(), 0.0f);
-    engine.play();
+    ASSERT_TRUE(engine.play());
     for (int block = 0; block < 8; ++block) {
         std::fill(left.begin(), left.end(), 0.0f);
         std::fill(right.begin(), right.end(), 0.0f);
@@ -124,7 +124,8 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     const auto afterPreviewStatus = engine.status();
     ASSERT_TRUE(afterPreviewStatus.graph.has_value());
     EXPECT_EQ(afterPreviewStatus.graph->revision, beforePreviewStatus.graph->revision);
-    EXPECT_EQ(afterPreviewStatus.graphPublishCount, beforePreviewStatus.graphPublishCount);
+    EXPECT_EQ(afterPreviewStatus.frame.graphPublishCount,
+              beforePreviewStatus.frame.graphPublishCount);
     mixLiveInput();
     const auto previewMeters = engine.meterSnapshot();
 
@@ -239,7 +240,7 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
-    engine.play();
+    ASSERT_TRUE(engine.play());
     for (int block = 0; block < 8; ++block) {
         std::fill(left.begin(), left.end(), 0.0f);
         std::fill(right.begin(), right.end(), 0.0f);
@@ -332,8 +333,8 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
                  juce::FloatVectorOperations::findMaximum(outputRight.data(), kBlockSamples));
     std::fill(outputLeft.begin(), outputLeft.end(), 0.0f);
     std::fill(outputRight.begin(), outputRight.end(), 0.0f);
-    engine.seekToTick(0);
-    engine.play();
+    ASSERT_TRUE(engine.seekToTick(0));
+    ASSERT_TRUE(engine.play());
     engine.mix(inputChannels.data(), 1, outputChannels.data(), 2, kBlockSamples);
 
     // Assert: the live chain processed the input (2x gain, pan law) and the

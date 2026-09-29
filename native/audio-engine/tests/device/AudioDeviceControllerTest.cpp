@@ -39,14 +39,13 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
     AudioRenderPipeline pipeline(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     pipeline.recording().setFinalizationDispatcher(
-        [&detached](std::unique_ptr<ArrangeRecordingSession> session) {
+        [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
             detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
         });
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                .getChildFile("riffra-device-stop-recording-test")
                                .getChildFile(juce::Uuid().toString());
-    ASSERT_TRUE(pipeline.recording().start(directory, error));
-    ASSERT_TRUE(timeline.startRecording(0, error));
+    ASSERT_EQ(pipeline.recording().start(directory, 0, error), RealtimeRequest::accepted);
     std::array<float, 32> input{};
     std::array<float, 32> output{};
     input.fill(0.25f);

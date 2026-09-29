@@ -1,5 +1,6 @@
 #include "AudioCommandDispatcher.h"
 
+#include <chrono>
 #include <string>
 #include <utility>
 #include <variant>
@@ -9,6 +10,84 @@
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
+namespace {
+
+constexpr auto kSafetyMutePanicApplyTimeout = std::chrono::milliseconds(500);
+
+}  // namespace
+
+AudioCommandDispatcher::AudioCommandDispatcher(Context context) : context(context) {
+    recordingStopWorker = std::thread([this] { recordingStopWorkerLoop(); });
+}
+
+AudioCommandDispatcher::~AudioCommandDispatcher() {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        recordingStopWorkerStopping = true;
+    }
+    recordingStopWake.notify_all();
+    if (recordingStopWorker.joinable()) recordingStopWorker.join();
+}
+
+bool AudioCommandDispatcher::waitForBackgroundWork(const std::chrono::milliseconds timeout) {
+    std::unique_lock lock(recordingStopMutex);
+    return recordingStopFinished.wait_for(lock, timeout,
+                                          [this] { return !recordingStopScheduled; });
+}
+
+bool AudioCommandDispatcher::reserveRecordingStop(CommandResponder& responder) {
+    const std::lock_guard lock(recordingStopMutex);
+    if (!recordingStopScheduled && !recordingStopWorkerStopping) {
+        recordingStopScheduled = true;
+        return true;
+    }
+    responder.fail("recordingBusy", "A recording stop is already pending.", "recording.stop");
+    return false;
+}
+
+void AudioCommandDispatcher::releaseRecordingStopReservation() {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        recordingStopScheduled = false;
+    }
+    recordingStopFinished.notify_all();
+}
+
+void AudioCommandDispatcher::queueRecordingStop(const PendingRecordingStop& pending) {
+    {
+        const std::lock_guard lock(recordingStopMutex);
+        pendingRecordingStop = pending;
+    }
+    recordingStopWake.notify_one();
+}
+
+void AudioCommandDispatcher::recordingStopWorkerLoop() {
+    for (;;) {
+        PendingRecordingStop pending;
+        {
+            std::unique_lock lock(recordingStopMutex);
+            recordingStopWake.wait(lock, [this] {
+                return recordingStopWorkerStopping || pendingRecordingStop.has_value();
+            });
+            if (recordingStopWorkerStopping && !pendingRecordingStop.has_value()) return;
+            pending = *pendingRecordingStop;
+            pendingRecordingStop.reset();
+        }
+
+        juce::String error;
+        const auto completed = context.pipeline.completeArrangeRecordingStop(pending, error);
+        if (completed != RealtimeRequest::accepted)
+            writeEvent(FaultSpec{{"recording", error, "recording.stop", {}}});
+        // The stop response reported the state at acceptance; this reports the applied stop.
+        writeEvent(currentStatus());
+
+        {
+            const std::lock_guard lock(recordingStopMutex);
+            recordingStopScheduled = false;
+        }
+        recordingStopFinished.notify_all();
+    }
+}
 
 void AudioCommandDispatcher::run(std::istream& input) {
     std::string line;
@@ -46,25 +125,87 @@ bool AudioCommandDispatcher::rejectWhileTimelineBusy(CommandResponder& responder
     return true;
 }
 
+bool AudioCommandDispatcher::rejectUnlessAccepted(CommandResponder& responder,
+                                                  const RealtimeRequest request,
+                                                  const juce::String& kind,
+                                                  const juce::String& error,
+                                                  const juce::String& operation) {
+    switch (request) {
+        case RealtimeRequest::accepted:
+            return false;
+        case RealtimeRequest::rejected:
+            responder.fail(kind, error, operation);
+            return true;
+        case RealtimeRequest::queueFull:
+            responder.fail("realtimeQueueFull", error, operation);
+            return true;
+    }
+    return true;
+}
+
+bool AudioCommandDispatcher::rejectUnlessQueued(CommandResponder& responder, const bool queued,
+                                                const juce::String& operation) {
+    if (queued) return false;
+    responder.fail("realtimeQueueFull", "The realtime command queue is full.", operation);
+    return true;
+}
+
 void AudioCommandDispatcher::handle(const StatusCommand&, CommandResponder responder) {
     responder.respond(currentStatus());
 }
 
+// Muting also silences instruments so held notes do not sound once unmuted.
 void AudioCommandDispatcher::handle(const SetEmergencyMuteCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setUserEmergencyMute(command.muted);
+    if (command.muted) {
+        context.pipeline.setUserEmergencyMute(true);
+        (void)context.timelineEngine.panicAllInstrumentTracks();
+    } else if (context.pipeline.hasMuteReason(MuteReason::UserEmergency)) {
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.emergencyMute")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.emergencyMute");
+            return;
+        }
+    }
+    if (!command.muted) context.pipeline.setUserEmergencyMute(false);
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetFeedbackProtectionCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setFeedbackProtection(command.active);
+    if (command.active) {
+        context.pipeline.setFeedbackProtection(true);
+        (void)context.timelineEngine.panicAllInstrumentTracks();
+    } else if (context.pipeline.hasMuteReason(MuteReason::FeedbackProtection)) {
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.feedbackProtection")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.feedbackProtection");
+            return;
+        }
+    }
+    if (!command.active) context.pipeline.setFeedbackProtection(false);
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const SetEngineTransitionMuteCommand& command,
                                     CommandResponder responder) {
-    context.pipeline.setEngineTransitionMute(command.active);
+    if (command.active) {
+        context.pipeline.setEngineTransitionMute(true);
+        (void)context.timelineEngine.panicAllInstrumentTracks();
+    } else if (context.pipeline.hasMuteReason(MuteReason::EngineTransition)) {
+        const auto panic = context.timelineEngine.panicAllInstrumentTracks();
+        if (rejectUnlessQueued(responder, panic.has_value(), "audio.engineTransitionMute")) return;
+        if (!context.timelineEngine.waitForCommandApplied(*panic, kSafetyMutePanicApplyTimeout)) {
+            responder.fail("timeout", "The panic command was not applied; the mute remains on.",
+                           "audio.engineTransitionMute");
+            return;
+        }
+    }
+    if (!command.active) context.pipeline.setEngineTransitionMute(false);
     responder.respond(currentStatus());
 }
 
@@ -75,21 +216,22 @@ void AudioCommandDispatcher::handle(const PreviewMasterGainDbCommand& command,
 }
 
 void AudioCommandDispatcher::handle(const TransportCommand& command, CommandResponder responder) {
-    switch (command.kind) {
-        case TransportCommandKind::play:
-            context.timelineEngine.play();
-            break;
-        case TransportCommandKind::setStarting:
-            context.timelineEngine.startPreparing();
-            break;
-        case TransportCommandKind::stop:
-            context.timelineEngine.stop();
-            break;
-        case TransportCommandKind::seek:
-            context.timelineEngine.seekToTick(command.tick);
-            break;
-    }
-    responder.respond(AudioStatusBuilder::currentTransport(context.timelineEngine));
+    auto& timeline = context.timelineEngine;
+    const auto accepted = [&]() -> std::optional<std::uint64_t> {
+        switch (command.kind) {
+            case TransportCommandKind::play:
+                return timeline.play();
+            case TransportCommandKind::setStarting:
+                return timeline.startPreparing();
+            case TransportCommandKind::stop:
+                return timeline.stop();
+            case TransportCommandKind::seek:
+                return timeline.seekToTick(command.tick);
+        }
+        return std::nullopt;
+    }();
+    if (rejectUnlessQueued(responder, accepted.has_value(), "timeline.transport")) return;
+    responder.respond(TransportAcceptedSpec{*accepted});
 }
 
 }  // namespace riffra

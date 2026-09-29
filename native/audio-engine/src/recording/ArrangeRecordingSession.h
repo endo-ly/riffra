@@ -55,6 +55,10 @@ public:
     void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                         const juce::MidiMessage& message,
                         std::uint64_t audioSample) noexcept override;
+    void writeMidiTrack(const juce::String& trackId, std::uint16_t sourceIndex,
+                        const juce::MidiMessage& message,
+                        std::uint64_t audioSample) noexcept override;
+    void setMidiSourceIds(const std::vector<juce::String>& sourceIds) override;
     void setCaptureRange(std::uint64_t startAudioSample, std::uint64_t endAudioSample,
                          std::uint64_t startTimelineSample,
                          std::uint64_t endTimelineSample) noexcept override;
@@ -85,6 +89,7 @@ private:
     struct MidiEvent final {
         std::uint64_t audioSample = 0;
         std::uint32_t trackIndex = 0;
+        std::optional<std::uint16_t> sourceIndex;
         std::array<char, 65> sourceDeviceId{};
         std::uint8_t sourceDeviceIdLength = 0;
         int status = 0;
@@ -124,10 +129,14 @@ private:
     ArrangeRecordingSession(juce::File directory, double sampleRate);
     bool initialise(const juce::var& configuration, juce::String& error);
     bool writeManifest(const juce::String& state, juce::String& error) const;
+    void captureMidiTrack(const juce::String& trackId, std::optional<std::uint16_t> sourceIndex,
+                          const juce::String& sourceDeviceId, const juce::MidiMessage& message,
+                          std::uint64_t audioSample) noexcept;
 
     juce::File directory;
     juce::File manifest;
     double sampleRate = 0.0;
+    std::vector<juce::String> midiSourceIds;
     std::uint64_t timelineStartTick = 0;
     bool loopEnabled = false;
     std::int64_t loopStartSample = 0;

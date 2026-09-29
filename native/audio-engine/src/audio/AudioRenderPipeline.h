@@ -33,6 +33,8 @@ public:
     AudioRenderPipeline& operator=(const AudioRenderPipeline&) = delete;
 
     // Control-side setters update atomic state consumed by processBlock().
+    // Muting does not silence timeline instruments; callers that need it
+    // request TimelineEngine::panicAllInstrumentTracks().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
     // Thread-safe; processBlock() also calls this when the realtime detector
@@ -43,6 +45,7 @@ public:
     [[nodiscard]] bool hasMuteReason(MuteReason reason) const noexcept;
     void setDeviceFaulted(bool faulted) noexcept;
     [[nodiscard]] bool isDeviceFaulted() const noexcept;
+    /// Any thread. processBlock() applies the gain of each published graph.
     void setMasterGainDb(float gainDb) noexcept;
     void setInputChannel(int channel) noexcept;
     [[nodiscard]] int getInputChannel() const noexcept;
@@ -91,20 +94,24 @@ public:
     [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
-    // Control-thread forwarding kept at the pipeline boundary while command
-    // dispatch is moved in a later phase.
-    bool startArrangeRecording(const juce::File& directory, TimelineEngine& timeline,
-                               juce::String& error) {
-        juce::ignoreUnused(timeline);
-        return recordingController.start(directory, error);
+    RealtimeRequest startArrangeRecording(const juce::File& directory, int countInBeats,
+                                          juce::String& error) {
+        return recordingController.start(directory, countInBeats, error);
     }
     void setRecordingFinalizationDispatcher(
         RecordingController::FinalizationDispatcher dispatcher) {
         recordingController.setFinalizationDispatcher(std::move(dispatcher));
     }
-    bool stopArrangeRecording(TimelineEngine& timeline, juce::String& error) {
-        juce::ignoreUnused(timeline);
+    RealtimeRequest stopArrangeRecording(juce::String& error) {
         return recordingController.stop(error);
+    }
+    RealtimeRequest requestArrangeRecordingStop(PendingRecordingStop& pending,
+                                                juce::String& error) {
+        return recordingController.requestStop(pending, error);
+    }
+    RealtimeRequest completeArrangeRecordingStop(const PendingRecordingStop& pending,
+                                                 juce::String& error) {
+        return recordingController.completeStop(pending, error);
     }
     std::unique_ptr<ArrangeRecordingSession> takeFinalizedRecording() noexcept {
         return recordingController.takePendingFinalization();
@@ -112,10 +119,6 @@ public:
     void completeArrangeRecordingProcessing(const ArrangeRecordingSummary& summary,
                                             const juce::String& error) {
         recordingController.completeProcessing(summary, error);
-    }
-    bool cancelArrangeRecording(TimelineEngine& timeline, juce::String& error) {
-        juce::ignoreUnused(timeline);
-        return recordingController.cancel(error);
     }
     bool startPreview(juce::AudioBuffer<float>& buffer, int startSample, int endSample, float gain,
                       bool loop, juce::String& error, int voiceKey = -1) {
@@ -147,9 +150,10 @@ public:
                       const juce::AudioIODeviceCallbackContext& context) noexcept;
 
     // Device lifecycle/control side only; these methods are separate from the
-    // audio callback.
+    // audio callback. They hand the timeline's realtime state to the audio
+    // thread and back.
     void prepare(juce::AudioIODevice* device);
-    void deviceStopped() noexcept;
+    void deviceStopped();
 
 private:
     static constexpr float kMinimumGainDb = -90.0f;
@@ -171,7 +175,6 @@ private:
     std::atomic<float> targetGainLinear{1.0f};
     std::atomic<float> masterGainDb{0.0f};
     std::atomic<int> inputChannel{0};
-    std::atomic<bool> panicRequested{false};
     std::atomic<bool> resetGainOnNextCallback{true};
     std::atomic<bool> feedbackSuspected{false};
     std::atomic<double> activeSampleRate{0.0};

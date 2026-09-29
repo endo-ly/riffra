@@ -158,7 +158,7 @@ describe('App native boundary', () => {
     await renderApp(api);
 
     await userEvent.click(screen.getByRole('button', { name: 'Play' }));
-    api.emitTransportStatus({ state: 'playing', sequence: 2 });
+    api.emitTransportStatus({ state: 'playing', appliedCommandSequence: 2 });
     rejectPlay(new Error('Cancelled previous transport request.'));
 
     await waitFor(() =>

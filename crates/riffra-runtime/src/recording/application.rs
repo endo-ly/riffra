@@ -235,7 +235,7 @@ pub fn stop_recording(context: &RecordingContext) -> Result<RecordingStopResult,
         .directory
         .clone()
         .or_else(|| before.and_then(|status| status.recording.directory));
-    if status.recording.processing || was_active {
+    if status.recording.processing || was_active || status.recording.active {
         let Some(directory) = directory else {
             return recording_stop_result(
                 context,
@@ -246,7 +246,6 @@ pub fn stop_recording(context: &RecordingContext) -> Result<RecordingStopResult,
             );
         };
         let directory_path = PathBuf::from(directory);
-        let _ = crate::recording::save_capture_completing(&directory_path);
         if let Err(error) = context.audio.begin_recording_finalization(&directory_path) {
             let error = error.to_string();
             let error = persist_finalization_failure(&directory_path, error);

@@ -22,6 +22,10 @@ public:
     virtual void writeMidiTrack(const juce::String& trackId, const juce::String& sourceDeviceId,
                                 const juce::MidiMessage& message,
                                 std::uint64_t audioSample) noexcept = 0;
+    virtual void writeMidiTrack(const juce::String& trackId, std::uint16_t sourceIndex,
+                                const juce::MidiMessage& message,
+                                std::uint64_t audioSample) noexcept = 0;
+    virtual void setMidiSourceIds(const std::vector<juce::String>& sourceIds) = 0;
     virtual void setCaptureRange(std::uint64_t startAudioSample, std::uint64_t endAudioSample,
                                  std::uint64_t startTimelineSample,
                                  std::uint64_t endTimelineSample) noexcept = 0;

@@ -10,35 +10,29 @@ void AudioCommandDispatcher::handle(const StartArrangeRecordingCommand& command,
         return;
     }
     juce::String recordingError;
-    if (!context.pipeline.startArrangeRecording(juce::File(command.directory),
-                                                context.timelineEngine, recordingError)) {
-        responder.fail("recording", recordingError, "recording.start");
+    const auto started = context.pipeline.startArrangeRecording(
+        juce::File(command.directory), command.countInBeats, recordingError);
+    if (rejectUnlessAccepted(responder, started, "recording", recordingError, "recording.start"))
         return;
-    }
-    if (!context.timelineEngine.startRecording(command.countInBeats, recordingError)) {
-        juce::String rollbackError;
-        (void)context.pipeline.stopArrangeRecording(context.timelineEngine, rollbackError);
-        responder.fail("recording", recordingError, "recording.start");
-        return;
-    }
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const StopArrangeRecordingCommand&,
                                     CommandResponder responder) {
+    if (!reserveRecordingStop(responder)) return;
+
     juce::String recordingError;
-    auto stopped = false;
-    if (context.timelineEngine.cancelRecordingIfCountingIn()) {
-        context.timelineEngine.stop();
-        stopped = context.pipeline.cancelArrangeRecording(context.timelineEngine, recordingError);
-    } else {
-        stopped = context.pipeline.stopArrangeRecording(context.timelineEngine, recordingError);
-    }
-    if (!stopped) {
-        responder.fail("recording", recordingError, "recording.stop");
+    PendingRecordingStop pending;
+    const auto requested = context.pipeline.requestArrangeRecordingStop(pending, recordingError);
+    if (rejectUnlessAccepted(responder, requested, "recording", recordingError, "recording.stop")) {
+        releaseRecordingStopReservation();
         return;
     }
-    responder.respond(currentStatus());
+
+    queueRecordingStop(pending);
+    auto status = currentStatus();
+    if (pending.cancelCountIn) status.recording.cancelled = true;
+    responder.respond(status);
 }
 
 }  // namespace riffra

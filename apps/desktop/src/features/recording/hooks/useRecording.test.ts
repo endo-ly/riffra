@@ -247,6 +247,41 @@ describe('useRecording', () => {
     expect(result.current.error).toBe('projection failed');
   });
 
+  it('keeps recording commands blocked while the accepted stop is still pending', async () => {
+    const activeAudio = fakeAudioStatus();
+    activeAudio.recording.active = true;
+    const api = new FakeNativeApi({ recordings: [], audio: activeAudio });
+    api.setResponse('stopArrangeRecording', {
+      canonical: canonicalState(defaultSession()),
+      audio: activeAudio,
+      projection: { state: 'notRequired' },
+      finalization: { state: 'processing' },
+    });
+    const { result } = renderHook(() =>
+      useRecordingHarness(api, sessionWithTrack(true), activeAudio),
+    );
+
+    await act(async () => {
+      await result.current.toggleRecording();
+    });
+
+    expect(result.current.audio.recording.active).toBe(true);
+    expect(result.current.recordingCommandPending).toBe(true);
+    await act(async () => {
+      await result.current.toggleRecording();
+      await result.current.startRecordingNow();
+    });
+    expect(api.calls.filter((call) => call === 'stopArrangeRecording')).toHaveLength(1);
+    expect(api.calls.filter((call) => call === 'startArrangeRecording')).toHaveLength(0);
+
+    act(() => {
+      const stoppedAudio = fakeAudioStatus();
+      stoppedAudio.recording.processing = true;
+      result.current.setAudio(stoppedAudio);
+    });
+    await waitFor(() => expect(result.current.recordingCommandPending).toBe(false));
+  });
+
   it('keeps a stopped take visible when finalization requires Inbox recovery', async () => {
     const activeAudio = fakeAudioStatus();
     activeAudio.recording.active = true;

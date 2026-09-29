@@ -152,8 +152,18 @@ public:
             loopBoundarySamples[static_cast<std::size_t>(loopBoundaryCount)] = audioClockSample;
         ++loopBoundaryCount;
     }
-    void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
-                        std::uint64_t) noexcept override {}
+    void writeMidiTrack(const juce::String&, const juce::String& sourceDeviceId,
+                        const juce::MidiMessage&, std::uint64_t) noexcept override {
+        receivedMidiSourceId = sourceDeviceId;
+    }
+    void writeMidiTrack(const juce::String&, const std::uint16_t sourceIndex,
+                        const juce::MidiMessage&, std::uint64_t) noexcept override {
+        receivedMidiSourceIndex = sourceIndex;
+    }
+    void setMidiSourceIds(const std::vector<juce::String>& sourceIds) override {
+        if (receivedMidiSourceIndex < sourceIds.size())
+            receivedMidiSourceId = sourceIds[receivedMidiSourceIndex];
+    }
     void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
                          std::uint64_t) noexcept override {}
 
@@ -185,6 +195,8 @@ public:
     }
 
     juce::String receivedTrack;
+    juce::String receivedMidiSourceId;
+    std::uint16_t receivedMidiSourceIndex = MidiSourceRegistry::kUnregistered;
     int receivedSamples = 0;
     int beginCount = 0;
     int endCount = 0;
@@ -244,6 +256,9 @@ public:
     void markLoopBoundary(std::uint64_t) noexcept override { ++boundaryCount; }
     void writeMidiTrack(const juce::String&, const juce::String&, const juce::MidiMessage&,
                         std::uint64_t) noexcept override {}
+    void writeMidiTrack(const juce::String&, std::uint16_t, const juce::MidiMessage&,
+                        std::uint64_t) noexcept override {}
+    void setMidiSourceIds(const std::vector<juce::String>&) override {}
     void setCaptureRange(std::uint64_t, std::uint64_t, std::uint64_t,
                          std::uint64_t) noexcept override {}
 
@@ -297,8 +312,8 @@ private:
 namespace {
 
 bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
-    if (!engine.finalizeRecording(error)) return false;
-    engine.stop();
+    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
+    if (!engine.stop()) return false;
     return engine.processFinalizedRecording(error);
 }
 
@@ -381,12 +396,12 @@ public:
                                         std::unique_ptr<juce::AudioProcessor> processor,
                                         const double sampleRate, const int blockSize,
                                         juce::String& error) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr) return false;
+        auto* const graph = committedGraph(engine);
+        if (graph == nullptr) return false;
         const auto found =
-            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end()) return false;
+        if (found == graph->tracks.end()) return false;
         auto& track = *(*found);
         return track.runtime != nullptr &&
                addChainDevice(track.runtime->effects(), deviceId, std::move(processor), sampleRate,
@@ -396,12 +411,12 @@ public:
     static bool installTrackInstrument(TimelineEngine& engine, const juce::String& trackId,
                                        const juce::String& deviceId,
                                        std::unique_ptr<PluginRack> rack) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr) return false;
+        auto* const graph = committedGraph(engine);
+        if (graph == nullptr) return false;
         const auto found =
-            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        if (found == graph->tracks.end() || (*found)->runtime == nullptr) return false;
         auto& track = *(*found);
         track.instrumentDeviceId = deviceId;
         track.instrument = Vst3InstrumentSpec{deviceId, "test-instrument.vst3", {}};
@@ -411,12 +426,12 @@ public:
 
     static bool setPlaybackCompensationForTest(TimelineEngine& engine, const juce::String& trackId,
                                                const std::int64_t samples) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr) return false;
+        auto* const graph = committedGraph(engine);
+        if (graph == nullptr) return false;
         const auto found =
-            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end()) return false;
+        if (found == graph->tracks.end()) return false;
         auto& track = *(*found);
         if (track.runtime == nullptr) return false;
         track.runtime->compensationDelaySamples = samples;
@@ -430,27 +445,47 @@ public:
     }
 
     static bool cachePluginTailForTest(TimelineEngine& engine, const juce::String& trackId) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr) return false;
+        auto* const graph = committedGraph(engine);
+        if (graph == nullptr) return false;
         const auto found =
-            std::find_if(engine.timeline->tracks.begin(), engine.timeline->tracks.end(),
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
                          [&trackId](const auto& item) { return item->id == trackId; });
-        if (found == engine.timeline->tracks.end() || (*found)->runtime == nullptr) return false;
+        if (found == graph->tracks.end() || (*found)->runtime == nullptr) return false;
         auto& runtime = *(*found)->runtime;
         runtime.pluginTailSamples = runtime.totalPluginTailSamples();
         return true;
     }
 
-    static void beginAudioReadForTest(TimelineEngine& engine) {
-        TimelineEngine::PreparedTimeline* active = nullptr;
-        engine.beginAudioRead(active);
+    static PreparedTimeline* committedGraph(TimelineEngine& engine) {
+        return engine.graphRegistry.access(
+            [](ControlGraphRegistry::State& graphs) { return graphs.latestCommitted; });
     }
 
-    static void endAudioReadForTest(TimelineEngine& engine) { engine.endAudioRead(); }
+    static PreparedTimeline* pendingGraph(TimelineEngine& engine) {
+        return engine.graphRegistry.access(
+            [](ControlGraphRegistry::State& graphs) { return graphs.pending.get(); });
+    }
 
-    static std::size_t retiredTimelineCount(const TimelineEngine& engine) {
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        return engine.retiredTimelines.size();
+    static bool hasRecordingSink(TimelineEngine& engine) {
+        return static_cast<bool>(engine.recordingCapture->acquireSink());
+    }
+
+    static std::uint64_t nextCommandSequence(TimelineEngine& engine) {
+        const std::lock_guard lock(engine.ownerMutex);
+        return engine.nextCommandSequence;
+    }
+
+    static std::size_t realtimeCommandCapacity() noexcept {
+        return TimelineEngine::kRealtimeCommandCapacity;
+    }
+
+    /// Opens one block as the audio callback does and reports its capture window.
+    static bool recordingWindow(TimelineEngine& engine, const int sampleCount, int& captureOffset,
+                                int& capturedSamples) {
+        (void)engine.beginBlock(sampleCount);
+        captureOffset = engine.realtime.captureBlockOffset;
+        capturedSamples = engine.realtime.captureBlockSamples;
+        return capturedSamples > 0;
     }
 
     static bool trackEffectChainProcessesOnce() {
@@ -464,9 +499,9 @@ public:
             return false;
         std::vector<int> processOrder;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& track = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& track = *graph->tracks.front();
             if (track.runtime == nullptr ||
                 !addChainDevice(track.runtime->effects(), "effect:first",
                                 std::make_unique<TestChainProcessor>(1, 1.0f, 0, processOrder),
@@ -478,7 +513,7 @@ public:
         }
 
         // Act
-        engine.play();
+        if (!engine.play()) return false;
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         std::array<float*, 2> outputs{left.data(), right.data()};
@@ -522,13 +557,13 @@ public:
         // Act
         if (!engine.loadSnapshot(second, formats, 48'000.0, 32, error, false) ||
             !engine.preparedTrackReusesRuntimeDevices("track:state") ||
-            !engine.commitPreparedSnapshot(error))
+            !(engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted))
             return false;
 
         // Assert
-        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-        if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-        const auto& runtime = *engine.timeline->tracks.front()->runtime;
+        auto* const graph = committedGraph(engine);
+        if (graph == nullptr || graph->tracks.size() != 1) return false;
+        const auto& runtime = *graph->tracks.front()->runtime;
         return runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() == rackPointer &&
                runtime.gainDb == -6.0f && runtime.pan == 0.5f && runtime.muted && runtime.solo &&
                runtime.armed && runtime.midiClips.size() == 1 && !runtime.volumeAutomation.empty();
@@ -548,9 +583,9 @@ public:
         if (rack == nullptr) return false;
         auto* rackPointer = rack.get();
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& track = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& track = *graph->tracks.front();
             if (track.runtime == nullptr) return false;
             track.instrumentDeviceId = "instrument:editor";
             track.instrument = Vst3InstrumentSpec{"instrument:editor", "test-instrument.vst3", {}};
@@ -561,7 +596,7 @@ public:
         if (!engine.mirrorEditorDeviceParameter("track:editor-instrument", "instrument:editor", 0,
                                                 0.75f, error))
             return false;
-        engine.play();
+        if (!engine.play()) return false;
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         std::array<float*, 2> outputs{left.data(), right.data()};
@@ -588,9 +623,9 @@ public:
         if (rack == nullptr) return false;
         auto* rackPointer = rack.get();
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& track = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& track = *graph->tracks.front();
             if (track.runtime == nullptr) return false;
             track.instrumentDeviceId = "instrument:plugin-state";
             track.instrument =
@@ -626,9 +661,9 @@ public:
                                                 32, error);
         if (rack == nullptr) return false;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& track = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& track = *graph->tracks.front();
             if (track.runtime == nullptr) return false;
             track.instrumentDeviceId = "instrument:plugin-program";
             track.instrument =
@@ -658,9 +693,9 @@ public:
             std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (instrumentRack == nullptr) return false;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& liveTrack = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& liveTrack = *graph->tracks.front();
             if (liveTrack.runtime == nullptr) return false;
             liveTrack.runtime->setInstrument(
                 Vst3InstrumentRuntime::fromRack(std::move(instrumentRack)));
@@ -670,10 +705,13 @@ public:
             liveTrack.runtime->compensationDelaySamples = 4;
         }
 
-        if (!engine.setLiveMidiTarget("track:live-instrument", error)) return false;
+        if (!(engine.setLiveMidiTarget("track:live-instrument", error) ==
+              RealtimeRequest::accepted))
+            return false;
 
-        if (!engine.enqueueTargetedMidi("track:live-instrument",
-                                        juce::MidiMessage::noteOn(1, 60, 0.8f), error))
+        if (!(engine.enqueueTargetedMidi("track:live-instrument",
+                                         juce::MidiMessage::noteOn(1, 60, 0.8f),
+                                         error) == RealtimeRequest::accepted))
             return false;
 
         std::array<float, 32> left{};
@@ -730,15 +768,16 @@ public:
                                                             std::move(rack)))
             return false;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.empty()) return false;
-            engine.timeline->tracks.front()->runtime->compensationDelaySamples = 4;
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.empty()) return false;
+            graph->tracks.front()->runtime->compensationDelaySamples = 4;
         }
-        if (!engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f), error))
+        if (!(engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f),
+                                         error) == RealtimeRequest::accepted))
             return false;
 
         // Act
-        engine.play();
+        if (!engine.play()) return false;
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         const std::array<float*, 2> outputs{left.data(), right.data()};
@@ -763,9 +802,9 @@ public:
             std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
         if (rack == nullptr) return false;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.timeline == nullptr || engine.timeline->tracks.size() != 1) return false;
-            auto& panicTrack = *engine.timeline->tracks.front();
+            auto* const graph = committedGraph(engine);
+            if (graph == nullptr || graph->tracks.size() != 1) return false;
+            auto& panicTrack = *graph->tracks.front();
             if (panicTrack.runtime == nullptr) return false;
             panicTrack.runtime->setInstrument(Vst3InstrumentRuntime::fromRack(std::move(rack)));
         }
@@ -774,9 +813,9 @@ public:
         std::array<float, 32> left{};
         std::array<float, 32> right{};
         std::array<float*, 2> outputs{left.data(), right.data()};
-        engine.panicAllInstrumentTracks();
+        if (!engine.panicAllInstrumentTracks()) return false;
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-        engine.play();
+        if (!engine.play()) return false;
         engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
 
         // Assert
@@ -793,7 +832,7 @@ public:
         if (!loadTestSnapshot(engine, snapshot, formats, 48'000.0, 256, error) ||
             !loadTestSnapshot(engine, snapshot, formats, 48'000.0, 256, error, false) ||
             !engine.preparedTrackReusesRuntimeDevices("track:audio-device") ||
-            !engine.commitPreparedSnapshot(error))
+            !(engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted))
             return false;
 
         // Act
@@ -806,20 +845,20 @@ public:
         double trackSampleRate = 0.0;
         bool reusesRuntimeDevices = true;
         {
-            const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-            if (engine.pendingTimeline == nullptr || engine.pendingTimeline->tracks.empty())
-                return false;
-            preparedSampleRate = engine.pendingTimeline->outputSampleRate;
-            preparedBlockSize = engine.pendingTimeline->preparedBlockSize;
-            trackSampleRate = engine.pendingTimeline->tracks.front()->runtime->outputSampleRate;
-            reusesRuntimeDevices = engine.pendingTimeline->tracks.front()->reuseRuntimeDevices;
+            auto* const pending = pendingGraph(engine);
+            if (pending == nullptr || pending->tracks.empty()) return false;
+            preparedSampleRate = pending->outputSampleRate;
+            preparedBlockSize = pending->preparedBlockSize;
+            trackSampleRate = pending->tracks.front()->runtime->outputSampleRate;
+            reusesRuntimeDevices = pending->tracks.front()->reuseRuntimeDevices;
         }
         if (reusesRuntimeDevices || std::abs(preparedSampleRate - 44'100.0) > 0.1 ||
             preparedBlockSize != 1024 || std::abs(trackSampleRate - 44'100.0) > 0.1)
             return false;
 
         // Assert
-        if (!engine.commitPreparedSnapshot(error)) return false;
+        if (!(engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted)) return false;
+        (void)engine.beginBlock(1024);
         const auto status = engine.status();
         return status.graph.has_value() && std::abs(status.graph->sampleRate - 44'100.0) <= 0.1;
     }
@@ -914,7 +953,7 @@ public:
                 graphUpdateReusedDevices =
                     loadTestSnapshot(engine, snapshot, formats, 48000.0, 512, error, false) &&
                     engine.preparedTrackReusesRuntimeDevices("track:test") &&
-                    engine.commitPreparedSnapshot(error);
+                    (engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted);
                 OfflineRenderer::Result offlineResult;
                 const auto offlineOutput = directory.getChildFile("offline-selection.wav");
                 if (renderTestSnapshot(snapshot.graph, formats, offlineOutput, 480, 1440, 48000,
@@ -946,8 +985,8 @@ public:
                         }
                     }
                 }
-                engine.seekToTick(0);
-                engine.play();
+                if (!engine.seekToTick(0)) return false;
+                if (!engine.play()) return false;
                 std::array<float, 512> left{};
                 std::array<float, 512> right{};
                 std::array<float*, 2> channels{left.data(), right.data()};
@@ -965,13 +1004,13 @@ public:
                 const auto peak = std::max(*std::max_element(left.begin(), left.end()),
                                            *std::max_element(right.begin(), right.end()));
                 mixed = peak > 0.1f;
-                engine.seekToTick(960);
+                if (!engine.seekToTick(960)) return false;
                 const auto seekStatus = engine.status();
-                seeked = seekStatus.timelineSample == 24000;
+                seeked = seekStatus.frame.timelineSample == 24000;
 
                 CaptureIsolationSink captureSink(directory);
                 engine.setRecordingSink(&captureSink);
-                engine.seekToTick(0);
+                if (!engine.seekToTick(0)) return false;
                 int captureOffset = 0;
                 int captureSamples = 0;
                 std::array<float, 512> physicalInput{};
@@ -980,14 +1019,16 @@ public:
                 std::array<float, 512> captureRight{};
                 const std::array<const float*, 1> physicalInputs{physicalInput.data()};
                 const std::array<float*, 2> captureOutputs{captureLeft.data(), captureRight.data()};
-                const auto captureStarted = engine.startRecording(0, error);
+                const auto captureStarted =
+                    (engine.startRecording(0, error) == RealtimeRequest::accepted);
                 const auto captureWindow =
-                    captureStarted && engine.recordingWindow(static_cast<int>(physicalInput.size()),
-                                                             captureOffset, captureSamples);
+                    captureStarted &&
+                    recordingWindow(engine, static_cast<int>(physicalInput.size()), captureOffset,
+                                    captureSamples);
                 if (captureWindow)
                     engine.mix(physicalInputs.data(), 1, captureOutputs.data(), 2,
                                static_cast<int>(physicalInput.size()));
-                engine.stopRecording();
+                if (!engine.stopRecording(error)) return false;
                 const auto captureFinalized = finalizeCapturedRecording(engine, error);
                 engine.clearRecordingSink();
                 recordingTapIsolated =
@@ -1013,7 +1054,7 @@ public:
                 if (loopSnapshotLoaded) {
                     CaptureIsolationSink loopCaptureSink(directory);
                     engine.setRecordingSink(&loopCaptureSink);
-                    engine.seekToTick(0);
+                    if (!engine.seekToTick(0)) return false;
                     int loopCaptureOffset = 0;
                     int loopCaptureSamples = 0;
                     constexpr int loopPassSamples = 24'000;
@@ -1026,11 +1067,12 @@ public:
                     const std::array<const float*, 1> loopInputs{loopAudioInput.data()};
                     const std::array<float*, 2> loopOutputs{loopOutputLeft.data(),
                                                             loopOutputRight.data()};
-                    const auto loopRecordingStarted = engine.startRecording(0, error);
+                    const auto loopRecordingStarted =
+                        (engine.startRecording(0, error) == RealtimeRequest::accepted);
                     const auto loopWindowed =
                         loopRecordingStarted &&
-                        engine.recordingWindow(loopTotalSamples, loopCaptureOffset,
-                                               loopCaptureSamples);
+                        recordingWindow(engine, loopTotalSamples, loopCaptureOffset,
+                                        loopCaptureSamples);
                     auto loopRemaining = loopTotalSamples;
                     while (loopWindowed && loopRemaining > loopBlockSamples) {
                         engine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, loopBlockSamples);
@@ -1038,7 +1080,7 @@ public:
                     }
                     if (loopWindowed && loopRemaining > 0)
                         engine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, loopRemaining);
-                    engine.stopRecording();
+                    if (!engine.stopRecording(error)) return false;
                     finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     loopCaptureSegments =
@@ -1074,15 +1116,15 @@ public:
                     constexpr int kImpulsePos[kSynthPasses] = {256, 1256, 2256};
                     LoopDataCaptureSink synthSink(directory, "synth");
                     engine.setRecordingSink(&synthSink);
-                    engine.seekToTick(0);
+                    if (!engine.seekToTick(0)) return false;
                     int synthOffset = 0;
                     int synthSamples = 0;
-                    const auto synthStarted = engine.startRecording(0, error);
+                    const auto synthStarted =
+                        (engine.startRecording(0, error) == RealtimeRequest::accepted);
                     const auto synthWindowed =
                         synthStarted &&
-                        engine.recordingWindow(kSynthTotal, synthOffset, synthSamples);
-                    const auto clockBefore =
-                        engine.audioClockSample.load(std::memory_order_acquire);
+                        recordingWindow(engine, kSynthTotal, synthOffset, synthSamples);
+                    const auto clockBefore = engine.realtime.audioClockSample;
                     std::array<float, kSynthBlock> synthInput{};
                     std::array<float, kSynthBlock> synthOutL{};
                     std::array<float, kSynthBlock> synthOutR{};
@@ -1100,26 +1142,23 @@ public:
                             synthInput[static_cast<std::size_t>(kImpulsePos[passIndex] -
                                                                 posInPass)] = kImpulseAmplitude;
                         }
-                        const auto prevClock =
-                            engine.audioClockSample.load(std::memory_order_acquire);
+                        const auto prevClock = engine.realtime.audioClockSample;
                         engine.mix(synthInputs.data(), 1, synthOutputs.data(), 2, block);
-                        const auto newClock =
-                            engine.audioClockSample.load(std::memory_order_acquire);
+                        const auto newClock = engine.realtime.audioClockSample;
                         if (newClock != prevClock + static_cast<std::uint64_t>(block))
                             synthClockContinuous = false;
                         synthMixed += block;
                     }
-                    engine.stopRecording();
+                    if (!engine.stopRecording(error)) return false;
                     finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
-                    const auto clockAfter = engine.audioClockSample.load(std::memory_order_acquire);
+                    const auto clockAfter = engine.realtime.audioClockSample;
                     // Verify: audio clock advanced continuously by total mixed samples
                     const bool synthClockOk =
                         synthClockContinuous &&
                         clockAfter == clockBefore + static_cast<std::uint64_t>(synthMixed);
                     // Verify: timeline wrapped (position < loopLength after stop)
-                    const auto finalPosition =
-                        engine.timelineSample.load(std::memory_order_acquire);
+                    const auto finalPosition = engine.realtime.timelineSample;
                     const bool synthTimelineWrapped =
                         finalPosition >= 0 && finalPosition < kSynthLoopLength;
                     // Verify: 3 segments, 3 boundaries
@@ -1170,9 +1209,9 @@ public:
                     constexpr int kPartialBlock = 512;
                     // Reset delay (may have been set by a previous test with reuseRuntimeDevices)
                     {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
+                        auto* const graph = committedGraph(engine);
+                        if (graph != nullptr) {
+                            for (auto& trackPtr : graph->tracks) {
                                 if (trackPtr->runtime != nullptr &&
                                     !trackPtr->runtime->instrumentTrack &&
                                     trackPtr->runtime->armed) {
@@ -1184,13 +1223,14 @@ public:
                     }
                     LoopDataCaptureSink partialSink(directory, "partial");
                     engine.setRecordingSink(&partialSink);
-                    engine.seekToTick(480);  // tick 480 = sample 12000
+                    if (!engine.seekToTick(480)) return false;  // tick 480 = sample 12000
                     int partialOffset = 0;
                     int partialSamples = 0;
-                    const auto partialStarted = engine.startRecording(0, error);
+                    const auto partialStarted =
+                        (engine.startRecording(0, error) == RealtimeRequest::accepted);
                     const auto partialWindowed =
                         partialStarted &&
-                        engine.recordingWindow(kPartialTotal, partialOffset, partialSamples);
+                        recordingWindow(engine, kPartialTotal, partialOffset, partialSamples);
                     std::array<float, kPartialBlock> partialInput{};
                     partialInput.fill(0.05f);
                     std::array<float, kPartialBlock> partialOutL{};
@@ -1204,7 +1244,7 @@ public:
                         engine.mix(partialInputs.data(), 1, partialOutputs.data(), 2, block);
                         partialMixed += block;
                     }
-                    engine.stopRecording();
+                    if (!engine.stopRecording(error)) return false;
                     finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Expected: 3 segments (partial 12000, full 24000, full 24000)
@@ -1253,12 +1293,13 @@ public:
                     constexpr int kBsImpulsePos = 500;
                     LoopDataCaptureSink bsSink(directory, "blocksize");
                     engine.setRecordingSink(&bsSink);
-                    engine.seekToTick(0);
+                    if (!engine.seekToTick(0)) return false;
                     int bsOffset = 0;
                     int bsSamples = 0;
-                    const auto bsStarted = engine.startRecording(0, error);
+                    const auto bsStarted =
+                        (engine.startRecording(0, error) == RealtimeRequest::accepted);
                     const auto bsWindowed =
-                        bsStarted && engine.recordingWindow(kBsTotal, bsOffset, bsSamples);
+                        bsStarted && recordingWindow(engine, kBsTotal, bsOffset, bsSamples);
                     std::array<float, kBsBlock> bsInput{};
                     std::array<float, kBsBlock> bsOutL{};
                     std::array<float, kBsBlock> bsOutR{};
@@ -1273,7 +1314,7 @@ public:
                         engine.mix(bsInputs.data(), 1, bsOutputs.data(), 2, kBsBlock);
                         bsMixed += kBsBlock;
                     }
-                    engine.stopRecording();
+                    if (!engine.stopRecording(error)) return false;
                     finalizeCapturedRecording(engine, error);
                     engine.clearRecordingSink();
                     // Verify: processed length matches raw, impulse at correct position
@@ -1301,9 +1342,9 @@ public:
                     constexpr int kLongBlock = 512;
                     // Reset delay (may have been set by a previous test with reuseRuntimeDevices)
                     {
-                        const juce::SpinLock::ScopedLockType lock(engine.timelineLock);
-                        if (engine.timeline != nullptr) {
-                            for (auto& trackPtr : engine.timeline->tracks) {
+                        auto* const graph = committedGraph(engine);
+                        if (graph != nullptr) {
+                            for (auto& trackPtr : graph->tracks) {
                                 if (trackPtr->runtime != nullptr &&
                                     !trackPtr->runtime->instrumentTrack &&
                                     trackPtr->runtime->armed) {
@@ -1319,13 +1360,14 @@ public:
                     if (loadTestSnapshot(engine, longSnapshot, formats, 48000.0, 512, error)) {
                         LoopDataCaptureSink longSink(directory, "longrec");
                         engine.setRecordingSink(&longSink);
-                        engine.seekToTick(0);
+                        if (!engine.seekToTick(0)) return false;
                         int longOffset = 0;
                         int longSamples = 0;
-                        const auto longStarted = engine.startRecording(0, error);
+                        const auto longStarted =
+                            (engine.startRecording(0, error) == RealtimeRequest::accepted);
                         const auto longWindowed =
                             longStarted &&
-                            engine.recordingWindow(kLongTotal, longOffset, longSamples);
+                            recordingWindow(engine, kLongTotal, longOffset, longSamples);
                         std::array<float, kLongBlock> longInput{};
                         longInput.fill(0.02f);
                         std::array<float, kLongBlock> longOutL{};
@@ -1338,7 +1380,7 @@ public:
                             engine.mix(longInputs.data(), 1, longOutputs.data(), 2, block);
                             longMixed += block;
                         }
-                        engine.stopRecording();
+                        if (!engine.stopRecording(error)) return false;
                         finalizeCapturedRecording(engine, error);
                         engine.clearRecordingSink();
                         // Verify: all 130 passes recorded, raw/processed match
@@ -1371,19 +1413,17 @@ public:
 
                         // 3 full passes. AudioRenderPipeline owns transport stop and capture
                         // detachment; this test completes the detached offline job explicitly.
-                        engine.seekToTick(0);
+                        if (!engine.seekToTick(0)) return false;
                         auto prodDir = directory.getChildFile("prod-writer");
                         AudioRenderPipeline prodCallback(engine);
                         juce::String sessionError;
                         const auto prodArrangeStarted =
-                            prodCallback.recording().start(prodDir, sessionError);
-                        if (prodArrangeStarted) {
+                            prodCallback.recording().start(prodDir, 0, sessionError);
+                        if (prodArrangeStarted == RealtimeRequest::accepted) {
                             int prodOffset = 0;
                             int prodSamples = 0;
-                            const auto prodStarted = engine.startRecording(0, error);
                             const auto prodWindowed =
-                                prodStarted &&
-                                engine.recordingWindow(kProdTotal, prodOffset, prodSamples);
+                                recordingWindow(engine, kProdTotal, prodOffset, prodSamples);
                             std::array<float, kProdBlock> prodIn{};
                             prodIn.fill(0.06f);
                             std::array<float, kProdBlock> prodOutL{};
@@ -1400,7 +1440,8 @@ public:
                             }
                             const auto preStopStatus = prodCallback.recording().status();
                             juce::String stopError;
-                            const auto stopOk = prodCallback.recording().stop(stopError);
+                            const auto stopOk = prodCallback.recording().stop(stopError) ==
+                                                RealtimeRequest::accepted;
                             auto detached = prodCallback.takeFinalizedRecording();
                             const auto processed =
                                 detached != nullptr &&
@@ -1412,8 +1453,6 @@ public:
                                 if (stopError.isNotEmpty()) stopError << " ";
                                 stopError << finishError;
                             }
-                            engine.stop();
-
                             const auto rawFile = prodDir.getChildFile("tracks/0000/raw.wav");
                             const auto processedFile =
                                 prodDir.getChildFile("tracks/0000/processed.wav");
@@ -1479,7 +1518,7 @@ public:
                         }
 
                         // Partial pass: start mid-loop, record partial+full+partial
-                        engine.seekToTick(7680);
+                        if (!engine.seekToTick(7680)) return false;
                         auto partialConfig = engine.recordingConfiguration();
                         juce::String partialSessionError;
                         auto partialDir = directory.getChildFile("prod-writer-partial");
@@ -1490,10 +1529,11 @@ public:
                             constexpr int kPartialTotal = 768'000;
                             int partialOffset = 0;
                             int partialSamples = 0;
-                            const auto partialStarted = engine.startRecording(0, error);
+                            const auto partialStarted =
+                                (engine.startRecording(0, error) == RealtimeRequest::accepted);
                             const auto partialWindowed =
-                                partialStarted && engine.recordingWindow(
-                                                      kPartialTotal, partialOffset, partialSamples);
+                                partialStarted && recordingWindow(engine, kPartialTotal,
+                                                                  partialOffset, partialSamples);
                             std::array<float, kProdBlock> partIn{};
                             partIn.fill(0.06f);
                             std::array<float, kProdBlock> partOutL{};
@@ -1508,7 +1548,7 @@ public:
                                 partMixed += block;
                                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             }
-                            engine.stopRecording();
+                            if (!engine.stopRecording(error)) return false;
                             const auto finalized = finalizeCapturedRecording(engine, error);
                             engine.clearRecordingSink();
                             juce::String finishError;
@@ -1580,42 +1620,43 @@ public:
                     loadTestSnapshot(engine, punchSnapshot, formats, 48000.0, 512, error)) {
                     int punchOffset = 0;
                     int punchSamples = 0;
-                    engine.seekToTick(480);
+                    if (!engine.seekToTick(480)) return false;
                     error.clear();
-                    const auto punchStarted = engine.startRecording(0, error);
+                    const auto punchStarted =
+                        (engine.startRecording(0, error) == RealtimeRequest::accepted);
                     punchWindowed = punchStarted &&
-                                    engine.recordingWindow(512, punchOffset, punchSamples) &&
+                                    recordingWindow(engine, 512, punchOffset, punchSamples) &&
                                     punchOffset == 0 && punchSamples == 512;
                     if (!punchStarted && error.isEmpty())
                         error = "Punch self-test could not start Arrange recording.";
-                    engine.stopRecording();
-                    engine.stop();
-                    engine.seekToTick(480);
-                    if (engine.startRecording(0, error)) {
+                    if (!engine.stopRecording(error)) return false;
+                    if (!engine.stop()) return false;
+                    if (!engine.seekToTick(480)) return false;
+                    if ((engine.startRecording(0, error) == RealtimeRequest::accepted)) {
                         int immediateOffset = 0;
                         int immediateSamples = 0;
                         std::array<float, 512> immediateOutput{};
                         std::array<float*, 1> immediateChannels{immediateOutput.data()};
                         const auto immediateWindow =
-                            engine.recordingWindow(static_cast<int>(immediateOutput.size()),
-                                                   immediateOffset, immediateSamples);
+                            recordingWindow(engine, static_cast<int>(immediateOutput.size()),
+                                            immediateOffset, immediateSamples);
                         engine.mix(immediateChannels.data(), 1,
                                    static_cast<int>(immediateOutput.size()));
                         const auto immediateStatus = engine.status();
                         immediateRecordStarted =
                             immediateWindow && immediateOffset == 0 && immediateSamples == 512 &&
-                            immediateStatus.transportState == TransportState::playing &&
-                            immediateStatus.timelineSample == 12'512;
-                        engine.stopRecording();
-                        engine.stop();
-                        engine.seekToTick(480);
+                            immediateStatus.frame.transportState == TransportState::playing &&
+                            immediateStatus.frame.timelineSample == 12'512;
+                        if (!engine.stopRecording(error)) return false;
+                        if (!engine.stop()) return false;
+                        if (!engine.seekToTick(480)) return false;
                     }
-                    if (engine.startRecording(1, error)) {
+                    if ((engine.startRecording(1, error) == RealtimeRequest::accepted)) {
                         int countInOffset = 0;
                         int countInSamples = 0;
                         constexpr int countInBlockSamples = 24'128;
-                        const auto countInWindow = engine.recordingWindow(
-                            countInBlockSamples, countInOffset, countInSamples);
+                        const auto countInWindow = recordingWindow(engine, countInBlockSamples,
+                                                                   countInOffset, countInSamples);
                         std::vector<float> countInOutput(countInBlockSamples);
                         std::array<float*, 1> countInChannels{countInOutput.data()};
                         engine.mix(countInChannels.data(), 1,
@@ -1624,24 +1665,24 @@ public:
                                             static_cast<int>(countInOutput.size()));
                         countInAligned = countInWindow && countInOffset == 24'000 &&
                                          countInSamples == 128 &&
-                                         engine.status().timelineSample == 12'128;
+                                         engine.status().frame.timelineSample == 12'128;
                         countInAudible =
                             *std::max_element(countInOutput.begin(), countInOutput.end()) > 0.0f;
-                        engine.stopRecording();
+                        if (!engine.stopRecording(error)) return false;
                     }
-                    engine.stop();
-                    engine.seekToTick(480);
-                    if (engine.startRecording(2, error)) {
+                    if (!engine.stop()) return false;
+                    if (!engine.seekToTick(480)) return false;
+                    if ((engine.startRecording(2, error) == RealtimeRequest::accepted)) {
                         int cancelledOffset = 0;
                         int cancelledSamples = 0;
                         countInCancelled =
-                            engine.cancelRecordingIfCountingIn() &&
-                            engine.status().recordingPhase == RecordingPhase::idle &&
-                            !engine.recordingWindow(512, cancelledOffset, cancelledSamples) &&
+                            (engine.stopArrangeRecording(error) == RealtimeRequest::accepted) &&
+                            engine.status().frame.recordingPhase == RecordingPhase::idle &&
+                            !recordingWindow(engine, 512, cancelledOffset, cancelledSamples) &&
                             cancelledSamples == 0;
                     }
-                    engine.play();
-                    engine.seekToTick(0);
+                    if (!engine.play()) return false;
+                    if (!engine.seekToTick(0)) return false;
                     std::array<float, 24000> silent{};
                     std::array<float*, 1> silentChannels{silent.data()};
                     engine.mix(silentChannels.data(), 1, static_cast<int>(silent.size()));
@@ -1649,7 +1690,7 @@ public:
                     std::array<float*, 1> loopBoundaryChannels{loopBoundary.data()};
                     engine.mix(loopBoundaryChannels.data(), 1,
                                static_cast<int>(loopBoundary.size()));
-                    looped = engine.status().timelineSample == 0;
+                    looped = engine.status().frame.timelineSample == 0;
                     std::array<float, 512> clicks{};
                     std::array<float*, 1> clickChannels{clicks.data()};
                     engine.mixMetronome(clickChannels.data(), 1, static_cast<int>(clicks.size()));

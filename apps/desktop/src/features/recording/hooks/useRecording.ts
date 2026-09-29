@@ -33,6 +33,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   const hostGeneration = options.hostGeneration ?? 0;
   const [recordings, setRecordings] = useState<RecordingAsset[]>([]);
   const [recordingCommandPending, setRecordingCommandPending] = useState(false);
+  const [recordingStopPending, setRecordingStopPending] = useState(false);
   const recordingCommandLock = useRef(false);
   const currentHostGeneration = useRef(hostGeneration);
   currentHostGeneration.current = hostGeneration;
@@ -49,7 +50,12 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
     recordingCommandLock.current = false;
     setRecordings([]);
     setRecordingCommandPending(false);
+    setRecordingStopPending(false);
   }, [hostGeneration]);
+
+  useEffect(() => {
+    if (!audio.recording.active || audio.recording.processing) setRecordingStopPending(false);
+  }, [audio.recording.active, audio.recording.processing]);
 
   const reloadRecordings = useCallback(async () => {
     const requestGeneration = hostGeneration;
@@ -97,6 +103,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
 
   const startRecordingNow = useCallback(
     async (recordingSessionId?: string) => {
+      if (recordingStopPending) return false;
       const succeeded = await runRecordingCommand(
         async () => {
           const nextAudio = await (recordingSessionId
@@ -116,16 +123,18 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
       runRecordingCommand,
       setAudio,
       startArrangeRecording,
+      recordingStopPending,
     ],
   );
 
   const toggleRecording = useCallback(async () => {
-    if (audio.recording.processing) return;
+    if (audio.recording.processing || recordingStopPending) return;
     if (audio.recording.active) {
       const succeeded = await runRecordingCommand(async () => {
         const result = await stopArrangeRecording();
         if (currentHostGeneration.current !== hostGeneration) return;
         setAudio(result.audio);
+        if (result.audio.recording.active) setRecordingStopPending(true);
         applyArrangementMutation(result, applyCanonicalState, onProjectionFailure);
         if (result.finalization.state === 'recoveryRequired') {
           onFinalizationFailure(result.finalization.message);
@@ -139,6 +148,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   }, [
     audio.recording.active,
     audio.recording.processing,
+    recordingStopPending,
     hostGeneration,
     refreshRecordings,
     runRecordingCommand,
@@ -153,7 +163,7 @@ export function useRecording(api: RecordingFeatureApi, options: UseRecordingOpti
   return {
     recordings,
     reloadRecordings,
-    recordingCommandPending,
+    recordingCommandPending: recordingCommandPending || recordingStopPending,
     startRecordingNow,
     toggleRecording,
   };

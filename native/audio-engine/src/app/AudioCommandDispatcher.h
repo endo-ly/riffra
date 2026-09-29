@@ -3,8 +3,13 @@
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <istream>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <thread>
 
 #include "AudioStatusBuilder.h"
 #include "audio/AudioRenderPipeline.h"
@@ -12,6 +17,7 @@
 #include "device/AudioDeviceController.h"
 #include "plugins/RuntimeLifecycleExecutor.h"
 #include "protocol/CommandResponder.h"
+#include "timeline/RealtimeCommand.h"
 
 namespace riffra {
 
@@ -37,7 +43,8 @@ public:
         std::atomic<bool>& timelineOperationRunning;
     };
 
-    explicit AudioCommandDispatcher(Context context) noexcept : context(context) {}
+    explicit AudioCommandDispatcher(Context context);
+    ~AudioCommandDispatcher();
 
     AudioCommandDispatcher(const AudioCommandDispatcher&) = delete;
     AudioCommandDispatcher& operator=(const AudioCommandDispatcher&) = delete;
@@ -45,6 +52,7 @@ public:
     /// Reads and dispatches command lines until standard input closes.
     void run(std::istream& input);
     void dispatch(const SidecarRequestSpec& request, CommandResponder responder);
+    [[nodiscard]] bool waitForBackgroundWork(std::chrono::milliseconds timeout);
 
 private:
     /// Status reported by commands whose response is the full audio status.
@@ -52,6 +60,20 @@ private:
     /// Rejects a command that must not overlap an Arrangement Graph lifecycle task.
     [[nodiscard]] bool rejectWhileTimelineBusy(CommandResponder& responder,
                                                const juce::String& message);
+    /// Fails the request unless the timeline accepted it. A full realtime
+    /// command queue is reported as the retryable `realtimeQueueFull`.
+    [[nodiscard]] static bool rejectUnlessAccepted(CommandResponder& responder,
+                                                   RealtimeRequest request,
+                                                   const juce::String& kind,
+                                                   const juce::String& error,
+                                                   const juce::String& operation);
+    /// Fails the request when a realtime command could not be queued.
+    [[nodiscard]] static bool rejectUnlessQueued(CommandResponder& responder, bool queued,
+                                                 const juce::String& operation);
+    [[nodiscard]] bool reserveRecordingStop(CommandResponder& responder);
+    void releaseRecordingStopReservation();
+    void queueRecordingStop(const PendingRecordingStop& pending);
+    void recordingStopWorkerLoop();
 
     void handle(const StatusCommand&, CommandResponder responder);
     void handle(const SetEmergencyMuteCommand& command, CommandResponder responder);
@@ -87,6 +109,13 @@ private:
     void handle(const StopArrangeRecordingCommand&, CommandResponder responder);
 
     Context context;
+    std::mutex recordingStopMutex;
+    std::condition_variable recordingStopWake;
+    std::condition_variable recordingStopFinished;
+    std::optional<PendingRecordingStop> pendingRecordingStop;
+    bool recordingStopScheduled = false;
+    bool recordingStopWorkerStopping = false;
+    std::thread recordingStopWorker;
 };
 
 }  // namespace riffra

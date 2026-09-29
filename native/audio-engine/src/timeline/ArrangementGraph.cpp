@@ -2,13 +2,17 @@
 
 #include <algorithm>
 
+#include "MidiSourceRegistry.h"
+
 namespace riffra {
 
-bool ArrangementGraph::midiRouteMatches(const juce::String& configuredDeviceId,
-                                        const int configuredChannel,
-                                        const juce::String& sourceDeviceId,
+bool ArrangementGraph::midiRouteMatches(const std::uint16_t configuredSource,
+                                        const int configuredChannel, const std::uint16_t source,
                                         const int messageChannel) noexcept {
-    return (configuredDeviceId.isEmpty() || configuredDeviceId == sourceDeviceId) &&
+    if (source == MidiSourceRegistry::kUnregistered &&
+        configuredSource != MidiSourceRegistry::kAllSources)
+        return false;
+    return (configuredSource == MidiSourceRegistry::kAllSources || configuredSource == source) &&
            (configuredChannel == 0 || configuredChannel == messageChannel);
 }
 

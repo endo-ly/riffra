@@ -76,12 +76,13 @@ bool writeCapture(ArrangeRecordingSession& session, juce::String& error) {
         return false;
     session.endAudioTrackCapture("track:vocal", 1512, 24'256);
 
-    session.writeMidiTrack("track:keys", "midi:keyboard",
+    session.writeMidiTrack("track:keys", std::uint16_t{0},
                            juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 1100);
     session.writeMidiTrack("track:keys", "midi:keyboard",
                            juce::MidiMessage::noteOn(1, 61, static_cast<juce::uint8>(100)), 900);
     session.writeMidiTrack("track:keys", "midi:keyboard",
                            juce::MidiMessage::noteOn(1, 62, static_cast<juce::uint8>(100)), 1600);
+    session.setMidiSourceIds({"midi:late-keyboard"});
     session.markLoopBoundary(1256);
     return session.finish(true, error);
 }
@@ -148,6 +149,7 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
     const auto events = midi.getProperty("events", {});
     ASSERT_TRUE(events.isArray());
     ASSERT_EQ(events.size(), 2);
+    EXPECT_EQ(events[0].getProperty("sourceDeviceId", {}).toString(), "midi:late-keyboard");
     EXPECT_EQ(static_cast<juce::int64>(events[0].getProperty("sampleOffset", -1)), 100);
     EXPECT_EQ(static_cast<juce::int64>(events[1].getProperty("sampleOffset", -1)), 256);
     EXPECT_EQ(static_cast<int>(events[1].getProperty("status", -1)), 128);

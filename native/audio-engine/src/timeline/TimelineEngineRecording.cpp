@@ -4,108 +4,131 @@
 
 namespace riffra {
 
-bool TimelineEngine::startRecording(const int countInBeats, juce::String& error) noexcept {
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
-    if (timeline == nullptr || timeline->outputSampleRate <= 0.0) {
+namespace {
+
+constexpr auto kRecordingApplyTimeout = std::chrono::milliseconds(500);
+
+}  // namespace
+
+RealtimeRequest TimelineEngine::startRecording(const int countInBeats, juce::String& error) {
+    const auto ready = graphRegistry.access([](const ControlGraphRegistry::State& graphs) {
+        return graphs.latestCommitted != nullptr && graphs.latestCommitted->outputSampleRate > 0.0;
+    });
+    if (!ready) {
         error = "Arrange recording requires a prepared Arrangement Graph.";
-        return false;
+        return RealtimeRequest::rejected;
     }
-    if (recordingPhase.load(std::memory_order_acquire) != RecordingPhase::idle) {
+    if (realtimeFrame.read().recordingPhase != RecordingPhase::idle) {
         error = "Arrange recording is already active.";
-        return false;
+        return RealtimeRequest::rejected;
     }
-    finalizedRecordingTracks.clear();
-    finalizedRecordingSampleRate = 0.0;
-    finalizedRecordingBlockSize = 0;
-    for (auto& track : timeline->tracks) {
-        recordingCapture->resetTrack(track->runtime->recordingCapture);
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::startRecording;
+    command.countInBeats = countInBeats;
+    if (!submit(command).has_value()) {
+        error = "The realtime command queue is full.";
+        return RealtimeRequest::queueFull;
     }
+    {
+        const std::lock_guard lock(finalizedRecordingMutex);
+        finalizedRecordingTracks.clear();
+        finalizedRecordingSampleRate = 0.0;
+        finalizedRecordingBlockSize = 0;
+    }
+    return RealtimeRequest::accepted;
+}
+
+void TimelineEngine::startRecordingNow(RealtimeState& state, const int countInBeats) noexcept {
+    if (state.graph == nullptr || state.recordingPhase != RecordingPhase::idle) return;
+    auto& graph = *state.graph;
+    for (auto& track : graph.tracks) recordingCapture->resetTrack(track->runtime->recordingCapture);
     recordingCapture->resetCaptureErrors();
-    recordingPassOrdinal.store(1, std::memory_order_release);
-    const auto alreadyPlaying = state.load(std::memory_order_acquire) == TransportState::playing;
+    state.recordingPassOrdinal = 1;
+    const auto alreadyPlaying = state.transport == TransportState::playing;
     if (alreadyPlaying || countInBeats <= 0) {
-        recordingPhase.store(RecordingPhase::recording, std::memory_order_release);
-        recordingStartAudioSample.store(audioClockSample.load(std::memory_order_acquire),
-                                        std::memory_order_release);
-        const auto requestedSample = seekPending.load(std::memory_order_acquire)
-                                         ? pendingSeekSample.load(std::memory_order_acquire)
-                                         : timelineSample.load(std::memory_order_acquire);
-        const auto tick =
-            timeline->timebase.sampleToTick(requestedSample, timeline->outputSampleRate);
-        recordingStartTick.store(tick, std::memory_order_release);
-        if (!alreadyPlaying) state.store(TransportState::playing, std::memory_order_release);
+        state.recordingPhase = RecordingPhase::recording;
+        state.recordingStartAudioSample = state.audioClockSample;
+        const auto requestedSample =
+            state.seekPending ? state.pendingSeekSample : state.timelineSample;
+        state.recordingStartTick =
+            graph.timebase.sampleToTick(requestedSample, graph.outputSampleRate);
+        if (!alreadyPlaying) state.transport = TransportState::playing;
     } else {
-        countInRemainingSamples.store(timeline->beatSamples * std::max(0, countInBeats),
-                                      std::memory_order_release);
-        recordingPhase.store(RecordingPhase::countingIn, std::memory_order_release);
+        state.countInRemainingSamples = graph.beatSamples * std::max(0, countInBeats);
+        state.recordingPhase = RecordingPhase::countingIn;
     }
-    sequence.fetch_add(1, std::memory_order_relaxed);
-    return true;
 }
 
-void TimelineEngine::stopRecording() noexcept {
-    recordingPhase.store(RecordingPhase::stopping, std::memory_order_release);
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
-    const auto hasCaptureWork =
-        timeline != nullptr &&
-        std::any_of(timeline->tracks.begin(), timeline->tracks.end(), [&](const auto& track) {
-            return recordingCapture->hasCaptureWork(track->runtime->recordingCapture);
-        });
-    if (!hasCaptureWork) recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
-    sequence.fetch_add(1, std::memory_order_relaxed);
-}
-
-bool TimelineEngine::cancelRecordingIfCountingIn() noexcept {
-    auto expected = RecordingPhase::countingIn;
-    if (!recordingPhase.compare_exchange_strong(expected, RecordingPhase::idle,
-                                                std::memory_order_acq_rel))
+bool TimelineEngine::stopRecording(juce::String& error) {
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::stopRecording;
+    const auto sequence = submit(command);
+    if (!sequence.has_value()) {
+        error = "The realtime command queue is full.";
         return false;
-    countInRemainingSamples.store(0, std::memory_order_release);
-    countInBlockStartRemainingSamples.store(0, std::memory_order_release);
-    captureBlockOffset.store(0, std::memory_order_release);
-    captureBlockSamples.store(0, std::memory_order_release);
-    playbackBlockOffset.store(0, std::memory_order_release);
-    sequence.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!waitUntilApplied(*sequence, kRecordingApplyTimeout)) {
+        error = "The audio thread did not close the recording capture in time.";
+        return false;
+    }
     return true;
 }
 
-bool TimelineEngine::finalizeRecording(juce::String& error) noexcept {
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
+void TimelineEngine::closeRecordingCaptures(RealtimeState& state) noexcept {
+    if (state.recordingPhase == RecordingPhase::idle) return;
+    state.recordingPhase = RecordingPhase::stopping;
+    if (state.graph == nullptr) return;
+    for (auto& trackPtr : state.graph->tracks) {
+        auto& track = *trackPtr;
+        auto& runtime = *track.runtime;
+        if (!runtime.armed || runtime.instrumentTrack ||
+            runtime.recordingCapture.state != RecordingCaptureState::capturing)
+            continue;
+        (void)recordingCapture->endTrackCapture(track.id, runtime.recordingCapture);
+        runtime.recordingCapture.state = RecordingCaptureState::idle;
+    }
+}
+
+RealtimeRequest TimelineEngine::stopArrangeRecording(juce::String& error) {
+    const auto sequence = enqueueArrangeRecordingStop();
+    if (!sequence.has_value()) {
+        error = "The realtime command queue is full.";
+        return RealtimeRequest::queueFull;
+    }
+    waitForCommandApplied(*sequence);
+    return RealtimeRequest::accepted;
+}
+
+std::optional<std::uint64_t> TimelineEngine::enqueueArrangeRecordingStop() noexcept {
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::stopArrangeRecording;
+    return submit(command);
+}
+
+bool TimelineEngine::finalizeRecording(juce::String& error) {
     auto sinkLease = recordingCapture->acquireSink();
-    auto* sink = sinkLease.get();
+    if (sinkLease) sinkLease->setMidiSourceIds(midiSources.snapshot());
+    const std::lock_guard lock(finalizedRecordingMutex);
     finalizedRecordingTracks.clear();
     finalizedRecordingSampleRate = 0.0;
     finalizedRecordingBlockSize = 0;
-    if (timeline == nullptr || sink == nullptr) {
-        recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
-        return true;
-    }
-    finalizedRecordingSampleRate = timeline->outputSampleRate;
-    finalizedRecordingBlockSize = timeline->preparedBlockSize;
-    finalizedRecordingTracks.reserve(timeline->tracks.size());
-    for (const auto& track : timeline->tracks) {
-        if (track->runtime == nullptr || track->runtime->instrumentTrack || !track->runtime->armed)
-            continue;
-        finalizedRecordingTracks.push_back({track->id, track->effects});
-    }
-    for (auto& trackPtr : timeline->tracks) {
-        auto& track = *trackPtr;
-        if (!track.runtime->armed || track.runtime->instrumentTrack ||
-            track.runtime->recordingCapture.state != RecordingCaptureState::capturing)
-            continue;
-        if (!recordingCapture->endTrackCapture(track.id, track.runtime->recordingCapture)) {
-            error = "Recording Capture Segment could not be closed.";
-            track.runtime->recordingCapture.state = RecordingCaptureState::idle;
-            finalizedRecordingTracks.clear();
-            finalizedRecordingSampleRate = 0.0;
-            finalizedRecordingBlockSize = 0;
-            recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
-            return false;
+    if (sinkLease.get() == nullptr) return true;
+    visitActiveGraph(false, [this](const PreparedTimeline& graph, const RealtimeFrame&) {
+        finalizedRecordingSampleRate = graph.outputSampleRate;
+        finalizedRecordingBlockSize = graph.preparedBlockSize;
+        finalizedRecordingTracks.reserve(graph.tracks.size());
+        for (const auto& track : graph.tracks) {
+            if (track->runtime->instrumentTrack || !track->runtime->armed) continue;
+            finalizedRecordingTracks.push_back({track->id, track->effects});
         }
-        track.runtime->recordingCapture.state = RecordingCaptureState::idle;
-    }
-    recordingPhase.store(RecordingPhase::idle, std::memory_order_release);
-    return recordingCapture->captureErrors() == 0;
+        return true;
+    });
+    if (recordingCapture->captureErrors() == 0) return true;
+    error = "Recording capture reported errors.";
+    finalizedRecordingTracks.clear();
+    finalizedRecordingSampleRate = 0.0;
+    finalizedRecordingBlockSize = 0;
+    return false;
 }
 
 bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
@@ -120,14 +143,13 @@ bool TimelineEngine::processFinalizedRecording(
     double sampleRate;
     int blockSize;
     {
-        const juce::SpinLock::ScopedLockType lock(timelineLock);
+        const std::lock_guard lock(finalizedRecordingMutex);
         sampleRate = finalizedRecordingSampleRate;
         blockSize = finalizedRecordingBlockSize;
         tracks = std::move(finalizedRecordingTracks);
         finalizedRecordingSampleRate = 0.0;
         finalizedRecordingBlockSize = 0;
     }
-
     if (sink == nullptr) {
         auto sinkLease = recordingCapture->acquireSink();
         sink = sinkLease.get();
@@ -242,36 +264,39 @@ bool TimelineEngine::generateProcessedVariants(
 }
 
 juce::var TimelineEngine::recordingConfiguration() const {
-    const juce::SpinLock::ScopedLockType lock(timelineLock);
-    if (timeline == nullptr) return {};
-    auto* result = new juce::DynamicObject();
-    result->setProperty("sampleRate", timeline->outputSampleRate);
-    const auto tick = static_cast<juce::int64>(timeline->timebase.sampleToTick(
-        timelineSample.load(std::memory_order_acquire), timeline->outputSampleRate));
-    result->setProperty("timelineStartTick", tick);
-    result->setProperty("loopEnabled", timeline->loopEnabled);
-    result->setProperty("loopStartSample", static_cast<juce::int64>(timeline->loopStartSample));
-    result->setProperty("loopEndSample", static_cast<juce::int64>(timeline->loopEndSample));
-    result->setProperty("punchEnabled", timeline->punchEnabled);
-    result->setProperty("punchStartSample", static_cast<juce::int64>(timeline->punchStartSample));
-    result->setProperty("punchEndSample", static_cast<juce::int64>(timeline->punchEndSample));
-    juce::Array<juce::var> trackValues;
-    for (const auto& track : timeline->tracks) {
-        if (!track->runtime->armed) continue;
-        auto* value = new juce::DynamicObject();
-        value->setProperty("trackId", track->id);
-        value->setProperty("kind", track->runtime->instrumentTrack ? "instrument" : "audio");
-        value->setProperty("audioInputChannel", track->runtime->audioInputChannel);
-        value->setProperty("midiDeviceId", track->runtime->midiDeviceId);
-        value->setProperty("midiChannel", track->runtime->midiChannel);
-        value->setProperty("pluginLatencySamples",
-                           static_cast<int>(track->runtime->pluginDelaySamples));
-        value->setProperty("pluginTailSamples",
-                           static_cast<int>(track->runtime->pluginTailSamples));
-        trackValues.add(juce::var(value));
-    }
-    result->setProperty("tracks", trackValues);
-    return juce::var(result);
+    const auto timelineSample = realtimeFrame.read().timelineSample;
+    return graphRegistry.access([timelineSample](const ControlGraphRegistry::State& graphs) {
+        const auto* graph = graphs.latestCommitted;
+        if (graph == nullptr) return juce::var();
+        auto* result = new juce::DynamicObject();
+        result->setProperty("sampleRate", graph->outputSampleRate);
+        const auto tick = static_cast<juce::int64>(
+            graph->timebase.sampleToTick(timelineSample, graph->outputSampleRate));
+        result->setProperty("timelineStartTick", tick);
+        result->setProperty("loopEnabled", graph->loopEnabled);
+        result->setProperty("loopStartSample", static_cast<juce::int64>(graph->loopStartSample));
+        result->setProperty("loopEndSample", static_cast<juce::int64>(graph->loopEndSample));
+        result->setProperty("punchEnabled", graph->punchEnabled);
+        result->setProperty("punchStartSample", static_cast<juce::int64>(graph->punchStartSample));
+        result->setProperty("punchEndSample", static_cast<juce::int64>(graph->punchEndSample));
+        juce::Array<juce::var> trackValues;
+        for (const auto& track : graph->tracks) {
+            if (!track->runtime->armed) continue;
+            auto* value = new juce::DynamicObject();
+            value->setProperty("trackId", track->id);
+            value->setProperty("kind", track->runtime->instrumentTrack ? "instrument" : "audio");
+            value->setProperty("audioInputChannel", track->runtime->audioInputChannel);
+            value->setProperty("midiDeviceId", track->runtime->midiDeviceId);
+            value->setProperty("midiChannel", track->runtime->midiChannel);
+            value->setProperty("pluginLatencySamples",
+                               static_cast<int>(track->runtime->pluginDelaySamples));
+            value->setProperty("pluginTailSamples",
+                               static_cast<int>(track->runtime->pluginTailSamples));
+            trackValues.add(juce::var(value));
+        }
+        result->setProperty("tracks", trackValues);
+        return juce::var(result);
+    });
 }
 
 void TimelineEngine::setRecordingSink(ArrangementCaptureSink* const sink) noexcept {
@@ -280,73 +305,59 @@ void TimelineEngine::setRecordingSink(ArrangementCaptureSink* const sink) noexce
 
 void TimelineEngine::clearRecordingSink() noexcept { recordingCapture->clearSink(); }
 
-bool TimelineEngine::recordingWindow(const int sampleCount, int& sampleOffset,
-                                     int& capturedSamples) noexcept {
-    sampleOffset = 0;
-    capturedSamples = std::max(0, sampleCount);
-    captureBlockOffset.store(0, std::memory_order_release);
-    captureBlockSamples.store(0, std::memory_order_release);
-    playbackBlockOffset.store(0, std::memory_order_release);
-    countInBlockStartRemainingSamples.store(0, std::memory_order_release);
-    if (sampleCount <= 0) return false;
-    AudioReadScope activeRead(*this);
-    auto* active = activeRead.get();
-    auto phase = recordingPhase.load(std::memory_order_acquire);
+void TimelineEngine::advanceCountIn(RealtimeState& state, const int sampleCount) noexcept {
+    state.captureBlockOffset = 0;
+    state.captureBlockSamples = 0;
+    state.playbackBlockOffset = 0;
+    state.countInBlockStartRemainingSamples = 0;
+    if (sampleCount <= 0) return;
+    const auto* graph = state.graph;
+    if (state.recordingPhase == RecordingPhase::idle ||
+        state.recordingPhase == RecordingPhase::stopping)
+        return;
+    auto sampleOffset = 0;
+    auto capturedSamples = sampleCount;
     auto transitionedFromCountIn = false;
-    if (phase == RecordingPhase::idle || phase == RecordingPhase::stopping) {
-        capturedSamples = 0;
-        return false;
-    }
-    if (phase == RecordingPhase::countingIn) {
-        const auto remaining = countInRemainingSamples.load(std::memory_order_acquire);
-        countInBlockStartRemainingSamples.store(remaining, std::memory_order_release);
+    if (state.recordingPhase == RecordingPhase::countingIn) {
+        const auto remaining = state.countInRemainingSamples;
+        state.countInBlockStartRemainingSamples = remaining;
         if (remaining >= sampleCount) {
-            countInRemainingSamples.store(remaining - sampleCount, std::memory_order_release);
-            capturedSamples = 0;
-            return false;
+            state.countInRemainingSamples = remaining - sampleCount;
+            return;
         }
+        // The count-in ends inside this block. Commands of the block were
+        // applied first, so a Stop in the same block has already cancelled it.
         sampleOffset = static_cast<int>(std::max<std::int64_t>(0, remaining));
-        playbackBlockOffset.store(sampleOffset, std::memory_order_release);
+        state.playbackBlockOffset = sampleOffset;
         capturedSamples = sampleCount - sampleOffset;
-        countInRemainingSamples.store(0, std::memory_order_release);
-        recordingStartAudioSample.store(audioClockSample.load(std::memory_order_acquire) +
-                                            static_cast<std::uint64_t>(sampleOffset),
-                                        std::memory_order_release);
-        if (active != nullptr) {
-            const auto tick = active->timebase.sampleToTick(
-                timelineSample.load(std::memory_order_acquire), active->outputSampleRate);
-            recordingStartTick.store(tick, std::memory_order_release);
-        }
-        state.store(TransportState::playing, std::memory_order_release);
-        recordingPhase.store(RecordingPhase::recording, std::memory_order_release);
-        phase = RecordingPhase::recording;
+        state.countInRemainingSamples = 0;
+        state.recordingStartAudioSample =
+            state.audioClockSample + static_cast<std::uint64_t>(sampleOffset);
+        if (graph != nullptr)
+            state.recordingStartTick =
+                graph->timebase.sampleToTick(state.timelineSample, graph->outputSampleRate);
+        state.transport = TransportState::playing;
+        state.recordingPhase = RecordingPhase::recording;
         transitionedFromCountIn = true;
     }
 
-    if (active == nullptr || !active->punchEnabled) {
-        captureBlockOffset.store(sampleOffset, std::memory_order_release);
-        captureBlockSamples.store(capturedSamples, std::memory_order_release);
-        return true;
+    if (graph == nullptr || !graph->punchEnabled) {
+        state.captureBlockOffset = sampleOffset;
+        state.captureBlockSamples = capturedSamples;
+        return;
     }
 
-    const auto position = seekPending.load(std::memory_order_acquire)
-                              ? pendingSeekSample.load(std::memory_order_acquire)
-                              : timelineSample.load(std::memory_order_acquire);
+    const auto position = state.seekPending ? state.pendingSeekSample : state.timelineSample;
     const auto playbackOffset = transitionedFromCountIn ? sampleOffset : 0;
     const auto playbackSamples = sampleCount - playbackOffset;
     const auto blockEnd = position + static_cast<std::int64_t>(playbackSamples);
-    if (blockEnd <= active->punchStartSample || position >= active->punchEndSample) {
-        capturedSamples = 0;
-        return false;
-    }
+    if (blockEnd <= graph->punchStartSample || position >= graph->punchEndSample) return;
     const auto punchOffset =
-        static_cast<int>(std::max<std::int64_t>(0, active->punchStartSample - position));
-    sampleOffset = playbackOffset + punchOffset;
-    const auto end = std::min<std::int64_t>(blockEnd, active->punchEndSample);
-    capturedSamples = static_cast<int>(std::max<std::int64_t>(0, end - position - punchOffset));
-    captureBlockOffset.store(sampleOffset, std::memory_order_release);
-    captureBlockSamples.store(capturedSamples, std::memory_order_release);
-    return capturedSamples > 0;
+        static_cast<int>(std::max<std::int64_t>(0, graph->punchStartSample - position));
+    const auto end = std::min<std::int64_t>(blockEnd, graph->punchEndSample);
+    state.captureBlockOffset = playbackOffset + punchOffset;
+    state.captureBlockSamples =
+        static_cast<int>(std::max<std::int64_t>(0, end - position - punchOffset));
 }
 
 }  // namespace riffra

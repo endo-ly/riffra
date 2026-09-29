@@ -14,11 +14,8 @@ public:
     /// Validates and prepares a snapshot for later publication by the engine.
     [[nodiscard]] bool build(const TimelineSnapshotSpec& snapshot,
                              juce::AudioFormatManager& formats, double outputSampleRate,
-                             int maximumBlockSize,
-                             std::unique_ptr<TimelineEngine::PreparedTimeline>& prepared,
-                             bool& monitorLiveInputState,
-                             std::uint32_t& monitoringInputChannelsState,
-                             bool& armedInstrumentTrackState, juce::String& error);
+                             int maximumBlockSize, std::unique_ptr<PreparedTimeline>& prepared,
+                             juce::String& error);
 
 private:
     TimelineEngine& engine;

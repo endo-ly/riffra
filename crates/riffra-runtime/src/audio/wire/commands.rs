@@ -155,7 +155,7 @@ pub(crate) enum TakeComparisonVariant {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExpectedResponse {
     AudioStatus,
-    TransportStatus,
+    TransportAccepted,
     TimelineAck,
     TimelineIdleAck,
     MidiAck,
@@ -194,7 +194,7 @@ impl SidecarCommand {
             Self::PlayTimeline
             | Self::SetTransportStarting
             | Self::StopTimeline
-            | Self::SeekTimeline { .. } => ExpectedResponse::TransportStatus,
+            | Self::SeekTimeline { .. } => ExpectedResponse::TransportAccepted,
             Self::PrepareTimelineSnapshot { .. }
             | Self::CommitTimelineSnapshot
             | Self::DiscardTimelineSnapshot => ExpectedResponse::TimelineAck,

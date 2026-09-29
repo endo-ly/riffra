@@ -96,9 +96,8 @@ AudioStatusSpec AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& mana
     diagnostics.preLimiterPeak = transientMeters.preLimiterPeak;
     diagnostics.limiterGainReductionDb = transientMeters.limiterGainReductionDb;
     diagnostics.hardClipSamples = pipeline.getHardClipSamples();
-    timeline.serviceDeferredCleanup();
     const auto timelineStatus = timeline.status();
-    diagnostics.graphPublishCount = timelineStatus.graphPublishCount;
+    diagnostics.graphPublishCount = timelineStatus.frame.graphPublishCount;
     if (const auto& graph = timelineStatus.graph) {
         status.timelineTick = graph->timelineTick;
         diagnostics.liveMidiDrops = graph->liveMidiDrops;
@@ -174,16 +173,17 @@ AudioMetersSpec AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pip
 
 TransportStatusSpec AudioStatusBuilder::currentTransport(const TimelineEngine& timeline) {
     const auto status = timeline.status();
+    const auto& frame = status.frame;
     TransportStatusSpec transport;
-    transport.state = transportState(status.transportState);
-    transport.timelineSample = status.timelineSample;
-    transport.audioClockSample = status.audioClockSample;
-    transport.sequence = status.sequence;
-    transport.recordingPhase = recordingPhase(status.recordingPhase);
-    transport.recordingStartTick = status.recordingStartTick;
-    transport.recordingPassOrdinal = status.recordingPassOrdinal;
-    transport.clockGeneration = status.clockGeneration;
-    transport.discontinuity = status.discontinuity;
+    transport.state = transportState(frame.transportState);
+    transport.timelineSample = frame.timelineSample;
+    transport.audioClockSample = frame.audioClockSample;
+    transport.appliedCommandSequence = frame.appliedCommandSequence;
+    transport.recordingPhase = recordingPhase(frame.recordingPhase);
+    transport.recordingStartTick = frame.recordingStartTick;
+    transport.recordingPassOrdinal = frame.recordingPassOrdinal;
+    transport.clockGeneration = frame.clockGeneration;
+    transport.discontinuity = frame.discontinuity;
     if (const auto& graph = status.graph) {
         transport.revision = graph->revision;
         transport.timelineTick = graph->timelineTick;

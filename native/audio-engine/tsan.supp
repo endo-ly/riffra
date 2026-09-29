@@ -1,0 +1,9 @@
+# ThreadSanitizer suppressions for the native audio engine tests.
+#
+# Only reports raised inside JUCE itself belong here, each with the reason it
+# is not a Riffra defect. Reports in Riffra code are fixed, never suppressed.
+
+# JUCE's TimeSliceThread takes its client-list lock and its WaitableEvent mutex
+# in opposite orders on its own thread and on the thread adding a client. Both
+# locks are private to juce::TimeSliceThread.
+deadlock:juce::TimeSliceThread::run

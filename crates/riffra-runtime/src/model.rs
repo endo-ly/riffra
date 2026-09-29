@@ -502,7 +502,8 @@ pub struct TransportStatus {
     pub audio_clock_sample: u64,
     /// Output sample rate of the active graph; `None` when no graph could be read.
     pub sample_rate: Option<f64>,
-    pub sequence: u64,
+    /// Sequence of the last transport or recording command applied by the audio thread.
+    pub applied_command_sequence: u64,
     pub recording_phase: RecordingPhase,
     pub recording_start_tick: u64,
     pub recording_pass_ordinal: u32,
