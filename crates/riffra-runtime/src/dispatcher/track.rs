@@ -86,6 +86,15 @@ mod tests {
                 None,
             )
             .unwrap();
+        dispatcher
+            .dispatch(
+                command(
+                    "effect.add",
+                    json!({"trackId": track_id, "pluginPath": "C:/Plugins/Delay.vst3"}),
+                ),
+                None,
+            )
+            .unwrap();
 
         let listed = output_value(
             &dispatcher
@@ -95,13 +104,9 @@ mod tests {
         let track = &listed[0];
         assert_eq!(track["name"], "Keys");
         assert!(track["instrument"].get("parameterValues").is_none());
-        assert!(
-            track["rack"]["devices"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|device| device.get("parameterValues").is_none())
-        );
+        let effects = track["effects"].as_array().unwrap();
+        assert_eq!(effects.len(), 1);
+        assert!(effects[0].get("parameterValues").is_none());
         let _ = fs::remove_dir_all(root);
     }
 

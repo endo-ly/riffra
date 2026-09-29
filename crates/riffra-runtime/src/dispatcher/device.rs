@@ -128,13 +128,13 @@ impl<A> HostDispatcher<'_, A> {
             .arrangement
             .tracks
             .iter()
-            .flat_map(|track| track.rack.devices.iter())
+            .flat_map(|track| track.effects.iter())
             .find(|device| device.id == params.device_id)
             .cloned()
             .ok_or_else(|| format!("track device is not registered: {}", params.device_id))?;
         replacement.name = name;
-        replacement.path = Some(path.to_string_lossy().into_owned());
-        replacement.disabled_placeholder = false;
+        replacement.plugin.path = path.to_string_lossy().into_owned();
+        replacement.plugin.disabled_placeholder = false;
         self.edited(application.replace_track_plugin(&params.device_id, replacement)?)
     }
 
@@ -210,15 +210,9 @@ mod tests {
         let instrument = track.instrument.as_ref().unwrap();
         assert!(matches!(
             &instrument.source,
-            riffra_core::TrackInstrumentSource::Vst3 { path, .. } if path == instrument_path
+            riffra_core::TrackInstrumentSource::Vst3(plugin) if plugin.path == instrument_path
         ));
-        let effect = track
-            .rack
-            .devices
-            .iter()
-            .find(|device| device.kind == riffra_core::DeviceKind::Plugin)
-            .unwrap();
-        assert_eq!(effect.path.as_deref(), Some(effect_path));
+        assert_eq!(track.effects[0].plugin.path, effect_path);
 
         let _ = fs::remove_dir_all(root);
     }

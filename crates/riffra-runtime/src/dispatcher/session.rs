@@ -769,8 +769,7 @@ mod tests {
             .session
             .arrangement
             .tracks[0]
-            .rack
-            .devices[0]
+            .effects[0]
             .id
             .clone();
 

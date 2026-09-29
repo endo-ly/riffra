@@ -1,4 +1,4 @@
-//! Rack and plugin runtime adapters.
+//! Track device and plugin runtime adapters.
 
 use super::*;
 
@@ -16,10 +16,9 @@ fn plugin_device_role(
         }
 
         track
-            .rack
-            .devices
+            .effects
             .iter()
-            .any(|device| device.id == device_id && device.kind == riffra_core::DeviceKind::Plugin)
+            .any(|device| device.id == device_id)
             .then_some(crate::api::output::PluginRole::Effect)
     })
 }
@@ -297,8 +296,7 @@ pub fn set_track_device_bypassed(
                 .map(|device| device.bypassed)
                 .or_else(|| {
                     track
-                        .rack
-                        .devices
+                        .effects
                         .iter()
                         .find(|device| device.id == device_id)
                         .map(|device| device.bypassed)
@@ -355,13 +353,13 @@ pub fn set_track_device_parameter(
         vst3.parameter_values.get(index).copied().unwrap_or(0.0)
     } else {
         track
-            .rack
-            .devices
+            .effects
             .iter()
             .find(|device| device.id == device_id)
             .ok_or_else(|| {
                 AdapterError::command(format!("Track Device is not registered: {device_id}"))
             })?
+            .plugin
             .parameter_values
             .get(index)
             .copied()
@@ -402,11 +400,7 @@ pub fn open_track_plugin_editor(
         .is_some_and(|track| {
             track.instrument.as_ref().is_some_and(|instrument| {
                 instrument.id == device_id && instrument.as_vst3().is_some()
-            }) || track
-                .rack
-                .devices
-                .iter()
-                .any(|device| device.id == device_id)
+            }) || track.effects.iter().any(|device| device.id == device_id)
         });
     if !registered {
         return Err(format!("Track Device is not registered: {device_id}").into());
@@ -570,7 +564,7 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{CreativeSession, DeviceKind, RackDevice, TimelineTick, Track};
+    use riffra_core::{CreativeSession, EffectDevice, TimelineTick, Track};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -717,8 +711,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             core.snapshot().unwrap().session.arrangement.tracks[0]
-                .rack
-                .devices
+                .effects
                 .is_empty()
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), [0]);
@@ -770,7 +763,7 @@ mod tests {
         ));
         let current = core.snapshot().unwrap().session;
         assert_eq!(current.arrangement.revision, 1);
-        assert!(current.arrangement.tracks[0].rack.devices.is_empty());
+        assert!(current.arrangement.tracks[0].effects.is_empty());
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -838,8 +831,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             core.snapshot().unwrap().session.arrangement.tracks[0]
-                .rack
-                .devices
+                .effects
                 .is_empty()
         );
         assert_eq!(driver.loaded.lock().unwrap().as_slice(), [1, 0]);
@@ -854,17 +846,14 @@ mod tests {
         ));
         let mut session = CreativeSession::new(1);
         let mut track = Track::audio("track:guitar".into(), "Guitar".into());
-        track.rack.devices.push(RackDevice {
-            id: "device:amp".into(),
-            name: "Amp".into(),
-            kind: DeviceKind::Plugin,
-            path: Some(r"C:\plugins\Amp.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
+        track.effects.push(
+            EffectDevice::new(
+                "device:amp".into(),
+                "Amp".into(),
+                r"C:\plugins\Amp.vst3".into(),
+            )
+            .unwrap(),
+        );
         session.arrangement.tracks.push(track);
         let audio = crate::AudioSupervisor::offline("test");
         let core = riffra_core::AppCore::new(root.clone(), session, audio, false, true);
@@ -884,9 +873,9 @@ mod tests {
             &riffra_core::serialize_session_document(&saved).unwrap(),
         )
         .unwrap();
-        let device = &restored.arrangement.tracks[0].rack.devices[0];
-        assert_eq!(device.parameter_values, [0.25, 0.75]);
-        assert_eq!(device.state_data.as_deref(), Some("opaque-state"));
+        let device = &restored.arrangement.tracks[0].effects[0];
+        assert_eq!(device.plugin.parameter_values, [0.25, 0.75]);
+        assert_eq!(device.plugin.state_data.as_deref(), Some("opaque-state"));
         assert!(device.bypassed);
         let _ = std::fs::remove_dir_all(root);
     }

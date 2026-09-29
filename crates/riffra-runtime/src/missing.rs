@@ -1,6 +1,6 @@
 use crate::api::output::MissingDependency;
 use crate::asset;
-use riffra_core::{AssetId, CreativeSession, DeviceKind, RackDevice, TrackInstrument};
+use riffra_core::{AssetId, CreativeSession, Vst3Plugin};
 use std::path::Path;
 
 fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
@@ -9,44 +9,18 @@ fn resolve_location(data_root: &Path, asset_id: &AssetId) -> Option<String> {
 
 fn collect_missing_plugin(
     missing: &mut Vec<MissingDependency>,
-    device: &RackDevice,
+    (id, name): (&str, &str),
+    plugin: &Vst3Plugin,
     used_by: String,
 ) {
-    if device.kind != DeviceKind::Plugin || device.disabled_placeholder {
-        return;
-    }
-    let exists = device
-        .path
-        .as_ref()
-        .is_some_and(|path| Path::new(path).exists());
-    if !exists {
-        missing.push(MissingDependency {
-            kind: "plugin".into(),
-            id: device.id.clone(),
-            name: device.name.clone(),
-            path: device.path.clone().unwrap_or_default(),
-            asset_id: None,
-            used_by: vec![used_by],
-        });
-    }
-}
-
-fn collect_missing_instrument(
-    missing: &mut Vec<MissingDependency>,
-    instrument: &TrackInstrument,
-    used_by: String,
-) {
-    let Some(vst3) = instrument.as_vst3() else {
-        return;
-    };
-    if vst3.disabled_placeholder || Path::new(vst3.path).exists() {
+    if plugin.disabled_placeholder || Path::new(&plugin.path).exists() {
         return;
     }
     missing.push(MissingDependency {
         kind: "plugin".into(),
-        id: instrument.id.clone(),
-        name: instrument.name.clone(),
-        path: vst3.path.to_owned(),
+        id: id.to_owned(),
+        name: name.to_owned(),
+        path: plugin.path.clone(),
         asset_id: None,
         used_by: vec![used_by],
     });
@@ -85,17 +59,21 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
     }
 
     for track in &session.arrangement.tracks {
-        if let Some(instrument) = &track.instrument {
-            collect_missing_instrument(
+        if let Some(instrument) = &track.instrument
+            && let Some(plugin) = instrument.as_vst3()
+        {
+            collect_missing_plugin(
                 &mut missing,
-                instrument,
+                (&instrument.id, &instrument.name),
+                plugin,
                 format!("track:{}:instrument", track.id),
             );
         }
-        for device in &track.rack.devices {
+        for device in &track.effects {
             collect_missing_plugin(
                 &mut missing,
-                device,
+                (&device.id, &device.name),
+                &device.plugin,
                 format!("track:{}:effect:{}", track.id, device.id),
             );
         }
@@ -108,9 +86,7 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
 mod tests {
     use super::*;
     use riffra_control::new_instance_id;
-    use riffra_core::{
-        AssetId, AudioClip, CreativeSession, DeviceKind, RackDevice, TimelineTick, Track,
-    };
+    use riffra_core::{AssetId, AudioClip, CreativeSession, EffectDevice, TimelineTick, Track};
     use riffra_host::now_ms;
 
     fn root() -> std::path::PathBuf {
@@ -125,17 +101,14 @@ mod tests {
         let asset_id = riffra_core::mint_asset_id();
         let mut session = CreativeSession::new(now_ms());
         let mut track = Track::audio("main".into(), "Main".into());
-        track.rack.devices.push(RackDevice {
-            id: "plugin:gone".into(),
-            name: "Lost".into(),
-            kind: DeviceKind::Plugin,
-            path: Some("C:\\gone\\Lost.vst3".into()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        });
+        track.effects.push(
+            EffectDevice::new(
+                "plugin:gone".into(),
+                "Lost".into(),
+                "C:\\gone\\Lost.vst3".into(),
+            )
+            .unwrap(),
+        );
         session.arrangement.tracks.push(track);
         session.arrangement.audio_clips.push(AudioClip::full_source(
             "clip:missing".into(),
@@ -173,12 +146,12 @@ mod tests {
         std::fs::create_dir_all(&bundle).unwrap();
         let (mut session, _) = session_with_missing_asset(&data_root);
         session.arrangement.tracks[0]
-            .rack
-            .devices
+            .effects
             .iter_mut()
             .find(|device| device.id == "plugin:gone")
             .unwrap()
-            .path = Some(bundle.to_string_lossy().into_owned());
+            .plugin
+            .path = bundle.to_string_lossy().into_owned();
         let missing = collect_missing(&data_root, &session);
         assert!(missing.iter().all(|item| item.kind != "plugin"));
         let _ = std::fs::remove_dir_all(data_root);
@@ -189,16 +162,8 @@ mod tests {
         let data_root = root();
         let mut session = CreativeSession::new(now_ms());
         let mut track = Track::instrument("synth".into(), "Synth".into());
-        let missing_device = |id: &str, name: &str| RackDevice {
-            id: id.into(),
-            name: name.into(),
-            kind: DeviceKind::Plugin,
-            path: Some(format!("C:\\gone\\{name}.vst3")),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
+        let missing_device = |id: &str, name: &str| {
+            EffectDevice::new(id.into(), name.into(), format!("C:\\gone\\{name}.vst3")).unwrap()
         };
         track.instrument = Some(
             riffra_core::TrackInstrument::vst3(
@@ -208,10 +173,7 @@ mod tests {
             )
             .unwrap(),
         );
-        track
-            .rack
-            .devices
-            .push(missing_device("effect:gone", "Lost FX"));
+        track.effects.push(missing_device("effect:gone", "Lost FX"));
         session.arrangement.tracks.push(track);
 
         let missing = collect_missing(&data_root, &session);

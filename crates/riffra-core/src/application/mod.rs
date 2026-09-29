@@ -1,21 +1,21 @@
 //! User-intent application operations over the canonical production state.
 
 mod arrangement;
+mod devices;
 pub(crate) mod history;
 mod music;
-mod rack;
 mod recording;
 mod session;
 
 use crate::PreparedSession;
 use crate::app::AppCore;
 use crate::domain::asset::AssetId;
-use crate::domain::rack::RackDevice;
 use crate::domain::{
     Arrangement, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute, AudioTakeVariant,
-    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange,
-    Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
+    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, EffectDevice,
+    FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
     ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackInstrument, TrackKind, TrackPatch,
+    Vst3Plugin,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
@@ -288,7 +288,27 @@ fn merge_recording_session(
 
 enum TrackDeviceMut<'a> {
     Instrument(&'a mut TrackInstrument),
-    Effect(&'a mut RackDevice),
+    Effect(&'a mut EffectDevice),
+}
+
+impl<'a> TrackDeviceMut<'a> {
+    fn set_bypassed(&mut self, bypassed: bool) {
+        match self {
+            Self::Instrument(instrument) => instrument.set_bypassed(bypassed),
+            Self::Effect(device) => device.bypassed = bypassed,
+        }
+    }
+
+    /// Returns the device's VST3 plugin, or `built_in_error` for a built-in
+    /// instrument.
+    fn into_plugin(self, built_in_error: &str) -> Result<&'a mut Vst3Plugin, ApplicationError> {
+        match self {
+            Self::Instrument(instrument) => instrument
+                .as_vst3_mut()
+                .ok_or_else(|| ApplicationError::InvalidCommand(built_in_error.into())),
+            Self::Effect(device) => Ok(&mut device.plugin),
+        }
+    }
 }
 
 fn find_track_device_mut<'a>(
@@ -316,8 +336,7 @@ fn find_track_device_mut<'a>(
             });
     }
     track
-        .rack
-        .devices
+        .effects
         .iter_mut()
         .find(|device| device.id == device_id)
         .map(TrackDeviceMut::Effect)
@@ -341,8 +360,7 @@ fn find_any_track_device_mut<'a>(
                 track.instrument.as_mut().map(TrackDeviceMut::Instrument)
             } else {
                 track
-                    .rack
-                    .devices
+                    .effects
                     .iter_mut()
                     .find(|device| device.id == device_id)
                     .map(TrackDeviceMut::Effect)

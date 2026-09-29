@@ -1,4 +1,4 @@
-//! Rack, input, automation, and Sample Pad application operations.
+//! Track device, input, and automation application operations.
 
 use super::*;
 
@@ -127,7 +127,8 @@ where
         path: String,
     ) -> Result<super::ApplicationMutation, ApplicationError> {
         let device_id = next_id("device:effect");
-        let device = plugin_device(device_id.clone(), name, path)?;
+        let device = EffectDevice::new(device_id.clone(), name, path)
+            .map_err(ApplicationError::InvalidCommand)?;
         let session = self.core.commit(self.storage, |session| {
             let track = session
                 .arrangement
@@ -135,7 +136,7 @@ where
                 .iter_mut()
                 .find(|track| track.id == track_id)
                 .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-            track.rack.devices.push(device);
+            track.effects.push(device);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })?;
@@ -178,17 +179,17 @@ where
                     .iter_mut()
                     .find(|track| track.id == track_id)
                     .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-                track
-                    .rack
-                    .devices
-                    .push(plugin_device(device_id.clone(), name, path)?);
+                track.effects.push(
+                    EffectDevice::new(device_id.clone(), name, path)
+                        .map_err(ApplicationError::InvalidCommand)?,
+                );
                 session.arrangement.revision = session.arrangement.revision.saturating_add(1);
                 Ok(())
             })
             .map(|prepared| (prepared, device_id))
     }
 
-    /// Removes one effect device from a Track rack.
+    /// Removes one effect device from a Track.
     pub fn remove_track_effect(
         &self,
         track_id: &str,
@@ -201,9 +202,9 @@ where
                 .iter_mut()
                 .find(|track| track.id == track_id)
                 .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-            let before = track.rack.devices.len();
-            track.rack.devices.retain(|device| device.id != device_id);
-            if before == track.rack.devices.len() {
+            let before = track.effects.len();
+            track.effects.retain(|device| device.id != device_id);
+            if before == track.effects.len() {
                 return Err(ApplicationError::InvalidCommand(
                     "track effect is not registered".into(),
                 ));
@@ -213,7 +214,7 @@ where
         })
     }
 
-    /// Reorders every effect in one Track rack.
+    /// Reorders every effect in one Track.
     pub fn reorder_track_effects(
         &self,
         track_id: &str,
@@ -229,29 +230,28 @@ where
             let unique_ids = ordered_device_ids
                 .iter()
                 .collect::<std::collections::HashSet<_>>();
-            if ordered_device_ids.len() != track.rack.devices.len()
+            if ordered_device_ids.len() != track.effects.len()
                 || unique_ids.len() != ordered_device_ids.len()
                 || ordered_device_ids
                     .iter()
-                    .any(|id| !track.rack.devices.iter().any(|device| &device.id == id))
+                    .any(|id| !track.effects.iter().any(|device| &device.id == id))
             {
                 return Err(ApplicationError::InvalidCommand(
                     "effect order must contain every track effect exactly once".into(),
                 ));
             }
-            let mut reordered = Vec::with_capacity(track.rack.devices.len());
+            let mut reordered = Vec::with_capacity(track.effects.len());
             for id in ordered_device_ids {
                 let index = track
-                    .rack
-                    .devices
+                    .effects
                     .iter()
                     .position(|device| device.id == id)
                     .ok_or_else(|| {
                         ApplicationError::InvalidCommand("track effect is not registered".into())
                     })?;
-                reordered.push(track.rack.devices.remove(index));
+                reordered.push(track.effects.remove(index));
             }
-            track.rack.devices = reordered;
+            track.effects = reordered;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -265,10 +265,7 @@ where
         bypassed: bool,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
-            match find_track_device_mut(session, track_id, device_id)? {
-                TrackDeviceMut::Instrument(instrument) => instrument.set_bypassed(bypassed),
-                TrackDeviceMut::Effect(device) => device.bypassed = bypassed,
-            }
+            find_track_device_mut(session, track_id, device_id)?.set_bypassed(bypassed);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -288,20 +285,9 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            let device = find_track_device_mut(session, track_id, device_id)?;
-            let parameter_values = match device {
-                TrackDeviceMut::Instrument(instrument) => {
-                    instrument
-                        .as_vst3_mut()
-                        .ok_or_else(|| {
-                            ApplicationError::InvalidCommand(
-                                "built-in instruments do not expose parameters".into(),
-                            )
-                        })?
-                        .parameter_values
-                }
-                TrackDeviceMut::Effect(device) => &mut device.parameter_values,
-            };
+            let parameter_values = &mut find_track_device_mut(session, track_id, device_id)?
+                .into_plugin("built-in instruments do not expose parameters")?
+                .parameter_values;
             if parameter_values.len() <= parameter_index {
                 parameter_values.resize(parameter_index + 1, 0.0);
             }
@@ -375,23 +361,11 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            match find_track_device_mut(session, track_id, device_id)? {
-                TrackDeviceMut::Instrument(instrument) => {
-                    let vst3 = instrument.as_vst3_mut().ok_or_else(|| {
-                        ApplicationError::InvalidCommand(
-                            "built-in instruments do not expose plugin state".into(),
-                        )
-                    })?;
-                    *vst3.parameter_values = parameter_values;
-                    *vst3.state_data = state_data.filter(|value| !value.is_empty());
-                    instrument.set_bypassed(bypassed);
-                }
-                TrackDeviceMut::Effect(device) => {
-                    device.parameter_values = parameter_values;
-                    device.state_data = state_data.filter(|value| !value.is_empty());
-                    device.bypassed = bypassed;
-                }
-            }
+            let mut device = find_track_device_mut(session, track_id, device_id)?;
+            device.set_bypassed(bypassed);
+            let plugin = device.into_plugin("built-in instruments do not expose plugin state")?;
+            plugin.parameter_values = parameter_values;
+            plugin.state_data = state_data.filter(|value| !value.is_empty());
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -411,20 +385,9 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            let device = find_track_device_mut(session, track_id, device_id)?;
-            let parameter_values = match device {
-                TrackDeviceMut::Instrument(instrument) => {
-                    instrument
-                        .as_vst3_mut()
-                        .ok_or_else(|| {
-                            ApplicationError::InvalidCommand(
-                                "built-in instruments do not expose parameters".into(),
-                            )
-                        })?
-                        .parameter_values
-                }
-                TrackDeviceMut::Effect(device) => &mut device.parameter_values,
-            };
+            let parameter_values = &mut find_track_device_mut(session, track_id, device_id)?
+                .into_plugin("built-in instruments do not expose parameters")?
+                .parameter_values;
             if parameter_values.len() <= parameter_index {
                 parameter_values.resize(parameter_index + 1, 0.0);
             }
@@ -440,39 +403,24 @@ where
         device_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
-            match find_any_track_device_mut(session, device_id)? {
-                TrackDeviceMut::Instrument(instrument) => {
-                    let vst3 = instrument.as_vst3_mut().ok_or_else(|| {
-                        ApplicationError::InvalidCommand(
-                            "built-in instruments cannot be disabled as missing plugins".into(),
-                        )
-                    })?;
-                    if *vst3.disabled_placeholder {
-                        return Err(ApplicationError::InvalidCommand(format!(
-                            "track device is already disabled: {device_id}"
-                        )));
-                    }
-                    *vst3.disabled_placeholder = true;
-                }
-                TrackDeviceMut::Effect(device) => {
-                    if device.disabled_placeholder {
-                        return Err(ApplicationError::InvalidCommand(format!(
-                            "track device is already disabled: {device_id}"
-                        )));
-                    }
-                    device.disabled_placeholder = true;
-                }
+            let plugin = find_any_track_device_mut(session, device_id)?
+                .into_plugin("built-in instruments cannot be disabled as missing plugins")?;
+            if plugin.disabled_placeholder {
+                return Err(ApplicationError::InvalidCommand(format!(
+                    "track device is already disabled: {device_id}"
+                )));
             }
+            plugin.disabled_placeholder = true;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
     }
 
-    /// Replaces a Track Plugin while preserving its rack slot identity.
+    /// Replaces a Track effect while preserving its slot identity.
     pub fn replace_track_plugin(
         &self,
         device_id: &str,
-        device: RackDevice,
+        device: EffectDevice,
     ) -> Result<CreativeSession, ApplicationError> {
         if device.id != device_id {
             return Err(ApplicationError::InvalidCommand(
@@ -526,7 +474,7 @@ where
     }
 
     /// Builds a plugin replacement for host runtime validation while
-    /// preserving the existing rack slot identity.
+    /// preserving the existing slot identity.
     ///
     /// # Errors
     /// Returns an error when the device or plugin descriptor is invalid.
@@ -549,32 +497,12 @@ where
                             .map_err(ApplicationError::InvalidCommand)?;
                 }
                 TrackDeviceMut::Effect(current) => {
-                    *current = plugin_device(device_id.to_owned(), name, path)?;
+                    *current = EffectDevice::new(device_id.to_owned(), name, path)
+                        .map_err(ApplicationError::InvalidCommand)?;
                 }
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
     }
-}
-
-fn plugin_device(id: String, name: String, path: String) -> Result<RackDevice, ApplicationError> {
-    let name = name.trim().to_owned();
-    let path = path.trim().to_owned();
-    if name.is_empty() || path.is_empty() {
-        return Err(ApplicationError::InvalidCommand(
-            "plugin name and path must not be empty".into(),
-        ));
-    }
-    Ok(RackDevice {
-        id,
-        name,
-        kind: DeviceKind::Plugin,
-        path: Some(path),
-        bypassed: false,
-        gain_db: 0.0,
-        parameter_values: Vec::new(),
-        state_data: None,
-        disabled_placeholder: false,
-    })
 }

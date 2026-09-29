@@ -13,7 +13,7 @@ use crate::domain::arrangement::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Session-wide settings that are not clip/track/rack structure.
+/// Session-wide settings that are not clip or track structure.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettings {

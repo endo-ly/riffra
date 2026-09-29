@@ -551,7 +551,7 @@ impl AudioSupervisor {
     pub fn enable_midi_listening(&self) -> NativeAudioResult<AudioStatus> {
         let status = self.request_status(
             SidecarCommand::EnableMidiListening,
-            "MIDI listening enabled; all detected inputs are routed to the rack.",
+            "MIDI listening enabled; all detected inputs are routed to instruments.",
             COMMAND_ACK_TIMEOUT,
         )?;
         self.recovery

@@ -1,5 +1,5 @@
 use crate::domain::instrument::{self, TrackInstrument};
-use crate::domain::rack::{self, RackInstance};
+use crate::domain::plugin::{self, EffectDevice};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -55,7 +55,7 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instrument: Option<TrackInstrument>,
-    pub rack: RackInstance,
+    pub effects: Vec<EffectDevice>,
 }
 
 /// A partial update for a timeline Track.
@@ -84,13 +84,6 @@ pub enum MonitoringState {
     On,
 }
 
-fn empty_track_rack() -> RackInstance {
-    RackInstance {
-        devices: Vec::new(),
-        macros: Vec::new(),
-    }
-}
-
 impl Track {
     /// Creates a neutral audio track.
     pub fn audio(id: String, name: String) -> Self {
@@ -108,7 +101,7 @@ impl Track {
             audio_input: None,
             midi_input: MidiInputRoute::default(),
             instrument: None,
-            rack: empty_track_rack(),
+            effects: Vec::new(),
         }
     }
 
@@ -158,7 +151,7 @@ impl Track {
         if let Some(instrument) = &mut self.instrument {
             instrument::validate_and_normalize(instrument)?;
         }
-        rack::validate_and_normalize(&mut self.rack)?;
+        plugin::validate_and_normalize_effects(&mut self.effects)?;
         Ok(())
     }
 }

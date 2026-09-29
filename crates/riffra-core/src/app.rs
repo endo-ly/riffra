@@ -1035,8 +1035,8 @@ mod tests {
             moved.arrangement.audio_clips[0].start_tick,
             TimelineTick(960)
         );
-        assert!(undone.arrangement.tracks[0].rack.devices.is_empty());
-        assert_eq!(redone.arrangement.tracks[0].rack.devices.len(), 1);
+        assert!(undone.arrangement.tracks[0].effects.is_empty());
+        assert_eq!(redone.arrangement.tracks[0].effects.len(), 1);
         assert_eq!(redone.arrangement.audio_clips.len(), 2);
         assert_eq!(redone.arrangement.midi_clips.len(), 1);
         assert!(storage.sessions.lock().unwrap().len() >= 10);
@@ -1183,7 +1183,7 @@ mod tests {
             .unwrap();
         let vst3 = instrument.as_vst3().unwrap();
         assert_eq!(vst3.parameter_values, [0.25]);
-        assert_eq!(vst3.state_data, Some("state"));
+        assert_eq!(vst3.state_data.as_deref(), Some("state"));
         assert!(instrument.bypassed);
         let disabled = application.disable_missing_plugin("device:synth").unwrap();
         assert!(

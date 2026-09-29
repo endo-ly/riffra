@@ -2,7 +2,7 @@
 
 use crate::application::{MusicalHarmonyEventView, MusicalRegionView};
 use crate::domain::{
-    AssetId, AudioClip, AutomationLane, DeviceKind, MidiClip, MusicalPosition, ProjectTimebase,
+    AssetId, AudioClip, AutomationLane, EffectDevice, MidiClip, MusicalPosition, ProjectTimebase,
     TimelineTick, TrackInstrument, TrackInstrumentSource, TrackKind,
 };
 use crate::{
@@ -122,7 +122,6 @@ pub struct TrackInspection {
 pub struct EffectInspection {
     pub id: String,
     pub name: String,
-    pub kind: DeviceKind,
     pub bypassed: bool,
     pub disabled_placeholder: bool,
 }
@@ -473,8 +472,7 @@ fn inspect_track(
             .as_ref()
             .map(InstrumentInspection::from_instrument),
         effects: track
-            .rack
-            .devices
+            .effects
             .iter()
             .map(EffectInspection::from_device)
             .collect(),
@@ -503,13 +501,12 @@ fn automation_counts<'a>(
 }
 
 impl EffectInspection {
-    fn from_device(device: &crate::RackDevice) -> Self {
+    fn from_device(device: &EffectDevice) -> Self {
         Self {
             id: device.id.clone(),
             name: device.name.clone(),
-            kind: device.kind,
             bypassed: device.bypassed,
-            disabled_placeholder: device.disabled_placeholder,
+            disabled_placeholder: device.plugin.disabled_placeholder,
         }
     }
 }
@@ -522,7 +519,7 @@ impl InstrumentInspection {
             bypassed: instrument.bypassed,
             source: match &instrument.source {
                 TrackInstrumentSource::Internal { .. } => InstrumentSourceKind::Internal,
-                TrackInstrumentSource::Vst3 { .. } => InstrumentSourceKind::Vst3,
+                TrackInstrumentSource::Vst3(_) => InstrumentSourceKind::Vst3,
             },
         }
     }
@@ -636,7 +633,7 @@ mod tests {
     use super::*;
     use crate::{
         AutomationLane, CreativeSession, HarmonyChord, HarmonyEvent, MidiClip, MidiEvent,
-        MidiEventKind, MidiNote, RackInstance, TimelineRegion, Track, TrackInstrument,
+        MidiEventKind, MidiNote, TimelineRegion, Track, TrackInstrument,
     };
 
     fn canonical(session: CreativeSession) -> CanonicalState {
@@ -863,10 +860,6 @@ mod tests {
             TrackInstrument::vst3("device:synth".into(), "Synth".into(), "synth.vst3".into())
                 .unwrap(),
         );
-        track.rack = RackInstance {
-            devices: Vec::new(),
-            macros: Vec::new(),
-        };
         session.arrangement.tracks.push(track);
         session.arrangement.midi_clips = (0..129)
             .map(|index| MidiClip {

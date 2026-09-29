@@ -674,7 +674,7 @@ impl HostState {
                 ControlOutput::Ok(())
             }
             RuntimeCommand::DeviceInspect(params) => {
-                match canonical_non_plugin_device_inspection(
+                match canonical_built_in_instrument_inspection(
                     &current,
                     &params.track_id,
                     &params.device_id,
@@ -1435,25 +1435,16 @@ fn canonical_plugin_device(
         return Ok((vst3.path.to_owned(), instrument.bypassed));
     }
     let device = track
-        .rack
-        .devices
+        .effects
         .iter()
         .find(|device| device.id == device_id)
         .ok_or_else(|| command_error(format!("track device is not registered: {device_id}")))?;
-    if device.kind != riffra_core::DeviceKind::Plugin {
-        return Err(command_error(
-            "non-plugin devices do not expose VST3 plugin controls",
-        ));
-    }
-    let path = device
-        .path
-        .clone()
-        .filter(|path| !path.trim().is_empty())
-        .ok_or_else(|| command_error("plugin device has no VST3 path"))?;
-    Ok((path, device.bypassed))
+    Ok((device.plugin.path.clone(), device.bypassed))
 }
 
-fn canonical_non_plugin_device_inspection(
+/// Returns the canonical inspection of a built-in instrument, or `None` for a
+/// VST3 device that only the native runtime can inspect.
+fn canonical_built_in_instrument_inspection(
     canonical: &CanonicalState,
     track_id: &str,
     device_id: &str,
@@ -1483,24 +1474,12 @@ fn canonical_non_plugin_device_inspection(
             state_persisted: false,
         }));
     }
-    let device = track
-        .rack
-        .devices
-        .iter()
-        .find(|device| device.id == device_id)
-        .ok_or_else(|| command_error(format!("track device is not registered: {device_id}")))?;
-    if device.kind == riffra_core::DeviceKind::Plugin {
-        return Ok(None);
+    if !track.effects.iter().any(|device| device.id == device_id) {
+        return Err(command_error(format!(
+            "track device is not registered: {device_id}"
+        )));
     }
-    Ok(Some(DeviceInspection {
-        id: device.id.clone(),
-        name: device.name.clone(),
-        source: "rack".into(),
-        bypassed: device.bypassed,
-        capabilities: DeviceCapabilities::default(),
-        parameter_count: 0,
-        state_persisted: false,
-    }))
+    Ok(None)
 }
 
 fn plugin_state_snapshot(

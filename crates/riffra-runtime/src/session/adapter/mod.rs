@@ -15,10 +15,10 @@
 //! production changes to Core, and compensates host resources when an external
 //! operation fails.
 
-mod rack;
+mod devices;
 mod recording;
 
-pub use rack::*;
+pub use devices::*;
 pub use recording::*;
 
 use std::path::Path;

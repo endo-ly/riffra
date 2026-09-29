@@ -2,9 +2,9 @@
 import type { AudioInputRoute } from "./AudioInputRoute";
 import type { MidiInputRoute } from "./MidiInputRoute";
 import type { MonitoringState } from "./MonitoringState";
+import type { TrackEffectSummary } from "./TrackEffectSummary";
 import type { TrackInstrumentSummary } from "./TrackInstrumentSummary";
 import type { TrackKind } from "./TrackKind";
-import type { TrackRackSummary } from "./TrackRackSummary";
 
 /**
  * Lightweight Track projection used by `track.list`.
@@ -12,4 +12,4 @@ import type { TrackRackSummary } from "./TrackRackSummary";
  * Device parameter arrays are intentionally omitted. The complete device
  * state remains available through the canonical `session.get` response.
  */
-export type TrackSummary = { id: string, name: string, kind: TrackKind, gainDb: number, pan: number, muted: boolean, solo: boolean, armed: boolean, monitoring: MonitoringState, color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrumentSummary, rack: TrackRackSummary, };
+export type TrackSummary = { id: string, name: string, kind: TrackKind, gainDb: number, pan: number, muted: boolean, solo: boolean, armed: boolean, monitoring: MonitoringState, color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrumentSummary, effects: Array<TrackEffectSummary>, };

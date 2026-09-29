@@ -26,7 +26,7 @@ function renderPanel(
     armed: false,
     monitoring: 'off',
     midiInput: {},
-    rack: { devices: [], macros: [] },
+    effects: [],
   });
   const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
   render(

@@ -204,7 +204,7 @@ mod tests {
                                         "id": "device:synth",
                                         "stateData": "large"
                                     },
-                                    "rack": {"devices": []}
+                                    "effects": []
                                 }],
                                 "midiClips": [{
                                     "id": "clip:keys",

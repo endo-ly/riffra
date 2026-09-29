@@ -40,8 +40,8 @@ pub use api::output::{
     MidiDeviceInfo, PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult,
     ProjectRecoveryState, ProjectState, ProjectSummary, ProjectionDiagnostics,
     RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
-    RuntimeProjectionState, RuntimeProjectionStatus, TrackDeviceSummary, TrackInstrumentSummary,
-    TrackInstrumentSummarySource, TrackRackSummary, TrackSummary,
+    RuntimeProjectionState, RuntimeProjectionStatus, TrackEffectSummary, TrackInstrumentSummary,
+    TrackInstrumentSummarySource, TrackSummary,
 };
 pub use api::params::AudioDriverConfig;
 pub use audio::{

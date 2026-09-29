@@ -52,10 +52,10 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
         <header className={styles.sectionHeader}>
           <strong>EFFECTS</strong>
         </header>
-        {props.track.rack.devices.length === 0 && <p className={styles.empty}>No effects</p>}
-        {props.track.rack.devices.map((device, index) => {
+        {props.track.effects.length === 0 && <p className={styles.empty}>No effects</p>}
+        {props.track.effects.map((device, index) => {
           const unavailable =
-            device.disabledPlaceholder || props.missingDeviceIds.includes(device.id);
+            device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id);
           return (
             <div className={styles.device} key={device.id}>
               <div className={styles.deviceRow}>
@@ -104,7 +104,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                       aria-label={`Move ${device.name} up`}
                       disabled={index === 0}
                       onClick={() => {
-                        const ids = props.track.rack.devices.map((item) => item.id);
+                        const ids = props.track.effects.map((item) => item.id);
                         [ids[index - 1], ids[index]] = [ids[index], ids[index - 1]];
                         props.commit(props.api.reorderTrackEffects(props.track.id, ids));
                       }}
@@ -115,9 +115,9 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                       type="button"
                       className={styles.iconButton}
                       aria-label={`Move ${device.name} down`}
-                      disabled={index + 1 === props.track.rack.devices.length}
+                      disabled={index + 1 === props.track.effects.length}
                       onClick={() => {
-                        const ids = props.track.rack.devices.map((item) => item.id);
+                        const ids = props.track.effects.map((item) => item.id);
                         [ids[index], ids[index + 1]] = [ids[index + 1], ids[index]];
                         props.commit(props.api.reorderTrackEffects(props.track.id, ids));
                       }}
@@ -140,7 +140,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
               {unavailable && (
                 <div className={styles.missingState}>
                   <strong>
-                    {device.disabledPlaceholder ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}
+                    {device.plugin.disabledPlaceholder ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}
                   </strong>
                   <button
                     type="button"
@@ -156,7 +156,7 @@ export function TrackPluginChainEditor(props: TrackPluginChainEditorProps) {
                   >
                     Replace
                   </button>
-                  {!device.disabledPlaceholder && (
+                  {!device.plugin.disabledPlaceholder && (
                     <button
                       type="button"
                       className={styles.smallButton}

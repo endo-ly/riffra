@@ -1,9 +1,9 @@
 //! Canonical session results.
 
 use riffra_core::{
-    AudioInputRoute, CanonicalState, DeviceKind, MidiInputRoute, MonitoringState, MusicalDuration,
-    MusicalPitch, MusicalPosition, RackDevice, RackMacro, Track, TrackInstrument,
-    TrackInstrumentSource, TrackKind,
+    AudioInputRoute, CanonicalState, EffectDevice, MidiInputRoute, MonitoringState,
+    MusicalDuration, MusicalPitch, MusicalPosition, Track, TrackInstrument, TrackInstrumentSource,
+    TrackKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -55,21 +55,17 @@ pub struct TrackSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instrument: Option<TrackInstrumentSummary>,
-    pub rack: TrackRackSummary,
+    pub effects: Vec<TrackEffectSummary>,
 }
 
-/// Device metadata included in a lightweight Track projection.
+/// Effect metadata included in a lightweight Track projection.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct TrackDeviceSummary {
+pub struct TrackEffectSummary {
     pub id: String,
     pub name: String,
-    pub kind: DeviceKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub path: Option<String>,
+    pub path: String,
     pub bypassed: bool,
-    pub gain_db: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub state_data: Option<String>,
@@ -97,14 +93,6 @@ pub enum TrackInstrumentSummarySource {
     Vst3,
 }
 
-/// Rack metadata included in a lightweight Track projection.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct TrackRackSummary {
-    pub devices: Vec<TrackDeviceSummary>,
-    pub macros: Vec<RackMacro>,
-}
-
 impl TrackSummary {
     pub(crate) fn from_track(track: &Track) -> Self {
         Self {
@@ -124,30 +112,24 @@ impl TrackSummary {
                 .instrument
                 .as_ref()
                 .map(TrackInstrumentSummary::from_instrument),
-            rack: TrackRackSummary {
-                devices: track
-                    .rack
-                    .devices
-                    .iter()
-                    .map(TrackDeviceSummary::from_device)
-                    .collect(),
-                macros: track.rack.macros.clone(),
-            },
+            effects: track
+                .effects
+                .iter()
+                .map(TrackEffectSummary::from_device)
+                .collect(),
         }
     }
 }
 
-impl TrackDeviceSummary {
-    fn from_device(device: &RackDevice) -> Self {
+impl TrackEffectSummary {
+    fn from_device(device: &EffectDevice) -> Self {
         Self {
             id: device.id.clone(),
             name: device.name.clone(),
-            kind: device.kind,
-            path: device.path.clone(),
+            path: device.plugin.path.clone(),
             bypassed: device.bypassed,
-            gain_db: device.gain_db,
-            state_data: device.state_data.clone(),
-            disabled_placeholder: device.disabled_placeholder,
+            state_data: device.plugin.state_data.clone(),
+            disabled_placeholder: device.plugin.disabled_placeholder,
         }
     }
 }
@@ -160,7 +142,7 @@ impl TrackInstrumentSummary {
             bypassed: instrument.bypassed,
             source: match &instrument.source {
                 TrackInstrumentSource::Internal { .. } => TrackInstrumentSummarySource::Internal,
-                TrackInstrumentSource::Vst3 { .. } => TrackInstrumentSummarySource::Vst3,
+                TrackInstrumentSource::Vst3(_) => TrackInstrumentSummarySource::Vst3,
             },
             preset_id: instrument.built_in_preset_id().map(str::to_owned),
         }

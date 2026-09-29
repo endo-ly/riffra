@@ -155,7 +155,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: InstrumentCommand,
     },
-    /// Remove and reorder effect devices in a Track rack.
+    /// Remove and reorder effect devices on a Track.
     Effect {
         #[command(subcommand)]
         command: EffectCommand,
@@ -1568,15 +1568,15 @@ pub struct InstrumentApplyArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EffectCommand {
-    /// Remove one effect device from a Track rack.
+    /// Remove one effect device from a Track.
     Remove(EffectRemoveArgs),
-    /// Reorder the effect devices in a Track rack to the supplied id order.
+    /// Reorder the effect devices on a Track to the supplied id order.
     Reorder(EffectReorderArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct EffectRemoveArgs {
-    /// Id of the Track whose rack is modified.
+    /// Id of the Track whose effects are modified.
     #[arg(long)]
     pub track_id: String,
     /// Id of the effect device to remove.
@@ -1586,7 +1586,7 @@ pub struct EffectRemoveArgs {
 
 #[derive(Debug, Args)]
 pub struct EffectReorderArgs {
-    /// Id of the Track whose rack is reordered.
+    /// Id of the Track whose effects are reordered.
     #[arg(long)]
     pub track_id: String,
     /// Comma-separated device ids in the desired order; mutually exclusive with --device-ids-json.
@@ -1599,7 +1599,7 @@ pub struct EffectReorderArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
-    /// Bypass or unbypass one device in a Track rack.
+    /// Bypass or unbypass one device on a Track.
     Bypass(DeviceBypassArgs),
     /// Inspect one device's identity and state; requires a running Riffra Host accessed with --attach.
     Inspect(DeviceInspectArgs),
@@ -1945,7 +1945,7 @@ pub enum PluginCommand {
     },
     /// Load or replace a VST3 instrument plugin on an Instrument Track.
     Instrument(PluginPathArgs),
-    /// Add a VST3 effect plugin to a Track rack.
+    /// Add a VST3 effect plugin to a Track.
     Effect(PluginPathArgs),
     /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
     Scan(PluginScanArgs),

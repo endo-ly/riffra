@@ -37,9 +37,9 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     disabled: props.disabled,
   });
   const color = resolveTrackColor(track, props.trackIndex);
-  const fxCount = track.rack.devices.length;
-  const hasMissingFx = track.rack.devices.some(
-    (device) => device.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+  const fxCount = track.effects.length;
+  const hasMissingFx = track.effects.some(
+    (device) => device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
   );
   const commitSwitch = async (field: 'muted' | 'solo' | 'armed') => {
     if (props.disabled || pendingSwitch !== null) return;
