@@ -190,7 +190,7 @@ TEST(AudioRenderPipelineTest, DetachesRecordingBeforeFinalizationCompletes) {
     AudioRenderPipeline callback(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     callback.setRecordingFinalizationDispatcher(
-        [&detached](std::unique_ptr<ArrangeRecordingSession> session) {
+        [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
             detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
         });
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -485,7 +485,8 @@ TEST(AudioRenderPipelineTest, SecondRecordingIsRejectedWhileProcessing) {
     ASSERT_TRUE(loadTestSnapshot(timeline, makeMonitoringSnapshot(0, true), formats, 48'000.0,
                                  kBlockSize, error));
     AudioRenderPipeline callback(timeline);
-    callback.recording().setFinalizationDispatcher([](std::unique_ptr<ArrangeRecordingSession>) {});
+    callback.recording().setFinalizationDispatcher(
+        [](std::unique_ptr<ArrangeRecordingSession>, const juce::String&) {});
     const auto firstDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                     .getChildFile("riffra-recording-busy-test")
                                     .getChildFile(juce::Uuid().toString());

@@ -39,7 +39,7 @@ TEST(AudioDeviceControllerTest, DeviceStopHandlerCanFinalizeRecordingAsynchronou
     AudioRenderPipeline pipeline(timeline);
     std::shared_ptr<ArrangeRecordingSession> detached;
     pipeline.recording().setFinalizationDispatcher(
-        [&detached](std::unique_ptr<ArrangeRecordingSession> session) {
+        [&detached](std::unique_ptr<ArrangeRecordingSession> session, const juce::String&) {
             detached = std::shared_ptr<ArrangeRecordingSession>(std::move(session));
         });
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
