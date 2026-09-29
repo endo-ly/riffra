@@ -1,6 +1,5 @@
 use crate::{
-    ControlCommand, ControlRequest, EndpointDescriptor, LocalControlEndpoint, LocalHostClient,
-    LocalHostClientError,
+    ControlRequest, EndpointDescriptor, LocalControlEndpoint, LocalHostClient, LocalHostClientError,
 };
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -227,7 +226,8 @@ impl LocalHostRegistry {
         let client = LocalHostClient::connect_registration(registration);
         let request = ControlRequest::new(
             format!("discovery-{}", registration.instance_id),
-            ControlCommand::new("host.status", serde_json::json!({})),
+            "host.status",
+            serde_json::json!({}),
             None,
         );
         let response = client.request(&request)?;

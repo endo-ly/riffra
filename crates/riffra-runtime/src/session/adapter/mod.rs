@@ -17,11 +17,9 @@
 
 mod rack;
 mod recording;
-mod runtime;
 
 pub use rack::*;
 pub use recording::*;
-pub use runtime::*;
 
 use std::path::Path;
 
@@ -38,7 +36,6 @@ pub use crate::session::commit::{
 pub use crate::session::context::{SessionContext, current_session};
 pub use crate::session::error::AdapterError;
 pub use crate::session::transport::{prepare_arrangement_candidate, sync_arrangement_runtime};
-use riffra_core::application::SessionSettingsPatch;
 
 pub fn undo(
     context: &SessionContext<'_>,

@@ -164,13 +164,7 @@ impl ControlCommand {
     ) -> ControlRequest {
         let name = self.name();
         let mut wire = serde_json::to_value(self).expect("control commands serialize");
-        ControlRequest {
-            request_id: request_id.into(),
-            command: name.into(),
-            expected_sequence,
-            expected_project_id: None,
-            params: wire["params"].take(),
-        }
+        ControlRequest::new(request_id, name, wire["params"].take(), expected_sequence)
     }
 }
 
@@ -409,6 +403,44 @@ control_commands! {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn scope_follows_active_project_dependency() {
+        // Arrange
+        let cases = [
+            ("project.list", CommandScope::Host),
+            ("instrument.list", CommandScope::Host),
+            ("audio.emergency-mute", CommandScope::Host),
+            ("instrument.preview", CommandScope::Host),
+            (
+                "session.get",
+                CommandScope::Project {
+                    long_running: false,
+                },
+            ),
+            (
+                "transport.play",
+                CommandScope::Project {
+                    long_running: false,
+                },
+            ),
+            ("effect.add", CommandScope::Project { long_running: true }),
+        ];
+        let params = |name: &str| match name {
+            "audio.emergency-mute" => json!({"muted": true}),
+            "instrument.preview" => json!({"instrumentId": "builtin:bass"}),
+            "effect.add" => json!({"trackId": "track:1", "pluginPath": "Reverb.vst3"}),
+            _ => json!({}),
+        };
+
+        for (name, scope) in cases {
+            // Act
+            let policy = ControlCommand::decode(name, params(name)).unwrap().policy();
+
+            // Assert
+            assert_eq!(policy.scope, scope, "{name}");
+        }
+    }
 
     #[test]
     fn unknown_command_name_is_rejected() {

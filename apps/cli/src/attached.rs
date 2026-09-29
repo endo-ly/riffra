@@ -1,9 +1,9 @@
 use crate::output::compact_agent_response;
 use riffra_control::{
-    ControlCommand, ControlRequest, ControlResponse, ErrorCode, LocalHostClient,
-    LocalHostClientError, LocalHostDiscovery, ProtocolError, new_instance_id,
+    ControlRequest, ControlResponse, ErrorCode, LocalHostClient, LocalHostClientError,
+    LocalHostDiscovery, ProtocolError, new_instance_id,
 };
-use riffra_runtime::command_requires_project_id;
+use riffra_runtime::api::{CommandScope, ControlCommand};
 use serde_json::Value;
 use std::io::{BufRead, Write};
 use std::thread;
@@ -24,9 +24,9 @@ impl AttachedBackend {
 
     /// Sends one request and waits for its ordered response.
     pub fn request(&self, request: &ControlRequest) -> Result<ControlResponse, String> {
-        let request = if command_requires_project_id(&request.command)
-            && request.expected_project_id.is_none()
-        {
+        let project_bound = ControlCommand::decode(&request.command, request.params.clone())
+            .is_ok_and(|command| command.policy().scope != CommandScope::Host);
+        let request = if project_bound && request.expected_project_id.is_none() {
             request
                 .clone()
                 .with_expected_project_id(self.active_project_id()?)
@@ -52,7 +52,8 @@ impl AttachedBackend {
         loop {
             let response = self.request(&ControlRequest::new(
                 format!("cli-job-wait-{}", new_instance_id()),
-                ControlCommand::new("job.get", serde_json::json!({"id": job_id})),
+                "job.get",
+                serde_json::json!({"id": job_id}),
                 None,
             ))?;
             if !response.ok {
@@ -82,7 +83,8 @@ impl AttachedBackend {
             .client
             .request(&ControlRequest::new(
                 format!("cli-project-state-{}", new_instance_id()),
-                ControlCommand::new("project.list", serde_json::json!({})),
+                "project.list",
+                serde_json::json!({}),
                 None,
             ))
             .map_err(|error| format!("{}: {error}", ErrorCode::HostUnavailable))?;
@@ -171,9 +173,7 @@ fn with_input_line(mut error: ProtocolError, input_line: Option<usize>) -> Proto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_control::{
-        CommandResult, ControlCommand, EndpointDescriptor, HelloRequest, HelloResponse,
-    };
+    use riffra_control::{CommandResult, EndpointDescriptor, HelloRequest, HelloResponse};
     use std::thread;
 
     #[test]
@@ -188,11 +188,7 @@ mod tests {
             riffra_control::now_ms(),
         );
 
-        let request = ControlRequest::new(
-            "42",
-            ControlCommand::new("session.get", serde_json::json!({})),
-            Some(7),
-        );
+        let request = ControlRequest::new("42", "session.get", serde_json::json!({}), Some(7));
         let expected_request = request.clone().with_expected_project_id("project:a");
         let instance_id = descriptor.instance_id.clone();
         let server = thread::spawn(move || {

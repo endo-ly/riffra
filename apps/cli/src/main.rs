@@ -183,11 +183,9 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         if interactive {
             return attached.run_interactive().map_err(RunFailure::Local);
         }
-        let request = ControlRequest::new(
-            "one-shot",
-            request.expect("one-shot request is present"),
-            expected_sequence,
-        );
+        let command = request.expect("one-shot request is present");
+        let request =
+            ControlRequest::new("one-shot", command.name, command.params, expected_sequence);
         let response = attached.request(&request)?;
         let response = annotate_batch_error(response, batch_operation_lines.as_deref());
         let response =
@@ -214,11 +212,8 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     if interactive {
         return run_interactive(&dispatcher).map_err(RunFailure::Local);
     }
-    let request = ControlRequest::new(
-        "one-shot",
-        request.expect("one-shot request is present"),
-        expected_sequence,
-    );
+    let command = request.expect("one-shot request is present");
+    let request = ControlRequest::new("one-shot", command.name, command.params, expected_sequence);
     let dispatched = match dispatcher.dispatch_request(request.clone()) {
         Ok(dispatched) => dispatched,
         Err(error) => {
@@ -232,10 +227,7 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     let response = ControlResponse::success(
         request.request_id.clone(),
         dispatched.sequence,
-        CommandResult {
-            result_type: dispatched.result_type.into(),
-            value: dispatched.value,
-        },
+        CommandResult::from(dispatched.output),
     );
     let response = annotate_batch_error(response, batch_operation_lines.as_deref());
     let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
@@ -245,12 +237,8 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }
         return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
     }
-    write_response(&compact_agent_response(
-        &request.command,
-        response,
-        Some(serde_json::to_value(dispatched.created_entity_ids).expect("entity ids serialize")),
-    ))
-    .map_err(RunFailure::Local)
+    write_response(&compact_agent_response(&request.command, response, None))
+        .map_err(RunFailure::Local)
 }
 
 fn annotate_batch_error(
@@ -433,12 +421,9 @@ fn handle_request_at(
             ControlResponse::success(
                 request.request_id,
                 result.sequence,
-                CommandResult {
-                    result_type: result.result_type.into(),
-                    value: result.value,
-                },
+                CommandResult::from(result.output),
             ),
-            Some(serde_json::to_value(result.created_entity_ids).expect("entity ids serialize")),
+            None,
         ),
         Err(error) => {
             let error = error.protocol_error();

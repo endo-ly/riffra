@@ -22,13 +22,7 @@ use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::control::ControlServer;
-use crate::dispatcher::{
-    AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceInspectParams,
-    DeviceParameterGetParams, DeviceParameterListParams, DeviceParameterParams, EffectRemoveParams,
-    EffectReorderParams, HostDispatcher, MidiInputParams, MissingPluginReplaceParams,
-    MissingRelinkParams, PluginDeviceParams, PluginPathParams, PluginPresetSetParams,
-    PluginStateSetParams,
-};
+use crate::dispatcher::HostDispatcher;
 use crate::jobs::{self, JobRegistry};
 use crate::recording::{self, RecordingContext};
 use crate::render;
@@ -40,13 +34,9 @@ use crate::{
     active_device_matches_preferences, load_or_default,
 };
 use crate::{analysis, library, missing, plugins};
-use riffra_control::{
-    CommandResult, ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError,
-};
+use riffra_control::{ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError};
 use riffra_core::{AppCore, CanonicalState};
 use riffra_host::{DataRootLease, ProjectStore, now_ms};
-use serde::Deserialize;
-use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};

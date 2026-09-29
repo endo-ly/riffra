@@ -2,12 +2,12 @@
 
 use crate::model::{BootstrapState, ProjectRecoveryState, RecoveryCandidate};
 use riffra_control::{
-    ControlCommand, ControlRequest, ControlResponse, HostEventFrame, LocalHostClient,
-    LocalHostDiscovery, LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
+    ControlRequest, ControlResponse, HostEventFrame, LocalHostClient, LocalHostDiscovery,
+    LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
 };
 use riffra_runtime::{
     AudioStatus, DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink,
-    RuntimeBinaries, command_requires_project_id,
+    RuntimeBinaries,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -771,7 +771,8 @@ impl HostConnectionManager {
         let response = client
             .request(&ControlRequest::new(
                 format!("desktop-bootstrap-{}", new_instance_id()),
-                ControlCommand::new("host.bootstrap", json!({})),
+                "host.bootstrap",
+                json!({}),
                 None,
             ))
             .map_err(|error| BootstrapRequestError::Connection(error.to_string()))?;
@@ -979,12 +980,15 @@ impl HostConnectionManager {
         let _read = self.operation_barrier.read().map_err(|_| {
             NativeCommandError::command_failed("Host operation barrier was poisoned")
         })?;
+        let project_bound = riffra_runtime::api::ControlCommand::decode(command, params.clone())
+            .is_ok_and(|command| command.policy().scope != riffra_runtime::api::CommandScope::Host);
         let request = ControlRequest::new(
             format!("desktop-command-{}", new_instance_id()),
-            ControlCommand::new(command, params),
+            command,
+            params,
             None,
         );
-        let request = if command_requires_project_id(command) {
+        let request = if project_bound {
             let project_id = self
                 .active_project_id
                 .read()
@@ -1201,7 +1205,8 @@ fn attached_recording_active(client: &LocalHostClient) -> bool {
     let project_id = client
         .request(&ControlRequest::new(
             format!("desktop-recording-project-{}", new_instance_id()),
-            ControlCommand::new("project.list", json!({})),
+            "project.list",
+            json!({}),
             None,
         ))
         .ok()
@@ -1209,7 +1214,8 @@ fn attached_recording_active(client: &LocalHostClient) -> bool {
         .and_then(|value| value["activeProjectId"].as_str().map(str::to_owned));
     let request = ControlRequest::new(
         format!("desktop-recording-status-{}", new_instance_id()),
-        ControlCommand::new("record.status", json!({})),
+        "record.status",
+        json!({}),
         None,
     );
     let request = match project_id {
@@ -1239,7 +1245,8 @@ fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
         .client
         .request(&ControlRequest::new(
             format!("desktop-info-{}", new_instance_id()),
-            ControlCommand::new("host.info", json!({})),
+            "host.info",
+            json!({}),
             None,
         ))
         .map_err(|error| error.to_string())?;
@@ -1590,7 +1597,8 @@ mod tests {
             .and_then(|client| {
                 client.request(&ControlRequest::new(
                     format!("status-{}", new_instance_id()),
-                    ControlCommand::new("host.status", json!({})),
+                    "host.status",
+                    json!({}),
                     None,
                 ))
             })
@@ -1814,7 +1822,8 @@ mod tests {
             .request(
                 &ControlRequest::new(
                     "lower-sequence-mutation",
-                    ControlCommand::new(command, params),
+                    command,
+                    params,
                     Some(switched.bootstrap.canonical.sequence),
                 )
                 .with_expected_project_id(switched.bootstrap.project_state.active_project_id),

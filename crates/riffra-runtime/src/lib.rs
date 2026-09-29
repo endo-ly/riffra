@@ -49,7 +49,7 @@ pub use audio::{
     RuntimeRestartHandler,
 };
 pub use binaries::RuntimeBinaries;
-pub use dispatcher::{DispatchError, DispatchResult, Dispatcher, command_requires_project_id};
+pub use dispatcher::{DispatchError, DispatchResult, Dispatcher};
 pub use host::{
     DawHost, HostConfig, HostError, HostEvent, HostEventHub, HostEventSink, HostEventSubscription,
     NoopHostEventSink, RecordingHostEventSink, SharedHostEventSink,

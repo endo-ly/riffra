@@ -2,6 +2,7 @@ use super::control::{audio_error, command_error};
 use super::*;
 use crate::NativeAudioError;
 use crate::model::RuntimeStartupFinished;
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -183,12 +184,12 @@ impl HostState {
             .map_err(|error| error.to_string())
     }
 
-    pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {
+    pub(super) fn audio_diagnostics(
+        &self,
+        include_debug: bool,
+    ) -> Result<crate::api::output::AudioDiagnosticsReport, ProtocolError> {
         let status = self.core.audio().refresh_status().map_err(audio_error)?;
-        let report = audio_diagnostics_report(&status);
-        let mut value = serde_json::to_value(report).map_err(|error| {
-            command_error(format!("audio diagnostics could not be encoded: {error}"))
-        })?;
+        let mut report = audio_diagnostics_report(&status);
         if include_debug {
             let projection = self.runtime.status();
             let debug = crate::api::output::AudioDiagnosticsDebug {
@@ -212,13 +213,9 @@ impl HostState {
                     live_midi_drops: status.diagnostics.live_midi_drops,
                 },
             };
-            value["debug"] = serde_json::to_value(debug).map_err(|error| {
-                command_error(format!(
-                    "audio diagnostic details could not be encoded: {error}"
-                ))
-            })?;
+            report.debug = Some(debug);
         }
-        Ok(value)
+        Ok(report)
     }
 
     pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
@@ -335,6 +332,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDi
             invalid_samples: status.invalid_samples,
         },
         instrument_faults: status.diagnostics.instrument_faults.clone(),
+        debug: None,
     }
 }
 

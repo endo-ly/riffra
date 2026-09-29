@@ -1,469 +1,67 @@
-//! music command family.
+//! Music-level command helpers.
 
-use super::*;
+use super::{DispatchError, HostDispatcher};
+use crate::api::ControlOutput;
+use crate::api::output::{PhrasePreview, PhrasePreviewNote};
+use crate::api::params::PhrasePreviewParams;
+use riffra_core::{MusicalPitch, ProjectTimebase};
 
-pub(super) fn handles(command: &str) -> bool {
-    matches!(
-        command,
-        "music.midi-clip.create"
-            | "music.midi-clip.resize"
-            | "music.note.insert"
-            | "music.note.list"
-            | "music.note.get"
-            | "music.note.update"
-            | "music.note.remove"
-            | "music.note.transform"
-            | "music.harmony.resolve"
-            | "music.harmony.list"
-            | "music.harmony.insert"
-            | "music.harmony.update"
-            | "music.harmony.remove"
-            | "music.harmony.realize"
-            | "music.phrase.insert"
-            | "music.phrase.preview"
-            | "music.region.list"
-            | "music.region.add"
-            | "music.region.update"
-            | "music.region.remove"
-    )
-}
-
-pub(super) fn dispatch<A>(
-    dispatcher: &HostDispatcher<'_, A>,
-    request: ControlCommand,
-    _canonical: riffra_core::CanonicalState,
-) -> Result<DispatchResult, DispatchError> {
-    Ok(match request.name.as_str() {
-        "music.midi-clip.create" => {
-            let params: MusicalMidiClipCreateParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .create_musical_midi_clip_with_created_ids(
-                        &params.track_id,
-                        params.start,
-                        params.end,
-                        params.name,
-                    )?,
-            )
-        }
-        "music.note.insert" => {
-            let params: MusicalNoteInsertParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .insert_musical_notes_with_created_ids(&params.clip_id, params.notes)?,
-            )
-        }
-        "music.note.list" => {
-            let params: MusicalNoteListParams = decode(request.params)?;
-            dispatcher.value(
-                "musicNotes",
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .list_musical_notes(MusicalNoteListRequest {
-                        scope: MusicalNoteScope {
-                            clip_id: params.clip_id,
-                            track_id: params.track_id,
-                        },
-                        start: params.start,
-                        end: params.end,
-                        include_ids: params.include_ids,
-                        raw: params.raw,
-                    })?,
-            )
-        }
-        "music.note.get" => {
-            let params: MusicalNoteIdParams = decode(request.params)?;
-            dispatcher.value(
-                "musicNote",
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .get_musical_note(&params.clip_id, &params.note_id)?,
-            )
-        }
-        "music.note.update" => {
-            let params: MusicalNoteUpdateParams = decode(request.params)?;
-            if params.patch.pitch.is_none()
-                && params.patch.position.is_none()
-                && params.patch.duration.is_none()
-                && params.patch.velocity.is_none()
-                && params.patch.channel.is_none()
-            {
-                return Err(DispatchError::invalid_request(
-                    "at least one musical note field is required",
-                ));
-            }
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .update_musical_note(&params.clip_id, &params.note_id, params.patch)?,
-            )
-        }
-        "music.note.remove" => {
-            let params: MusicalNoteIdParams = decode(request.params)?;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .remove_musical_note(&params.clip_id, &params.note_id)?,
-            )
-        }
-        "music.note.transform" => {
-            let params: MusicalNoteTransformParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .transform_musical_notes(MusicalNoteTransformRequest {
-                        scope: MusicalNoteScope {
-                            clip_id: params.clip_id,
-                            track_id: params.track_id,
-                        },
-                        start: params.start,
-                        end: params.end,
-                        pitch: params.pitch,
-                        channel: params.channel,
-                        timing_offset: params.timing_offset,
-                        velocity_offset: params.velocity_offset,
-                        transpose_semitones: params.transpose_semitones,
-                    })?,
-            )
-        }
-        "music.midi-clip.resize" => {
-            let params: MusicalMidiClipResizeParams = decode(request.params)?;
-            if params.start.is_none() && params.end.is_none() {
-                return Err(DispatchError::invalid_request(
-                    "MIDI clip resize requires a start or end",
-                ));
-            }
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .resize_musical_midi_clip(&params.clip_id, params.start, params.end)?,
-            )
-        }
-        "music.harmony.resolve" => {
-            let params: MusicalHarmonyResolveParams = decode(request.params)?;
-            dispatcher.value(
-                "harmonyChord",
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .resolve_harmony_chord(&params.chord)?,
-            )
-        }
-        "music.harmony.list" => dispatcher.value(
-            "harmonyEvents",
-            dispatcher
-                .core
-                .application(&dispatcher.storage)
-                .list_harmony_events()?,
-        ),
-        "music.harmony.insert" => {
-            let params: MusicalHarmonyInsertParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .insert_harmony_events_with_created_ids(params.events)?,
-            )
-        }
-        "music.harmony.update" => {
-            let params: MusicalHarmonyUpdateParams = decode(request.params)?;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .update_harmony_event(&params.event_id, params.patch)?,
-            )
-        }
-        "music.harmony.remove" => {
-            let params: MusicalHarmonyRemoveParams = decode(request.params)?;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .remove_harmony_events(params.event_ids)?,
-            )
-        }
-        "music.harmony.realize" => {
-            let params: MusicalHarmonyRealizeParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .realize_harmony_with_created_ids(
-                        &params.clip_id,
-                        HarmonyRealizeSelection {
-                            start: params.start,
-                            end: params.end,
-                        },
-                        ChordVoicingInput {
-                            lowest_octave: params.lowest_octave.unwrap_or(3),
-                        },
-                        params.rhythm,
-                        params.velocity,
-                        params.channel,
-                    )?,
-            )
-        }
-        "music.phrase.insert" => {
-            let params: MusicalPhraseInsertParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .insert_phrase_pattern_with_created_ids(
-                        &params.clip_id,
-                        params.pattern,
-                        params.placements,
-                        params.channel,
-                    )?,
-            )
-        }
-        "music.phrase.preview" => {
-            let params: MusicalPhrasePreviewParams = decode(request.params)?;
-            let application = dispatcher.core.application(&dispatcher.storage);
-            let resolved = application.resolve_phrase_pattern(
+impl<A> HostDispatcher<'_, A> {
+    pub(super) fn phrase_preview(
+        &self,
+        timebase: ProjectTimebase,
+        params: PhrasePreviewParams,
+    ) -> Result<ControlOutput, DispatchError> {
+        let resolved = self
+            .core
+            .application(&self.storage)
+            .resolve_phrase_pattern(
                 &params.clip_id,
                 params.pattern,
                 params.placements,
                 params.channel,
             )?;
-            let timebase = _canonical.session.arrangement.timebase;
-            let mut value = serde_json::json!({
-                "noteCount": resolved.notes.len(),
-                "placementCount": resolved.placement_count,
-                "start": timebase.tick_to_musical_position(resolved.start_tick),
-                "end": timebase.tick_to_musical_position(resolved.end_tick),
-            });
-            if params.include_notes {
-                let notes = resolved
+        let invalid =
+            |error: riffra_core::DomainError| DispatchError::invalid_request(error.to_string());
+        let notes = if params.include_notes {
+            Some(
+                resolved
                     .notes
-                    .into_iter()
+                    .iter()
                     .map(|note| {
-                        Ok(serde_json::json!({
-                            "pitch": riffra_core::MusicalPitch::from_midi_pitch(note.pitch)
-                                .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
-                            "position": timebase.tick_to_musical_position(note.start_tick),
-                            "duration": timebase
+                        Ok(PhrasePreviewNote {
+                            pitch: MusicalPitch::from_midi_pitch(note.pitch).map_err(invalid)?,
+                            position: timebase.tick_to_musical_position(note.start_tick),
+                            duration: timebase
                                 .ticks_to_musical_duration(note.duration_ticks)
-                                .map_err(|error| DispatchError::invalid_request(error.to_string()))?,
-                            "velocity": note.velocity,
-                            "channel": note.channel,
-                        }))
+                                .map_err(invalid)?,
+                            velocity: note.velocity,
+                            channel: note.channel,
+                        })
                     })
-                    .collect::<Result<Vec<_>, DispatchError>>()?;
-                value["notes"] = serde_json::json!(notes);
-            }
-            dispatcher.value("phrasePreview", value)
-        }
-        "music.region.list" => dispatcher.value(
-            "regions",
-            dispatcher
-                .core
-                .application(&dispatcher.storage)
-                .list_regions()?,
-        ),
-        "music.region.add" => {
-            let params: MusicalRegionAddParams = decode(request.params)?;
-            dispatcher.application_mutation(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .add_region_with_created_ids(params.name, params.start, params.end)?,
+                    .collect::<Result<Vec<_>, DispatchError>>()?,
             )
-        }
-        "music.region.update" => {
-            let params: MusicalRegionUpdateParams = decode(request.params)?;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .update_region(&params.region_id, params.name, params.start, params.end)?,
-            )
-        }
-        "music.region.remove" => {
-            let params: MusicalRegionIdParams = decode(request.params)?;
-            dispatcher.session(
-                dispatcher
-                    .core
-                    .application(&dispatcher.storage)
-                    .remove_region(&params.region_id)?,
-            )
-        }
-        _ => unreachable!("unsupported music command family"),
-    })
+        } else {
+            None
+        };
+        Ok(ControlOutput::PhrasePreview(PhrasePreview {
+            note_count: resolved.notes.len(),
+            placement_count: resolved.placement_count,
+            start: timebase.tick_to_musical_position(resolved.start_tick),
+            end: timebase.tick_to_musical_position(resolved.end_tick),
+            notes,
+        }))
+    }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalMidiClipCreateParams {
-    track_id: String,
-    start: riffra_core::MusicalPosition,
-    end: riffra_core::MusicalPosition,
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalNoteInsertParams {
-    clip_id: String,
-    notes: Vec<MusicalMidiNoteInput>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalNoteListParams {
-    clip_id: Option<String>,
-    track_id: Option<String>,
-    start: Option<riffra_core::MusicalPosition>,
-    end: Option<riffra_core::MusicalPosition>,
-    #[serde(default)]
-    include_ids: bool,
-    #[serde(default)]
-    raw: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalNoteTransformParams {
-    clip_id: Option<String>,
-    track_id: Option<String>,
-    start: Option<riffra_core::MusicalPosition>,
-    end: Option<riffra_core::MusicalPosition>,
-    pitch: Option<riffra_core::MusicalPitch>,
-    channel: Option<u8>,
-    timing_offset: Option<riffra_core::MusicalTimeDelta>,
-    velocity_offset: Option<i32>,
-    transpose_semitones: Option<i16>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalNoteIdParams {
-    clip_id: String,
-    note_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalNoteUpdateParams {
-    clip_id: String,
-    note_id: String,
-    #[serde(flatten)]
-    patch: riffra_core::application::MusicalMidiNotePatch,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalMidiClipResizeParams {
-    clip_id: String,
-    start: Option<riffra_core::MusicalPosition>,
-    end: Option<riffra_core::MusicalPosition>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalHarmonyResolveParams {
-    chord: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalHarmonyInsertParams {
-    events: Vec<HarmonyEventInput>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalHarmonyUpdateParams {
-    event_id: String,
-    #[serde(flatten)]
-    patch: HarmonyEventPatch,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalHarmonyRemoveParams {
-    event_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalHarmonyRealizeParams {
-    clip_id: String,
-    start: Option<riffra_core::MusicalPosition>,
-    end: Option<riffra_core::MusicalPosition>,
-    lowest_octave: Option<i8>,
-    rhythm: Option<RhythmPattern>,
-    velocity: Option<u8>,
-    channel: Option<u8>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalPhraseInsertParams {
-    clip_id: String,
-    pattern: PhrasePattern,
-    placements: Vec<PhrasePlacement>,
-    channel: Option<u8>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalPhrasePreviewParams {
-    clip_id: String,
-    pattern: PhrasePattern,
-    placements: Vec<PhrasePlacement>,
-    channel: Option<u8>,
-    #[serde(default)]
-    include_notes: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalRegionAddParams {
-    name: String,
-    start: riffra_core::MusicalPosition,
-    end: riffra_core::MusicalPosition,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalRegionUpdateParams {
-    region_id: String,
-    name: Option<String>,
-    start: Option<riffra_core::MusicalPosition>,
-    end: Option<riffra_core::MusicalPosition>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MusicalRegionIdParams {
-    region_id: String,
-}
 #[cfg(test)]
 mod tests {
     use crate::dispatcher::Dispatcher;
-    use riffra_control::ControlCommand;
+    use crate::test_support::{command as request, mutated_session, output_type, output_value};
+    use riffra_control::ControlRequest;
     use riffra_host::now_ms;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::fs;
-
-    fn request(command: &str, params: Value) -> ControlCommand {
-        ControlCommand {
-            name: command.into(),
-            params,
-        }
-    }
 
     #[test]
     fn musical_commands_create_canonical_notes_and_regions() {
@@ -479,7 +77,7 @@ mod tests {
                 json!({"name":"Keys","kind":"instrument"}),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let session = mutated_session(&track);
         let track_id = session.arrangement.tracks[0].id.clone();
         let created = dispatcher
             .dispatch(request(
@@ -492,10 +90,11 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(created.value).unwrap();
+        let session = mutated_session(&created);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
         let invalid = dispatcher
-            .dispatch(request(
+            .dispatch_request(ControlRequest::new(
+                "invalid-note",
                 "music.note.insert",
                 json!({
                     "clipId": clip_id,
@@ -503,6 +102,7 @@ mod tests {
                         {"pitch":"C4","position":"1:1","duration":"1/8","velocity":null}
                     ]
                 }),
+                None,
             ))
             .unwrap_err()
             .protocol_error();
@@ -517,7 +117,7 @@ mod tests {
                 json!({"name":"A'","start":"5:1","end":"13:1"}),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(region.value).unwrap();
+        let session = mutated_session(&region);
         assert_eq!(session.arrangement.regions[0].name, "A'");
         let inserted = dispatcher
             .dispatch(request(
@@ -533,7 +133,7 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(inserted.value).unwrap();
+        let session = mutated_session(&inserted);
         let clip = &session.arrangement.midi_clips[0];
         assert_eq!(clip.start_tick, riffra_core::TimelineTick(15_360));
         assert_eq!(clip.duration_ticks, 30_720);
@@ -557,16 +157,24 @@ mod tests {
                 }),
             ))
             .unwrap();
-        assert_eq!(listed.result_type, "musicNotes");
-        assert_eq!(listed.value["count"], 1);
-        assert_eq!(listed.value["clips"][0]["notes"][0]["pitch"], "C4");
-        assert!(listed.value["clips"][0]["notes"][0].get("id").is_none());
+        assert_eq!(output_type(&listed), "musicNotes");
+        assert_eq!(output_value(&listed)["count"], 1);
+        assert_eq!(output_value(&listed)["clips"][0]["notes"][0]["pitch"], "C4");
         assert!(
-            listed.value["clips"][0]["notes"][0]
+            output_value(&listed)["clips"][0]["notes"][0]
+                .get("id")
+                .is_none()
+        );
+        assert!(
+            output_value(&listed)["clips"][0]["notes"][0]
                 .get("startTick")
                 .is_none()
         );
-        assert!(listed.value["clips"][0]["notes"][0].get("note").is_none());
+        assert!(
+            output_value(&listed)["clips"][0]["notes"][0]
+                .get("note")
+                .is_none()
+        );
 
         let fetched = dispatcher
             .dispatch(request(
@@ -574,8 +182,8 @@ mod tests {
                 json!({"clipId": clip_id, "noteId": note_id}),
             ))
             .unwrap();
-        assert_eq!(fetched.result_type, "musicNote");
-        assert_eq!(fetched.value["position"], "5:1");
+        assert_eq!(output_type(&fetched), "musicNote");
+        assert_eq!(output_value(&fetched)["position"], "5:1");
 
         dispatcher
             .dispatch(request(
@@ -594,8 +202,8 @@ mod tests {
                 json!({"clipId": clip_id, "noteId": note_id}),
             ))
             .unwrap();
-        assert_eq!(updated.value["position"], "5:2");
-        assert_eq!(updated.value["duration"], "1/4");
+        assert_eq!(output_value(&updated)["position"], "5:2");
+        assert_eq!(output_value(&updated)["duration"], "1/4");
 
         let transformed = dispatcher
             .dispatch(request(
@@ -609,8 +217,7 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let transformed: riffra_core::CreativeSession =
-            serde_json::from_value(transformed.value).unwrap();
+        let transformed = mutated_session(&transformed);
         assert_eq!(transformed.arrangement.midi_clips[0].notes[1].velocity, 104);
 
         dispatcher
@@ -637,8 +244,8 @@ mod tests {
         let listed = dispatcher
             .dispatch(request("music.region.list", json!({})))
             .unwrap();
-        assert_eq!(listed.result_type, "regions");
-        assert_eq!(listed.value.as_array().unwrap().len(), 1);
+        assert_eq!(output_type(&listed), "regions");
+        assert_eq!(output_value(&listed).as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -656,7 +263,7 @@ mod tests {
                 json!({"name":"Keys","kind":"instrument"}),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
+        let session = mutated_session(&track);
         let clip = dispatcher
             .dispatch(request(
                 "music.midi-clip.create",
@@ -667,7 +274,7 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(clip.value).unwrap();
+        let session = mutated_session(&clip);
         let clip_id = session.arrangement.midi_clips[0].id.clone();
 
         let resolved = dispatcher
@@ -676,11 +283,11 @@ mod tests {
                 json!({"chord":"G7(b9,#11)/F"}),
             ))
             .unwrap();
-        assert_eq!(resolved.result_type, "harmonyChord");
-        assert_eq!(resolved.value["root"], "G");
-        assert_eq!(resolved.value["bass"], "F");
+        assert_eq!(output_type(&resolved), "harmonyChord");
+        assert_eq!(output_value(&resolved)["root"], "G");
+        assert_eq!(output_value(&resolved)["bass"], "F");
         assert_eq!(
-            resolved.value["tones"],
+            output_value(&resolved)["tones"],
             json!(["G", "B", "D", "F", "Ab", "C#"])
         );
 
@@ -695,8 +302,7 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession =
-            serde_json::from_value(inserted.value.clone()).unwrap();
+        let session = mutated_session(&inserted);
         let harmony_ids = session
             .arrangement
             .harmony_events
@@ -708,9 +314,9 @@ mod tests {
         let listed = dispatcher
             .dispatch(request("music.harmony.list", json!({})))
             .unwrap();
-        assert_eq!(listed.result_type, "harmonyEvents");
-        assert_eq!(listed.value[0]["start"], "1:1");
-        assert!(listed.value[0].get("startTick").is_none());
+        assert_eq!(output_type(&listed), "harmonyEvents");
+        assert_eq!(output_value(&listed)[0]["start"], "1:1");
+        assert!(output_value(&listed)[0].get("startTick").is_none());
 
         dispatcher
             .dispatch(request(
@@ -724,8 +330,7 @@ mod tests {
                 json!({"eventId": harmony_ids[0], "chord":"Dm9"}),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession =
-            serde_json::from_value(updated.value.clone()).unwrap();
+        let session = mutated_session(&updated);
         assert_eq!(session.arrangement.harmony_events[0].chord.name, "Dm9");
 
         let phrase = dispatcher
@@ -745,11 +350,11 @@ mod tests {
                 }),
             ))
             .unwrap();
-        assert_eq!(phrase.result_type, "phrasePreview");
-        assert_eq!(phrase.value["noteCount"], 2);
-        assert_eq!(phrase.value["placementCount"], 1);
-        assert_eq!(phrase.value["notes"].as_array().unwrap().len(), 2);
-        assert_eq!(phrase.value["notes"][0]["pitch"], "C4");
+        assert_eq!(output_type(&phrase), "phrasePreview");
+        assert_eq!(output_value(&phrase)["noteCount"], 2);
+        assert_eq!(output_value(&phrase)["placementCount"], 1);
+        assert_eq!(output_value(&phrase)["notes"].as_array().unwrap().len(), 2);
+        assert_eq!(output_value(&phrase)["notes"][0]["pitch"], "C4");
 
         let phrase = dispatcher
             .dispatch(request(
@@ -767,8 +372,7 @@ mod tests {
                 }),
             ))
             .unwrap();
-        let session: riffra_core::CreativeSession =
-            serde_json::from_value(phrase.value.clone()).unwrap();
+        let session = mutated_session(&phrase);
         assert_eq!(session.arrangement.midi_clips[0].notes.len(), 9);
 
         dispatcher
@@ -780,7 +384,7 @@ mod tests {
         let listed = dispatcher
             .dispatch(request("music.harmony.list", json!({})))
             .unwrap();
-        assert!(listed.value.as_array().unwrap().is_empty());
+        assert!(output_value(&listed).as_array().unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 }

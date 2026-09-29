@@ -1,114 +1,95 @@
-//! project command family.
+//! Standalone Project container commands.
 
-use super::*;
+use super::{DispatchError, DispatchResult, HostDispatcher};
+use crate::api::{ControlOutput, ProjectCommand};
+use riffra_core::application::SessionSettingsPatch;
+use riffra_host::now_ms;
 
-pub(super) fn handles(command: &str) -> bool {
-    matches!(
-        command,
-        "project.list"
-            | "project.create"
-            | "project.open"
-            | "project.rename"
-            | "project.import"
-            | "project.export"
-    )
-}
+impl<A> HostDispatcher<'_, A> {
+    pub(super) fn execute_project(
+        &self,
+        command: ProjectCommand,
+        canonical: riffra_core::CanonicalState,
+    ) -> Result<DispatchResult, DispatchError> {
+        let sequence = canonical.sequence;
+        let output = match command {
+            ProjectCommand::ProjectList(_) => ControlOutput::ProjectState(self.project_state()?),
+            ProjectCommand::ProjectCreate(params) => {
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create(params.name)
+                    .map_err(|error| error.to_string())?;
+                return self.activate_project(&summary.project_id);
+            }
+            ProjectCommand::ProjectOpen(params) => {
+                return self.activate_project(&params.project_id);
+            }
+            ProjectCommand::ProjectRename(params) => {
+                let session = self
+                    .core
+                    .application(&self.storage)
+                    .update_session_settings(SessionSettingsPatch {
+                        project_name: Some(Some(params.name)),
+                        ..Default::default()
+                    })?;
+                let storage = self.storage.store().map_err(DispatchError::from)?;
+                crate::library::index::refresh(&self.data_root, &storage, &session);
+                return Ok(DispatchResult {
+                    output: ControlOutput::ProjectState(self.project_state()?),
+                    sequence: self.core.snapshot()?.sequence,
+                });
+            }
+            ProjectCommand::ProjectImport(params) => {
+                let session = crate::projects::import(&self.data_root, &params.path)?;
+                let summary = self
+                    .project_store
+                    .as_ref()
+                    .create_from_session(&session)
+                    .map_err(|error| error.to_string())?;
+                return self.activate_project(&summary.project_id);
+            }
+            ProjectCommand::ProjectExport(params) => {
+                ControlOutput::ProjectExport(crate::projects::export(
+                    &self.data_root,
+                    &canonical.session,
+                    now_ms(),
+                    &params.output,
+                )?)
+            }
+        };
+        Ok(DispatchResult { output, sequence })
+    }
 
-pub(super) fn dispatch<A>(
-    dispatcher: &HostDispatcher<'_, A>,
-    request: ControlCommand,
-    canonical: riffra_core::CanonicalState,
-) -> Result<DispatchResult, DispatchError> {
-    Ok(match request.name.as_str() {
-        "project.list" => dispatcher.value("projectState", dispatcher.project_state()?),
-        "project.create" => {
-            let params: ProjectCreateParams = decode(request.params)?;
-            let summary = dispatcher
-                .project_store
-                .as_ref()
-                .create(params.name)
-                .map_err(|error| error.to_string())?;
-            dispatcher.activate_project(&summary.project_id)?
-        }
-        "project.open" => {
-            let params: ProjectOpenParams = decode(request.params)?;
-            dispatcher.activate_project(&params.project_id)?
-        }
-        "project.rename" => {
-            let params: ProjectRenameParams = decode(request.params)?;
-            let session = dispatcher
-                .core
-                .application(&dispatcher.storage)
-                .update_session_settings(riffra_core::application::SessionSettingsPatch {
-                    project_name: Some(Some(params.name)),
-                    ..Default::default()
-                })?;
-            let storage = dispatcher.storage.store().map_err(DispatchError::from)?;
-            crate::library::index::refresh(&dispatcher.data_root, &storage, &session);
-            dispatcher.value("projectState", dispatcher.project_state()?)
-        }
-        "project.export" => dispatcher.value(
-            "projectExport",
-            crate::projects::export(
-                &dispatcher.data_root,
-                &canonical.session,
-                now_ms(),
-                &decode::<ProjectExportParams>(request.params)?.output,
-            )?,
-        ),
-        "project.import" => {
-            let params: ProjectImportParams = decode(request.params)?;
-            let session = crate::projects::import(&dispatcher.data_root, &params.path)?;
-            let summary = dispatcher
-                .project_store
-                .as_ref()
-                .create_from_session(&session)
-                .map_err(|error| error.to_string())?;
-            dispatcher.activate_project(&summary.project_id)?
-        }
-        _ => unreachable!("unsupported project command family"),
-    })
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectImportParams {
-    path: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectCreateParams {
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectOpenParams {
-    project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectRenameParams {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectExportParams {
-    output: PathBuf,
+    fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
+        let prepared = crate::projects::prepare(self.project_store.as_ref(), project_id)
+            .map_err(DispatchError::CommandFailed)?;
+        crate::library::index::refresh(
+            &self.data_root,
+            &prepared.storage,
+            &prepared.loaded.session,
+        );
+        let activated =
+            crate::projects::activate(self.project_store.as_ref(), prepared, |session| {
+                self.activate_core_session(session)
+            })
+            .map_err(DispatchError::CommandFailed)?;
+        self.set_core_recovery(activated.loaded.recovered_from_generation);
+        self.storage.replace_owned(activated.storage.clone());
+        let sequence = activated.canonical.sequence;
+        Ok(DispatchResult {
+            output: ControlOutput::ProjectActivation(crate::projects::result(activated)),
+            sequence,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::Dispatcher;
-    use riffra_control::ControlCommand;
+    use crate::test_support::{command as request, output_value};
     use riffra_host::ProjectStore;
     use serde_json::{Value, json};
-
-    fn request(command: &str, params: Value) -> ControlCommand {
-        ControlCommand::new(command, params)
-    }
 
     #[test]
     fn project_commands_keep_containers_independent_and_switch_the_active_session() {
@@ -125,7 +106,7 @@ mod tests {
         let initial = dispatcher
             .dispatch(request("project.list", json!({})))
             .unwrap();
-        let initial_id = initial.value["activeProjectId"]
+        let initial_id = output_value(&initial)["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -133,7 +114,7 @@ mod tests {
         let created = dispatcher
             .dispatch(request("project.create", json!({"name": "Second"})))
             .unwrap();
-        let second_id = created.value["projectState"]["activeProjectId"]
+        let second_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -141,8 +122,8 @@ mod tests {
         assert_eq!(
             dispatcher
                 .dispatch(request("session.get", json!({})))
-                .unwrap()
-                .value["projectName"],
+                .map(|result| output_value(&result))
+                .unwrap()["projectName"],
             "Second"
         );
 
@@ -152,8 +133,8 @@ mod tests {
         assert_eq!(
             dispatcher
                 .dispatch(request("session.get", json!({})))
-                .unwrap()
-                .value["projectName"],
+                .map(|result| output_value(&result))
+                .unwrap()["projectName"],
             Value::Null
         );
         assert!(
@@ -179,8 +160,8 @@ mod tests {
         .unwrap();
         let initial_id = dispatcher
             .dispatch(request("project.list", json!({})))
-            .unwrap()
-            .value["activeProjectId"]
+            .map(|result| output_value(&result))
+            .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -191,11 +172,11 @@ mod tests {
         let exported = dispatcher
             .dispatch(request("project.export", json!({"output": export_path})))
             .unwrap();
-        let manifest = exported.value["path"].as_str().unwrap().to_owned();
+        let manifest = output_value(&exported)["path"].as_str().unwrap().to_owned();
         let before = dispatcher
             .dispatch(request("project.list", json!({})))
-            .unwrap()
-            .value["projects"]
+            .map(|result| output_value(&result))
+            .unwrap()["projects"]
             .as_array()
             .unwrap()
             .len();
@@ -203,12 +184,13 @@ mod tests {
         let imported = dispatcher
             .dispatch(request("project.import", json!({"path": manifest})))
             .unwrap();
-        let imported_id = imported.value["projectState"]["activeProjectId"]
+        let imported = output_value(&imported);
+        let imported_id = imported["projectState"]["activeProjectId"]
             .as_str()
             .unwrap();
 
         assert_eq!(
-            imported.value["projectState"]["projects"]
+            imported["projectState"]["projects"]
                 .as_array()
                 .unwrap()
                 .len(),
@@ -224,8 +206,8 @@ mod tests {
         assert_eq!(
             dispatcher
                 .dispatch(request("session.get", json!({})))
-                .unwrap()
-                .value["projectName"],
+                .map(|result| output_value(&result))
+                .unwrap()["projectName"],
             "Source"
         );
         dispatcher
@@ -234,8 +216,8 @@ mod tests {
         assert_eq!(
             dispatcher
                 .dispatch(request("session.get", json!({})))
-                .unwrap()
-                .value["projectName"],
+                .map(|result| output_value(&result))
+                .unwrap()["projectName"],
             "Source"
         );
 
@@ -255,15 +237,15 @@ mod tests {
         .unwrap();
         let initial_id = dispatcher
             .dispatch(request("project.list", json!({})))
-            .unwrap()
-            .value["activeProjectId"]
+            .map(|result| output_value(&result))
+            .unwrap()["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
         let created = dispatcher
             .dispatch(request("project.create", json!({"name": "Recovered"})))
             .unwrap();
-        let recovered_id = created.value["projectState"]["activeProjectId"]
+        let recovered_id = output_value(&created)["projectState"]["activeProjectId"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -284,18 +266,24 @@ mod tests {
         let recovered = dispatcher
             .dispatch(request("project.open", json!({"projectId": recovered_id})))
             .unwrap();
-        assert_eq!(recovered.value["recovery"]["recoveredFromGeneration"], true);
         assert_eq!(
-            recovered.value["recovery"]["recoveryCandidates"][0]["projectName"],
+            output_value(&recovered)["recovery"]["recoveredFromGeneration"],
+            true
+        );
+        assert_eq!(
+            output_value(&recovered)["recovery"]["recoveryCandidates"][0]["projectName"],
             "Recovered"
         );
 
         let normal = dispatcher
             .dispatch(request("project.open", json!({"projectId": initial_id})))
             .unwrap();
-        assert_eq!(normal.value["recovery"]["recoveredFromGeneration"], false);
+        assert_eq!(
+            output_value(&normal)["recovery"]["recoveredFromGeneration"],
+            false
+        );
         assert!(
-            normal.value["recovery"]["recoveryCandidates"]
+            output_value(&normal)["recovery"]["recoveryCandidates"]
                 .as_array()
                 .unwrap()
                 .is_empty()

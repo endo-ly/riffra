@@ -212,6 +212,11 @@ pub struct AudioDiagnosticsReport {
     pub realtime: AudioDiagnosticsRealtime,
     pub output: AudioDiagnosticsOutput,
     pub instrument_faults: Vec<AudioInstrumentFault>,
+    /// Projection and timeline details outside the stable contract, present
+    /// only when requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub(crate) debug: Option<AudioDiagnosticsDebug>,
 }
 
 /// Device values included in an audio diagnostic snapshot.

@@ -11,6 +11,7 @@ mod policy;
 mod table;
 
 pub use decode::CommandDecodeError;
+pub(crate) use decode::{attach_input_value, json_pointer_segment};
 pub use output::ControlOutput;
 pub use policy::{CanonicalAccess, CommandExecutor, CommandPolicy, CommandScope};
 pub use table::{
