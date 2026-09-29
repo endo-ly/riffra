@@ -41,20 +41,24 @@ enum RenderWorkerError {
     Cancelled,
 }
 
-/// Bounded single-line view of a worker byte stream for error messages.
+/// Bounded single-line view of the tail of a worker byte stream for error
+/// messages.
 fn excerpt(bytes: &[u8]) -> String {
     const LIMIT: usize = 240;
-    String::from_utf8_lossy(bytes)
+    let flattened = String::from_utf8_lossy(bytes)
         .chars()
         .map(|ch| match ch {
             '\r' | '\n' => ' ',
             other => other,
         })
-        .collect::<String>()
-        .trim()
-        .chars()
-        .take(LIMIT)
-        .collect()
+        .collect::<String>();
+    let trimmed = flattened.trim();
+    let start = trimmed
+        .char_indices()
+        .rev()
+        .nth(LIMIT - 1)
+        .map_or(0, |(index, _)| index);
+    trimmed[start..].to_owned()
 }
 
 /// Launches one `riffra-render` process for each offline render request.
