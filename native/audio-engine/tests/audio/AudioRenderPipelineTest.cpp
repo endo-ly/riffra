@@ -21,7 +21,7 @@ TimelineSnapshotSpec makeMonitoringSnapshot(const int channelIndex = 0, const bo
     auto snapshot = makeTestSnapshot();
     auto track = makeAudioTrack("track:monitoring");
     track.armed = armed;
-    track.monitoring = MonitoringSpec::on;
+    track.monitorInput = true;
     track.audioInput = AudioInputSpec{static_cast<std::uint32_t>(channelIndex)};
     snapshot.graph.tracks.push_back(std::move(track));
     return snapshot;

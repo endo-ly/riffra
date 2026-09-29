@@ -18,7 +18,6 @@ riffra::TimelineSnapshotSpec makeSnapshot(const juce::String& effectPath,
     instrumentTrack.id = "track:instrument";
     instrumentTrack.kind = riffra::TrackKindSpec::instrument;
     instrumentTrack.armed = true;
-    instrumentTrack.monitoring = riffra::MonitoringSpec::on;
     instrumentTrack.effects.push_back({"device:instrument-effect", effectPath, {}});
     instrumentTrack.instrument =
         riffra::Vst3InstrumentSpec{"device:instrument", instrumentPath, {}};
@@ -28,7 +27,7 @@ riffra::TimelineSnapshotSpec makeSnapshot(const juce::String& effectPath,
     audioTrack.id = "track:audio";
     audioTrack.kind = riffra::TrackKindSpec::audio;
     audioTrack.armed = true;
-    audioTrack.monitoring = riffra::MonitoringSpec::on;
+    audioTrack.monitorInput = true;
     audioTrack.effects.push_back({"device:audio-effect", effectPath, {}});
     snapshot.graph.tracks.push_back(std::move(audioTrack));
     return snapshot;

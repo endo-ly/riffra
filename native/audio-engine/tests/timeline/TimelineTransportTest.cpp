@@ -205,7 +205,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputWhileTransportIsStopped) {
              std::pair{"track:guitar", false}, std::pair{"track:muted-guitar", true}}) {
         auto track = makeAudioTrack(id);
         track.muted = muted;
-        track.monitoring = MonitoringSpec::on;
+        track.monitorInput = true;
         track.audioInput = AudioInputSpec{0};
         snapshot.graph.tracks.push_back(std::move(track));
     }

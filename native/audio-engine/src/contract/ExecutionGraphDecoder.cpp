@@ -302,12 +302,11 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
 bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& output,
                  juce::String& error) {
     ContractReader reader(value, path,
-                          {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitoring",
+                          {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput",
                            "audioInput", "midiInput", "volumeAutomation", "panAutomation",
                            "effects", "instrument", "audioClips", "midiClips"},
                           error);
     juce::String kind;
-    juce::String monitoring;
     juce::var audioInput;
     juce::var midiInput;
     juce::var instrument;
@@ -319,7 +318,8 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     if (!reader.string("id", output.id) || !reader.string("kind", kind) ||
         !reader.number("gainDb", output.gainDb) || !reader.number("pan", output.pan) ||
         !reader.boolean("muted", output.muted) || !reader.boolean("solo", output.solo) ||
-        !reader.boolean("armed", output.armed) || !reader.string("monitoring", monitoring) ||
+        !reader.boolean("armed", output.armed) ||
+        !reader.boolean("monitorInput", output.monitorInput) ||
         !reader.value("audioInput", audioInput) || !reader.object("midiInput", midiInput) ||
         !reader.array("volumeAutomation", volumeAutomation) ||
         !reader.array("panAutomation", panAutomation) || !reader.array("effects", effects) ||
@@ -327,15 +327,9 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
         !reader.array("midiClips", midiClips) || !reader.finish())
         return false;
     int trackKind = 0;
-    int monitor = 0;
-    if (!readEnum(kind, child(path, "kind"), {{"audio", 0}, {"instrument", 1}}, trackKind, error) ||
-        !readEnum(monitoring, child(path, "monitoring"), {{"off", 0}, {"auto", 1}, {"on", 2}},
-                  monitor, error))
+    if (!readEnum(kind, child(path, "kind"), {{"audio", 0}, {"instrument", 1}}, trackKind, error))
         return false;
     output.kind = static_cast<TrackKindSpec>(trackKind);
-    output.monitoring = monitor == 0   ? MonitoringSpec::off
-                        : monitor == 1 ? MonitoringSpec::automatic
-                                       : MonitoringSpec::on;
     if (output.gainDb < -90.0 || output.gainDb > 24.0)
         return fail(error, child(path, "gainDb"), "must be between -90 and 24");
     if (output.pan < -1.0 || output.pan > 1.0)

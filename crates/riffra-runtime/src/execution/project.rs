@@ -1,7 +1,7 @@
 use super::*;
 use riffra_core::{
     AudioTakeVariant, AutomationParameter, CreativeSession, FadeShape, InternalInstrumentResource,
-    MidiEventKind, MonitoringState, TrackInstrumentSource, TrackKind, Vst3Plugin,
+    MidiEventKind, MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
 };
 
 /// Builds a live snapshot from canonical session state and already-resolved resources.
@@ -209,11 +209,7 @@ pub(crate) fn project_graph(
                 muted: track.muted,
                 solo: track.solo,
                 armed: track.armed,
-                monitoring: match track.monitoring {
-                    MonitoringState::Off => GraphMonitoring::Off,
-                    MonitoringState::Auto => GraphMonitoring::Auto,
-                    MonitoringState::On => GraphMonitoring::On,
-                },
+                monitor_input: monitors_audio_input(track),
                 audio_input: track.audio_input.map(|route| GraphAudioInput {
                     channel_index: route.channel_index,
                 }),
@@ -254,6 +250,17 @@ pub(crate) fn project_graph(
         },
         diagnostics,
     )
+}
+
+/// Decides whether a Track monitors its physical audio input: an Audio Track
+/// set to `On`, or set to `Auto` while armed.
+fn monitors_audio_input(track: &Track) -> bool {
+    track.kind == TrackKind::Audio
+        && match track.monitoring {
+            MonitoringState::On => true,
+            MonitoringState::Auto => track.armed,
+            MonitoringState::Off => false,
+        }
 }
 
 /// Projects an enabled plugin whose path is installed. A plugin that is not
@@ -504,7 +511,7 @@ mod tests {
         assert_eq!(graph.tracks[0].gain_db, -3.0);
         assert_eq!(graph.tracks[0].pan, 0.25);
         assert!(graph.tracks[0].muted && graph.tracks[0].solo && graph.tracks[0].armed);
-        assert_eq!(graph.tracks[0].monitoring, GraphMonitoring::Auto);
+        assert!(graph.tracks[0].monitor_input);
         assert_eq!(graph.tracks[0].effects.len(), 1);
         assert_eq!(graph.tracks[0].audio_clips.len(), 1);
         assert_eq!(graph.tracks[0].audio_clips[0].path, "audio/clip.wav");
@@ -549,6 +556,36 @@ mod tests {
             graph.tracks[2].instrument,
             Some(GraphInstrument::Internal { .. })
         ));
+    }
+
+    #[test]
+    fn monitors_audio_input_only_for_audio_tracks_that_request_it() {
+        // Arrange
+        let cases = [
+            (TrackKind::Audio, MonitoringState::Off, true, false),
+            (TrackKind::Audio, MonitoringState::Auto, false, false),
+            (TrackKind::Audio, MonitoringState::Auto, true, true),
+            (TrackKind::Audio, MonitoringState::On, false, true),
+            (TrackKind::Instrument, MonitoringState::On, true, false),
+        ];
+
+        for (kind, monitoring, armed, expected) in cases {
+            let track = Track {
+                kind,
+                monitoring,
+                armed,
+                ..Track::audio("track:1".into(), "Track".into())
+            };
+
+            // Act
+            let monitor_input = monitors_audio_input(&track);
+
+            // Assert
+            assert_eq!(
+                monitor_input, expected,
+                "{kind:?} {monitoring:?} armed={armed}"
+            );
+        }
     }
 
     #[test]

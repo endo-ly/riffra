@@ -10,7 +10,6 @@
 namespace riffra {
 
 enum class TrackKindSpec { audio, instrument };
-enum class MonitoringSpec { off, automatic, on };
 enum class FadeShapeSpec { linear, equalPower, smooth };
 enum class TakeVariantSpec { raw, processed };
 enum class MidiEventKindSpec { controlChange, pitchBend, channelPressure };
@@ -167,7 +166,7 @@ struct TrackSpec final {
     bool muted = false;
     bool solo = false;
     bool armed = false;
-    MonitoringSpec monitoring = MonitoringSpec::off;
+    bool monitorInput = false;
     std::optional<AudioInputSpec> audioInput;
     MidiInputSpec midiInput;
     std::vector<AutomationPointSpec> volumeAutomation;

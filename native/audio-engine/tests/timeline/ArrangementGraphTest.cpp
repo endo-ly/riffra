@@ -27,15 +27,6 @@ TEST(ArrangementGraphTest, ResolvesMidiAndPhysicalInputRouting) {
     EXPECT_EQ(ArrangementGraph::audioInputSource(2, physicalInputs.data(), 2), nullptr);
 }
 
-TEST(ArrangementGraphTest, DeterminesMonitoringFromModeAndRecordingState) {
-    EXPECT_TRUE(ArrangementGraph::shouldMonitorAudioInput(MonitoringSpec::on, false, false));
-    EXPECT_FALSE(ArrangementGraph::shouldMonitorAudioInput(MonitoringSpec::off, true, false));
-    EXPECT_TRUE(ArrangementGraph::shouldMonitorAudioInput(MonitoringSpec::automatic, true, false));
-    EXPECT_FALSE(
-        ArrangementGraph::shouldMonitorAudioInput(MonitoringSpec::automatic, false, false));
-    EXPECT_FALSE(ArrangementGraph::shouldMonitorAudioInput(MonitoringSpec::on, true, true));
-}
-
 TEST(ArrangementGraphTest, CalculatesPluginDelayCompensation) {
     EXPECT_EQ(ArrangementGraph::compensationDelay(768, 256), 512);
     EXPECT_EQ(ArrangementGraph::compensationDelay(768, 768), 0);
