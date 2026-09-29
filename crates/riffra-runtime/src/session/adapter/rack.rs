@@ -880,8 +880,10 @@ mod tests {
                 true,
             )
             .unwrap();
-        let restored =
-            riffra_core::deserialize_session(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let restored = riffra_core::deserialize_session_document(
+            &riffra_core::serialize_session_document(&saved).unwrap(),
+        )
+        .unwrap();
         let device = &restored.arrangement.tracks[0].rack.devices[0];
         assert_eq!(device.parameter_values, [0.25, 0.75]);
         assert_eq!(device.state_data.as_deref(), Some("opaque-state"));

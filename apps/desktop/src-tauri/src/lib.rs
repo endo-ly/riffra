@@ -153,7 +153,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("riffra-bootstrap-recovery-{nonce}"));
         let store = SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         store.ensure_layout().unwrap();
-        let payload = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
+        let payload =
+            riffra_core::serialize_session_document(&CreativeSession::new(1_000)).unwrap();
         std::fs::write(
             root.join("projects/01900000-0000-7000-8000-000000000001/generations/1-1.json"),
             payload,

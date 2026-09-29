@@ -5,6 +5,10 @@
 //! view state, audio/MIDI file bodies, the Library index, recording files, or
 //! background-job state.
 
+mod document;
+
+pub use document::*;
+
 use crate::domain::arrangement::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -35,14 +39,6 @@ pub struct CreativeSession {
     #[serde(default)]
     pub arrangement: Arrangement,
     pub settings: SessionSettings,
-}
-
-/// Deserializes a canonical session payload.
-///
-/// # Errors
-/// Returns a JSON error when the payload does not match the current schema.
-pub fn deserialize_session(payload: &[u8]) -> Result<CreativeSession, serde_json::Error> {
-    serde_json::from_slice(payload)
 }
 
 impl CreativeSession {

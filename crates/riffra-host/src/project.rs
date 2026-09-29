@@ -1,5 +1,8 @@
 use crate::asset;
-use riffra_core::{AssetId, AssetKind, CreativeSession, Provenance};
+use riffra_core::{
+    AssetId, AssetKind, CreativeSession, Provenance, deserialize_session_document,
+    serialize_session_document,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashSet},
@@ -44,23 +47,39 @@ struct PackagedInstrumentSnapshot {
     files: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// Package metadata stored as `project.json`. The session itself is stored
+/// as a session document in `session.json`.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProjectManifest<'a> {
+struct ProjectManifest {
     exported_at_ms: u64,
-    session: &'a CreativeSession,
-    assets: Vec<PackagedAsset>,
-    instrument_snapshots: Vec<PackagedInstrumentSnapshot>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectManifestOwned {
-    exported_at_ms: u64,
-    session: CreativeSession,
     assets: Vec<PackagedAsset>,
     #[serde(default)]
     instrument_snapshots: Vec<PackagedInstrumentSnapshot>,
+}
+
+/// Archive entry holding the package's session document.
+const SESSION_ENTRY: &str = "session.json";
+
+/// Reads one metadata entry of a package, bounded by the manifest size limit.
+fn read_limited_entry(
+    archive: &mut ZipArchive<fs::File>,
+    name: &str,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut payload = Vec::new();
+    archive
+        .by_name(name)
+        .map_err(|error| format!("Project archive has no {name} {label}: {error}"))?
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut payload)
+        .map_err(|error| format!("Project {label} could not be read: {error}"))?;
+    if payload.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "Project {label} exceeds the {MAX_MANIFEST_BYTES} byte limit."
+        ));
+    }
+    Ok(payload)
 }
 
 /// Collects the distinct asset ids referenced by a session's clips.
@@ -154,12 +173,13 @@ pub fn export(
 
     let manifest = ProjectManifest {
         exported_at_ms,
-        session,
         assets: assets.clone(),
         instrument_snapshots: instrument_snapshots.clone(),
     };
     let payload = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Project manifest could not be encoded: {error}"))?;
+    let session_payload = serialize_session_document(session)
+        .map_err(|error| format!("Project session could not be encoded: {error}"))?;
     if output.extension().and_then(|extension| extension.to_str()) != Some("riffra") {
         return Err("Project export path must use the .riffra extension.".into());
     }
@@ -190,6 +210,12 @@ pub fn export(
         archive
             .write_all(&payload)
             .map_err(|error| format!("Project manifest could not be archived: {error}"))?;
+        archive
+            .start_file(SESSION_ENTRY, options)
+            .map_err(|error| format!("Project session could not be archived: {error}"))?;
+        archive
+            .write_all(&session_payload)
+            .map_err(|error| format!("Project session could not be archived: {error}"))?;
         for (package_path, source_path) in asset_sources {
             let entry = package_path.to_string_lossy().replace('\\', "/");
             archive
@@ -260,23 +286,14 @@ pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> 
             .to_owned();
         resolve_packaged_path(Path::new("."), &name)?;
     }
-    let mut manifest_payload = Vec::new();
-    archive
-        .by_name("project.json")
-        .map_err(|error| format!("Project archive has no project.json manifest: {error}"))?
-        .take(MAX_MANIFEST_BYTES + 1)
-        .read_to_end(&mut manifest_payload)
-        .map_err(|error| format!("Project manifest could not be read: {error}"))?;
-    if manifest_payload.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(format!(
-            "Project manifest exceeds the {} byte limit.",
-            MAX_MANIFEST_BYTES
-        ));
-    }
-    let manifest = serde_json::from_slice::<ProjectManifestOwned>(&manifest_payload)
+    let manifest_payload = read_limited_entry(&mut archive, "project.json", "manifest")?;
+    let manifest = serde_json::from_slice::<ProjectManifest>(&manifest_payload)
         .map_err(|error| format!("Project manifest is invalid: {error}"))?;
     let _exported_at_ms = manifest.exported_at_ms;
-    let session = manifest.session.validate_and_normalize()?;
+    let session_payload = read_limited_entry(&mut archive, SESSION_ENTRY, "session")?;
+    let session = deserialize_session_document(&session_payload)
+        .map_err(|error| format!("Project session is invalid: {error}"))?
+        .validate_and_normalize()?;
     validate_instrument_snapshot_references(&session, &manifest.instrument_snapshots)?;
     let import_id = Uuid::now_v7();
     let staging_dir = data_root
@@ -933,7 +950,11 @@ mod tests {
         serde_json::from_slice(&payload).unwrap()
     }
 
-    fn write_manifest_package(path: &Path, manifest: &serde_json::Value) {
+    fn write_manifest_package(
+        path: &Path,
+        manifest: &serde_json::Value,
+        session: &CreativeSession,
+    ) {
         let file = fs::File::create(path).unwrap();
         let mut archive = ZipWriter::new(file);
         archive
@@ -941,6 +962,12 @@ mod tests {
             .unwrap();
         archive
             .write_all(&serde_json::to_vec(manifest).unwrap())
+            .unwrap();
+        archive
+            .start_file(SESSION_ENTRY, SimpleFileOptions::default())
+            .unwrap();
+        archive
+            .write_all(&serialize_session_document(session).unwrap())
             .unwrap();
         archive.finish().unwrap().sync_all().unwrap();
     }
@@ -967,7 +994,6 @@ mod tests {
         let manifest_path = package_path(&root, "traversal.riffra");
         let mut manifest = serde_json::json!({
             "exportedAtMs": 42,
-            "session": session,
             "assets": []
         });
         manifest["assets"] = serde_json::json!([{
@@ -978,7 +1004,7 @@ mod tests {
             "packagePath": "../outside.wav",
             "state": "collected"
         }]);
-        write_manifest_package(&manifest_path, &manifest);
+        write_manifest_package(&manifest_path, &manifest, &session);
 
         let error = import(&root, &manifest_path).unwrap_err();
         assert!(error.contains("safe relative path"));
@@ -994,9 +1020,9 @@ mod tests {
         write_manifest_package(
             &package,
             &serde_json::json!({
-                "exportedAtMs": 42,
-                "session": session
+                "exportedAtMs": 42
             }),
+            &session,
         );
         let error = import(&root, &package).unwrap_err();
         assert!(error.contains("missing field `assets`"));
@@ -1329,10 +1355,10 @@ mod tests {
             &package,
             &serde_json::json!({
                 "exportedAtMs": 42,
-                "session": session,
                 "assets": [],
                 "instrumentSnapshots": []
             }),
+            &session,
         );
 
         let error = import(&root, &package).unwrap_err();
