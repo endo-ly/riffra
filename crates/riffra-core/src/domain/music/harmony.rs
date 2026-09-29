@@ -8,7 +8,7 @@ use ts_rs::TS;
 
 /// A resolved chord symbol or explicitly supplied sonority.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyChord {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,7 +136,7 @@ fn normalize_chord_name(value: String, bass: Option<MusicalNoteName>) -> String 
 
 /// A canonical harmony event on the arrangement timeline.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HarmonyEvent {
     pub id: String,
     #[ts(type = "number")]

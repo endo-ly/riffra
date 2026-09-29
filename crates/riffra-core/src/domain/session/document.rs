@@ -93,6 +93,44 @@ mod tests {
     }
 
     #[test]
+    fn unknown_or_missing_session_keys_are_invalid() {
+        // Arrange
+        let session = serde_json::to_value(CreativeSession::new(1_000)).unwrap();
+        let mut unknown = session.clone();
+        unknown["settings"]["loopEnabld"] = true.into();
+        let mut missing_setting = session.clone();
+        missing_setting["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("loopEnabled");
+        let mut missing_arrangement = session;
+        missing_arrangement
+            .as_object_mut()
+            .unwrap()
+            .remove("arrangement");
+        let cases = [
+            (unknown, "unknown field `loopEnabld`"),
+            (missing_setting, "missing field `loopEnabled`"),
+            (missing_arrangement, "missing field `arrangement`"),
+        ];
+
+        for (session, message) in cases {
+            let document = serde_json::json!({"schemaVersion": 1, "session": session});
+
+            // Act
+            let error =
+                deserialize_session_document(&serde_json::to_vec(&document).unwrap()).unwrap_err();
+
+            // Assert
+            assert!(
+                matches!(&error, SessionDocumentError::Invalid(_))
+                    && error.to_string().contains(message),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn a_missing_or_different_version_is_unsupported() {
         // Arrange
         let session = serde_json::to_value(CreativeSession::new(1_000)).unwrap();

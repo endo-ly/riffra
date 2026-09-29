@@ -15,28 +15,23 @@ use ts_rs::TS;
 
 /// Session-wide settings that are not clip/track/rack structure.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettings {
     pub master_db: f64,
-    #[serde(default)]
     pub loop_enabled: bool,
-    #[serde(default)]
     pub count_in_beats: u8,
-    #[serde(default)]
     pub metronome_enabled: bool,
-    #[serde(default)]
     pub note: String,
 }
 
 /// The canonical production-state model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CreativeSession {
     pub session_id: String,
     pub updated_at_ms: u64,
     #[serde(default)]
     pub project_name: Option<String>,
-    #[serde(default)]
     pub arrangement: Arrangement,
     pub settings: SessionSettings,
 }

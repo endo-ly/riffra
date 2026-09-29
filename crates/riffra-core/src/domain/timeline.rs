@@ -13,7 +13,7 @@ pub struct TimelineTick(pub u64);
 
 /// A half-open range of source-audio frames.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FrameRange {
     pub start: u64,
     pub end: u64,
@@ -27,7 +27,7 @@ impl FrameRange {
 
 /// A real-time duration expressed against its source sample rate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FrameDuration {
     pub frames: u64,
     pub sample_rate: u32,
@@ -35,7 +35,7 @@ pub struct FrameDuration {
 
 /// Musical clock shared by the ruler, snapping, MIDI, and transport.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectTimebase {
     pub ppq: u32,
     pub bpm: f64,
@@ -75,7 +75,7 @@ impl ProjectTimebase {
 
 /// Persisted loop selection. Disabled ranges retain their endpoints.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TimelineLoopRange {
     pub enabled: bool,
     #[ts(type = "number")]
@@ -86,7 +86,7 @@ pub struct TimelineLoopRange {
 
 /// Optional non-destructive punch recording range on the project timeline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TimelinePunchRange {
     #[ts(type = "number")]
     pub start_tick: TimelineTick,

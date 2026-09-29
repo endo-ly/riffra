@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// One instrument assigned to a timeline Track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrackInstrument {
     pub id: String,
     pub name: String,
@@ -16,7 +16,7 @@ pub struct TrackInstrument {
 
 /// The implementation source of a Track instrument.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all_fields = "camelCase")]
 pub enum TrackInstrumentSource {
     /// An instrument definition rendered by Riffra's built-in runtime.
@@ -29,7 +29,6 @@ pub enum TrackInstrumentSource {
     /// An external VST3 instrument and its persisted plugin state.
     Vst3 {
         path: String,
-        #[serde(default)]
         #[serde(rename = "parameterValues")]
         #[ts(rename = "parameterValues")]
         parameter_values: Vec<f32>,
@@ -38,7 +37,6 @@ pub enum TrackInstrumentSource {
         #[serde(rename = "stateData")]
         #[ts(rename = "stateData")]
         state_data: Option<String>,
-        #[serde(default)]
         #[serde(rename = "disabledPlaceholder")]
         #[ts(rename = "disabledPlaceholder")]
         disabled_placeholder: bool,
@@ -47,7 +45,7 @@ pub enum TrackInstrumentSource {
 
 /// Resource origin for an internal instrument definition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all_fields = "camelCase")]
 pub enum InternalInstrumentResource {
     /// A preset shipped in the Riffra resource bundle.
@@ -339,6 +337,32 @@ mod tests {
         assert_eq!(decoded, instrument);
         assert_eq!(decoded.built_in_preset_id(), Some("01-clean-sub-bass"));
         assert!(decoded.as_vst3().is_none());
+    }
+
+    #[test]
+    fn tagged_sources_reject_unknown_keys() {
+        // Arrange
+        let mut source = serde_json::to_value(&built_in().source).unwrap();
+        let mut resource = source["resource"].clone();
+        source["presetId"] = "01-clean-sub-bass".into();
+        resource["definitionJson"] = "{}".into();
+
+        // Act
+        let source_error = serde_json::from_value::<TrackInstrumentSource>(source).unwrap_err();
+        let resource_error =
+            serde_json::from_value::<InternalInstrumentResource>(resource).unwrap_err();
+
+        // Assert
+        assert!(
+            source_error
+                .to_string()
+                .contains("unknown field `presetId`")
+        );
+        assert!(
+            resource_error
+                .to_string()
+                .contains("unknown field `definitionJson`")
+        );
     }
 
     #[test]

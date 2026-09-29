@@ -26,7 +26,7 @@ pub use track::{AudioInputRoute, MidiInputRoute, MonitoringState, Track, TrackKi
 
 /// The Arrange workspace's production state.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Arrangement {
     pub revision: u64,
     pub timebase: ProjectTimebase,
@@ -37,26 +37,19 @@ pub struct Arrangement {
     pub tracks: Vec<Track>,
     pub audio_clips: Vec<AudioClip>,
     pub midi_clips: Vec<MidiClip>,
-    #[serde(default)]
     pub automation_lanes: Vec<AutomationLane>,
-    #[serde(default)]
     pub markers: Vec<Marker>,
-    #[serde(default)]
     pub regions: Vec<TimelineRegion>,
-    #[serde(default)]
     pub harmony_events: Vec<HarmonyEvent>,
-    #[serde(default)]
     pub recording_sessions: Vec<RecordingSessionRecord>,
-    #[serde(default)]
     pub recording_passes: Vec<RecordingPassRecord>,
-    #[serde(default)]
     pub takes: Vec<RecordingTakeRecord>,
 }
 
 /// A named timeline marker. Markers hold no audio processing impact; they are
 /// authoring metadata rendered on the Time Ruler.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Marker {
     pub id: String,
     pub name: String,
@@ -65,7 +58,7 @@ pub struct Marker {
 
 /// A named half-open range on the project timeline.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TimelineRegion {
     pub id: String,
     pub name: String,
