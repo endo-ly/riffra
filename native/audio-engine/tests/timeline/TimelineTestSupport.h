@@ -688,6 +688,29 @@ public:
                immediate > 0.0f;
     }
 
+    static bool pluginDevicesWarmUpAndReset() {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine(true);
+        juce::String error;
+        if (!loadTestSnapshot(engine, makeInstrumentSnapshot("track:warm-up"), formats, 48'000.0,
+                              32, error))
+            return false;
+        InstrumentTrace trace;
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
+        if (rack == nullptr ||
+            !installTrackInstrument(engine, "track:warm-up", "instrument:warm-up", std::move(rack)))
+            return false;
+        const auto preparedResets = trace.resetCount;
+
+        engine.warmUpPluginDevices(32);
+        const auto warmedUp = trace.processBlockCount == 1 && trace.resetCount == preparedResets;
+        engine.resetPluginDevices();
+
+        return warmedUp && trace.resetCount == preparedResets + 1;
+    }
+
     static bool timelineMidiUsesCurrentTransportContext() {
         // Arrange
         juce::AudioFormatManager formats;

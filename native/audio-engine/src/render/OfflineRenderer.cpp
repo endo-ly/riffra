@@ -92,7 +92,7 @@ void warmUpPlugins(TimelineEngine& engine, const double sampleRate, const int bl
         std::chrono::duration<double>(blockSize / sampleRate));
     const auto deadline = std::chrono::steady_clock::now() + kPluginWarmUp;
     for (auto next = std::chrono::steady_clock::now(); next < deadline; next += blockDuration) {
-        engine.warmUpDevices(blockSize);
+        engine.warmUpPluginDevices(blockSize);
         std::this_thread::sleep_until(next + blockDuration);
     }
 }
@@ -149,7 +149,14 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
 
 bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
                              juce::String& error) {
-    if (plan.hostsPlugins) warmUpPlugins(*engine, plan.sampleRate, plan.blockSize);
+    if (plan.hostsPlugins) {
+        warmUpPlugins(*engine, plan.sampleRate, plan.blockSize);
+        // The warm-up advanced the plugins' processing state; rendering starts from reset state.
+        if (!juce::MessageManager::callSync([this] { engine->resetPluginDevices(); })) {
+            error = "Offline Render could not reset the warmed-up plugins.";
+            return false;
+        }
+    }
     engine->seekToTick(0);
     engine->play();
 

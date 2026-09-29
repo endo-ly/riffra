@@ -332,14 +332,14 @@ void TimelineEngine::processLiveInstrumentTrack(PreparedTimeline& prepared, Trac
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
-void TimelineEngine::warmUpDevices(const int sampleCount) noexcept {
+void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     AudioReadScope activeRead(*this);
     auto* active = activeRead.get();
     if (active == nullptr) return;
     for (auto& trackPtr : active->tracks) {
         auto& runtime = *trackPtr->runtime;
         runtime.liveInputBuffer.clear(0, sampleCount);
-        if (runtime.instrument() != nullptr)
+        if (runtime.instrument() != nullptr && runtime.instrument()->vst3Rack() != nullptr)
             runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2,
                                           sampleCount, nullptr,
                                           instrumentProcessContext(*active, 0, false));

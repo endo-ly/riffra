@@ -77,6 +77,7 @@ struct InstrumentTrace final {
     bool released = false;
     bool noteHeld = false;
     int processBlockCount = 0;
+    int resetCount = 0;
     juce::MidiMessage lastMidiMessage;
     std::vector<juce::MidiMessage> midiMessages;
     std::vector<int> midiSamplePositions;
@@ -94,6 +95,7 @@ public:
         trace.prepared = sampleRate > 0.0 && samplesPerBlock > 0;
     }
     void releaseResources() override { trace.released = true; }
+    void reset() override { ++trace.resetCount; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
         return layout.getMainInputChannelSet() == (getBusCount(true) > 0
                                                        ? juce::AudioChannelSet::stereo()
