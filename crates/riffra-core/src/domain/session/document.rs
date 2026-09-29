@@ -35,7 +35,10 @@ struct OwnedSessionDocument {
 /// A session document that cannot be read by this build.
 #[derive(Debug, Error)]
 pub enum SessionDocumentError {
-    #[error("unsupported session schema version: found {found:?}, expected {expected}")]
+    #[error(
+        "unsupported session schema version: found {}, expected {expected}",
+        found.map_or_else(|| "none".to_owned(), |version| version.to_string())
+    )]
     UnsupportedSchemaVersion { found: Option<u32>, expected: u32 },
     #[error("invalid session document: {0}")]
     Invalid(#[from] serde_json::Error),
@@ -135,14 +138,15 @@ mod tests {
         // Arrange
         let session = serde_json::to_value(CreativeSession::new(1_000)).unwrap();
         let cases = [
-            (serde_json::json!(session), None),
+            (serde_json::json!(session), None, "none"),
             (
                 serde_json::json!({"schemaVersion": 2, "session": session}),
                 Some(2),
+                "2",
             ),
         ];
 
-        for (document, found) in cases {
+        for (document, found, shown) in cases {
             // Act
             let error =
                 deserialize_session_document(&serde_json::to_vec(&document).unwrap()).unwrap_err();
@@ -153,6 +157,10 @@ mod tests {
                 SessionDocumentError::UnsupportedSchemaVersion { found: actual, expected: 1 }
                     if actual == found
             ));
+            assert_eq!(
+                error.to_string(),
+                format!("unsupported session schema version: found {shown}, expected 1")
+            );
         }
     }
 }
