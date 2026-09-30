@@ -3327,7 +3327,7 @@ mod tests {
         };
 
         // Assert
-        let details = error.details().unwrap();
+        let details = error.details();
         assert_eq!(details["path"], "/start");
         assert_eq!(details["value"], "0:1");
     }

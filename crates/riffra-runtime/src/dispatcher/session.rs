@@ -830,6 +830,24 @@ mod tests {
         );
         assert!(error.details.as_ref().unwrap()["value"].is_null());
 
+        let unknown_operation = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    serde_json::json!({
+                        "operations": [{"command": "missing.command", "params": {}}]
+                    }),
+                ),
+                None,
+            )
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(unknown_operation.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            unknown_operation.details.as_ref().unwrap()["path"],
+            "/command"
+        );
+
         let after = dispatcher
             .dispatch(command("session.get", json!({})), None)
             .unwrap();

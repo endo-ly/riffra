@@ -470,7 +470,7 @@ mod tests {
 
         // Assert
         assert!(error.to_string().contains("unknown field `trackNmae`"));
-        assert_eq!(error.details().unwrap()["path"], "/trackNmae");
+        assert_eq!(error.details()["path"], "/trackNmae");
     }
 
     #[test]
@@ -483,7 +483,7 @@ mod tests {
         .unwrap_err();
 
         // Assert
-        let details = error.details().unwrap();
+        let details = error.details();
         assert_eq!(details["path"], "/notes/0/velocity");
         assert_eq!(details["index"], 0);
         assert_eq!(details["value"], "loud");

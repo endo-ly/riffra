@@ -17,24 +17,19 @@ pub enum CommandDecodeError {
 }
 
 impl CommandDecodeError {
-    /// Returns the machine-readable location of an invalid parameter.
-    pub fn details(&self) -> Option<&Value> {
+    /// Returns the machine-readable details for this decoding failure.
+    pub fn details(&self) -> Value {
         match self {
-            Self::UnknownCommand(_) => None,
-            Self::InvalidParams { details, .. } => Some(details),
+            Self::UnknownCommand(_) => serde_json::json!({"path": "/command"}),
+            Self::InvalidParams { details, .. } => details.clone(),
         }
     }
 }
 
 impl From<CommandDecodeError> for ProtocolError {
     fn from(error: CommandDecodeError) -> Self {
-        let protocol = ProtocolError::new(ErrorCode::InvalidRequest, error.to_string());
-        match error {
-            CommandDecodeError::UnknownCommand(_) => {
-                protocol.with_details(serde_json::json!({"path": "/command"}))
-            }
-            CommandDecodeError::InvalidParams { details, .. } => protocol.with_details(details),
-        }
+        ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
+            .with_details(error.details())
     }
 }
 

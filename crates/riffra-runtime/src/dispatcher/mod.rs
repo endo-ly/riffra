@@ -133,6 +133,7 @@ impl DispatchError {
         if let Some(Value::String(path)) = details.get_mut("path")
             && path.starts_with('/')
             && !path.starts_with("/params/")
+            && path != "/command"
         {
             *path = format!("/params{path}");
         }
@@ -158,12 +159,7 @@ impl From<&'static str> for DispatchError {
 impl From<CommandDecodeError> for DispatchError {
     fn from(error: CommandDecodeError) -> Self {
         let message = error.to_string();
-        match error {
-            CommandDecodeError::UnknownCommand(_) => Self::invalid_request(message),
-            CommandDecodeError::InvalidParams { details, .. } => {
-                Self::invalid_request_with_details(message, details)
-            }
-        }
+        Self::invalid_request_with_details(message, error.details())
     }
 }
 
@@ -602,6 +598,28 @@ mod tests {
         )
         .unwrap();
         (dispatcher, root)
+    }
+
+    #[test]
+    fn unknown_command_request_reports_command_path() {
+        // Arrange
+        let (dispatcher, root) = open("unknown-command");
+
+        // Act
+        let error = dispatcher
+            .dispatch_request(ControlRequest::new(
+                "unknown-command",
+                "missing.command",
+                json!({}),
+                None,
+            ))
+            .unwrap_err()
+            .protocol_error();
+
+        // Assert
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.details.unwrap()["path"], "/command");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

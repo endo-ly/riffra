@@ -91,7 +91,7 @@ impl From<CommandDecodeError> for NativeCommandError {
         Self {
             code: "invalidRequest".into(),
             message,
-            details: error.details().cloned(),
+            details: Some(error.details()),
         }
     }
 }
@@ -1646,6 +1646,19 @@ mod tests {
         for path in paths {
             let _ = std::fs::remove_dir_all(path);
         }
+    }
+
+    #[test]
+    fn unknown_command_at_desktop_boundary_reports_command_path() {
+        // Arrange
+        let command = ControlCommand::decode("missing.command", json!({}));
+
+        // Act
+        let error = command.map_err(NativeCommandError::from).unwrap_err();
+
+        // Assert
+        assert_eq!(error.code, "invalidRequest");
+        assert_eq!(error.details.unwrap()["path"], "/command");
     }
 
     #[test]
