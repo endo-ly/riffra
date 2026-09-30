@@ -7,7 +7,7 @@
 ### 書くこと
 
 - IPC 境界の全体像と使い分け基準
-- Tauri 命令のカタログ（領域ごとの分類と責務、実行モード）
+- Tauri 命令の構成と Control Command の定義・性質
 - NativeApi TS 契約と Tauri 命令との対応規則
 - サイドカー JSON Lines プロトコルの構造と規則（音声・レンダー・プローブ）
 - CLI と Riffra Host 制御のプロトコル境界
@@ -16,7 +16,7 @@
 
 ### 書かないこと
 
-- 各 Tauri 命令の引数・戻り値の詳細（code 参照）
+- 各 Control Command の Params・結果の詳細（`riffra-runtime` の `api` モジュール参照）
 - サイドカーコマンドの全シグネチャ（code 参照）
 - 各メッセージの全フィールド（code 参照）
 
@@ -72,75 +72,37 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 
 ## 3. 境界 A: Tauri 命令（WebView → Rust）
 
-### 3.1 実行モード
+### 3.1 命令の構成
 
-命令は責務に応じて 3 つの実行モードを使い分ける。すべて `spawn_blocking` 経由で async ワーカーから分離して実行する。
+WebView から Host への操作は、すべて `dispatch_control` 1 本で送る。Tauri 命令として個別に持つのは、Desktop shell が所有する処理だけである。
 
-| モード                              | 挙動                                                                                                                | 使う命令                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `run_blocking`                      | Host command gate を取得してから実行（正準セッション操作と保存を直列化）                                            | 楽曲編集・ライブラリ操作・素材操作の大半           |
-| `run_blocking_without_command_gate` | ゲートなしで blocking 実行。読み取り専用処理と、VSTライフサイクル中にホストゲートを保持できない処理                 | プローブ、スキャン、録音一覧、プラグイン接続など   |
-| `run_runtime_control`               | Runtime側は永続セッションを変更しないsnapshot読み取りで実行。Project-bound requestはHost入口でProject切替と排他する | play / stop / seek、MIDI送信、プレビュー、ミュート |
+| 命令                                                                                | 責務                                                                                    |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `dispatch_control`                                                                  | Control Command（§3.2）を 1 件デコードし、接続中の Host で実行して結果の `value` を返す |
+| `get_bootstrap_state`                                                               | CanonicalState・ProjectState・プラグイン一覧・セーフモード・回復候補の初期状態を返す    |
+| `get_host_connection_state` / `list_local_hosts` / `switch_host` / `reconnect_host` | Host の選択・切替・再接続                                                               |
+| `import_midi_bytes`                                                                 | ドロップされた MIDI バイト列を一時ファイルへ書き出し、`asset.import-midi` で取り込む    |
+| `render_timeline`                                                                   | `render.start` でジョブを開始し、完了まで `job.get` で待って結果を返す                  |
 
-### 3.2 命令カタログ
+全命令は `lib.rs` の `invoke_handler` が真実源。命令は `spawn_blocking` で async ワーカーから分離して実行する。
 
-領域ごとに代表を示す。全命令は `src-tauri/src/**/commands.rs` と `lib.rs` の `invoke_handler` が真実源。
+### 3.2 Control Command
 
-**起動・全体（lib.rs / startup.rs / audio_preferences.rs）**
+Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モジュールにある表（`api/table.rs`）で 1 回だけ定義する。表の 1 行は、命令名・Params 型・結果型・性質を持つ。Standalone dispatcher、Live Host、CLI、Desktop はすべてこの表から生成された型を使い、命令名の文字列リストを別に持たない。
 
-| 命令                                                                                                 | 責務                                                                                              |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `get_bootstrap_state`                                                                                | CanonicalState・ProjectState・Built-in instrument catalog・セーフモード・回復候補の初期状態を返す |
-| `get_audio_status`                                                                                   | 音声状態の照会                                                                                    |
-| `probe_audio_devices` / `probe_device_channels`                                                      | オーディオデバイス・チャンネル列挙（境界E経由）                                                   |
-| `set_emergency_mute` / `reset_feedback_protection` / `set_master_gain_db` / `preview_master_gain_db` | 安全制御とマスターゲイン                                                                          |
-| `recover_audio_device` / `retry_startup_runtime`                                                     | デバイス回復・スタートアップ再試行                                                                |
-| `restore_recovery_generation`                                                                        | 世代からの回復                                                                                    |
+| 性質     | 値                                        | 意味                                                                                           |
+| -------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| scope    | `host`                                    | `expectedProjectId` を要求しない                                                               |
+|          | `project`                                 | Active Project に紐づき、`expectedProjectId` を要求する。Live Host では command gate を取る    |
+|          | `project(long)`                           | Project の確定だけを守り、command gate を取らない長時間処理（VST3 のロードを伴う編集など）     |
+| executor | `canonical`（`read` / `mutation(batch)`） | 正準状態を読む・変える。Standalone でも実行でき、`batch` の命令は `session.apply` に含められる |
+|          | `project`                                 | Project container の一覧・作成・切替・Import / Export                                          |
+|          | `runtime`                                 | Live Host の Runtime を要する。Standalone は `runtimeUnavailable` を返す                       |
 
-`preview_track_mix` は Host の現行 Track Runtime に Gain / Pan を一時適用する。Canonical state、履歴、保存を変更しないため、確定時は `update_track` を使う。
-
-**セッション・アレンジ（session/commands/）**
-
-| 領域               | 命令                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| タイムラインレンジ | `update_timeline_loop_range`、`update_timeline_punch_range`、`update_arrangement_timebase`                                                                                                                                                                                                                                                                                                              |
-| トラック           | `add_track`、`duplicate_track`、`remove_track`、`reorder_track`、`update_track`、`set_track_audio_input`、`set_track_midi_input`、`list_built_in_instruments`、`set_track_built_in_instrument`、`set_track_vst3_instrument`、`clear_track_instrument`、`set_track_device_bypassed`、`set_track_device_parameter`                                                                                        |
-| クリップ           | `add_audio_clip_to_arrangement`、`add_midi_clip_to_arrangement`、`create_midi_clip`、`update_audio_clip`、`update_midi_clip`、`move_audio_clips`、`move_midi_clips`、`trim_audio_clip`、`trim_midi_clip`、`split_audio_clip`、`split_midi_clip`、`crossfade_audio_clips`、`duplicate_audio_clip`、`duplicate_midi_clip`、`remove_timeline_clips`、`paste_timeline_clips`、`set_audio_clip_take_variant` |
-| ノート             | `add_midi_note`、`insert_midi_notes`、`update_midi_note`、`update_midi_notes`、`remove_midi_note`、`remove_midi_notes`、`duplicate_midi_notes`、`quantize_midi_notes`                                                                                                                                                                                                                                   |
-| オートメーション   | `set_track_automation`                                                                                                                                                                                                                                                                                                                                                                                  |
-| マーカー           | `add_marker`、`update_marker`、`remove_marker`                                                                                                                                                                                                                                                                                                                                                          |
-| 設定               | `update_session_settings`                                                                                                                                                                                                                                                                                                                                                                               |
-| 履歴               | `undo_session`、`redo_session`、`get_history_state`                                                                                                                                                                                                                                                                                                                                                     |
-| Project            | `list_projects`、`create_project`、`open_project`、`rename_project`、`export_project`、`import_project`                                                                                                                                                                                                                                                                                                 |
-| 素材入出力         | `import_midi_file`、`import_midi_bytes`                                                                                                                                                                                                                                                                                                                                                                 |
-| 欠落依存           | `get_missing_dependencies`、`relink_missing_dependency`、`disable_missing_plugin`、`replace_missing_track_plugin`                                                                                                                                                                                                                                                                                       |
-
-- `open_project` は同一 DataRoot 内の Project container を直接切り替える
-- 外部 package を扱うのは `import_project` と `export_project` のみ。Import は既存 Project を残したまま新規 container を Active にし、Export の出力先は指定 path のみとする
-
-**プラグイン（plugins/commands.rs）**: `scan_vst3_folder`、`start_scan_job`、`open_track_plugin_editor`。エディタ由来の state / parameter 変更は Host 内の coalesce と正準保存で完結する。
-
-**録音（recording/commands.rs）**
-
-| 領域           | 命令                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 録音制御       | `start_arrange_recording`、`stop_arrange_recording`、`record_another_take`                                                                          |
-| テイク         | `activate_take`、`place_take_as_separate_clip`、`start_take_comparison`、`switch_take_comparison_variant`、`stop_take_comparison`                   |
-| キャプチャ管理 | `list_recordings`、`rename_recording`、`archive_recording`、`promote_recording`、`tag_recording`、`delete_recording`、`detect_duplicate_recordings` |
-
-**素材・ライブラリ（asset / library / analysis / render / plugins commands）**
-
-| 領域               | 命令                                                                                                                                                                                                                                                                                 |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ライブラリ         | `search_library`、`related_library_assets`、`update_library_asset`                                                                                                                                                                                                                   |
-| Instrument Library | `list_instruments`、`set_instrument_favorite`、`set_instrument_category_override`、`set_instrument_user_tags`、`list_instrument_collections`、`create_instrument_collection`、`rename_instrument_collection`、`delete_instrument_collection`、`set_instrument_collection_membership` |
-| プレビュー         | `preview_asset`、`preview_instrument`、`stop_preview`、`stop_instrument_preview`                                                                                                                                                                                                     |
-| 解析               | `analyze_asset`（同期）                                                                                                                                                                                                                                                              |
-| レンダー           | `render_timeline`                                                                                                                                                                                                                                                                    |
-
-**ランタイム投影**: `get_runtime_projection_status`、`retry_runtime_projection`
-
-**演奏・トランスポート（session/transport.rs / runtime）**: `play_timeline`、`stop_timeline`、`seek_timeline`、`go_to_start_timeline`、`send_midi_to_track`、`set_live_midi_target`、`panic_midi_track`、`enable_midi_listening`、`disable_midi_listening`
+- 要求は最初に `ControlCommand::decode` で型付きの命令になる。未知の命令名、未知の Params キー、型違いは `invalidRequest` になり、`details` に JSON Pointer 形式の `path`、配列要素の `index`、小さな値の `value` が付く
+- 実行側は executor ごとの命令を網羅的に `match` する。表に命令を足して実装を書き忘れるとコンパイルエラーになる
+- 正準状態を変える命令は `arrangementMutation`（`session.apply` は `batchMutation`）を返す。結果の `type` は `ControlOutput` の variant 名である
+- TypeScript の `ControlCommand`（`{ command, params }` の union）と `ControlCommandResults`（命令名 → 結果型）は Rust から生成する（`npm run gen:types`）
 
 ### 3.3 エラー規約
 
@@ -166,8 +128,8 @@ Riffra Host Control Server → HostEventHub → Host state / Core
 ### 3.4 UI 呼び出しの順序
 
 - 順序の所有者は Core と Host command gate。フロントエンドは応答の `CanonicalState` を確定順序として受け入れる
-- 中間値を捨ててよい連続制御は集約して最終値のみ送信する。集約された待機者には同一の確定応答を返す
-- `invokeHostOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）専用のフォールバック。ネイティブ実行時は失敗をそのまま reject する
+- 中間値を捨ててよい連続制御は `dispatchLatestControl` で集約して最終値のみ送信する。集約された待機者には同一の確定応答を返す
+- `dispatchControlOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）専用のフォールバック。ネイティブ実行時は失敗をそのまま reject する
 
 ---
 
@@ -364,7 +326,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 ## 8. 境界 F: Local ClientとRiffra Host制御
 
-`riffra`にはStandalone、serve、Attachedの三つの実行モードがある。DesktopのHostConnectionManagerも同じ`riffra-control::ControlCommand`とLocalHostClientを利用するため、EmbeddedとAttachedの制作操作は同じHost command境界を通る。
+`riffra`にはStandalone、serve、Attachedの三つの実行モードがある。DesktopのHostConnectionManagerも同じControl Command（§3.2）とLocalHostClientを利用するため、EmbeddedとAttachedの制作操作は同じHost command境界を通る。CLIの一回実行と`--interactive`の各行も、送信前に`ControlCommand::decode`で型付きの命令にする。
 
 | モード     | 状態の所有者                                         | 要求の経路                                         |
 | ---------- | ---------------------------------------------------- | -------------------------------------------------- |
@@ -435,7 +397,7 @@ riffra --attach --interactive
 
 ### 8.2 応答とエラー
 
-- 成功応答は対応する正準シーケンスを含む。`session.get` は `result.type: "session"`、投影連動の変更は `result.type: "arrangementMutation"`（`canonical` + `projection`、sequence 一致）、その他は固有型を使う
+- 成功応答は対応する正準シーケンスを含む。`result.type` は命令ごとに表（§3.2）で決まる。`session.get` は `"session"`、正準状態の変更は `"arrangementMutation"`（`canonical` + `projection`、sequence 一致）、その他は固有型を使う
 - 結果と sequence は同一 `CanonicalState` スナップショットから一貫して構築する
 
 ```json
@@ -488,7 +450,7 @@ CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core
 | Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                                   |
 | Automation             | `automation set`、`automation clear`                                                                                                                                                                                                                                                                                                              |
 | Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                             |
-| Rack state             | `plugin catalog list`、`instrument list/apply`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                       |
+| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                       |
 | Runtime services       | `audio status/diagnostics/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
 軽量投影の約束: `session inspect`、`track list`、`device inspect`、`music.note.*` は構造把握用であり、本文の取得は `session get`、`plugin.state.get` に委譲する。`device inspect` の応答範囲は metadata と capability とする。
@@ -527,9 +489,9 @@ Desktop の Tauri command 境界と Live Host の Control Server の機能分担
 
 ## 10. NativeApi と境界の対応規則
 
-`src/native/api/` は Tauri 命令をドメイン用語の capability interface へ写像する。コマンド名・引数名の知識は capability 層に集約し、各 Feature は必要な capability だけに依存する。低レベル API の import は ESLint で `src/native/` 配下に限定する。
+`src/native/api/` は Control Command と Desktop 固有の Tauri 命令をドメイン用語の capability interface へ写像する。命令名・引数名の知識は capability 層に集約し、各 Feature は必要な capability だけに依存する。低レベル API の import は ESLint で `src/native/` 配下に限定する。
 
-- Host 所有の method は `invokeHost` を使う。開始時と応答時の connection generation が一致した応答のみ成功とする。bootstrap・Host 切替・Reconnect は現在 generation を更新する
+- Host 所有の method は `dispatchControl` 系で Control Command を送る。命令名と Params は生成された型で検査される。開始時と応答時の connection generation が一致した応答のみ成功とする。bootstrap・Host 切替・Reconnect は現在 generation を更新する
 - Window・dialog・Host selector など Desktop shell 所有の method は通常の `invoke` を使う。再同期範囲は Host 所有の method に限る
 - 制作状態を変更する method は `CanonicalState` を含む結果を返す。起動時は履歴可否を Core の HistoryState で判定する
 - `previewTrackMix` と `previewMasterGainDb` は Runtime-only の一時プレビューであり、CanonicalStateを返すMutationではない。確定操作はそれぞれ `updateTrack` と `setMasterGainDb` を使い、結果は正準状態と投影結果を含む `ArrangementMutationResult` を返す

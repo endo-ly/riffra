@@ -1,15 +1,20 @@
 //! Desktop-side ownership and routing for the currently connected Host.
 
-use crate::model::{BootstrapState, ProjectRecoveryState, RecoveryCandidate};
+use crate::model::BootstrapState;
 use riffra_control::{
-    ControlCommand, ControlRequest, ControlResponse, HostEventFrame, LocalHostClient,
-    LocalHostDiscovery, LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
+    ControlResponse, HostEventFrame, LocalHostClient, LocalHostDiscovery,
+    LocalHostEventStreamHandle, LocalHostRegistry, new_instance_id,
+};
+use riffra_runtime::api::output::{AudioState, HostInfo};
+use riffra_runtime::api::output::{ProjectRecoveryState, RecoveryCandidate};
+use riffra_runtime::api::params::EmptyParams;
+use riffra_runtime::api::{
+    CommandDecodeError, CommandScope, ControlCommand, ControlOutput, ProjectCommand, RuntimeCommand,
 };
 use riffra_runtime::{
-    AudioStatus, DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink,
-    RuntimeBinaries, command_requires_project_id,
+    DawHost, HostBootstrap, HostConfig, HostError, HostEvent, HostEventSink, RuntimeBinaries,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -76,6 +81,17 @@ impl NativeCommandError {
             code: "commandFailed".into(),
             message: message.into(),
             details: None,
+        }
+    }
+}
+
+impl From<CommandDecodeError> for NativeCommandError {
+    fn from(error: CommandDecodeError) -> Self {
+        let message = error.to_string();
+        Self {
+            code: "invalidRequest".into(),
+            message,
+            details: Some(error.details()),
         }
     }
 }
@@ -769,13 +785,18 @@ impl HostConnectionManager {
         client: &LocalHostClient,
     ) -> Result<HostBootstrap, BootstrapRequestError> {
         let response = client
-            .request(&ControlRequest::new(
-                format!("desktop-bootstrap-{}", new_instance_id()),
-                ControlCommand::new("host.bootstrap", json!({})),
-                None,
-            ))
+            .request(
+                &ControlCommand::from(RuntimeCommand::HostBootstrap(EmptyParams {}))
+                    .into_request(format!("desktop-bootstrap-{}", new_instance_id()), None),
+            )
             .map_err(|error| BootstrapRequestError::Connection(error.to_string()))?;
-        response_value(response).map_err(|error| BootstrapRequestError::Response(error.to_string()))
+        match response_output(response) {
+            Ok(ControlOutput::HostBootstrap(bootstrap)) => Ok(*bootstrap),
+            Ok(output) => Err(BootstrapRequestError::Response(
+                unexpected_output(output).to_string(),
+            )),
+            Err(error) => Err(BootstrapRequestError::Response(error.to_string())),
+        }
     }
 
     fn prepare_target(
@@ -793,7 +814,10 @@ impl HostConnectionManager {
             HostTarget::Registration { instance_id } => {
                 let discovery = self
                     .registry
-                    .discover()
+                    .discover(|registration| {
+                        ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                            .into_request(format!("discovery-{}", registration.instance_id), None)
+                    })
                     .map_err(|error| format!("Local Host discovery failed: {error}"))?
                     .into_iter()
                     .find(|host| host.registration.instance_id == instance_id)
@@ -839,7 +863,10 @@ impl HostConnectionManager {
             .flatten();
         let discovered = self
             .registry
-            .discover()
+            .discover(|registration| {
+                ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                    .into_request(format!("discovery-{}", registration.instance_id), None)
+            })
             .map_err(|error| format!("Local Host discovery failed: {error}"))?;
         let mut hosts = Vec::new();
         for discovery in discovered.into_iter().filter(|host| {
@@ -970,21 +997,18 @@ impl HostConnectionManager {
         self.switch(HostTarget::DataRoot { data_root })
     }
 
-    /// Runs one Host-owned operation through the current Host.
-    pub fn dispatch<T: DeserializeOwned>(
-        &self,
-        command: &str,
-        params: Value,
-    ) -> Result<T, NativeCommandError> {
+    /// Runs one Control Command through the current Host.
+    ///
+    /// A Project-scoped command is bound to the active Project known to this
+    /// Desktop, which follows every Project activation result.
+    pub fn dispatch(&self, command: ControlCommand) -> Result<ControlOutput, NativeCommandError> {
         let _read = self.operation_barrier.read().map_err(|_| {
             NativeCommandError::command_failed("Host operation barrier was poisoned")
         })?;
-        let request = ControlRequest::new(
-            format!("desktop-command-{}", new_instance_id()),
-            ControlCommand::new(command, params),
-            None,
-        );
-        let request = if command_requires_project_id(command) {
+        let scope = command.policy().scope;
+        let mut request =
+            command.into_request(format!("desktop-command-{}", new_instance_id()), None);
+        if scope != CommandScope::Host {
             let project_id = self
                 .active_project_id
                 .read()
@@ -995,10 +1019,8 @@ impl HostConnectionManager {
                 .ok_or_else(|| {
                     NativeCommandError::invalid_request("active Project is not available")
                 })?;
-            request.with_expected_project_id(project_id)
-        } else {
-            request
-        };
+            request.expected_project_id = Some(project_id);
+        }
         let (response, attached_generation) = {
             let active = self.active.read().map_err(|_| {
                 NativeCommandError::command_failed("Host connection lock was poisoned")
@@ -1028,17 +1050,20 @@ impl HostConnectionManager {
                 return Err(NativeCommandError::host_unavailable(error));
             }
         };
-        if response.ok
-            && let Some(project_id) = response
-                .result
-                .as_ref()
-                .and_then(|result| result.value["projectState"]["activeProjectId"].as_str())
-        {
+        let output = response_output(response)?;
+        let active_project_id = match &output {
+            ControlOutput::ProjectActivation(activation) => {
+                Some(&activation.project_state.active_project_id)
+            }
+            ControlOutput::ProjectState(state) => Some(&state.active_project_id),
+            _ => None,
+        };
+        if let Some(project_id) = active_project_id {
             *self.active_project_id.write().map_err(|_| {
                 NativeCommandError::command_failed("active Project lock was poisoned")
-            })? = Some(project_id.to_owned());
+            })? = Some(project_id.clone());
         }
-        response_value(response)
+        Ok(output)
     }
 
     /// Reports whether the embedded Host requested Desktop process shutdown.
@@ -1156,7 +1181,7 @@ impl HostConnectionManager {
     }
 }
 
-fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, NativeCommandError> {
+fn response_output(response: ControlResponse) -> Result<ControlOutput, NativeCommandError> {
     if !response.ok {
         let error = response.error.map_or_else(
             || NativeCommandError::command_failed("Host command failed"),
@@ -1168,15 +1193,27 @@ fn response_value<T: DeserializeOwned>(response: ControlResponse) -> Result<T, N
         );
         return Err(error);
     }
-    let value = response
+    let result = response
         .result
-        .map(|result| result.value)
-        .unwrap_or(Value::Null);
-    serde_json::from_value(value).map_err(|error| NativeCommandError {
+        .ok_or_else(|| protocol_violation("Host response did not contain a result"))?;
+    ControlOutput::try_from(result)
+        .map_err(|error| protocol_violation(format!("Host response could not be decoded: {error}")))
+}
+
+fn unexpected_output(output: ControlOutput) -> NativeCommandError {
+    let result_type = serde_json::to_value(output)
+        .ok()
+        .and_then(|value| value["type"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    protocol_violation(format!("Host returned an unexpected result: {result_type}"))
+}
+
+fn protocol_violation(message: impl Into<String>) -> NativeCommandError {
+    NativeCommandError {
         code: "commandFailed".into(),
-        message: format!("Host response could not be decoded: {error}"),
+        message: message.into(),
         details: Some(json!({"kind": "protocolViolation"})),
-    })
+    }
 }
 
 fn shutdown_old(active: ActiveHost) {
@@ -1199,51 +1236,46 @@ fn ensure_no_active_recording(recording_active: bool) -> Result<(), String> {
 /// Queries one attached Host for its native recording state.
 fn attached_recording_active(client: &LocalHostClient) -> bool {
     let project_id = client
-        .request(&ControlRequest::new(
-            format!("desktop-recording-project-{}", new_instance_id()),
-            ControlCommand::new("project.list", json!({})),
-            None,
-        ))
+        .request(
+            &ControlCommand::from(ProjectCommand::ProjectList(EmptyParams {})).into_request(
+                format!("desktop-recording-project-{}", new_instance_id()),
+                None,
+            ),
+        )
         .ok()
-        .and_then(|response| response_value::<Value>(response).ok())
-        .and_then(|value| value["activeProjectId"].as_str().map(str::to_owned));
-    let request = ControlRequest::new(
-        format!("desktop-recording-status-{}", new_instance_id()),
-        ControlCommand::new("record.status", json!({})),
-        None,
-    );
-    let request = match project_id {
-        Some(project_id) => request.with_expected_project_id(project_id),
-        None => request,
-    };
+        .and_then(|response| match response_output(response) {
+            Ok(ControlOutput::ProjectState(state)) => Some(state.active_project_id),
+            _ => None,
+        });
+    let mut request = ControlCommand::from(RuntimeCommand::RecordStatus(EmptyParams {}))
+        .into_request(
+            format!("desktop-recording-status-{}", new_instance_id()),
+            None,
+        );
+    request.expected_project_id = project_id;
     client
         .request(&request)
         .ok()
-        .and_then(|response| response_value::<AudioStatus>(response).ok())
-        .map(|status| status.recording.active || status.recording.processing)
-        .unwrap_or(false)
-}
-
-/// Lightweight Host identity payload returned by `host.info`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HostInfoPayload {
-    project_name: Option<String>,
-    safe_mode: bool,
-    runtime_state: String,
+        .and_then(|response| match response_output(response) {
+            Ok(ControlOutput::AudioStatus(status)) => Some(status),
+            _ => None,
+        })
+        .is_some_and(|status| status.recording.active || status.recording.processing)
 }
 
 fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
     let registration = discovery.registration;
     let response = discovery
         .client
-        .request(&ControlRequest::new(
-            format!("desktop-info-{}", new_instance_id()),
-            ControlCommand::new("host.info", json!({})),
-            None,
-        ))
+        .request(
+            &ControlCommand::from(RuntimeCommand::HostInfo(EmptyParams {}))
+                .into_request(format!("desktop-info-{}", new_instance_id()), None),
+        )
         .map_err(|error| error.to_string())?;
-    let info: HostInfoPayload = response_value(response)?;
+    let info: HostInfo = match response_output(response)? {
+        ControlOutput::HostInfo(info) => info,
+        output => return Err(unexpected_output(output).to_string()),
+    };
     Ok(LocalHostInfo {
         instance_id: registration.instance_id,
         pid: registration.pid,
@@ -1251,18 +1283,18 @@ fn host_info(discovery: LocalHostDiscovery) -> Result<LocalHostInfo, String> {
         started_at_ms: registration.started_at_ms,
         project_name: info.project_name,
         safe_mode: info.safe_mode,
-        status: display_runtime_state(&info.runtime_state).into(),
+        status: display_runtime_state(info.runtime_state).into(),
     })
 }
 
 /// Maps the Host runtime state onto the Host Selector's display vocabulary.
-fn display_runtime_state(state: &str) -> &'static str {
+fn display_runtime_state(state: AudioState) -> &'static str {
     match state {
-        "faulted" => "Faulted",
-        "muted" => "Muted",
-        "starting" => "Starting",
-        "offline" => "Offline",
-        _ => "Ready",
+        AudioState::Faulted => "Faulted",
+        AudioState::Muted => "Muted",
+        AudioState::Starting => "Starting",
+        AudioState::Offline => "Offline",
+        AudioState::Ready => "Ready",
     }
 }
 
@@ -1401,8 +1433,9 @@ pub(crate) async fn reconnect_host(
 mod tests {
     use super::*;
     use riffra_control::{
-        CommandResult, ConnectionRole, ControlResponse, EndpointDescriptor, ErrorCode,
-        HelloRequest, HelloResponse, LocalHostRegistration, ProtocolError, now_ms, read_endpoint,
+        CommandResult, ConnectionRole, ControlRequest, ControlResponse, EndpointDescriptor,
+        ErrorCode, HelloRequest, HelloResponse, LocalHostRegistration, ProtocolError, now_ms,
+        read_endpoint,
     };
     use riffra_runtime::NoopHostEventSink;
     use std::time::Instant;
@@ -1590,7 +1623,8 @@ mod tests {
             .and_then(|client| {
                 client.request(&ControlRequest::new(
                     format!("status-{}", new_instance_id()),
-                    ControlCommand::new("host.status", json!({})),
+                    "host.status",
+                    json!({}),
                     None,
                 ))
             })
@@ -1598,14 +1632,33 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn add_track(name: &str) -> (&'static str, Value) {
-        ("track.add", json!({ "name": name, "kind": "instrument" }))
+    fn add_track(name: &str) -> ControlCommand {
+        riffra_runtime::api::CanonicalCommand::TrackAdd(
+            riffra_runtime::api::params::TrackAddParams {
+                name: name.into(),
+                kind: riffra_core::TrackKind::Instrument,
+            },
+        )
+        .into()
     }
 
     fn cleanup(paths: &[PathBuf]) {
         for path in paths {
             let _ = std::fs::remove_dir_all(path);
         }
+    }
+
+    #[test]
+    fn unknown_command_at_desktop_boundary_reports_command_path() {
+        // Arrange
+        let command = ControlCommand::decode("missing.command", json!({}));
+
+        // Act
+        let error = command.map_err(NativeCommandError::from).unwrap_err();
+
+        // Assert
+        assert_eq!(error.code, "invalidRequest");
+        assert_eq!(error.details.unwrap()["path"], "/command");
     }
 
     #[test]
@@ -1644,8 +1697,7 @@ mod tests {
                 canonical_sequence: 0
             }
         )));
-        let (command, params) = add_track("Routed to A");
-        manager.dispatch::<Value>(command, params).unwrap();
+        manager.dispatch(add_track("Routed to A")).unwrap();
 
         let to_b = manager
             .switch(HostTarget::Registration {
@@ -1792,9 +1844,12 @@ mod tests {
     #[test]
     fn a_lower_target_sequence_is_adopted_after_a_switch() {
         let (manager, _outlet) = test_manager("sequence");
-        let (command, params) = add_track("Raises the embedded sequence");
-        manager.dispatch::<Value>(command, params.clone()).unwrap();
-        manager.dispatch::<Value>(command, params).unwrap();
+        manager
+            .dispatch(add_track("Raises the embedded sequence"))
+            .unwrap();
+        manager
+            .dispatch(add_track("Raises the embedded sequence"))
+            .unwrap();
         let embedded_sequence = manager.desktop_bootstrap().unwrap().canonical.sequence;
         assert_eq!(embedded_sequence, 2);
         let host = standalone_host("sequence-host");
@@ -1808,16 +1863,15 @@ mod tests {
 
         assert_eq!(switched.state.mode, HostConnectionMode::Attached);
         assert!(switched.bootstrap.canonical.sequence < embedded_sequence);
-        let (command, params) = add_track("Expected sequence 0");
         let response = LocalHostClient::connect_data_root(host.data_root())
             .unwrap()
             .request(
-                &ControlRequest::new(
-                    "lower-sequence-mutation",
-                    ControlCommand::new(command, params),
-                    Some(switched.bootstrap.canonical.sequence),
-                )
-                .with_expected_project_id(switched.bootstrap.project_state.active_project_id),
+                &add_track("Expected sequence 0")
+                    .into_request(
+                        "lower-sequence-mutation",
+                        Some(switched.bootstrap.canonical.sequence),
+                    )
+                    .with_expected_project_id(switched.bootstrap.project_state.active_project_id),
             )
             .unwrap();
         assert!(response.ok);

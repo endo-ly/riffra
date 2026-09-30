@@ -26,7 +26,7 @@
         "muted": false,
         "solo": true,
         "armed": true,
-        "monitoring": "off",
+        "monitorInput": true,
         "audioInput": {
           "channelIndex": 2
         },
@@ -114,7 +114,7 @@
         "muted": false,
         "solo": true,
         "armed": true,
-        "monitoring": "auto",
+        "monitorInput": false,
         "audioInput": null,
         "midiInput": {
           "deviceId": "midi-device",
@@ -177,7 +177,7 @@
         "muted": false,
         "solo": true,
         "armed": true,
-        "monitoring": "on",
+        "monitorInput": false,
         "audioInput": null,
         "midiInput": {
           "deviceId": null,

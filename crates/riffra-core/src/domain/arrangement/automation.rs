@@ -13,7 +13,7 @@ pub enum AutomationParameter {
 
 /// A single value on an Automation Lane.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AutomationPoint {
     pub id: String,
     #[ts(type = "number")]
@@ -23,7 +23,7 @@ pub struct AutomationPoint {
 
 /// Timeline control data for one Track parameter.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AutomationLane {
     pub id: String,
     pub track_id: String,

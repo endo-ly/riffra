@@ -141,7 +141,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
             armed: false,
             monitoring: 'off',
             midiInput: {},
-            rack: { devices: [], macros: [] },
+            effects: [],
           } satisfies Track,
         }}
         recordings={recordingsStub}
@@ -190,7 +190,7 @@ describe('Inbox preservation zone (LIB-003)', () => {
             armed: false,
             monitoring: 'off',
             midiInput: {},
-            rack: { devices: [], macros: [] },
+            effects: [],
           } satisfies Track,
         }}
         recordings={recordingsStub}

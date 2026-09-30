@@ -9,6 +9,7 @@ import {
 import type { ArrangementMutationResult, CreativeSession, Marker } from '@/model/domain';
 import type { ArrangeApi, TransportApi } from '@/native/native-api';
 import { HostConnectionChangedError } from '@/native/invoke';
+import { tickToMusicalPosition } from '@/shared/session/musical-position';
 import { isEditableTarget } from '../model/interaction';
 
 type RangeKind = 'loop' | 'punch';
@@ -80,6 +81,11 @@ export function useArrangeRulerController({
     setSelectedMarkerId(null);
   }, []);
 
+  const position = useCallback(
+    (tick: number) => tickToMusicalPosition(tick, arrangement.timebase),
+    [arrangement.timebase],
+  );
+
   const clearSelectedRange = useCallback(() => setSelectedRange(null), []);
   const clearTimeSelection = useCallback(() => setTimeSelection(null), []);
   const clearMarkerRename = useCallback(() => setMarkerRename(null), []);
@@ -95,38 +101,38 @@ export function useArrangeRulerController({
         range === 'loop'
           ? api.updateTimelineLoopRange(
               false,
-              arrangement.loopRange.startTick,
-              arrangement.loopRange.endTick,
+              position(arrangement.loopRange.startTick),
+              position(arrangement.loopRange.endTick),
             )
           : api.updateTimelinePunchRange(
               false,
-              arrangement.punchRange?.startTick ?? 0,
-              arrangement.punchRange?.endTick ?? 0,
+              position(arrangement.punchRange?.startTick ?? 0),
+              position(arrangement.punchRange?.endTick ?? 0),
             );
       void commit(operation);
     },
-    [api, arrangement.loopRange, arrangement.punchRange, commit],
+    [api, arrangement.loopRange, arrangement.punchRange, commit, position],
   );
 
   const addMarkerAt = useCallback(
     (tick: number) => {
       const existing = new Set(arrangement.markers.map((marker) => marker.id));
-      void commit(api.addMarker(snapTick(tick), `Marker ${arrangement.markers.length + 1}`)).then(
-        (next) => {
-          if (!next) return;
-          const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
-          if (created) setSelectedMarkerId(created.id);
-        },
-      );
+      void commit(
+        api.addMarker(position(snapTick(tick)), `Marker ${arrangement.markers.length + 1}`),
+      ).then((next) => {
+        if (!next) return;
+        const created = next.arrangement.markers.find((marker) => !existing.has(marker.id));
+        if (created) setSelectedMarkerId(created.id);
+      });
     },
-    [api, arrangement.markers, commit, snapTick],
+    [api, arrangement.markers, commit, position, snapTick],
   );
 
   const moveMarker = useCallback(
     (marker: Marker, tick: number) => {
-      void commit(api.updateMarker(marker.id, { tick: snapTick(tick) }));
+      void commit(api.updateMarker(marker.id, { position: position(snapTick(tick)) }));
     },
-    [api, commit, snapTick],
+    [api, commit, position, snapTick],
   );
 
   const renameMarker = useCallback((marker: Marker) => {
@@ -157,13 +163,25 @@ export function useArrangeRulerController({
 
   const setLoopToSelection = useCallback(() => {
     if (!timeSelection) return;
-    void commit(api.updateTimelineLoopRange(true, timeSelection.startTick, timeSelection.endTick));
-  }, [api, commit, timeSelection]);
+    void commit(
+      api.updateTimelineLoopRange(
+        true,
+        position(timeSelection.startTick),
+        position(timeSelection.endTick),
+      ),
+    );
+  }, [api, commit, position, timeSelection]);
 
   const setPunchToSelection = useCallback(() => {
     if (!timeSelection) return;
-    void commit(api.updateTimelinePunchRange(true, timeSelection.startTick, timeSelection.endTick));
-  }, [api, commit, timeSelection]);
+    void commit(
+      api.updateTimelinePunchRange(
+        true,
+        position(timeSelection.startTick),
+        position(timeSelection.endTick),
+      ),
+    );
+  }, [api, commit, position, timeSelection]);
 
   const seekFromRuler = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
@@ -256,8 +274,8 @@ export function useArrangeRulerController({
           void commit(
             api.updateTimelineLoopRange(
               range.enabled,
-              boundary === 'start' ? next : range.startTick,
-              boundary === 'end' ? next : range.endTick,
+              position(boundary === 'start' ? next : range.startTick),
+              position(boundary === 'end' ? next : range.endTick),
             ),
           ).finally(() => setLoopPreview(null));
         } else setLoopPreview(null);
@@ -279,7 +297,7 @@ export function useArrangeRulerController({
       window.addEventListener('pointercancel', cancel);
       applyPreview(event.clientX, event.altKey);
     },
-    [api, arrangement.loopRange, commit, pixelsPerTick, snapTick],
+    [api, arrangement.loopRange, commit, pixelsPerTick, position, snapTick],
   );
 
   const dragPunchHandle = useCallback(
@@ -308,8 +326,8 @@ export function useArrangeRulerController({
           void commit(
             api.updateTimelinePunchRange(
               true,
-              boundary === 'start' ? next : range.startTick,
-              boundary === 'end' ? next : range.endTick,
+              position(boundary === 'start' ? next : range.startTick),
+              position(boundary === 'end' ? next : range.endTick),
             ),
           ).finally(() => setPunchPreview(null));
         } else setPunchPreview(null);
@@ -331,7 +349,7 @@ export function useArrangeRulerController({
       window.addEventListener('pointercancel', cancel);
       applyPreview(event.clientX, event.altKey);
     },
-    [api, arrangement.punchRange, commit, pixelsPerTick, snapTick],
+    [api, arrangement.punchRange, commit, pixelsPerTick, position, snapTick],
   );
 
   const handleKeyboard = useCallback(

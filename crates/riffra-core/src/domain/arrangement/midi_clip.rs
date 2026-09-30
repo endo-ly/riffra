@@ -6,7 +6,7 @@ use ts_rs::TS;
 
 /// A single MIDI note inside a [`MidiClip`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNote {
     pub id: String,
     pub note: u8,
@@ -31,7 +31,7 @@ pub enum MidiEventKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiEvent {
     pub id: String,
     pub kind: MidiEventKind,
@@ -44,7 +44,7 @@ pub struct MidiEvent {
 
 /// A non-destructive MIDI clip on the arrangement.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClip {
     pub id: String,
     pub name: String,
@@ -55,13 +55,9 @@ pub struct MidiClip {
     #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub duration_ticks: u64,
-    #[serde(default)]
     pub notes: Vec<MidiNote>,
-    #[serde(default)]
     pub events: Vec<MidiEvent>,
-    #[serde(default)]
     pub muted: bool,
-    #[serde(default)]
     pub loop_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -136,7 +132,7 @@ impl MidiClip {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipMove {
     pub clip_id: String,
     #[ts(type = "number")]
@@ -145,7 +141,7 @@ pub struct MidiClipMove {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

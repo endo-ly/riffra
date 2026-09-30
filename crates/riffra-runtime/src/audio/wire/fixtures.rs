@@ -6,11 +6,11 @@
 //! fixtures; every other run checks that they are current.
 
 use super::*;
+use crate::api::output::{
+    InstrumentPreviewDefinition, InstrumentPreviewNote, InstrumentPreviewTimeSignature,
+};
 use crate::execution::{
     ExecutionGraph, GraphLoopRange, GraphPluginState, GraphTimebase, TimelineSnapshot,
-};
-use crate::instrument::{
-    InstrumentPreviewDefinition, InstrumentPreviewNote, InstrumentPreviewTimeSignature,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;

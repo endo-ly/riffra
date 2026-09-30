@@ -178,7 +178,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:follow',
@@ -230,7 +230,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:midi-range',
@@ -293,7 +293,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:quantize',
@@ -353,7 +353,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:shortcuts',
@@ -415,7 +415,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off' as const,
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     };
     session.arrangement.tracks.push(track);
     const createdSession: CreativeSession = {
@@ -475,7 +475,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off' as const,
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     };
     session.arrangement.tracks.push(track);
     const createdSession: CreativeSession = {
@@ -539,7 +539,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:arrows',
@@ -604,7 +604,7 @@ describe('WorkspaceArrange', () => {
         armed: false,
         monitoring: 'off',
         midiInput: {},
-        rack: { devices: [], macros: [] },
+        effects: [],
       },
       {
         id: 'track:midi-selection',
@@ -617,7 +617,7 @@ describe('WorkspaceArrange', () => {
         armed: false,
         monitoring: 'off',
         midiInput: {},
-        rack: { devices: [], macros: [] },
+        effects: [],
       },
     );
     session.arrangement.audioClips.push({
@@ -702,7 +702,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:draw',
@@ -771,7 +771,7 @@ describe('WorkspaceArrange', () => {
           disabledPlaceholder: false,
         },
       },
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:audition',
@@ -824,7 +824,7 @@ describe('WorkspaceArrange', () => {
         armed: false,
         monitoring: 'off',
         midiInput: {},
-        rack: { devices: [], macros: [] },
+        effects: [],
       });
     }
     session.arrangement.midiClips.push(
@@ -886,7 +886,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:quantize-aligned',
@@ -935,7 +935,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:midi-move',
@@ -1021,7 +1021,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:midi-group',
@@ -1104,7 +1104,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:midi-delete',
@@ -1143,20 +1143,18 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: {
-        devices: [
-          {
-            id: 'device:amp',
-            name: 'Amplitube',
-            kind: 'plugin',
-            bypassed: false,
-            gainDb: 0,
+      effects: [
+        {
+          id: 'device:amp',
+          name: 'Amplitube',
+          bypassed: false,
+          plugin: {
+            path: 'C:/Plugins/Amplitube.vst3',
             parameterValues: [],
             disabledPlaceholder: false,
           },
-        ],
-        macros: [],
-      },
+        },
+      ],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
@@ -1183,7 +1181,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.audioClips.push({
       id: 'clip:missing',
@@ -1372,7 +1370,7 @@ describe('WorkspaceArrange', () => {
         armed: false,
         monitoring: 'off',
         midiInput: {},
-        rack: { devices: [], macros: [] },
+        effects: [],
       },
       {
         id: 'track:instrument',
@@ -1385,7 +1383,7 @@ describe('WorkspaceArrange', () => {
         armed: false,
         monitoring: 'off',
         midiInput: {},
-        rack: { devices: [], macros: [] },
+        effects: [],
       },
     );
     session.arrangement.audioClips.push({
@@ -1436,7 +1434,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     let addArgs: Parameters<FakeNativeApi['addTrack']> | undefined;
@@ -1750,7 +1748,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} />);
@@ -1788,7 +1786,7 @@ describe('WorkspaceArrange', () => {
           disabledPlaceholder: false,
         },
       },
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:velocity',
@@ -1908,7 +1906,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:navigation',
@@ -1971,7 +1969,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:drag-collapse',
@@ -2017,7 +2015,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.tracks.push({
       id: 'track:mixer',
@@ -2030,7 +2028,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     render(<Harness api={api} initialSession={session} initialFocusedTrackId="track:focused" />);
@@ -2064,7 +2062,7 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.midiClips.push({
       id: 'clip:play-surface',

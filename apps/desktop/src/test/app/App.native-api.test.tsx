@@ -181,7 +181,7 @@ describe('App native boundary', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     const older = { ...defaultSession(), projectName: 'Older' };
     older.arrangement.tracks.push({
@@ -195,7 +195,7 @@ describe('App native boundary', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
 
     api.emitCanonicalStateChanged({

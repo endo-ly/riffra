@@ -1,4 +1,7 @@
-use riffra_core::{CreativeSession, PortError, SessionStorage};
+use riffra_core::{
+    CreativeSession, PortError, SessionStorage, deserialize_session_document,
+    serialize_session_document,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -149,7 +152,7 @@ impl SessionStore {
     /// Reads and validates the active session without touching the original on failure.
     fn read_active(&self, path: &Path) -> Result<CreativeSession, io::Error> {
         let payload = fs::read(path)?;
-        let session = riffra_core::deserialize_session(&payload)
+        let session = deserialize_session_document(&payload)
             .map_err(|error| corrupt_io_error(&format!("current session is invalid: {error}")))?;
         let session = session
             .validate_and_normalize()
@@ -172,7 +175,7 @@ impl SessionStore {
     /// session the app cannot open.
     fn read_generation(&self, path: &Path) -> io::Result<CreativeSession> {
         let payload = fs::read(path)?;
-        let session = riffra_core::deserialize_session(&payload)?;
+        let session = deserialize_session_document(&payload).map_err(invalid_data)?;
         let session = session.validate_and_normalize().map_err(invalid_data)?;
         crate::asset::validate_session_references(&self.data_root, &session)
             .map_err(invalid_data)?;
@@ -199,7 +202,7 @@ impl SessionStore {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         self.ensure_layout()?;
         let current = self.current_path()?;
-        let payload = serde_json::to_vec_pretty(&normalized)
+        let payload = serialize_session_document(&normalized)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let current_bytes = current
             .metadata()
@@ -300,55 +303,30 @@ impl SessionStore {
 
     pub(crate) fn summary(&self) -> io::Result<crate::ProjectSummary> {
         let payload = fs::read(self.current_path()?)?;
-        let value: serde_json::Value = serde_json::from_slice(&payload).map_err(invalid_data)?;
-        let project_id = self.project_id()?;
-        let name = value
-            .get("projectName")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("Untitled Project")
-            .to_owned();
-        let updated_at_ms = value
-            .get("updatedAtMs")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| invalid_data("Project session has no updatedAtMs"))?;
+        let session = deserialize_session_document(&payload).map_err(invalid_data)?;
         Ok(crate::ProjectSummary {
-            project_id,
-            name,
-            updated_at_ms,
+            project_id: self.project_id()?,
+            name: session
+                .project_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| "Untitled Project".into()),
+            updated_at_ms: session.updated_at_ms,
             error: None,
         })
     }
 }
 
-/// Extracts recovery-listing metadata from a session payload without a full
-/// deserialize, so listing candidates never mutates the Asset store.
+/// Extracts recovery-listing metadata from a session document without
+/// validating Asset references, so listing candidates never touches the Asset
+/// store.
 fn peek_recovery_metadata(payload: &[u8]) -> Option<RecoveryCandidate> {
-    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
-    let session_id = value
-        .get("sessionId")
-        .and_then(serde_json::Value::as_str)?
-        .to_owned();
-    let updated_at_ms = value
-        .get("updatedAtMs")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_default();
-    let project_name = value
-        .get("projectName")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
-    let note = value
-        .get("settings")
-        .and_then(|settings| settings.get("note"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_owned();
+    let session = deserialize_session_document(payload).ok()?;
     Some(RecoveryCandidate {
         file_name: String::new(),
-        updated_at_ms,
-        session_id,
-        project_name,
-        note,
+        updated_at_ms: session.updated_at_ms,
+        session_id: session.session_id,
+        project_name: session.project_name,
+        note: session.settings.note,
     })
 }
 
@@ -540,6 +518,36 @@ mod tests {
     }
 
     #[test]
+    fn an_unversioned_session_is_rejected_without_changing_the_file() {
+        // Arrange
+        let root = test_root("unversioned");
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
+        store.ensure_layout().unwrap();
+        let current = root
+            .join("projects")
+            .join(TEST_PROJECT_ID)
+            .join("session.json");
+        fs::write(
+            &current,
+            serde_json::to_vec(&CreativeSession::new(now_ms())).unwrap(),
+        )
+        .unwrap();
+        let original = fs::read(&current).unwrap();
+
+        // Act
+        let error = store.load_existing().unwrap_err();
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported session schema version")
+        );
+        assert_eq!(fs::read(&current).unwrap(), original);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn clamps_unsafe_master_gain_before_persisting() {
         let mut session = CreativeSession::new(now_ms());
         session.settings.master_db = 12.0;
@@ -590,7 +598,7 @@ mod tests {
 
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
-        let payload = serde_json::to_vec_pretty(&session).unwrap();
+        let payload = serialize_session_document(&session).unwrap();
         fs::write(&current, &payload).unwrap();
         let original = fs::read(&current).unwrap();
 
@@ -611,7 +619,7 @@ mod tests {
         // A valid generation that references no external asset.
         let mut generation = CreativeSession::new(now_ms());
         generation.project_name = Some("Recoverable".into());
-        let generation_payload = serde_json::to_vec_pretty(&generation).unwrap();
+        let generation_payload = serialize_session_document(&generation).unwrap();
         fs::write(
             root.join("projects")
                 .join(TEST_PROJECT_ID)
@@ -628,7 +636,7 @@ mod tests {
             .join("session.json");
         let mut session = CreativeSession::new(now_ms());
         push_audio_clip(&mut session, "clip:unknown", "unknown", mint_asset_id());
-        fs::write(&current, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+        fs::write(&current, serialize_session_document(&session).unwrap()).unwrap();
 
         let loaded = store.load_or_create().unwrap();
         assert!(loaded.recovered_from_generation);

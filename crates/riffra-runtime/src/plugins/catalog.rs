@@ -1,4 +1,4 @@
-use crate::plugins::{PluginEntry, PluginRole, PluginScanState, ScanReport};
+use crate::api::output::{PluginEntry, PluginRole, PluginScanState, ScanReport};
 use serde::Deserialize;
 use std::{
     fs::{self, File},
@@ -148,7 +148,7 @@ pub fn validated_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
+    use crate::api::output::{PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanReport};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);

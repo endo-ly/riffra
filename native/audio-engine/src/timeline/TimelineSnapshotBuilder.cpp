@@ -98,8 +98,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->muted = trackSpec.muted;
         track->runtime->solo = trackSpec.solo;
         prepared->hasSolo = prepared->hasSolo || track->runtime->solo;
-        track->runtime->monitorInput = ArrangementGraph::shouldMonitorAudioInput(
-            trackSpec.monitoring, track->runtime->armed, track->runtime->instrumentTrack);
+        track->runtime->monitorInput = trackSpec.monitorInput;
         track->runtime->audioInputChannel =
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;

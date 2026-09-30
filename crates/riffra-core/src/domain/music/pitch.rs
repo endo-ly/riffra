@@ -221,7 +221,8 @@ impl<'de> Deserialize<'de> for MusicalNoteName {
 }
 
 /// A pitch name that retains its enharmonic spelling while exposing its MIDI value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct MusicalPitch {
     note: MusicalNoteName,
     octave: i8,

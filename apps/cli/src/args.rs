@@ -1,15 +1,20 @@
 use clap::{Args, Parser, Subcommand};
-use riffra_control::ControlCommand;
-use serde::Serialize;
-use serde_json::{Value, json};
+use riffra_core::application::{SessionInspectionQuery, SessionSettingsPatch};
+use riffra_core::{
+    AudioClipMove, AudioClipPatch, FrameRange, MidiClipMove, MidiClipPatch, PhrasePattern,
+    PhrasePlacement, TimelineTick,
+};
+use riffra_runtime::api::params::*;
+use riffra_runtime::api::{
+    CanonicalCommand as Canonical, CommandDecodeError, ControlCommand, ProjectCommand as Project,
+    RuntimeCommand as Runtime, decode_params,
+};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
 
 fn finite_f64(value: &str) -> Result<f64, String> {
     let parsed: f64 = value
@@ -150,7 +155,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: InstrumentCommand,
     },
-    /// Remove and reorder effect devices in a Track rack.
+    /// Remove and reorder effect devices on a Track.
     Effect {
         #[command(subcommand)]
         command: EffectCommand,
@@ -300,20 +305,16 @@ pub struct SessionApplyArgs {
     pub include_created_ids: bool,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct SessionInspectArgs {
     /// Optional half-open range start on the arrangement as a musical position in bar:beat or bar:beat+fraction notation; must be provided together with --end, and --end must be after --start.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
     /// Optional half-open range end on the arrangement as a musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and must be after --start.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
     /// Optional Track id; when set, only that Track is summarized.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
 }
 
@@ -323,32 +324,25 @@ pub enum SessionSettingsCommand {
     Update(SessionSettingsArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct SessionSettingsArgs {
     /// New project display name.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
     /// Master gain in dB; non-finite values are rejected and the value is clamped to -90..=0.
     #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub master_db: Option<f64>,
     /// Enable or disable loop playback.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub loop_enabled: Option<bool>,
     /// Count-in length in beats before recording or playback starts; values above 8 are clamped to 8.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub count_in_beats: Option<u8>,
     /// Enable or disable the metronome click.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub metronome_enabled: Option<bool>,
     /// Free-form session note stored with the settings.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
@@ -388,8 +382,7 @@ pub enum TrackCommand {
     },
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct TrackAddArgs {
     /// Display name for the new Track.
     #[arg(long)]
@@ -399,48 +392,38 @@ pub struct TrackAddArgs {
     pub kind: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct TrackUpdateArgs {
     /// Id of the Track to update.
     #[arg(long)]
     pub track_id: String,
     /// New display name.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Track gain in dB; non-finite values are rejected and the value is clamped to -90..=24.
     #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub gain_db: Option<f64>,
     /// Track stereo pan; non-finite values are rejected and values are clamped to -1.0 (left) through 1.0 (right).
     #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub pan: Option<f64>,
     /// Mute or unmute this Track; a muted Track is silent regardless of automation.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub muted: Option<bool>,
     /// Solo or unsolo this Track; when any Track is solo, every non-solo Track is silent, and a Track that is both muted and solo is silent.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub solo: Option<bool>,
     /// Arm or unarm this Track for recording.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub armed: Option<bool>,
     /// Input monitoring mode: `off` never monitors, `auto` monitors while armed, `on` always monitors.
     #[arg(long, value_parser = ["off", "auto", "on"])]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub monitoring: Option<String>,
     /// Presentation color; an empty string clears it and returns the Track to automatic coloring.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ReorderTrackArgs {
     /// Id of the Track to move.
     #[arg(long)]
@@ -458,8 +441,7 @@ pub enum AudioInputCommand {
     Clear(IdArg),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioInputSetArgs {
     /// Id of the audio Track to route.
     #[arg(long)]
@@ -477,24 +459,20 @@ pub enum MidiInputCommand {
     Clear(IdArg),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiInputSetArgs {
     /// Id of the instrument Track to route.
     #[arg(long)]
     pub track_id: String,
     /// MIDI input device id; omit to accept input from any device.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
     /// MIDI channel number in the inclusive range 1..=16; omit to accept all channels.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<u8>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct IdArg {
     /// Id of the target Track.
     #[arg(long)]
@@ -528,8 +506,7 @@ pub enum AudioClipCommand {
     Crossfade(AudioClipCrossfadeArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioClipAddAssetArgs {
     /// Id of the imported Asset to place on the arrangement.
     #[arg(long)]
@@ -539,16 +516,13 @@ pub struct AudioClipAddAssetArgs {
     pub name: String,
     /// Absolute arrangement start position in timeline ticks; omit to append the Clip after the last existing Audio Clip.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_tick: Option<u64>,
     /// Destination Track id; omit to use the first existing audio Track, creating one named `Audio 1` when no audio Track exists.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioClipUpdateArgs {
     /// Id of the Audio Clip to update.
     #[arg(long)]
@@ -579,8 +553,7 @@ pub struct AudioClipUpdateArgs {
     pub muted: Option<bool>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ClipMoveArgs {
     /// Id of the Clip to move.
     #[arg(long)]
@@ -593,8 +566,7 @@ pub struct ClipMoveArgs {
     pub track_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioClipTrimArgs {
     /// Id of the Audio Clip to trim.
     #[arg(long)]
@@ -610,8 +582,7 @@ pub struct AudioClipTrimArgs {
     pub source_end: u64,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ClipSplitArgs {
     /// Id of the Clip to split.
     #[arg(long)]
@@ -621,16 +592,14 @@ pub struct ClipSplitArgs {
     pub split_tick: u64,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ClipIdArg {
     /// Id of the target Clip.
     #[arg(long)]
     pub clip_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioClipCrossfadeArgs {
     /// Id of one Clip in the crossfade pair.
     #[arg(long)]
@@ -662,8 +631,7 @@ pub enum MidiClipCommand {
     Duplicate(ClipIdArg),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiClipCreateArgs {
     /// Destination instrument Track id.
     #[arg(long)]
@@ -679,8 +647,7 @@ pub struct MidiClipCreateArgs {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiClipAddAssetArgs {
     /// Id of the imported MIDI Asset to place on the arrangement.
     #[arg(long)]
@@ -696,8 +663,7 @@ pub struct MidiClipAddAssetArgs {
     pub track_id: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiClipUpdateArgs {
     /// Id of the MIDI Clip to update.
     #[arg(long)]
@@ -725,8 +691,7 @@ pub struct MidiClipUpdateArgs {
     pub loop_enabled: Option<bool>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiClipTrimArgs {
     /// Id of the MIDI Clip to trim.
     #[arg(long)]
@@ -763,8 +728,7 @@ pub enum MidiNoteCommand {
     Duplicate(MidiNoteDuplicateArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteAddArgs {
     /// Id of the MIDI Clip that receives the Note.
     #[arg(long)]
@@ -786,8 +750,7 @@ pub struct MidiNoteAddArgs {
     pub channel: u8,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteBulkArgs {
     /// Id of the MIDI Clip that receives the Notes.
     #[arg(long)]
@@ -854,8 +817,7 @@ pub enum MusicHarmonyCommand {
     Realize(MusicalHarmonyRealizeArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalHarmonyResolveArgs {
     /// Chord symbol to resolve, such as `C`, `Dm9`, or `G7(b9,#11)/F`.
     #[arg(long)]
@@ -972,8 +934,7 @@ pub enum MusicMidiClipCommand {
     Resize(MusicalMidiClipResizeArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalMidiClipCreateArgs {
     /// Destination instrument Track id.
     #[arg(long)]
@@ -1051,37 +1012,29 @@ pub struct MusicalNoteBulkArgs {
     pub stdin: bool,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalNoteListArgs {
     /// Scope to one MIDI Clip; mutually exclusive with --track-id and exactly one scope option is required.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_id: Option<String>,
     /// Scope to every MIDI Clip on one Track; mutually exclusive with --clip-id, and --start and --end are required with this scope.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
     /// Half-open range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --end, and both are required with --track-id.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
     /// Half-open range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and both are required with --track-id.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
     /// Include stable Note ids in the response.
     #[arg(long)]
-    #[serde(skip_serializing_if = "is_false")]
     pub include_ids: bool,
     /// Return raw MIDI and tick values instead of musical coordinates; Clip startTick is arrangement-absolute while Note startTick is Clip-relative, and the response includes timebase metadata.
     #[arg(long)]
-    #[serde(skip_serializing_if = "is_false")]
     pub raw: bool,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalNoteGetArgs {
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
@@ -1091,8 +1044,7 @@ pub struct MusicalNoteGetArgs {
     pub note_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalNoteUpdateArgs {
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
@@ -1102,28 +1054,22 @@ pub struct MusicalNoteUpdateArgs {
     pub note_id: String,
     /// New pitch as a note name such as C4 or F#3.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub pitch: Option<String>,
     /// New arrangement-absolute position as a musical position in bar:beat or bar:beat+fraction notation.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<String>,
     /// New duration as a whole-note fraction such as 1/8 or 3/16.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<String>,
     /// New MIDI velocity 0..=127.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub velocity: Option<u8>,
     /// New MIDI channel number in the inclusive range 1..=16.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<u8>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalNoteRemoveArgs {
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
@@ -1133,44 +1079,34 @@ pub struct MusicalNoteRemoveArgs {
     pub note_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalNoteTransformArgs {
     /// Scope to one MIDI Clip; mutually exclusive with --track-id and exactly one scope option is required.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub clip_id: Option<String>,
     /// Scope to every MIDI Clip on one Track; mutually exclusive with --clip-id, and --start and --end are required with this scope.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
     /// Half-open selection range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; selects Notes whose start lies in the range; must be provided together with --end, and both are required with --track-id.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
     /// Half-open selection range end as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation; must be provided together with --start, and both are required with --track-id.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<String>,
     /// Pre-transform pitch filter as a note name such as D2; only Notes currently at this pitch are selected.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub pitch: Option<String>,
     /// Pre-transform MIDI channel filter in the inclusive range 1..=16; only Notes currently on this channel are selected.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<u8>,
     /// Signed whole-note timing displacement such as +1/48 or -1/48 applied to every selected Note; a resulting Note outside its Clip fails the whole mutation.
     #[arg(long, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub timing_offset: Option<String>,
     /// Signed velocity displacement added to every selected Note and clamped to MIDI velocity 0..127.
     #[arg(long, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub velocity_offset: Option<i32>,
     /// Signed semitone transposition applied to every selected Note; a resulting pitch outside MIDI 0..127 fails the whole mutation.
     #[arg(long, allow_hyphen_values = true)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub transpose_semitones: Option<i16>,
 }
 
@@ -1186,8 +1122,7 @@ pub enum MusicRegionCommand {
     Remove(MusicalRegionIdArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalRegionAddArgs {
     /// Free-form region name such as Intro or Verse; names are not constrained to a fixed set and may repeat.
     #[arg(long)]
@@ -1200,8 +1135,7 @@ pub struct MusicalRegionAddArgs {
     pub end: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalRegionUpdateArgs {
     /// Id of the region to update.
     #[arg(long)]
@@ -1217,16 +1151,14 @@ pub struct MusicalRegionUpdateArgs {
     pub end: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MusicalRegionIdArgs {
     /// Id of the region.
     #[arg(long)]
     pub region_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteUpdateArgs {
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
@@ -1239,8 +1171,7 @@ pub struct MidiNoteUpdateArgs {
     pub patch: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteUpdatesArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1250,8 +1181,7 @@ pub struct MidiNoteUpdatesArgs {
     pub updates_json: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteIdArgs {
     /// Id of the MIDI Clip containing the Note.
     #[arg(long)]
@@ -1261,8 +1191,7 @@ pub struct MidiNoteIdArgs {
     pub note_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteIdsArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1272,12 +1201,10 @@ pub struct MidiNoteIdsArgs {
     pub note_ids: Vec<String>,
     /// JSON array of Note ids as an alternative to --note-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ids_json: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteQuantizeArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1287,15 +1214,13 @@ pub struct MidiNoteQuantizeArgs {
     pub note_ids: Vec<String>,
     /// JSON array of Note ids as an alternative to --note-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ids_json: Option<String>,
     /// Quantization grid length in timeline ticks; the project timebase defines ticks per beat.
     #[arg(long)]
     pub grid_ticks: u64,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteTransformArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1305,7 +1230,6 @@ pub struct MidiNoteTransformArgs {
     pub note_ids: Vec<String>,
     /// JSON array of Note ids as an alternative to --note-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ids_json: Option<String>,
     /// Signed semitone transposition applied to every selected Note; the resulting pitch clamps to MIDI 0..127.
     #[arg(long, default_value_t = 0)]
@@ -1317,8 +1241,7 @@ pub struct MidiNoteTransformArgs {
     pub velocity_offset: i16,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MidiNoteDuplicateArgs {
     /// Id of the MIDI Clip containing the Notes.
     #[arg(long)]
@@ -1328,7 +1251,6 @@ pub struct MidiNoteDuplicateArgs {
     pub note_ids: Vec<String>,
     /// JSON array of Note ids as an alternative to --note-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ids_json: Option<String>,
     /// Tick offset applied to each duplicated Note relative to its original Clip-relative start.
     #[arg(long)]
@@ -1343,8 +1265,7 @@ pub enum ClipCommand {
     Paste(ClipPasteArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ClipRemoveArgs {
     /// Comma-separated Audio Clip ids; mutually exclusive with --audio-clip-ids-json.
     #[arg(long, value_delimiter = ',')]
@@ -1354,16 +1275,13 @@ pub struct ClipRemoveArgs {
     pub midi_clip_ids: Vec<String>,
     /// JSON array of Audio Clip ids as an alternative to --audio-clip-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_clip_ids_json: Option<String>,
     /// JSON array of MIDI Clip ids as an alternative to --midi-clip-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub midi_clip_ids_json: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ClipPasteArgs {
     /// Comma-separated Audio Clip ids to paste; mutually exclusive with --audio-clip-ids-json.
     #[arg(long, value_delimiter = ',')]
@@ -1373,11 +1291,9 @@ pub struct ClipPasteArgs {
     pub midi_clip_ids: Vec<String>,
     /// JSON array of Audio Clip ids as an alternative to --audio-clip-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_clip_ids_json: Option<String>,
     /// JSON array of MIDI Clip ids as an alternative to --midi-clip-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub midi_clip_ids_json: Option<String>,
     /// Absolute arrangement destination in timeline ticks for the pasted Clips.
     #[arg(long)]
@@ -1394,8 +1310,7 @@ pub enum MarkerCommand {
     Remove(MarkerIdArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MarkerAddArgs {
     /// Marker display name.
     #[arg(long)]
@@ -1405,8 +1320,7 @@ pub struct MarkerAddArgs {
     pub position: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MarkerUpdateArgs {
     /// Id of the marker to update.
     #[arg(long)]
@@ -1419,8 +1333,7 @@ pub struct MarkerUpdateArgs {
     pub position: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MarkerIdArgs {
     /// Id of the marker.
     #[arg(long)]
@@ -1433,20 +1346,16 @@ pub enum TimebaseCommand {
     Update(TimebaseArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct TimebaseArgs {
     /// Tempo in beats per minute; non-finite values are rejected and the value must be within 20.0..=400.0.
     #[arg(long, value_parser = finite_f64)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bpm: Option<f64>,
     /// Time signature numerator, such as 4 in 4/4; must be within 1..=255.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_signature_numerator: Option<u8>,
     /// Time signature denominator, such as 4 in 4/4; must be one of 1, 2, 4, 8, 16, or 32.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_signature_denominator: Option<u8>,
 }
 
@@ -1456,12 +1365,10 @@ pub enum RangeCommand {
     Set(RangeArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RangeArgs {
     /// Enable or disable the range; defaults to false when omitted.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     /// Range start as an arrangement-absolute musical position in bar:beat or bar:beat+fraction notation.
     #[arg(long)]
@@ -1487,8 +1394,7 @@ pub enum AutomationCommand {
     Clear(AutomationClearArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AutomationSetArgs {
     /// Id of the Track that owns the automation lane.
     #[arg(long)]
@@ -1501,8 +1407,7 @@ pub struct AutomationSetArgs {
     pub points_json: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AutomationClearArgs {
     /// Id of the Track that owns the automation lane.
     #[arg(long)]
@@ -1522,8 +1427,7 @@ pub enum AssetCommand {
     StopPreview,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AssetImportMidiArgs {
     /// Path to the MIDI file to import.
     pub path: PathBuf,
@@ -1532,8 +1436,7 @@ pub struct AssetImportMidiArgs {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AssetPreviewArgs {
     /// Id of the imported Asset to play.
     #[arg(long)]
@@ -1546,7 +1449,6 @@ pub struct AssetPreviewArgs {
     pub end_ms: Option<u64>,
     /// Loop the preview range; defaults to false when omitted.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub looped: Option<bool>,
     /// Linear playback gain applied to the preview; 1.0 is unity gain.
     #[arg(long, default_value_t = 1.0)]
@@ -1569,36 +1471,32 @@ pub enum ProjectCommand {
     Import(ProjectImportArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ProjectCreateArgs {
     /// Display name for the new project; omit to use a generated default.
     #[arg(long)]
     pub name: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ProjectOpenArgs {
     /// Id of the project to open, as reported by `project list`.
     pub project_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ProjectRenameArgs {
     /// New display name for the active project.
     pub name: String,
 }
 
-#[derive(Debug, Args, Serialize)]
+#[derive(Debug, Args)]
 pub struct ProjectImportArgs {
     /// Path to the project file to import.
     pub path: PathBuf,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct ProjectExportArgs {
     /// Output path for the exported project file.
     #[arg(long)]
@@ -1639,19 +1537,16 @@ pub struct SonalloyArgs {
     pub args: Vec<OsString>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct InstrumentSaveArgs {
     /// Path to the Sonalloy definition JSON to save as a User Instrument.
     pub definition_path: PathBuf,
     /// Explicit User Instrument id; omit to allocate one.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub instrument_id: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct InstrumentExportArgs {
     /// Id of the User Instrument to export, such as `user:<id>`.
     #[arg(long)]
@@ -1661,8 +1556,7 @@ pub struct InstrumentExportArgs {
     pub output: PathBuf,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct InstrumentApplyArgs {
     /// Id of the Instrument Track that receives the Instrument.
     #[arg(long)]
@@ -1674,16 +1568,15 @@ pub struct InstrumentApplyArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EffectCommand {
-    /// Remove one effect device from a Track rack.
+    /// Remove one effect device from a Track.
     Remove(EffectRemoveArgs),
-    /// Reorder the effect devices in a Track rack to the supplied id order.
+    /// Reorder the effect devices on a Track to the supplied id order.
     Reorder(EffectReorderArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct EffectRemoveArgs {
-    /// Id of the Track whose rack is modified.
+    /// Id of the Track whose effects are modified.
     #[arg(long)]
     pub track_id: String,
     /// Id of the effect device to remove.
@@ -1691,10 +1584,9 @@ pub struct EffectRemoveArgs {
     pub device_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct EffectReorderArgs {
-    /// Id of the Track whose rack is reordered.
+    /// Id of the Track whose effects are reordered.
     #[arg(long)]
     pub track_id: String,
     /// Comma-separated device ids in the desired order; mutually exclusive with --device-ids-json.
@@ -1702,13 +1594,12 @@ pub struct EffectReorderArgs {
     pub device_ids: Vec<String>,
     /// JSON array of device ids in the desired order as an alternative to --device-ids; the two cannot be combined.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_ids_json: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum DeviceCommand {
-    /// Bypass or unbypass one device in a Track rack.
+    /// Bypass or unbypass one device on a Track.
     Bypass(DeviceBypassArgs),
     /// Inspect one device's identity and state; requires a running Riffra Host accessed with --attach.
     Inspect(DeviceInspectArgs),
@@ -1719,8 +1610,7 @@ pub enum DeviceCommand {
     },
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceBypassArgs {
     /// Id of the Track that owns the device.
     #[arg(long)]
@@ -1730,12 +1620,10 @@ pub struct DeviceBypassArgs {
     pub device_id: String,
     /// Bypass state: true bypasses the device, false re-enables it; defaults to false when omitted.
     #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bypassed: Option<bool>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceParameterSetArgs {
     /// Id of the Track that owns the device.
     #[arg(long)]
@@ -1761,8 +1649,7 @@ pub enum DeviceParameterCommand {
     Set(DeviceParameterSetArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceInspectArgs {
     /// Id of the Track that owns the device.
     #[arg(long)]
@@ -1772,8 +1659,7 @@ pub struct DeviceInspectArgs {
     pub device_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceParameterListArgs {
     /// Id of the Track that owns the device.
     #[arg(long)]
@@ -1783,8 +1669,7 @@ pub struct DeviceParameterListArgs {
     pub device_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceParameterGetArgs {
     /// Id of the Track that owns the device.
     #[arg(long)]
@@ -1826,8 +1711,7 @@ pub enum TransportCommand {
     Seek(SeekArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct SeekArgs {
     /// Absolute arrangement position in timeline ticks; the project timebase defines ticks per beat.
     #[arg(long)]
@@ -1842,8 +1726,7 @@ pub enum LiveMidiCommand {
     Panic(IdArg),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct LiveMidiSendArgs {
     /// Id of the Track that receives the live MIDI bytes.
     #[arg(long)]
@@ -1895,8 +1778,7 @@ pub enum AudioDriverCommand {
     Set(AudioDriverArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioChannelsProbeArgs {
     /// Audio driver name to probe, such as the platform's default driver.
     #[arg(long)]
@@ -1909,8 +1791,7 @@ pub struct AudioChannelsProbeArgs {
     pub output_device: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AudioDriverArgs {
     /// Audio driver name to activate, such as the platform's default driver.
     #[arg(long)]
@@ -1958,32 +1839,28 @@ pub enum RecordCommand {
     Duplicates,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RecordStartArgs {
     /// Existing recording session id to continue with another take; omit to start a new recording session.
     #[arg(long)]
     pub recording_session_id: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RecordListArgs {
     /// Free-text query matched against take names and notes; omit to list all takes.
     #[arg(long)]
     pub query: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RecordIdArgs {
     /// Id of the recorded take.
     #[arg(long)]
     pub id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RecordRenameArgs {
     /// Id of the recorded take to rename.
     #[arg(long)]
@@ -1993,8 +1870,7 @@ pub struct RecordRenameArgs {
     pub new_name: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct RecordTagArgs {
     /// Id of the recorded take to tag.
     #[arg(long)]
@@ -2017,16 +1893,14 @@ pub enum LibraryCommand {
     Related(LibraryIdArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct LibrarySearchArgs {
     /// Free-text search query matched against Asset metadata.
     #[arg(long)]
     pub query: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct LibraryAssetUpdateArgs {
     /// Id of the library Asset to update.
     #[arg(long)]
@@ -2039,8 +1913,7 @@ pub struct LibraryAssetUpdateArgs {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct LibraryIdArgs {
     /// Id of the library Asset whose relations are read.
     #[arg(long)]
@@ -2053,8 +1926,7 @@ pub enum AnalysisCommand {
     Start(AnalysisStartArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct AnalysisStartArgs {
     /// Id of an already imported Asset to analyze; mutually exclusive with --path.
     #[arg(long)]
@@ -2073,7 +1945,7 @@ pub enum PluginCommand {
     },
     /// Load or replace a VST3 instrument plugin on an Instrument Track.
     Instrument(PluginPathArgs),
-    /// Add a VST3 effect plugin to a Track rack.
+    /// Add a VST3 effect plugin to a Track.
     Effect(PluginPathArgs),
     /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
     Scan(PluginScanArgs),
@@ -2097,8 +1969,7 @@ pub enum PluginCatalogCommand {
     List,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginPathArgs {
     /// Id of the Track that hosts the plugin device.
     #[arg(long)]
@@ -2108,8 +1979,7 @@ pub struct PluginPathArgs {
     pub plugin_path: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginScanArgs {
     /// Directory to scan for VST3 plugins; omit to scan the platform default plugin root.
     #[arg(long)]
@@ -2134,8 +2004,7 @@ pub enum PluginStateCommand {
     Load(PluginStateLoadArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginDeviceArgs {
     /// Id of the Track that hosts the plugin device.
     #[arg(long)]
@@ -2145,8 +2014,7 @@ pub struct PluginDeviceArgs {
     pub device_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginPresetSetArgs {
     /// Id of the Track that hosts the plugin device.
     #[arg(long)]
@@ -2162,8 +2030,7 @@ pub struct PluginPresetSetArgs {
     pub preset_index: Option<u32>,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginStateSaveArgs {
     /// Id of the Track that hosts the plugin device.
     #[arg(long)]
@@ -2176,8 +2043,7 @@ pub struct PluginStateSaveArgs {
     pub output: PathBuf,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct PluginStateLoadArgs {
     /// Id of the Track that hosts the plugin device.
     #[arg(long)]
@@ -2202,8 +2068,7 @@ pub enum MissingCommand {
     ReplacePlugin(MissingPluginReplaceArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MissingRelinkArgs {
     /// Id of the missing Asset to relink.
     #[arg(long)]
@@ -2213,16 +2078,14 @@ pub struct MissingRelinkArgs {
     pub new_path: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct DeviceIdArg {
     /// Id of the plugin device.
     #[arg(long)]
     pub device_id: String,
 }
 
-#[derive(Debug, Args, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Args)]
 pub struct MissingPluginReplaceArgs {
     /// Id of the missing plugin device to replace.
     #[arg(long)]
@@ -2279,7 +2142,7 @@ pub enum JobCommand {
     Wait(JobWaitArgs),
 }
 
-#[derive(Debug, Args, Serialize)]
+#[derive(Debug, Args)]
 pub struct JobIdArgs {
     /// Id of the background Job.
     #[arg(long)]
@@ -2296,8 +2159,36 @@ pub struct JobWaitArgs {
     pub timeout_ms: Option<u64>,
 }
 
+/// Why the CLI could not build a Control Command from its arguments.
+#[derive(Debug)]
+pub enum RequestError {
+    /// The arguments are inconsistent; reported as a local CLI failure.
+    Usage(String),
+    /// A supplied value does not decode into its params field; reported like
+    /// a Host's params error, with the field's JSON pointer.
+    Params(CommandDecodeError),
+}
+
+impl From<String> for RequestError {
+    fn from(message: String) -> Self {
+        Self::Usage(message)
+    }
+}
+
+impl From<&str> for RequestError {
+    fn from(message: &str) -> Self {
+        Self::Usage(message.to_owned())
+    }
+}
+
+impl From<CommandDecodeError> for RequestError {
+    fn from(error: CommandDecodeError) -> Self {
+        Self::Params(error)
+    }
+}
+
 impl Cli {
-    pub fn request(self) -> Result<ControlCommand, String> {
+    pub fn request(self) -> Result<ControlCommand, RequestError> {
         let command = self
             .command
             .ok_or_else(|| "a command is required unless --interactive is used".to_string())?;
@@ -2344,8 +2235,9 @@ impl Cli {
     }
 }
 
-fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
-    let request = match command {
+fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> {
+    let empty = EmptyParams {};
+    Ok(match command {
         CliCommand::Serve(_) => {
             return Err("serve is a process mode and cannot be used as a one-shot command".into());
         }
@@ -2353,227 +2245,478 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             HostCommand::List => {
                 return Err("host list is handled locally by the CLI".into());
             }
-            HostCommand::Status => simple("host.status"),
-            HostCommand::Shutdown => simple("host.shutdown"),
+            HostCommand::Status => Runtime::HostStatus(empty).into(),
+            HostCommand::Shutdown => Runtime::HostShutdown(empty).into(),
         },
         CliCommand::Session { command } => match command {
-            SessionCommand::Get => simple("session.get"),
-            SessionCommand::Inspect(args) => value("session.inspect", args),
+            SessionCommand::Get => Canonical::SessionGet(empty).into(),
+            SessionCommand::Inspect(args) => Canonical::SessionInspect(SessionInspectionQuery {
+                start: optional_text("/start", args.start)?,
+                end: optional_text("/end", args.end)?,
+                track_id: args.track_id,
+            })
+            .into(),
             SessionCommand::Apply(args) => session_apply(args)?,
             SessionCommand::Settings { command } => match command {
-                SessionSettingsCommand::Update(args) => value("session.settings.update", args),
+                SessionSettingsCommand::Update(args) => {
+                    Canonical::SessionSettingsUpdate(SessionSettingsPatch {
+                        project_name: args.project_name.map(Some),
+                        master_db: args.master_db,
+                        loop_enabled: args.loop_enabled,
+                        count_in_beats: args.count_in_beats,
+                        metronome_enabled: args.metronome_enabled,
+                        note: args.note,
+                    })
+                    .into()
+                }
             },
         },
         CliCommand::History { command } => match command {
-            HistoryCommand::Get => simple("history.get"),
+            HistoryCommand::Get => Canonical::HistoryGet(empty).into(),
         },
         CliCommand::Track { command } => match command {
-            TrackCommand::List => simple("track.list"),
-            TrackCommand::Add(args) => value("track.add", args),
-            TrackCommand::Update(args) => value("track.update", args),
-            TrackCommand::Remove(args) => value("track.remove", json!({"trackId": args.track_id})),
-            TrackCommand::Duplicate(args) => {
-                value("track.duplicate", json!({"trackId": args.track_id}))
-            }
-            TrackCommand::Reorder(args) => value("track.reorder", args),
+            TrackCommand::List => Canonical::TrackList(empty).into(),
+            TrackCommand::Add(args) => Canonical::TrackAdd(TrackAddParams {
+                name: args.name,
+                kind: text("/kind", args.kind)?,
+            })
+            .into(),
+            TrackCommand::Update(args) => Canonical::TrackUpdate(TrackUpdateParams {
+                track_id: args.track_id,
+                name: args.name,
+                gain_db: args.gain_db,
+                pan: args.pan,
+                muted: args.muted,
+                solo: args.solo,
+                armed: args.armed,
+                monitoring: optional_text("/monitoring", args.monitoring)?,
+                color: args.color,
+            })
+            .into(),
+            TrackCommand::Remove(args) => Canonical::TrackRemove(track_id(args)).into(),
+            TrackCommand::Duplicate(args) => Canonical::TrackDuplicate(track_id(args)).into(),
+            TrackCommand::Reorder(args) => Canonical::TrackReorder(TrackReorderParams {
+                track_id: args.track_id,
+                target_index: args.target_index,
+            })
+            .into(),
             TrackCommand::AudioInput { command } => match command {
-                AudioInputCommand::Set(args) => value("track.audio-input.set", args),
+                AudioInputCommand::Set(args) => Canonical::TrackAudioInputSet(AudioInputParams {
+                    track_id: args.track_id,
+                    channel_index: args.channel_index,
+                })
+                .into(),
                 AudioInputCommand::Clear(args) => {
-                    value("track.audio-input.clear", json!({"trackId": args.track_id}))
+                    Canonical::TrackAudioInputClear(track_id(args)).into()
                 }
             },
             TrackCommand::MidiInput { command } => match command {
-                MidiInputCommand::Set(args) => value("track.midi-input.set", args),
+                MidiInputCommand::Set(args) => Canonical::TrackMidiInputSet(MidiInputParams {
+                    track_id: args.track_id,
+                    device_id: args.device_id,
+                    channel: args.channel,
+                })
+                .into(),
                 MidiInputCommand::Clear(args) => {
-                    value("track.midi-input.clear", json!({"trackId": args.track_id}))
+                    Canonical::TrackMidiInputClear(track_id(args)).into()
                 }
             },
         },
         CliCommand::AudioClip { command } => match command {
-            AudioClipCommand::List => simple("audio-clip.list"),
-            AudioClipCommand::AddAsset(args) => value("audio-clip.add-asset", args),
+            AudioClipCommand::List => Canonical::AudioClipList(empty).into(),
+            AudioClipCommand::AddAsset(args) => Canonical::AudioClipAddAsset(ClipAddAssetParams {
+                asset_id: args.asset_id,
+                name: args.name,
+                start_tick: args.start_tick,
+                track_id: args.track_id,
+            })
+            .into(),
             AudioClipCommand::Update(args) => audio_clip_update(args)?,
-            AudioClipCommand::Move(args) => value(
-                "audio-clip.move",
-                json!({"moves":[{"clipId":args.clip_id,"startTick":args.start_tick,"trackId":args.track_id}]}),
-            ),
-            AudioClipCommand::Trim(args) => value(
-                "audio-clip.trim",
-                json!({
-                    "clipId": args.clip_id,
-                    "startTick": args.start_tick,
-                    "sourceRange": {"start": args.source_start, "end": args.source_end}
-                }),
-            ),
-            AudioClipCommand::Split(args) => value("audio-clip.split", args),
+            AudioClipCommand::Move(args) => Canonical::AudioClipMove(AudioClipMoveParams {
+                moves: vec![AudioClipMove {
+                    clip_id: args.clip_id,
+                    start_tick: TimelineTick(args.start_tick),
+                    track_id: args.track_id,
+                }],
+            })
+            .into(),
+            AudioClipCommand::Trim(args) => Canonical::AudioClipTrim(AudioClipTrimParams {
+                clip_id: args.clip_id,
+                start_tick: args.start_tick,
+                source_range: FrameRange {
+                    start: args.source_start,
+                    end: args.source_end,
+                },
+            })
+            .into(),
+            AudioClipCommand::Split(args) => Canonical::AudioClipSplit(ClipSplitParams {
+                clip_id: args.clip_id,
+                split_tick: args.split_tick,
+            })
+            .into(),
             AudioClipCommand::Duplicate(args) => {
-                value("audio-clip.duplicate", json!({"clipId": args.clip_id}))
+                Canonical::AudioClipDuplicate(clip_id(args)).into()
             }
-            AudioClipCommand::Crossfade(args) => value("audio-clip.crossfade", args),
+            AudioClipCommand::Crossfade(args) => {
+                Canonical::AudioClipCrossfade(AudioClipCrossfadeParams {
+                    first_clip_id: args.first_clip_id,
+                    second_clip_id: args.second_clip_id,
+                })
+                .into()
+            }
         },
         CliCommand::MidiClip { command } => match command {
-            MidiClipCommand::List => simple("midi-clip.list"),
-            MidiClipCommand::Create(args) => value("midi-clip.create", args),
-            MidiClipCommand::AddAsset(args) => value("midi-clip.add-asset", args),
+            MidiClipCommand::List => Canonical::MidiClipList(empty).into(),
+            MidiClipCommand::Create(args) => Canonical::MidiClipCreate(MidiClipCreateParams {
+                track_id: args.track_id,
+                start_tick: args.start_tick,
+                duration_ticks: args.duration_ticks,
+                name: args.name,
+            })
+            .into(),
+            MidiClipCommand::AddAsset(args) => Canonical::MidiClipAddAsset(ClipAddAssetParams {
+                asset_id: args.asset_id,
+                name: args.name,
+                start_tick: args.start_tick,
+                track_id: args.track_id,
+            })
+            .into(),
             MidiClipCommand::Update(args) => midi_clip_update(args)?,
-            MidiClipCommand::Move(args) => value(
-                "midi-clip.move",
-                json!({"moves":[{"clipId":args.clip_id,"startTick":args.start_tick,"trackId":args.track_id}]}),
-            ),
-            MidiClipCommand::Trim(args) => value("midi-clip.trim", args),
-            MidiClipCommand::Split(args) => value("midi-clip.split", args),
-            MidiClipCommand::Duplicate(args) => {
-                value("midi-clip.duplicate", json!({"clipId": args.clip_id}))
-            }
+            MidiClipCommand::Move(args) => Canonical::MidiClipMove(MidiClipMoveParams {
+                moves: vec![MidiClipMove {
+                    clip_id: args.clip_id,
+                    start_tick: TimelineTick(args.start_tick),
+                    track_id: args.track_id,
+                }],
+            })
+            .into(),
+            MidiClipCommand::Trim(args) => Canonical::MidiClipTrim(MidiClipTrimParams {
+                clip_id: args.clip_id,
+                start_tick: args.start_tick,
+                duration_ticks: args.duration_ticks,
+            })
+            .into(),
+            MidiClipCommand::Split(args) => Canonical::MidiClipSplit(ClipSplitParams {
+                clip_id: args.clip_id,
+                split_tick: args.split_tick,
+            })
+            .into(),
+            MidiClipCommand::Duplicate(args) => Canonical::MidiClipDuplicate(clip_id(args)).into(),
         },
         CliCommand::MidiNote { command } => match command {
-            MidiNoteCommand::Add(args) => value("midi-note.add", args),
-            MidiNoteCommand::Insert(args) => note_source_command(
-                "midi-note.insert",
-                args.clip_id,
-                args.notes_json,
-                args.notes_file,
-                args.stdin,
-            )?,
-            MidiNoteCommand::Update(args) => {
-                let patch: Value = serde_json::from_str(&args.patch)
-                    .map_err(|error| format!("--patch is invalid JSON: {error}"))?;
-                value(
-                    "midi-note.update",
-                    json!({"clipId":args.clip_id,"noteId":args.note_id,"patch":patch}),
-                )
+            MidiNoteCommand::Add(args) => Canonical::MidiNoteAdd(MidiNoteAddParams {
+                clip_id: args.clip_id,
+                pitch: args.pitch,
+                start_tick: args.start_tick,
+                duration_ticks: args.duration_ticks,
+                velocity: args.velocity,
+                channel: args.channel,
+            })
+            .into(),
+            MidiNoteCommand::Insert(args) => Canonical::MidiNoteInsert(MidiNoteInsertParams {
+                clip_id: args.clip_id,
+                notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
+            })
+            .into(),
+            MidiNoteCommand::Update(args) => Canonical::MidiNoteUpdate(MidiNoteUpdateParams {
+                clip_id: args.clip_id,
+                note_id: args.note_id,
+                patch: field("/patch", json_argument("patch", &args.patch)?)?,
+            })
+            .into(),
+            MidiNoteCommand::UpdateMany(args) => {
+                Canonical::MidiNoteUpdateMany(MidiNoteUpdateManyParams {
+                    clip_id: args.clip_id,
+                    updates: field(
+                        "/updates",
+                        json_argument("updates-json", &args.updates_json)?,
+                    )?,
+                })
+                .into()
             }
-            MidiNoteCommand::UpdateMany(args) => json_string(
-                "midi-note.update-many",
-                args.clip_id,
-                "updates",
-                args.updates_json,
-            )?,
-            MidiNoteCommand::Remove(args) => value("midi-note.remove", args),
-            MidiNoteCommand::RemoveMany(args) => {
-                id_list_value("midi-note.remove-many", args, &["noteIds"])?
-            }
-            MidiNoteCommand::Clear(args) => value("midi-note.clear", args),
+            MidiNoteCommand::Remove(args) => Canonical::MidiNoteRemove(NoteIdParams {
+                clip_id: args.clip_id,
+                note_id: args.note_id,
+            })
+            .into(),
+            MidiNoteCommand::RemoveMany(args) => Canonical::MidiNoteRemoveMany(NoteIdsParams {
+                clip_id: args.clip_id,
+                note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+            })
+            .into(),
+            MidiNoteCommand::Clear(args) => Canonical::MidiNoteClear(clip_id(args)).into(),
             MidiNoteCommand::Quantize(args) => {
-                id_list_value("midi-note.quantize", args, &["noteIds"])?
+                Canonical::MidiNoteQuantize(MidiNoteQuantizeParams {
+                    clip_id: args.clip_id,
+                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                    grid_ticks: args.grid_ticks,
+                })
+                .into()
             }
             MidiNoteCommand::Transform(args) => {
-                id_list_value("midi-note.transform", args, &["noteIds"])?
+                Canonical::MidiNoteTransform(MidiNoteTransformParams {
+                    clip_id: args.clip_id,
+                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                    transpose_semitones: args.transpose_semitones,
+                    velocity_offset: args.velocity_offset,
+                })
+                .into()
             }
             MidiNoteCommand::Duplicate(args) => {
-                id_list_value("midi-note.duplicate", args, &["noteIds"])?
+                Canonical::MidiNoteDuplicate(MidiNoteDuplicateParams {
+                    clip_id: args.clip_id,
+                    note_ids: id_list(args.note_ids, args.note_ids_json, "note-ids")?,
+                    offset_ticks: args.offset_ticks,
+                })
+                .into()
             }
         },
         CliCommand::Music { command } => match command {
             MusicCommand::MidiClip { command } => match command {
-                MusicMidiClipCommand::Create(args) => value("music.midi-clip.create", args),
+                MusicMidiClipCommand::Create(args) => {
+                    Canonical::MusicMidiClipCreate(MusicalMidiClipCreateParams {
+                        track_id: args.track_id,
+                        start: text("/start", args.start)?,
+                        end: text("/end", args.end)?,
+                        name: args.name,
+                    })
+                    .into()
+                }
                 MusicMidiClipCommand::Resize(args) => {
                     if args.start.is_none() && args.end.is_none() {
                         return Err("--start or --end is required for clip resize".into());
                     }
-                    value(
-                        "music.midi-clip.resize",
-                        json!({
-                            "clipId": args.clip_id,
-                            "start": args.start,
-                            "end": args.end,
-                        }),
-                    )
+                    Canonical::MusicMidiClipResize(MusicalMidiClipResizeParams {
+                        clip_id: args.clip_id,
+                        start: optional_text("/start", args.start)?,
+                        end: optional_text("/end", args.end)?,
+                    })
+                    .into()
                 }
             },
             MusicCommand::Note { command } => match command {
-                MusicNoteCommand::List(args) => value("music.note.list", args),
-                MusicNoteCommand::Get(args) => value("music.note.get", args),
-                MusicNoteCommand::Insert(args) => note_source_command(
-                    "music.note.insert",
-                    args.clip_id,
-                    args.notes_json,
-                    args.notes_file,
-                    args.stdin,
-                )?,
-                MusicNoteCommand::Update(args) => value("music.note.update", args),
-                MusicNoteCommand::Remove(args) => value("music.note.remove", args),
-                MusicNoteCommand::Transform(args) => value("music.note.transform", args),
+                MusicNoteCommand::List(args) => Canonical::MusicNoteList(MusicalNoteListParams {
+                    clip_id: args.clip_id,
+                    track_id: args.track_id,
+                    start: optional_text("/start", args.start)?,
+                    end: optional_text("/end", args.end)?,
+                    include_ids: args.include_ids,
+                    raw: args.raw,
+                })
+                .into(),
+                MusicNoteCommand::Get(args) => Canonical::MusicNoteGet(NoteIdParams {
+                    clip_id: args.clip_id,
+                    note_id: args.note_id,
+                })
+                .into(),
+                MusicNoteCommand::Insert(args) => {
+                    Canonical::MusicNoteInsert(MusicalNoteInsertParams {
+                        clip_id: args.clip_id,
+                        notes: note_input(args.notes_json, args.notes_file, args.stdin)?,
+                    })
+                    .into()
+                }
+                MusicNoteCommand::Update(args) => {
+                    Canonical::MusicNoteUpdate(MusicalNoteUpdateParams {
+                        clip_id: args.clip_id,
+                        note_id: args.note_id,
+                        pitch: optional_text("/pitch", args.pitch)?,
+                        position: optional_text("/position", args.position)?,
+                        duration: optional_text("/duration", args.duration)?,
+                        velocity: args.velocity,
+                        channel: args.channel,
+                    })
+                    .into()
+                }
+                MusicNoteCommand::Remove(args) => Canonical::MusicNoteRemove(NoteIdParams {
+                    clip_id: args.clip_id,
+                    note_id: args.note_id,
+                })
+                .into(),
+                MusicNoteCommand::Transform(args) => {
+                    Canonical::MusicNoteTransform(MusicalNoteTransformParams {
+                        clip_id: args.clip_id,
+                        track_id: args.track_id,
+                        start: optional_text("/start", args.start)?,
+                        end: optional_text("/end", args.end)?,
+                        pitch: optional_text("/pitch", args.pitch)?,
+                        channel: args.channel,
+                        timing_offset: optional_text("/timingOffset", args.timing_offset)?,
+                        velocity_offset: args.velocity_offset,
+                        transpose_semitones: args.transpose_semitones,
+                    })
+                    .into()
+                }
             },
             MusicCommand::Region { command } => match command {
-                MusicRegionCommand::List => simple("music.region.list"),
-                MusicRegionCommand::Add(args) => value("music.region.add", args),
-                MusicRegionCommand::Update(args) => value("music.region.update", args),
-                MusicRegionCommand::Remove(args) => value("music.region.remove", args),
+                MusicRegionCommand::List => Canonical::MusicRegionList(empty).into(),
+                MusicRegionCommand::Add(args) => Canonical::MusicRegionAdd(RegionAddParams {
+                    name: args.name,
+                    start: text("/start", args.start)?,
+                    end: text("/end", args.end)?,
+                })
+                .into(),
+                MusicRegionCommand::Update(args) => {
+                    Canonical::MusicRegionUpdate(RegionUpdateParams {
+                        region_id: args.region_id,
+                        name: args.name,
+                        start: optional_text("/start", args.start)?,
+                        end: optional_text("/end", args.end)?,
+                    })
+                    .into()
+                }
+                MusicRegionCommand::Remove(args) => Canonical::MusicRegionRemove(RegionIdParams {
+                    region_id: args.region_id,
+                })
+                .into(),
             },
             MusicCommand::Harmony { command } => match command {
-                MusicHarmonyCommand::Resolve(args) => value("music.harmony.resolve", args),
-                MusicHarmonyCommand::List => simple("music.harmony.list"),
+                MusicHarmonyCommand::Resolve(args) => {
+                    Canonical::MusicHarmonyResolve(HarmonyResolveParams { chord: args.chord })
+                        .into()
+                }
+                MusicHarmonyCommand::List => Canonical::MusicHarmonyList(empty).into(),
                 MusicHarmonyCommand::Insert(args) => harmony_insert(args)?,
                 MusicHarmonyCommand::Update(args) => harmony_update(args)?,
                 MusicHarmonyCommand::Remove(args) => {
-                    let ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
+                    let event_ids = serde_json::from_str::<Vec<String>>(&args.event_ids_json)
                         .map_err(|error| format!("--event-ids-json is invalid JSON: {error}"))?;
-                    value("music.harmony.remove", json!({"eventIds": ids}))
+                    Canonical::MusicHarmonyRemove(HarmonyRemoveParams { event_ids }).into()
                 }
                 MusicHarmonyCommand::Realize(args) => harmony_realize(args)?,
             },
             MusicCommand::Phrase { command } => match command {
-                MusicPhraseCommand::Insert(args) => phrase_insert(args)?,
-                MusicPhraseCommand::Preview(args) => phrase_preview(args)?,
+                MusicPhraseCommand::Insert(args) => {
+                    let (pattern, placements) = phrase_input(args.phrase_json, args.phrase_file)?;
+                    Canonical::MusicPhraseInsert(PhraseInsertParams {
+                        clip_id: args.clip_id,
+                        pattern,
+                        placements,
+                        channel: args.channel,
+                    })
+                    .into()
+                }
+                MusicPhraseCommand::Preview(args) => {
+                    let (pattern, placements) = phrase_input(args.phrase_json, args.phrase_file)?;
+                    Canonical::MusicPhrasePreview(PhrasePreviewParams {
+                        clip_id: args.clip_id,
+                        pattern,
+                        placements,
+                        channel: args.channel,
+                        include_notes: args.include_notes,
+                    })
+                    .into()
+                }
             },
         },
         CliCommand::Clip { command } => match command {
-            ClipCommand::Remove(args) => {
-                id_list_value("clip.remove", args, &["audioClipIds", "midiClipIds"])?
-            }
-            ClipCommand::Paste(args) => {
-                id_list_value("clip.paste", args, &["audioClipIds", "midiClipIds"])?
-            }
+            ClipCommand::Remove(args) => Canonical::ClipRemove(ClipRemoveParams {
+                audio_clip_ids: id_list(
+                    args.audio_clip_ids,
+                    args.audio_clip_ids_json,
+                    "audio-clip-ids",
+                )?,
+                midi_clip_ids: id_list(
+                    args.midi_clip_ids,
+                    args.midi_clip_ids_json,
+                    "midi-clip-ids",
+                )?,
+            })
+            .into(),
+            ClipCommand::Paste(args) => Canonical::ClipPaste(ClipPasteParams {
+                audio_clip_ids: id_list(
+                    args.audio_clip_ids,
+                    args.audio_clip_ids_json,
+                    "audio-clip-ids",
+                )?,
+                midi_clip_ids: id_list(
+                    args.midi_clip_ids,
+                    args.midi_clip_ids_json,
+                    "midi-clip-ids",
+                )?,
+                start_tick: args.start_tick,
+            })
+            .into(),
         },
         CliCommand::Marker { command } => match command {
-            MarkerCommand::Add(args) => value(
-                "marker.add",
-                json!({"name": args.name, "position": args.position}),
-            ),
-            MarkerCommand::Update(args) => value(
-                "marker.update",
-                json!({
-                    "markerId": args.marker_id,
-                    "name": args.name,
-                    "position": args.position,
-                }),
-            ),
-            MarkerCommand::Remove(args) => value("marker.remove", args),
+            MarkerCommand::Add(args) => Canonical::MarkerAdd(MarkerAddParams {
+                name: args.name,
+                position: text("/position", args.position)?,
+            })
+            .into(),
+            MarkerCommand::Update(args) => Canonical::MarkerUpdate(MarkerUpdateParams {
+                marker_id: args.marker_id,
+                name: args.name,
+                position: optional_text("/position", args.position)?,
+            })
+            .into(),
+            MarkerCommand::Remove(args) => Canonical::MarkerRemove(MarkerIdParams {
+                marker_id: args.marker_id,
+            })
+            .into(),
         },
         CliCommand::Timebase { command } => match command {
-            TimebaseCommand::Update(args) => value("timebase.update", args),
+            TimebaseCommand::Update(args) => Canonical::TimebaseUpdate(TimebaseUpdateParams {
+                bpm: args.bpm,
+                time_signature_numerator: args.time_signature_numerator,
+                time_signature_denominator: args.time_signature_denominator,
+            })
+            .into(),
         },
         CliCommand::LoopRange { command } => match command {
-            RangeCommand::Set(args) => range_value("loop-range.set", args),
+            RangeCommand::Set(args) => Canonical::LoopRangeSet(range(args)?).into(),
         },
         CliCommand::PunchRange { command } => match command {
-            RangeCommand::Set(args) => range_value("punch-range.set", args),
+            RangeCommand::Set(args) => Canonical::PunchRangeSet(range(args)?).into(),
         },
         CliCommand::Automation { command } => match command {
-            AutomationCommand::Set(args) => {
-                let points_json = args.points_json.clone();
-                json_string_with_fields("automation.set", args, "points", points_json)?
-            }
-            AutomationCommand::Clear(args) => value("automation.clear", args),
+            AutomationCommand::Set(args) => Canonical::AutomationSet(AutomationSetParams {
+                track_id: args.track_id,
+                parameter: text("/parameter", args.parameter)?,
+                points: field("/points", json_argument("points-json", &args.points_json)?)?,
+            })
+            .into(),
+            AutomationCommand::Clear(args) => Canonical::AutomationClear(AutomationClearParams {
+                track_id: args.track_id,
+                parameter: text("/parameter", args.parameter)?,
+            })
+            .into(),
         },
         CliCommand::Asset { command } => match command {
-            AssetCommand::ImportMidi(args) => value(
-                "asset.import-midi",
-                json!({"path":args.path,"name":args.name}),
-            ),
-            AssetCommand::Preview(args) => asset_preview_value(args),
-            AssetCommand::StopPreview => simple("asset.preview.stop"),
+            AssetCommand::ImportMidi(args) => Canonical::AssetImportMidi(AssetImportParams {
+                path: args.path,
+                name: args.name,
+            })
+            .into(),
+            AssetCommand::Preview(args) => Runtime::AssetPreview(AssetPreviewParams {
+                asset_id: args.asset_id,
+                start_ms: args.start_ms,
+                end_ms: args.end_ms,
+                looped: args.looped.unwrap_or(false),
+                gain: args.gain,
+            })
+            .into(),
+            AssetCommand::StopPreview => Runtime::AssetPreviewStop(empty).into(),
         },
         CliCommand::Project { command } => match command {
-            ProjectCommand::List => simple("project.list"),
-            ProjectCommand::Create(args) => value("project.create", args),
-            ProjectCommand::Open(args) => {
-                value("project.open", json!({"projectId": args.project_id}))
+            ProjectCommand::List => Project::ProjectList(empty).into(),
+            ProjectCommand::Create(args) => {
+                Project::ProjectCreate(ProjectCreateParams { name: args.name }).into()
             }
-            ProjectCommand::Rename(args) => value("project.rename", args),
-            ProjectCommand::Export(args) => value("project.export", args),
-            ProjectCommand::Import(args) => value("project.import", json!({"path":args.path})),
+            ProjectCommand::Open(args) => Project::ProjectOpen(ProjectOpenParams {
+                project_id: args.project_id,
+            })
+            .into(),
+            ProjectCommand::Rename(args) => {
+                Project::ProjectRename(ProjectRenameParams { name: args.name }).into()
+            }
+            ProjectCommand::Export(args) => Project::ProjectExport(ProjectExportParams {
+                output: args.output,
+            })
+            .into(),
+            ProjectCommand::Import(args) => {
+                Project::ProjectImport(ProjectImportParams { path: args.path }).into()
+            }
         },
         CliCommand::Instrument { command } => match command {
             InstrumentCommand::Init(_)
@@ -2583,206 +2726,380 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, String> {
             | InstrumentCommand::Audition(_) => {
                 unreachable!("Sonalloy instrument commands are handled directly by the CLI")
             }
-            InstrumentCommand::List => simple("instrument.list"),
-            InstrumentCommand::Save(args) => value("instrument.save", args),
-            InstrumentCommand::Export(args) => value("instrument.export", args),
-            InstrumentCommand::Apply(args) => value("instrument.apply", args),
-            InstrumentCommand::Clear(args) => {
-                value("instrument.clear", json!({"trackId": args.track_id}))
+            InstrumentCommand::List => Canonical::InstrumentList(empty).into(),
+            InstrumentCommand::Save(args) => Canonical::InstrumentSave(InstrumentSaveParams {
+                definition_path: args.definition_path,
+                instrument_id: args.instrument_id,
+            })
+            .into(),
+            InstrumentCommand::Export(args) => {
+                Canonical::InstrumentExport(InstrumentExportParams {
+                    instrument_id: args.instrument_id,
+                    output: args.output,
+                })
+                .into()
             }
+            InstrumentCommand::Apply(args) => Canonical::InstrumentApply(InstrumentApplyParams {
+                track_id: args.track_id,
+                instrument_id: args.instrument_id,
+            })
+            .into(),
+            InstrumentCommand::Clear(args) => Canonical::InstrumentClear(track_id(args)).into(),
         },
         CliCommand::Effect { command } => match command {
-            EffectCommand::Remove(args) => value("effect.remove", args),
-            EffectCommand::Reorder(args) => id_list_value("effect.reorder", args, &["deviceIds"])?,
+            EffectCommand::Remove(args) => Canonical::EffectRemove(TrackDeviceParams {
+                track_id: args.track_id,
+                device_id: args.device_id,
+            })
+            .into(),
+            EffectCommand::Reorder(args) => Canonical::EffectReorder(EffectReorderParams {
+                track_id: args.track_id,
+                device_ids: id_list(args.device_ids, args.device_ids_json, "device-ids")?,
+            })
+            .into(),
         },
         CliCommand::Device { command } => match command {
-            DeviceCommand::Bypass(args) => device_bypass_value(args),
-            DeviceCommand::Inspect(args) => value("device.inspect", args),
+            DeviceCommand::Bypass(args) => Canonical::DeviceBypass(DeviceBypassParams {
+                track_id: args.track_id,
+                device_id: args.device_id,
+                bypassed: args.bypassed.unwrap_or(false),
+            })
+            .into(),
+            DeviceCommand::Inspect(args) => Runtime::DeviceInspect(TrackDeviceParams {
+                track_id: args.track_id,
+                device_id: args.device_id,
+            })
+            .into(),
             DeviceCommand::Parameter { command } => match command {
-                DeviceParameterCommand::List(args) => value("device.parameter.list", args),
-                DeviceParameterCommand::Get(args) => value("device.parameter.get", args),
-                DeviceParameterCommand::Set(args) => value("device.parameter.set", args),
+                DeviceParameterCommand::List(args) => {
+                    Runtime::DeviceParameterList(TrackDeviceParams {
+                        track_id: args.track_id,
+                        device_id: args.device_id,
+                    })
+                    .into()
+                }
+                DeviceParameterCommand::Get(args) => {
+                    Runtime::DeviceParameterGet(DeviceParameterGetParams {
+                        track_id: args.track_id,
+                        device_id: args.device_id,
+                        parameter_index: args.parameter_index,
+                    })
+                    .into()
+                }
+                DeviceParameterCommand::Set(args) => {
+                    Canonical::DeviceParameterSet(DeviceParameterSetParams {
+                        track_id: args.track_id,
+                        device_id: args.device_id,
+                        parameter_index: args.parameter_index,
+                        value: args.value,
+                    })
+                    .into()
+                }
             },
         },
         CliCommand::Runtime { command } => match command {
             RuntimeCommand::Projection { command } => match command {
-                RuntimeProjectionCommand::Get => simple("runtime.projection.get"),
-                RuntimeProjectionCommand::Retry => simple("runtime.projection.retry"),
+                RuntimeProjectionCommand::Get => Runtime::RuntimeProjectionGet(empty).into(),
+                RuntimeProjectionCommand::Retry => Runtime::RuntimeProjectionRetry(empty).into(),
             },
         },
         CliCommand::Transport { command } => match command {
-            TransportCommand::Play => simple("transport.play"),
-            TransportCommand::Stop => simple("transport.stop"),
-            TransportCommand::GoToStart => simple("transport.go-to-start"),
-            TransportCommand::Seek(args) => value("transport.seek", args),
+            TransportCommand::Play => Runtime::TransportPlay(empty).into(),
+            TransportCommand::Stop => Runtime::TransportStop(empty).into(),
+            TransportCommand::GoToStart => Runtime::TransportGoToStart(empty).into(),
+            TransportCommand::Seek(args) => {
+                Runtime::TransportSeek(SeekParams { tick: args.tick }).into()
+            }
         },
         CliCommand::Midi { command } => match command {
-            LiveMidiCommand::Send(args) => value("midi.send", args),
-            LiveMidiCommand::Panic(args) => value("midi.panic", json!({"trackId": args.track_id})),
+            LiveMidiCommand::Send(args) => Runtime::MidiSend(MidiSendParams {
+                track_id: args.track_id,
+                bytes: args.bytes,
+            })
+            .into(),
+            LiveMidiCommand::Panic(args) => Runtime::MidiPanic(track_id(args)).into(),
         },
         CliCommand::Audio { command } => match command {
-            AudioCommand::Status => simple("audio.status"),
-            AudioCommand::Probe => simple("audio.probe"),
-            AudioCommand::ChannelsProbe(args) => value("audio.channels.probe", args),
+            AudioCommand::Status => Runtime::AudioStatus(empty).into(),
+            AudioCommand::Probe => Runtime::AudioProbe(empty).into(),
+            AudioCommand::ChannelsProbe(args) => {
+                Runtime::AudioChannelsProbe(AudioChannelsProbeParams {
+                    driver: args.driver,
+                    input_device: args.input_device,
+                    output_device: args.output_device,
+                })
+                .into()
+            }
             AudioCommand::Diagnostics(args) => {
-                value("audio.diagnostics", json!({"debug": args.debug}))
+                Runtime::AudioDiagnostics(AudioDiagnosticsParams { debug: args.debug }).into()
             }
             AudioCommand::Driver { command } => match command {
-                AudioDriverCommand::Get => simple("audio.driver.get"),
-                AudioDriverCommand::Set(args) => value("audio.driver.set", args),
+                AudioDriverCommand::Get => Runtime::AudioDriverGet(empty).into(),
+                AudioDriverCommand::Set(args) => Runtime::AudioDriverSet(AudioDriverConfig {
+                    driver: args.driver,
+                    input_device: args.input_device,
+                    input_channel: args.input_channel,
+                    output_device: args.output_device,
+                    sample_rate: args.sample_rate,
+                    buffer_size: args.buffer_size,
+                })
+                .into(),
             },
-            AudioCommand::Recover => simple("audio.recover"),
-            AudioCommand::StartupRetry => simple("audio.startup.retry"),
+            AudioCommand::Recover => Runtime::AudioRecover(empty).into(),
+            AudioCommand::StartupRetry => Runtime::AudioStartupRetry(empty).into(),
         },
         CliCommand::Record { command } => match command {
-            RecordCommand::Start(args) => value("record.start", args),
-            RecordCommand::AnotherTake(args) => value("record.start", args),
-            RecordCommand::Stop => simple("record.stop"),
-            RecordCommand::Status => simple("record.status"),
-            RecordCommand::List(args) => value("record.list", args),
-            RecordCommand::Rename(args) => value("record.rename", args),
-            RecordCommand::Archive(args) => value("record.archive", args),
-            RecordCommand::Promote(args) => value("record.promote", args),
-            RecordCommand::Tag(args) => value("record.tag", args),
-            RecordCommand::Delete(args) => value("record.delete", args),
-            RecordCommand::Duplicates => simple("record.duplicates"),
+            RecordCommand::Start(args) | RecordCommand::AnotherTake(args) => {
+                Runtime::RecordStart(RecordStartParams {
+                    recording_session_id: args.recording_session_id,
+                })
+                .into()
+            }
+            RecordCommand::Stop => Runtime::RecordStop(empty).into(),
+            RecordCommand::Status => Runtime::RecordStatus(empty).into(),
+            RecordCommand::List(args) => {
+                Runtime::RecordList(RecordListParams { query: args.query }).into()
+            }
+            RecordCommand::Rename(args) => Runtime::RecordRename(RecordRenameParams {
+                id: args.id,
+                new_name: args.new_name,
+            })
+            .into(),
+            RecordCommand::Archive(args) => Runtime::RecordArchive(IdParams { id: args.id }).into(),
+            RecordCommand::Promote(args) => Runtime::RecordPromote(IdParams { id: args.id }).into(),
+            RecordCommand::Tag(args) => Runtime::RecordTag(LibraryTagParams {
+                id: args.id,
+                tag: args.tag,
+                note: args.note,
+            })
+            .into(),
+            RecordCommand::Delete(args) => Runtime::RecordDelete(IdParams { id: args.id }).into(),
+            RecordCommand::Duplicates => Runtime::RecordDuplicates(empty).into(),
         },
         CliCommand::Library { command } => match command {
-            LibraryCommand::Search(args) => value("library.search", args),
-            LibraryCommand::AssetUpdate(args) => value("library.asset.update", args),
-            LibraryCommand::Related(args) => value("library.related", args),
+            LibraryCommand::Search(args) => {
+                Runtime::LibrarySearch(LibrarySearchParams { query: args.query }).into()
+            }
+            LibraryCommand::AssetUpdate(args) => Runtime::LibraryAssetUpdate(LibraryTagParams {
+                id: args.id,
+                tag: args.tag,
+                note: args.note,
+            })
+            .into(),
+            LibraryCommand::Related(args) => {
+                Runtime::LibraryRelated(IdParams { id: args.id }).into()
+            }
         },
         CliCommand::Analysis { command } => match command {
-            AnalysisCommand::Start(args) => value("analysis.start", args),
+            AnalysisCommand::Start(args) => Runtime::AnalysisStart(AnalysisParams {
+                asset_id: args.asset_id,
+                path: args.path,
+            })
+            .into(),
         },
         CliCommand::Plugin { command } => match command {
             PluginCommand::Catalog { command } => match command {
-                PluginCatalogCommand::List => simple("plugin.catalog.list"),
+                PluginCatalogCommand::List => Runtime::PluginCatalogList(empty).into(),
             },
-            PluginCommand::Instrument(args) => value("instrument.vst3.set", args),
-            PluginCommand::Effect(args) => value("effect.add", args),
-            PluginCommand::Scan(args) => value("plugin.scan", args),
-            PluginCommand::ScanStart(args) => value("plugin.scan.start", args),
+            PluginCommand::Instrument(args) => {
+                Canonical::InstrumentVst3Set(plugin_path(args)).into()
+            }
+            PluginCommand::Effect(args) => Canonical::EffectAdd(plugin_path(args)).into(),
+            PluginCommand::Scan(args) => {
+                Runtime::PluginScan(PluginScanParams { path: args.path }).into()
+            }
+            PluginCommand::ScanStart(args) => {
+                Runtime::PluginScanStart(PluginScanParams { path: args.path }).into()
+            }
             PluginCommand::Preset { command } => match command {
-                PluginPresetCommand::List(args) => value("plugin.preset.list", args),
-                PluginPresetCommand::Get(args) => value("plugin.preset.get", args),
-                PluginPresetCommand::Set(args) => plugin_preset_set(args)?,
+                PluginPresetCommand::List(args) => {
+                    Runtime::PluginPresetList(plugin_device(args)).into()
+                }
+                PluginPresetCommand::Get(args) => {
+                    Runtime::PluginPresetGet(plugin_device(args)).into()
+                }
+                PluginPresetCommand::Set(args) => {
+                    if args.preset.is_some() == args.preset_index.is_some() {
+                        return Err(
+                            "--preset and --preset-index are mutually exclusive and one is required"
+                                .into(),
+                        );
+                    }
+                    Runtime::PluginPresetSet(PluginPresetSetParams {
+                        track_id: args.track_id,
+                        device_id: args.device_id,
+                        preset: args.preset,
+                        preset_index: args.preset_index,
+                    })
+                    .into()
+                }
             },
             PluginCommand::State { command } => match command {
-                PluginStateCommand::Save(args) => value(
-                    "plugin.state.get",
-                    json!({
-                        "trackId": args.track_id,
-                        "deviceId": args.device_id,
-                    }),
-                ),
+                PluginStateCommand::Save(args) => Runtime::PluginStateGet(TrackDeviceParams {
+                    track_id: args.track_id,
+                    device_id: args.device_id,
+                })
+                .into(),
                 PluginStateCommand::Load(args) => plugin_state_load(args)?,
             },
         },
         CliCommand::Missing { command } => match command {
-            MissingCommand::List => simple("missing.list"),
-            MissingCommand::Relink(args) => value("missing.relink", args),
-            MissingCommand::DisablePlugin(args) => value("missing.disable-plugin", args),
-            MissingCommand::ReplacePlugin(args) => value("missing.replace-plugin", args),
+            MissingCommand::List => Runtime::MissingList(empty).into(),
+            MissingCommand::Relink(args) => Canonical::MissingRelink(MissingRelinkParams {
+                asset_id: args.asset_id,
+                new_path: args.new_path,
+            })
+            .into(),
+            MissingCommand::DisablePlugin(args) => {
+                Canonical::MissingDisablePlugin(DeviceIdParams {
+                    device_id: args.device_id,
+                })
+                .into()
+            }
+            MissingCommand::ReplacePlugin(args) => {
+                Canonical::MissingReplacePlugin(MissingPluginReplaceParams {
+                    device_id: args.device_id,
+                    new_path: args.new_path,
+                })
+                .into()
+            }
         },
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
         },
         CliCommand::Job { command } => match command {
-            JobCommand::Get(args) => value("job.get", args),
-            JobCommand::Cancel(args) => value("job.cancel", args),
+            JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
+            JobCommand::Cancel(args) => Runtime::JobCancel(IdParams { id: args.id }).into(),
             JobCommand::Wait(_) => {
                 return Err("job wait is handled locally by an attached one-shot CLI".into());
             }
         },
-        CliCommand::Undo => simple("undo"),
-        CliCommand::Redo => simple("redo"),
-    };
-    Ok(request)
+        CliCommand::Undo => Canonical::Undo(empty).into(),
+        CliCommand::Redo => Canonical::Redo(empty).into(),
+    })
 }
 
-fn simple(command: &str) -> ControlCommand {
-    ControlCommand {
-        name: command.into(),
-        params: json!({}),
+/// Decodes one CLI-supplied value into a params field, reporting an invalid
+/// value at `pointer` as the Host reports invalid params.
+fn field<T: DeserializeOwned>(pointer: &str, value: Value) -> Result<T, CommandDecodeError> {
+    decode_params(value).map_err(|error| match error {
+        CommandDecodeError::InvalidParams {
+            message,
+            mut details,
+        } => {
+            if let Some(Value::String(path)) = details.get_mut("path") {
+                *path = format!("{pointer}{path}");
+            }
+            CommandDecodeError::InvalidParams { message, details }
+        }
+        error => error,
+    })
+}
+
+fn text<T: DeserializeOwned>(pointer: &str, value: String) -> Result<T, CommandDecodeError> {
+    field(pointer, Value::String(value))
+}
+
+fn optional_text<T: DeserializeOwned>(
+    pointer: &str,
+    value: Option<String>,
+) -> Result<Option<T>, CommandDecodeError> {
+    value.map(|value| text(pointer, value)).transpose()
+}
+
+fn json_argument(flag: &str, encoded: &str) -> Result<Value, String> {
+    serde_json::from_str(encoded).map_err(|error| format!("--{flag} is invalid JSON: {error}"))
+}
+
+fn track_id(args: IdArg) -> TrackIdParams {
+    TrackIdParams {
+        track_id: args.track_id,
     }
 }
 
-fn value<T: Serialize>(command: &str, params: T) -> ControlCommand {
-    ControlCommand {
-        name: command.into(),
-        params: serde_json::to_value(params).expect("CLI arguments must serialize"),
+fn clip_id(args: ClipIdArg) -> ClipIdParams {
+    ClipIdParams {
+        clip_id: args.clip_id,
     }
 }
 
-fn render_start(args: RenderStartArgs) -> Result<ControlCommand, String> {
+fn plugin_path(args: PluginPathArgs) -> PluginPathParams {
+    PluginPathParams {
+        track_id: args.track_id,
+        plugin_path: args.plugin_path,
+    }
+}
+
+fn plugin_device(args: PluginDeviceArgs) -> TrackDeviceParams {
+    TrackDeviceParams {
+        track_id: args.track_id,
+        device_id: args.device_id,
+    }
+}
+
+fn range(args: RangeArgs) -> Result<RangeParams, CommandDecodeError> {
+    Ok(RangeParams {
+        enabled: args.enabled.unwrap_or(false),
+        start: text("/start", args.start)?,
+        end: text("/end", args.end)?,
+    })
+}
+
+fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
     let has_start = args.start.is_some();
     let has_end = args.end.is_some();
     if has_start != has_end {
         return Err("--start and --end must be provided together".into());
     }
-    let range = match (args.range.as_str(), has_start) {
-        ("entire-arrangement", false) => json!({"kind": "entireArrangement"}),
-        ("loop-range", false) => json!({"kind": "loopRange"}),
-        ("entire-arrangement", true) => json!({
-            "kind": "timeSelection",
-            "start": args.start.expect("start was checked"),
-            "end": args.end.expect("end was checked"),
-        }),
-        ("loop-range", true) => {
+    let range = match (args.range.as_str(), args.start, args.end) {
+        ("entire-arrangement", None, None) => RenderRange::EntireArrangement,
+        ("loop-range", None, None) => RenderRange::LoopRange,
+        ("entire-arrangement", Some(start), Some(end)) => RenderRange::TimeSelection {
+            start: text("/options/range/start", start)?,
+            end: text("/options/range/end", end)?,
+        },
+        ("loop-range", _, _) => {
             return Err("--range loop-range cannot be combined with --start or --end".into());
         }
-        (other, _) => {
-            return Err(format!(
-                "--range must be entire-arrangement or loop-range (got {other})"
-            ));
+        (other, _, _) => {
+            return Err(
+                format!("--range must be entire-arrangement or loop-range (got {other})").into(),
+            );
         }
     };
-    Ok(value(
-        "render.start",
-        json!({
-            "options": {
-                "range": range,
-                "normalize": args.normalize.unwrap_or(false),
-                "trackId": args.track_id,
-            }
+    Ok(Runtime::RenderStart(RenderStartParams {
+        options: Some(RenderOptions {
+            range,
+            normalize: args.normalize.unwrap_or(false),
+            track_id: args.track_id,
         }),
-    ))
+    })
+    .into())
 }
 
-fn json_string(
-    command: &str,
-    clip_id: String,
-    field: &str,
-    encoded: String,
-) -> Result<ControlCommand, String> {
-    let points: Value = serde_json::from_str(&encoded)
-        .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?;
-    Ok(value(command, json!({"clipId": clip_id, field: points})))
-}
-
-fn note_source_command(
-    command: &str,
-    clip_id: String,
+fn note_input<T: DeserializeOwned>(
     notes_json: Option<String>,
     notes_file: Option<PathBuf>,
     use_stdin: bool,
-) -> Result<ControlCommand, String> {
+) -> Result<Vec<T>, RequestError> {
     let notes = json_source(notes_json, notes_file, use_stdin, "notes", true)?
         .expect("required JSON source is present");
     if !notes.is_array() {
         return Err("note input must be a JSON array".into());
     }
-    Ok(value(command, json!({"clipId": clip_id, "notes": notes})))
+    Ok(field("/notes", notes)?)
 }
 
-fn harmony_insert(args: MusicalHarmonyInsertArgs) -> Result<ControlCommand, String> {
+fn harmony_insert(args: MusicalHarmonyInsertArgs) -> Result<ControlCommand, RequestError> {
     let events = json_source(args.events_json, args.events_file, false, "events", true)?
         .expect("required JSON source is present");
     if !events.is_array() {
         return Err("events input must be a JSON array".into());
     }
-    Ok(value("music.harmony.insert", json!({"events": events})))
+    Ok(Canonical::MusicHarmonyInsert(HarmonyInsertParams {
+        events: field("/events", events)?,
+    })
+    .into())
 }
 
 fn json_source(
@@ -2825,99 +3142,51 @@ fn json_source(
         .map_err(|error| format!("{field} input is invalid JSON: {error}"))
 }
 
-fn plugin_preset_set(args: PluginPresetSetArgs) -> Result<ControlCommand, String> {
-    if args.preset.is_some() == args.preset_index.is_some() {
-        return Err(
-            "--preset and --preset-index are mutually exclusive and one is required".into(),
-        );
-    }
-    Ok(value(
-        "plugin.preset.set",
-        json!({
-            "trackId": args.track_id,
-            "deviceId": args.device_id,
-            "preset": args.preset,
-            "presetIndex": args.preset_index,
-        }),
-    ))
-}
-
-fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, String> {
+fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, RequestError> {
     let encoded = std::fs::read_to_string(&args.file)
         .map_err(|error| format!("--file could not be read: {error}"))?;
     let state = serde_json::from_str::<Value>(&encoded)
         .map_err(|error| format!("--file is invalid JSON: {error}"))?;
-    Ok(value(
-        "plugin.state.set",
-        json!({
-            "trackId": args.track_id,
-            "deviceId": args.device_id,
-            "state": state,
-        }),
-    ))
+    Ok(Runtime::PluginStateSet(PluginStateSetParams {
+        track_id: args.track_id,
+        device_id: args.device_id,
+        state: field("/state", state)?,
+    })
+    .into())
 }
 
-fn json_string_with_fields<T: Serialize>(
-    command: &str,
-    fields: T,
-    field: &str,
-    encoded: String,
-) -> Result<ControlCommand, String> {
-    let mut object = serde_json::to_value(fields)
-        .map_err(|error| format!("CLI arguments could not be encoded: {error}"))?;
-    object
-        .as_object_mut()
-        .ok_or_else(|| "CLI arguments did not form an object".to_string())?
-        .insert(
-            field.into(),
-            serde_json::from_str(&encoded)
-                .map_err(|error| format!("--{field}-json is invalid JSON: {error}"))?,
-        );
-    Ok(value(command, object))
-}
-
-fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, String> {
-    let patch = serde_json::from_str::<Value>(&args.patch_json)
-        .map_err(|error| format!("--patch-json is invalid JSON: {error}"))?;
-    let mut params = json!({"eventId": args.event_id});
-    let object = patch
-        .as_object()
-        .ok_or_else(|| "--patch-json must contain a JSON object".to_string())?;
-    if object.contains_key("eventId") {
+fn harmony_update(args: MusicalHarmonyUpdateArgs) -> Result<ControlCommand, RequestError> {
+    let patch = json_argument("patch-json", &args.patch_json)?;
+    let Value::Object(mut params) = patch else {
+        return Err("--patch-json must contain a JSON object".into());
+    };
+    if params.contains_key("eventId") {
         return Err("--patch-json must not contain eventId".into());
     }
-    params
-        .as_object_mut()
-        .expect("object literal produces an object")
-        .extend(object.clone());
-    Ok(value("music.harmony.update", params))
+    params.insert("eventId".into(), Value::String(args.event_id));
+    Ok(
+        Canonical::MusicHarmonyUpdate(decode_params::<HarmonyUpdateParams>(Value::Object(params))?)
+            .into(),
+    )
 }
 
-fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, String> {
-    let mut params = serde_json::Map::new();
-    params.insert("clipId".into(), Value::String(args.clip_id));
-    if let Some(start) = args.start {
-        params.insert("start".into(), Value::String(start));
-    }
-    if let Some(end) = args.end {
-        params.insert("end".into(), Value::String(end));
-    }
-    if let Some(lowest_octave) = args.lowest_octave {
-        params.insert("lowestOctave".into(), json!(lowest_octave));
-    }
-    if let Some(rhythm) = json_source(args.rhythm_json, args.rhythm_file, false, "rhythm", false)? {
-        params.insert("rhythm".into(), rhythm);
-    }
-    if let Some(velocity) = args.velocity {
-        params.insert("velocity".into(), json!(velocity));
-    }
-    if let Some(channel) = args.channel {
-        params.insert("channel".into(), json!(channel));
-    }
-    Ok(value("music.harmony.realize", Value::Object(params)))
+fn harmony_realize(args: MusicalHarmonyRealizeArgs) -> Result<ControlCommand, RequestError> {
+    let rhythm = json_source(args.rhythm_json, args.rhythm_file, false, "rhythm", false)?
+        .map(|rhythm| field("/rhythm", rhythm))
+        .transpose()?;
+    Ok(Canonical::MusicHarmonyRealize(HarmonyRealizeParams {
+        clip_id: args.clip_id,
+        start: optional_text("/start", args.start)?,
+        end: optional_text("/end", args.end)?,
+        lowest_octave: args.lowest_octave,
+        rhythm,
+        velocity: args.velocity,
+        channel: args.channel,
+    })
+    .into())
 }
 
-fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, String> {
+fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, RequestError> {
     let contents = fs::read_to_string(&args.file)
         .map_err(|error| format!("session apply file could not be read: {error}"))?;
     let mut operations = Vec::new();
@@ -2925,7 +3194,7 @@ fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, String> {
         if line.trim().is_empty() {
             continue;
         }
-        let operation = serde_json::from_str::<ControlCommand>(line).map_err(|error| {
+        let operation = serde_json::from_str::<BatchOperation>(line).map_err(|error| {
             format!(
                 "session apply line {} is not a valid Control Command: {error}",
                 line_index + 1
@@ -2936,27 +3205,23 @@ fn session_apply(args: SessionApplyArgs) -> Result<ControlCommand, String> {
     if operations.is_empty() {
         return Err("session apply file must contain at least one command".into());
     }
-    Ok(value(
-        "session.apply",
-        json!({
-            "operations": operations,
-            "includeCreatedIds": args.include_created_ids,
-        }),
-    ))
+    Ok(Canonical::SessionApply(SessionApplyParams {
+        operations,
+        include_created_ids: args.include_created_ids,
+    })
+    .into())
 }
 
-fn phrase_params(
-    clip_id: String,
+/// Reads a phrase object holding exactly `pattern` and `placements`.
+fn phrase_input(
     phrase_json: Option<String>,
     phrase_file: Option<PathBuf>,
-    channel: Option<u8>,
-) -> Result<serde_json::Map<String, Value>, String> {
+) -> Result<(PhrasePattern, Vec<PhrasePlacement>), RequestError> {
     let phrase = json_source(phrase_json, phrase_file, false, "phrase", true)?
         .expect("required JSON source is present");
-    let mut phrase = phrase
-        .as_object()
-        .cloned()
-        .ok_or_else(|| "phrase input must contain a JSON object".to_string())?;
+    let Value::Object(mut phrase) = phrase else {
+        return Err("phrase input must contain a JSON object".into());
+    };
     if phrase.contains_key("clipId") {
         return Err("--phrase-json must not contain clipId".into());
     }
@@ -2969,164 +3234,113 @@ fn phrase_params(
     if !phrase.is_empty() {
         return Err("--phrase-json may contain only pattern and placements".into());
     }
-    let mut params = serde_json::Map::new();
-    params.insert("clipId".into(), Value::String(clip_id));
-    params.insert("pattern".into(), pattern);
-    params.insert("placements".into(), placements);
-    if let Some(channel) = channel {
-        params.insert("channel".into(), json!(channel));
-    }
-    Ok(params)
+    Ok((
+        field("/pattern", pattern)?,
+        field("/placements", placements)?,
+    ))
 }
 
-fn phrase_insert(args: MusicalPhraseInsertArgs) -> Result<ControlCommand, String> {
-    let params = phrase_params(
-        args.clip_id,
-        args.phrase_json,
-        args.phrase_file,
-        args.channel,
-    )?;
-    Ok(value("music.phrase.insert", Value::Object(params)))
-}
-
-fn phrase_preview(args: MusicalPhrasePreviewArgs) -> Result<ControlCommand, String> {
-    let mut params = phrase_params(
-        args.clip_id,
-        args.phrase_json,
-        args.phrase_file,
-        args.channel,
-    )?;
-    params.insert("includeNotes".into(), json!(args.include_notes));
-    Ok(value("music.phrase.preview", Value::Object(params)))
-}
-
-fn id_list_value<T: Serialize>(
-    command: &str,
-    params: T,
-    fields: &[&str],
-) -> Result<ControlCommand, String> {
-    let mut params = serde_json::to_value(params)
-        .map_err(|error| format!("CLI arguments could not be encoded: {error}"))?;
-    for field in fields {
-        replace_id_list_from_json(&mut params, field)?;
-    }
-    Ok(value(command, params))
-}
-
-fn replace_id_list_from_json(params: &mut Value, field: &str) -> Result<(), String> {
-    let object = params
-        .as_object_mut()
-        .ok_or_else(|| "CLI arguments did not form an object".to_string())?;
-    let json_field = format!("{field}Json");
-    let encoded = object.remove(&json_field);
+fn id_list(ids: Vec<String>, encoded: Option<String>, flag: &str) -> Result<Vec<String>, String> {
     let Some(encoded) = encoded else {
-        return Ok(());
+        return Ok(ids);
     };
-    let encoded = encoded
-        .as_str()
-        .ok_or_else(|| format!("--{json_field} must contain a JSON array of strings"))?;
-    if object
-        .get(field)
-        .and_then(Value::as_array)
-        .is_some_and(|ids| !ids.is_empty())
-    {
-        return Err(format!("--{field} and --{json_field} cannot be combined"));
+    if !ids.is_empty() {
+        return Err(format!("--{flag} and --{flag}-json cannot be combined"));
     }
-    let ids = serde_json::from_str::<Vec<String>>(encoded)
-        .map_err(|error| format!("--{json_field} is invalid JSON: {error}"))?;
-    object.insert(
-        field.to_owned(),
-        serde_json::to_value(ids).expect("String IDs serialize"),
-    );
-    Ok(())
+    serde_json::from_str::<Vec<String>>(&encoded)
+        .map_err(|error| format!("--{flag}-json is invalid JSON: {error}"))
 }
 
-fn range_value(command: &str, args: RangeArgs) -> ControlCommand {
-    value(
-        command,
-        json!({
-            "enabled": args.enabled.unwrap_or(false),
-            "start": args.start,
-            "end": args.end,
-        }),
-    )
+fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<ControlCommand, RequestError> {
+    let patch = match args.patch {
+        Some(patch) => field("/patch", json_argument("patch", &patch)?)?,
+        None => AudioClipPatch {
+            name: args.name,
+            track_id: args.track_id,
+            start_tick: args.start_tick.map(TimelineTick),
+            gain_db: args.gain_db,
+            pan: args.pan,
+            loop_enabled: args.loop_enabled,
+            muted: args.muted,
+            ..AudioClipPatch::default()
+        },
+    };
+    Ok(Canonical::AudioClipUpdate(AudioClipUpdateParams {
+        clip_id: args.clip_id,
+        patch,
+    })
+    .into())
 }
 
-fn asset_preview_value(args: AssetPreviewArgs) -> ControlCommand {
-    value(
-        "asset.preview",
-        json!({
-            "assetId": args.asset_id,
-            "startMs": args.start_ms,
-            "endMs": args.end_ms,
-            "looped": args.looped.unwrap_or(false),
-            "gain": args.gain,
-        }),
-    )
-}
-
-fn device_bypass_value(args: DeviceBypassArgs) -> ControlCommand {
-    value(
-        "device.bypass",
-        json!({
-            "trackId": args.track_id,
-            "deviceId": args.device_id,
-            "bypassed": args.bypassed.unwrap_or(false),
-        }),
-    )
-}
-
-fn audio_clip_update(args: AudioClipUpdateArgs) -> Result<ControlCommand, String> {
-    if let Some(patch) = args.patch {
-        let patch: Value = serde_json::from_str(&patch)
-            .map_err(|error| format!("--patch is invalid JSON: {error}"))?;
-        return Ok(value(
-            "audio-clip.update",
-            json!({"clipId": args.clip_id, "patch": patch}),
-        ));
-    }
-    let patch = json!({
-        "name": args.name,
-        "trackId": args.track_id,
-        "startTick": args.start_tick,
-        "gainDb": args.gain_db,
-        "pan": args.pan,
-        "loopEnabled": args.loop_enabled,
-        "muted": args.muted,
-    });
-    Ok(value(
-        "audio-clip.update",
-        json!({"clipId": args.clip_id, "patch": patch}),
-    ))
-}
-
-fn midi_clip_update(args: MidiClipUpdateArgs) -> Result<ControlCommand, String> {
-    if let Some(patch) = args.patch {
-        let patch: Value = serde_json::from_str(&patch)
-            .map_err(|error| format!("--patch is invalid JSON: {error}"))?;
-        return Ok(value(
-            "midi-clip.update",
-            json!({"clipId": args.clip_id, "patch": patch}),
-        ));
-    }
-    let patch = json!({
-        "name": args.name,
-        "trackId": args.track_id,
-        "startTick": args.start_tick,
-        "durationTicks": args.duration_ticks,
-        "muted": args.muted,
-        "loopEnabled": args.loop_enabled,
-    });
-    Ok(value(
-        "midi-clip.update",
-        json!({"clipId": args.clip_id, "patch": patch}),
-    ))
+fn midi_clip_update(args: MidiClipUpdateArgs) -> Result<ControlCommand, RequestError> {
+    let patch = match args.patch {
+        Some(patch) => field("/patch", json_argument("patch", &patch)?)?,
+        None => MidiClipPatch {
+            name: args.name,
+            track_id: args.track_id,
+            start_tick: args.start_tick.map(TimelineTick),
+            duration_ticks: args.duration_ticks,
+            muted: args.muted,
+            loop_enabled: args.loop_enabled,
+            ..MidiClipPatch::default()
+        },
+    };
+    Ok(Canonical::MidiClipUpdate(MidiClipUpdateParams {
+        clip_id: args.clip_id,
+        patch,
+    })
+    .into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::{CommandFactory, Parser};
+    use serde_json::json;
+
+    /// The wire form of a built command, as a Host receives it.
+    struct Wire {
+        name: String,
+        params: Value,
+    }
+
+    #[test]
+    fn invalid_musical_values_report_their_params_path() {
+        // Arrange
+        let cli = Cli::try_parse_from([
+            "riffra",
+            "music",
+            "midi-clip",
+            "create",
+            "--track-id",
+            "track:1",
+            "--start",
+            "0:1",
+            "--end",
+            "5:1",
+        ])
+        .unwrap();
+
+        // Act
+        let RequestError::Params(error) = cli.request().unwrap_err() else {
+            panic!("an invalid position is a params error");
+        };
+
+        // Assert
+        let details = error.details();
+        assert_eq!(details["path"], "/start");
+        assert_eq!(details["value"], "0:1");
+    }
+
+    fn wire(cli: Cli) -> Wire {
+        let command = cli.request().unwrap();
+        let name = command.name().to_owned();
+        let mut encoded = serde_json::to_value(command).unwrap();
+        Wire {
+            name,
+            params: encoded["params"].take(),
+        }
+    }
 
     #[test]
     fn every_command_and_option_has_help() {
@@ -3321,7 +3535,7 @@ mod tests {
     fn instrument_commands_use_common_ids_and_keep_vst3_distinct() {
         let cli =
             Cli::try_parse_from(["riffra", "--data-root", "data", "instrument", "list"]).unwrap();
-        assert_eq!(cli.request().unwrap().name, "instrument.list");
+        assert_eq!(wire(cli).name, "instrument.list");
 
         let cli = Cli::try_parse_from([
             "riffra",
@@ -3335,7 +3549,7 @@ mod tests {
             "builtin:01-clean-sub-bass",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "instrument.apply");
         assert_eq!(
             request.params,
@@ -3353,7 +3567,7 @@ mod tests {
             "user:018f5d40-1b9e-7b9d-a70b-7a5b4f4e4c3e",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "instrument.save");
         assert_eq!(request.params["definitionPath"], "definition.json");
 
@@ -3369,7 +3583,7 @@ mod tests {
             "C:\\Plugins\\Keys.vst3",
         ])
         .unwrap();
-        assert_eq!(cli.request().unwrap().name, "instrument.vst3.set");
+        assert_eq!(wire(cli).name, "instrument.vst3.set");
     }
 
     #[test]
@@ -3392,13 +3606,11 @@ mod tests {
             cli.plugin_state_save_output(),
             Some(PathBuf::from("state.json"))
         );
-        let request = cli.request().unwrap();
+        let request = wire(cli);
+        assert_eq!(request.name, "plugin.state.get");
         assert_eq!(
-            request,
-            ControlCommand::new(
-                "plugin.state.get",
-                json!({"trackId":"track:keys","deviceId":"device:synth"})
-            )
+            request.params,
+            json!({"trackId":"track:keys","deviceId":"device:synth"})
         );
 
         let cli = Cli::try_parse_from([
@@ -3411,15 +3623,18 @@ mod tests {
             "140",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "timebase.update");
-        assert_eq!(request.params, json!({"bpm": 140.0}));
+        assert_eq!(
+            request.params,
+            json!({"bpm": 140.0, "timeSignatureNumerator": null, "timeSignatureDenominator": null})
+        );
 
         let cli =
             Cli::try_parse_from(["riffra", "audio", "diagnostics", "--json", "--debug"]).unwrap();
 
         assert_eq!(cli.audio_diagnostics_options(), Some((true, true)));
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "audio.diagnostics");
         assert_eq!(request.params, json!({"debug": true}));
     }
@@ -3443,7 +3658,7 @@ mod tests {
             "Piano",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.midi-clip.create");
         assert_eq!(
             request.params,
@@ -3463,7 +3678,7 @@ mod tests {
             r#"[{"pitch":"C4","position":"5:1","duration":"1/8"}]"#,
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.note.insert");
         assert_eq!(
             request.params,
@@ -3492,16 +3707,20 @@ mod tests {
             "-1/48",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.note.transform");
         assert_eq!(
             request.params,
             json!({
+                "clipId":null,
                 "trackId":"track:drums",
                 "start":"5:1",
                 "end":"13:1",
                 "pitch":"D2",
-                "timingOffset":"-1/48"
+                "channel":null,
+                "timingOffset":"-1/48",
+                "velocityOffset":null,
+                "transposeSemitones":null
             })
         );
 
@@ -3520,7 +3739,7 @@ mod tests {
             "13:1",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.region.add");
         assert_eq!(
             request.params,
@@ -3541,7 +3760,7 @@ mod tests {
             "track:keys",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "session.inspect");
         assert_eq!(
             request.params,
@@ -3563,7 +3782,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params["options"]["range"],
+            wire(cli).params["options"]["range"],
             json!({"kind":"timeSelection","start":"9:1","end":"13:1"})
         );
 
@@ -3606,11 +3825,11 @@ mod tests {
             r#"[{"start":"1:1","end":"2:1","chord":"Dm9"}]"#,
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.harmony.insert");
         assert_eq!(
             request.params,
-            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
+            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9","pitches":null,"root":null,"bass":null,"label":null}]})
         );
 
         let cli = Cli::try_parse_from([
@@ -3628,7 +3847,7 @@ mod tests {
             r#"{"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]}"#,
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.harmony.realize");
         assert_eq!(request.params["clipId"], "midi-clip:1");
         assert_eq!(request.params["lowestOctave"], 3);
@@ -3647,7 +3866,7 @@ mod tests {
             r#"{"pattern":{"length":"1/1","notes":[{"offset":"0/1","duration":"1/8","semitones":0}]},"placements":[{"position":"1:1","anchor":"C4","repeats":1}]}"#,
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.phrase.insert");
         assert_eq!(request.params["clipId"], "midi-clip:1");
         assert_eq!(request.params["pattern"]["length"], "1/1");
@@ -3663,10 +3882,7 @@ mod tests {
             "17:1",
         ])
         .unwrap();
-        assert_eq!(
-            cli.request().unwrap().params,
-            json!({"name":"Chorus","position":"17:1"})
-        );
+        assert_eq!(wire(cli).params, json!({"name":"Chorus","position":"17:1"}));
         assert!(
             Cli::try_parse_from([
                 "riffra", "marker", "add", "--name", "Chorus", "--tick", "960"
@@ -3713,7 +3929,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params["notes"],
+            wire(cli).params["notes"],
             json!([{"pitch":"C4","position":"1:1","duration":"1/8"}])
         );
 
@@ -3783,8 +3999,8 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params,
-            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9"}]})
+            wire(cli).params,
+            json!({"events":[{"start":"1:1","end":"2:1","chord":"Dm9","pitches":null,"root":null,"bass":null,"label":null}]})
         );
 
         let cli = Cli::try_parse_from([
@@ -3799,8 +4015,8 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params["rhythm"],
-            json!({"length":"1/2","steps":[{"offset":"0/1","duration":"1/8"}]})
+            wire(cli).params["rhythm"],
+            json!({"length":"1/2","steps":[{"offset":"0/1","duration":"1/8","velocity":null}]})
         );
 
         let cli = Cli::try_parse_from([
@@ -3814,7 +4030,7 @@ mod tests {
             phrase_file.to_str().unwrap(),
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert!(request.params.get("phrase").is_none());
         assert_eq!(request.params["pattern"]["length"], "1/1");
         assert_eq!(request.params["placements"][0]["anchor"], "C4");
@@ -3863,7 +4079,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params,
+            wire(cli).params,
             json!({
                 "audioClipIds": [],
                 "midiClipIds": ["midi-clip:recording-slot:take:C:\\takes\\lead.wav:track:1"]
@@ -3883,7 +4099,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            cli.request().unwrap().params,
+            wire(cli).params,
             json!({"clipId":"clip:1","noteIds":["note:a","note:b"]})
         );
         let _ = std::fs::remove_file(path);
@@ -3901,10 +4117,7 @@ mod tests {
             "17:1",
         ])
         .unwrap();
-        assert_eq!(
-            cli.request().unwrap().params,
-            json!({"name":"Chorus","position":"17:1"})
-        );
+        assert_eq!(wire(cli).params, json!({"name":"Chorus","position":"17:1"}));
 
         assert!(
             Cli::try_parse_from([
@@ -3968,7 +4181,7 @@ mod tests {
             "2:1",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(
             request.params,
             json!({"enabled":true,"start":"1:1","end":"2:1"})
@@ -3999,7 +4212,7 @@ mod tests {
             "true",
         ])
         .unwrap();
-        assert_eq!(cli.request().unwrap().params["options"]["normalize"], true);
+        assert_eq!(wire(cli).params["options"]["normalize"], true);
     }
 
     #[test]
@@ -4015,7 +4228,7 @@ mod tests {
         ])
         .unwrap();
 
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "midi-note.clear");
         assert_eq!(request.params, json!({"clipId":"midi-clip:1"}));
     }
@@ -4042,7 +4255,7 @@ mod tests {
             "--include-created-ids",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "session.apply");
         assert_eq!(request.params["operations"].as_array().unwrap().len(), 2);
         assert_eq!(request.params["operations"][0]["command"], "track.add");
@@ -4064,7 +4277,7 @@ mod tests {
             "--include-notes",
         ])
         .unwrap();
-        let request = cli.request().unwrap();
+        let request = wire(cli);
         assert_eq!(request.name, "music.phrase.preview");
         assert_eq!(request.params["includeNotes"], true);
         assert_eq!(request.params["clipId"], "midi-clip:1");
@@ -4096,7 +4309,9 @@ mod tests {
             ])
             .unwrap();
 
-            let error = cli.request().unwrap_err();
+            let RequestError::Usage(error) = cli.request().unwrap_err() else {
+                panic!("an invalid operation line is a usage error");
+            };
             assert!(error.contains("unknown field"));
             let _ = std::fs::remove_file(path);
         }

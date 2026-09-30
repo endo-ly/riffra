@@ -252,7 +252,7 @@ pub(super) fn default_plugin_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_control::{ControlCommand, new_instance_id};
+    use riffra_control::new_instance_id;
 
     #[test]
     fn a_data_root_owned_by_another_host_is_reported_as_data_root_in_use() {
@@ -363,10 +363,8 @@ mod tests {
         let response = host.dispatch_control(
             ControlRequest::new(
                 "track-add",
-                ControlCommand::new(
-                    "track.add",
-                    serde_json::json!({"name": "Synth", "kind": "instrument"}),
-                ),
+                "track.add",
+                serde_json::json!({"name": "Synth", "kind": "instrument"}),
                 Some(0),
             )
             .with_expected_project_id(expected_project_id),

@@ -4,26 +4,29 @@ import type {
   LibraryAsset,
   RecordingAsset,
 } from '@/model/domain';
-import { invokeHostOrFallback, invokeHost } from '../invoke';
+import { dispatchControl, dispatchControlOrFallback } from '../invoke';
 
 export async function listRecordings(query?: string): Promise<RecordingAsset[]> {
-  return invokeHostOrFallback<RecordingAsset[]>('list_recordings', { query: query ?? null }, []);
+  return dispatchControlOrFallback(
+    { command: 'record.list', params: { query: query ?? null } },
+    [],
+  );
 }
 
 export async function renameRecording(id: string, name: string): Promise<string> {
-  return invokeHost<string>('rename_recording', { id, newName: name });
+  return dispatchControl({ command: 'record.rename', params: { id, newName: name } });
 }
 
 export async function deleteRecording(id: string): Promise<void> {
-  await invokeHost('delete_recording', { id });
+  await dispatchControl({ command: 'record.delete', params: { id } });
 }
 
 export async function archiveRecording(id: string): Promise<string> {
-  return await invokeHost<string>('archive_recording', { id });
+  return dispatchControl({ command: 'record.archive', params: { id } });
 }
 
 export async function promoteRecording(id: string): Promise<string> {
-  return await invokeHost<string>('promote_recording', { id });
+  return dispatchControl({ command: 'record.promote', params: { id } });
 }
 
 export async function tagRecording(
@@ -31,16 +34,16 @@ export async function tagRecording(
   tag: string | null,
   note: string | null,
 ): Promise<LibraryAsset | null> {
-  return await invokeHost<LibraryAsset>('tag_recording', { id, tag, note });
+  return dispatchControl({ command: 'record.tag', params: { id, tag, note } });
 }
 
 export async function detectDuplicateRecordings(): Promise<string[][]> {
-  return await invokeHost<string[][]>('detect_duplicate_recordings');
+  return dispatchControl({ command: 'record.duplicates', params: {} });
 }
 
 export async function searchLibrary(query: string): Promise<LibraryAsset[]> {
   if (!query.trim()) return [];
-  return invokeHostOrFallback<LibraryAsset[]>('search_library', { query }, []);
+  return dispatchControlOrFallback({ command: 'library.search', params: { query } }, []);
 }
 
 export async function updateLibraryAsset(
@@ -48,31 +51,37 @@ export async function updateLibraryAsset(
   tag: string | null,
   note: string | null,
 ): Promise<LibraryAsset | null> {
-  return invokeHostOrFallback<LibraryAsset | null>('update_library_asset', { id, tag, note }, null);
+  return dispatchControlOrFallback(
+    { command: 'library.asset.update', params: { id, tag, note } },
+    null,
+  );
 }
 
 export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
-  return invokeHostOrFallback<LibraryAsset[]>('related_library_assets', { id }, []);
+  return dispatchControlOrFallback({ command: 'library.related', params: { id } }, []);
 }
 
 export async function listInstruments(): Promise<InstrumentLibraryItem[]> {
-  return invokeHostOrFallback<InstrumentLibraryItem[]>('list_instruments', {}, []);
+  return dispatchControlOrFallback({ command: 'library.instrument.list', params: {} }, []);
 }
 
 export async function setInstrumentFavorite(
   instrumentId: string,
   favorite: boolean,
 ): Promise<InstrumentLibraryItem> {
-  return invokeHost<InstrumentLibraryItem>('set_instrument_favorite', { instrumentId, favorite });
+  return dispatchControl({
+    command: 'library.instrument.favorite.set',
+    params: { instrumentId, favorite },
+  });
 }
 
 export async function setInstrumentCategoryOverride(
   instrumentId: string,
   category: string | null,
 ): Promise<InstrumentLibraryItem> {
-  return invokeHost<InstrumentLibraryItem>('set_instrument_category_override', {
-    instrumentId,
-    category,
+  return dispatchControl({
+    command: 'library.instrument.category.set',
+    params: { instrumentId, category },
   });
 }
 
@@ -80,26 +89,32 @@ export async function setInstrumentUserTags(
   instrumentId: string,
   tags: string[],
 ): Promise<InstrumentLibraryItem> {
-  return invokeHost<InstrumentLibraryItem>('set_instrument_user_tags', { instrumentId, tags });
+  return dispatchControl({
+    command: 'library.instrument.tags.set',
+    params: { instrumentId, tags },
+  });
 }
 
 export async function listInstrumentCollections(): Promise<InstrumentCollection[]> {
-  return invokeHostOrFallback<InstrumentCollection[]>('list_instrument_collections', {}, []);
+  return dispatchControlOrFallback(
+    { command: 'library.instrument.collection.list', params: {} },
+    [],
+  );
 }
 
 export async function createInstrumentCollection(name: string): Promise<InstrumentCollection> {
-  return invokeHost<InstrumentCollection>('create_instrument_collection', { name });
+  return dispatchControl({ command: 'library.instrument.collection.create', params: { name } });
 }
 
 export async function renameInstrumentCollection(
   id: number,
   name: string,
 ): Promise<InstrumentCollection> {
-  return invokeHost<InstrumentCollection>('rename_instrument_collection', { id, name });
+  return dispatchControl({ command: 'library.instrument.collection.rename', params: { id, name } });
 }
 
 export async function deleteInstrumentCollection(id: number): Promise<void> {
-  await invokeHost('delete_instrument_collection', { id });
+  await dispatchControl({ command: 'library.instrument.collection.delete', params: { id } });
 }
 
 export async function setInstrumentCollectionMembership(
@@ -107,9 +122,8 @@ export async function setInstrumentCollectionMembership(
   instrumentId: string,
   included: boolean,
 ): Promise<InstrumentLibraryItem> {
-  return invokeHost<InstrumentLibraryItem>('set_instrument_collection_membership', {
-    collectionId,
-    instrumentId,
-    included,
+  return dispatchControl({
+    command: 'library.instrument.collection.membership.set',
+    params: { collectionId, instrumentId, included },
   });
 }

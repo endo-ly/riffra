@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import type { ControlCommand, ControlCommandResults } from '@/model/generated';
 
 let currentHostGeneration = 0;
 let currentProjectEpoch = 0;
@@ -167,7 +168,7 @@ export async function invokeHostOrFallback<T>(
 }
 
 /** Coalesces Host-owned high-frequency updates with Host and Project guards. */
-export function invokeLatestHost<T>(
+function invokeLatestHost<T>(
   command: string,
   args: Record<string, unknown>,
   key: string,
@@ -240,6 +241,39 @@ async function drainLatestHostQueue<T>(
       latestQueues.delete(key);
     }
   }
+}
+
+/** The value returned by the Host for one Control Command. */
+export type ControlResult<C extends ControlCommand> = ControlCommandResults[C['command'] &
+  keyof ControlCommandResults];
+
+function controlArgs(command: ControlCommand): Record<string, unknown> {
+  return { command: command.command, params: command.params };
+}
+
+/** Runs one Control Command through the connected Host. */
+export function dispatchControl<C extends ControlCommand>(command: C): Promise<ControlResult<C>> {
+  return invokeHost<ControlResult<C>>('dispatch_control', controlArgs(command));
+}
+
+/** Runs one Control Command, or resolves to `fallback` without the native runtime. */
+export function dispatchControlOrFallback<C extends ControlCommand, F>(
+  command: C,
+  fallback: F,
+): Promise<ControlResult<C> | F> {
+  return invokeHostOrFallback<ControlResult<C> | F>(
+    'dispatch_control',
+    controlArgs(command),
+    fallback,
+  );
+}
+
+/** Runs the latest of the Control Commands queued under `key`. */
+export function dispatchLatestControl<C extends ControlCommand>(
+  command: C,
+  key: string,
+): Promise<ControlResult<C>> {
+  return invokeLatestHost<ControlResult<C>>('dispatch_control', controlArgs(command), key);
 }
 
 /**

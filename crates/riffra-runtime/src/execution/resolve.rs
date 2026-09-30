@@ -1,6 +1,6 @@
 use crate::asset;
 use crate::instrument::BuiltInInstrumentCatalog;
-use riffra_core::{CreativeSession, InternalInstrumentResource, TrackInstrumentSource};
+use riffra_core::{CreativeSession, TrackInstrument};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -34,38 +34,23 @@ pub(crate) fn resolve(
     let mut existing_plugin_paths = HashSet::new();
     let mut built_in_base_dirs = HashMap::new();
     for track in &session.arrangement.tracks {
-        for device in &track.rack.devices {
-            if device.kind == riffra_core::DeviceKind::Plugin
-                && !device.disabled_placeholder
-                && let Some(path) = device.path.as_ref()
-                && Path::new(path).exists()
-            {
-                existing_plugin_paths.insert(path.clone());
+        let plugins = track
+            .effects
+            .iter()
+            .map(|device| &device.plugin)
+            .chain(track.instrument.as_ref().and_then(TrackInstrument::as_vst3));
+        for plugin in plugins {
+            if !plugin.disabled_placeholder && Path::new(&plugin.path).exists() {
+                existing_plugin_paths.insert(plugin.path.clone());
             }
         }
-        if let Some(instrument) = &track.instrument {
-            match &instrument.source {
-                TrackInstrumentSource::Vst3 {
-                    path,
-                    disabled_placeholder: false,
-                    ..
-                } if Path::new(path).exists() => {
-                    existing_plugin_paths.insert(path.clone());
-                }
-                TrackInstrumentSource::Internal {
-                    resource: InternalInstrumentResource::BuiltInPreset { preset_id },
-                    ..
-                } => {
-                    if let Ok(definition) = catalog.resolve(preset_id) {
-                        built_in_base_dirs.insert(preset_id.clone(), definition.base_dir.clone());
-                    }
-                }
-                TrackInstrumentSource::Vst3 { .. }
-                | TrackInstrumentSource::Internal {
-                    resource: InternalInstrumentResource::UserSnapshot { .. },
-                    ..
-                } => {}
-            }
+        if let Some(preset_id) = track
+            .instrument
+            .as_ref()
+            .and_then(TrackInstrument::built_in_preset_id)
+            && let Ok(definition) = catalog.resolve(preset_id)
+        {
+            built_in_base_dirs.insert(preset_id.to_owned(), definition.base_dir.clone());
         }
     }
 
@@ -152,18 +137,14 @@ mod tests {
 
         let mut session = CreativeSession::new(1);
         let mut track = Track::instrument("track:instrument".into(), "Instrument".into());
-        let device = riffra_core::RackDevice {
-            id: "device:plugin".into(),
-            name: "Plugin".into(),
-            kind: riffra_core::DeviceKind::Plugin,
-            path: Some(plugin.to_string_lossy().into_owned()),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: false,
-        };
-        track.rack.devices.push(device);
+        track.effects.push(
+            riffra_core::EffectDevice::new(
+                "device:plugin".into(),
+                "Plugin".into(),
+                plugin.to_string_lossy().into_owned(),
+            )
+            .unwrap(),
+        );
         track.instrument = Some(
             TrackInstrument::built_in(
                 "instrument:builtin".into(),

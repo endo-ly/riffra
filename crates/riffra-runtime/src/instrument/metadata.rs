@@ -1,3 +1,7 @@
+use crate::api::output::{
+    InstrumentPreviewDefinition, InstrumentPreviewNote, InstrumentPreviewTimeSignature,
+    InstrumentRecommendedRange,
+};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
@@ -14,43 +18,6 @@ const MAX_MIDI_NOTE: u8 = 127;
 const MAX_CATEGORY_CHARS: usize = 64;
 const MAX_TAG_COUNT: usize = 12;
 const MAX_TAG_CHARS: usize = 32;
-
-/// The practical MIDI range recommended for one instrument.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InstrumentRecommendedRange {
-    pub min_midi: u8,
-    pub max_midi: u8,
-}
-
-/// The deterministic MIDI pattern used for an instrument preview.
-#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InstrumentPreviewDefinition {
-    pub tempo_bpm: f64,
-    pub ticks_per_beat: u16,
-    pub time_signature: InstrumentPreviewTimeSignature,
-    pub length_ticks: u64,
-    pub notes: Vec<InstrumentPreviewNote>,
-}
-
-/// The meter used by an instrument preview.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InstrumentPreviewTimeSignature {
-    pub numerator: u8,
-    pub denominator: u8,
-}
-
-/// One MIDI note in an instrument preview.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct InstrumentPreviewNote {
-    pub tick: u64,
-    pub duration_ticks: u64,
-    pub note: u8,
-    pub velocity: u8,
-}
 
 /// Display metadata projected from a Sonalloy instrument definition.
 #[derive(Clone, Debug, PartialEq)]

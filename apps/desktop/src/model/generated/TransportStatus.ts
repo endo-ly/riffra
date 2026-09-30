@@ -6,23 +6,23 @@ import type { TransportState } from "./TransportState";
 /**
  * Live transport snapshot published by the native timeline.
  */
-export type TransportStatus = { state: TransportState,
+export type TransportStatus = { state: TransportState, 
 /**
  * Revision of the active graph; `None` when no graph could be read.
  */
-revision: number | null, timelineTick: number,
+revision: number | null, timelineTick: number, 
 /**
  * Timeline position in output samples, including a pending seek.
  */
-timelineSample: number,
+timelineSample: number, 
 /**
  * Samples processed by the audio device since the clock generation began.
  */
-audioClockSample: number,
+audioClockSample: number, 
 /**
  * Output sample rate of the active graph; `None` when no graph could be read.
  */
-sampleRate: number | null,
+sampleRate: number | null, 
 /**
  * Sequence of the last transport or recording command applied by the audio thread.
  */

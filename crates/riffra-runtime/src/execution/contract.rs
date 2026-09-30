@@ -56,7 +56,8 @@ pub(crate) struct GraphTrack {
     pub(crate) muted: bool,
     pub(crate) solo: bool,
     pub(crate) armed: bool,
-    pub(crate) monitoring: GraphMonitoring,
+    /// Whether the physical audio input is monitored through the Track.
+    pub(crate) monitor_input: bool,
     pub(crate) audio_input: Option<GraphAudioInput>,
     pub(crate) midi_input: GraphMidiInput,
     pub(crate) volume_automation: Vec<GraphAutomationPoint>,
@@ -72,14 +73,6 @@ pub(crate) struct GraphTrack {
 pub(crate) enum GraphTrackKind {
     Audio,
     Instrument,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum GraphMonitoring {
-    Off,
-    Auto,
-    On,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -247,7 +240,7 @@ mod tests {
 
     fn full_snapshot() -> TimelineSnapshot {
         let shared = |kind: GraphTrackKind,
-                      monitoring: GraphMonitoring,
+                      monitor_input: bool,
                       audio_input: Option<GraphAudioInput>,
                       device_id: Option<&str>,
                       channel: Option<u8>,
@@ -261,7 +254,7 @@ mod tests {
                 muted: false,
                 solo: true,
                 armed: true,
-                monitoring,
+                monitor_input,
                 audio_input,
                 midi_input: GraphMidiInput {
                     device_id: device_id.map(str::to_owned),
@@ -363,7 +356,7 @@ mod tests {
         ];
         let mut audio = shared(
             GraphTrackKind::Audio,
-            GraphMonitoring::Off,
+            true,
             Some(GraphAudioInput { channel_index: 2 }),
             None,
             None,
@@ -376,7 +369,7 @@ mod tests {
         audio.effects.clear();
         let mut internal = shared(
             GraphTrackKind::Instrument,
-            GraphMonitoring::Auto,
+            false,
             None,
             Some("midi-device"),
             Some(16),
@@ -393,7 +386,7 @@ mod tests {
         internal.midi_clips[0].events[0].kind = GraphMidiEventKind::PitchBend;
         let mut vst = shared(
             GraphTrackKind::Instrument,
-            GraphMonitoring::On,
+            false,
             None,
             None,
             None,

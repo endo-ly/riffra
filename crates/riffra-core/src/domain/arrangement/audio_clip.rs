@@ -17,7 +17,7 @@ pub enum FadeShape {
 /// A non-destructive audio clip referencing an [`AssetId`].
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClip {
     pub id: String,
     pub track_id: String,
@@ -31,7 +31,6 @@ pub struct AudioClip {
     pub pan: f64,
     pub fade_in: FrameDuration,
     pub fade_out: FrameDuration,
-    #[serde(default)]
     pub fade_shape: FadeShape,
     pub loop_enabled: bool,
     pub muted: bool,
@@ -39,7 +38,6 @@ pub struct AudioClip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub recording_take_id: Option<String>,
-    #[serde(default)]
     pub take_variant: AudioTakeVariant,
 }
 
@@ -132,7 +130,7 @@ impl AudioClip {
 /// value. Numeric normalization (gain, pan, fade clamping) is applied by the
 /// domain, so callers may pass unclamped values.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -173,7 +171,7 @@ pub struct AudioClipPatch {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioClipMove {
     pub clip_id: String,
     #[ts(type = "number")]

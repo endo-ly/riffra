@@ -2,12 +2,12 @@ use super::error::{NativeAudioError, NativeAudioResult};
 use super::recovery::AudioDeviceReopenOutcome;
 use super::wire::{SidecarCommand, SidecarResponse, TakeComparisonVariant, WirePluginState};
 use super::{AUDIO_DEVICE_COMMAND_TIMEOUT, AudioSupervisor, COMMAND_ACK_TIMEOUT};
-use crate::execution::{GraphPluginState, TimelineSnapshot};
-use crate::instrument::InstrumentPreviewDefinition;
-use crate::model::{
+use crate::api::output::InstrumentPreviewDefinition;
+use crate::api::output::{
     AudioStatus, DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
 };
-use crate::preferences::AudioDriverConfig;
+use crate::api::params::AudioDriverConfig;
+use crate::execution::{GraphPluginState, TimelineSnapshot};
 use crate::runtime::TIMELINE_PREPARE_TIMEOUT;
 use riffra_core::AudioTakeVariant;
 use serde_json::Value;
@@ -551,7 +551,7 @@ impl AudioSupervisor {
     pub fn enable_midi_listening(&self) -> NativeAudioResult<AudioStatus> {
         let status = self.request_status(
             SidecarCommand::EnableMidiListening,
-            "MIDI listening enabled; all detected inputs are routed to the rack.",
+            "MIDI listening enabled; all detected inputs are routed to instruments.",
             COMMAND_ACK_TIMEOUT,
         )?;
         self.recovery

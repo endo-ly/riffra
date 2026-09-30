@@ -1,7 +1,7 @@
 //! Commands sent to `riffra-audio` and the request sent to `riffra-render`.
 
+use crate::api::output::InstrumentPreviewDefinition;
 use crate::execution::{GraphPluginState, OfflineRenderRequest, TimelineSnapshot};
-use crate::instrument::InstrumentPreviewDefinition;
 use serde::Serialize;
 
 /// One command accepted by the realtime sidecar.

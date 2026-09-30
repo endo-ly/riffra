@@ -15,21 +15,17 @@ pub use state::HostBootstrap;
 
 pub(crate) use state::HostState;
 
+use crate::api::output::{AudioStatus, RuntimeProjectionStatus};
+use crate::api::output::{BackgroundJobStatus, JobKind, RenderResult};
+use crate::api::params::RenderOptions;
 use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
 use crate::binaries::RuntimeBinaries;
 use crate::control::ControlServer;
-use crate::dispatcher::{
-    AudioInputParams, DeviceBypassParams, DeviceIdParams, DeviceInspectParams,
-    DeviceParameterGetParams, DeviceParameterListParams, DeviceParameterParams, EffectRemoveParams,
-    EffectReorderParams, HostDispatcher, MidiInputParams, MissingPluginReplaceParams,
-    MissingRelinkParams, PluginDeviceParams, PluginPathParams, PluginPresetSetParams,
-    PluginStateSetParams,
-};
-use crate::jobs::{self, BackgroundJobStatus, JobKind, JobRegistry};
-use crate::model::{AudioStatus, RuntimeProjectionStatus};
+use crate::dispatcher::HostDispatcher;
+use crate::jobs::{self, JobRegistry};
 use crate::recording::{self, RecordingContext};
-use crate::render::{self, RenderOptions, RenderResult};
+use crate::render;
 use crate::runtime::RuntimeError;
 use crate::session::{adapter as session_adapter, commit, context::SessionContext};
 use crate::startup;
@@ -38,13 +34,9 @@ use crate::{
     active_device_matches_preferences, load_or_default,
 };
 use crate::{analysis, library, missing, plugins};
-use riffra_control::{
-    CommandResult, ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError,
-};
+use riffra_control::{ControlRequest, ControlResponse, ErrorCode, HostIdentity, ProtocolError};
 use riffra_core::{AppCore, CanonicalState};
 use riffra_host::{DataRootLease, ProjectStore, now_ms};
-use serde::Deserialize;
-use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -278,7 +270,10 @@ impl DawHost {
     }
 
     /// Runs a synchronous plugin discovery/validation pass in the Host.
-    pub fn scan_plugins(&self, path: Option<PathBuf>) -> Result<plugins::ScanReport, HostError> {
+    pub fn scan_plugins(
+        &self,
+        path: Option<PathBuf>,
+    ) -> Result<crate::api::output::ScanReport, HostError> {
         self.state
             .scan_plugins(path.unwrap_or_else(lifecycle::default_plugin_root))
             .map_err(HostError::State)

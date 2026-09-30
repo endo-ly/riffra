@@ -1,27 +1,15 @@
 use serde::Serialize;
 use ts_rs::TS;
 
-pub use riffra_runtime::RuntimeProjectionStatus;
-pub use riffra_runtime::{
-    ArrangementMutationResult, AudioDeviceProbe, AudioStatus, DeviceChannels,
-    ProjectActivationResult, ProjectRecoveryState, ProjectState, RecordingStopResult,
-    RecoveryCandidate,
-};
-#[cfg(test)]
-pub use riffra_runtime::{
-    AudioAccessMode, AudioChannelInfo, AudioDevicePairing, AudioDriverInfo, AudioState,
-    MidiDeviceInfo, RecordingFinalizationOutcome, RecordingStatus,
-};
+use riffra_runtime::api::output::{PluginEntry, ProjectRecoveryState, ProjectState};
 
-// Shared production types live in feature modules; this module owns the
-// application-level audio and runtime status types.
-
+/// Initial state of the Desktop WebView for the connected Host.
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapState {
     pub canonical: riffra_core::CanonicalState,
     pub project_state: ProjectState,
-    pub plugin_catalog: Vec<crate::plugins::PluginEntry>,
+    pub plugin_catalog: Vec<PluginEntry>,
     pub runtime_started: bool,
     pub runtime_startup_finished: bool,
     pub recovery: ProjectRecoveryState,

@@ -23,7 +23,7 @@ function sessionWithTrack(armed: boolean): CreativeSession {
       armed,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     },
   ];
   return session;

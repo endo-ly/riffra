@@ -1,21 +1,21 @@
 //! User-intent application operations over the canonical production state.
 
 mod arrangement;
+mod devices;
 pub(crate) mod history;
 mod music;
-mod rack;
 mod recording;
 mod session;
 
 use crate::PreparedSession;
 use crate::app::AppCore;
 use crate::domain::asset::AssetId;
-use crate::domain::rack::RackDevice;
 use crate::domain::{
     Arrangement, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute, AudioTakeVariant,
-    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, DeviceKind, FrameRange,
-    Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
+    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, EffectDevice,
+    FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
     ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackInstrument, TrackKind, TrackPatch,
+    Vst3Plugin,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
@@ -30,7 +30,7 @@ pub use music::{
     RawMidiNoteView, ResolvedPhrase, ResolvedPhraseNote,
 };
 pub use session::{
-    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
+    ClipInspection, EffectInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
     InstrumentSourceKind, MusicalMarkerView, MusicalRangeInspection, ProjectInspection,
     SessionInspection, SessionInspectionQuery, TrackInspection, inspect_canonical_state,
 };
@@ -63,8 +63,9 @@ impl ApplicationMutation {
 }
 
 /// Partial update for session-wide production settings.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
     pub project_name: Option<Option<String>>,
     pub master_db: Option<f64>,
@@ -75,10 +76,12 @@ pub struct SessionSettingsPatch {
 }
 
 /// Partial update for one MIDI note.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[ts(optional_fields = nullable)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNotePatch {
     pub note: Option<u8>,
+    #[ts(optional, type = "number")]
     pub start_tick: Option<TimelineTick>,
     pub duration_ticks: Option<u64>,
     pub velocity: Option<u8>,
@@ -86,18 +89,19 @@ pub struct MidiNotePatch {
 }
 
 /// One note update within an atomic MIDI edit.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteUpdate {
     pub note_id: String,
     pub patch: MidiNotePatch,
 }
 
 /// Identity-free MIDI note data accepted by a Core insertion operation.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiNoteInput {
     pub pitch: u8,
+    #[ts(type = "number")]
     pub start_tick: TimelineTick,
     pub duration_ticks: u64,
     pub velocity: u8,
@@ -284,7 +288,27 @@ fn merge_recording_session(
 
 enum TrackDeviceMut<'a> {
     Instrument(&'a mut TrackInstrument),
-    Effect(&'a mut RackDevice),
+    Effect(&'a mut EffectDevice),
+}
+
+impl<'a> TrackDeviceMut<'a> {
+    fn set_bypassed(&mut self, bypassed: bool) {
+        match self {
+            Self::Instrument(instrument) => instrument.set_bypassed(bypassed),
+            Self::Effect(device) => device.bypassed = bypassed,
+        }
+    }
+
+    /// Returns the device's VST3 plugin, or `built_in_error` for a built-in
+    /// instrument.
+    fn into_plugin(self, built_in_error: &str) -> Result<&'a mut Vst3Plugin, ApplicationError> {
+        match self {
+            Self::Instrument(instrument) => instrument
+                .as_vst3_mut()
+                .ok_or_else(|| ApplicationError::InvalidCommand(built_in_error.into())),
+            Self::Effect(device) => Ok(&mut device.plugin),
+        }
+    }
 }
 
 fn find_track_device_mut<'a>(
@@ -312,8 +336,7 @@ fn find_track_device_mut<'a>(
             });
     }
     track
-        .rack
-        .devices
+        .effects
         .iter_mut()
         .find(|device| device.id == device_id)
         .map(TrackDeviceMut::Effect)
@@ -337,8 +360,7 @@ fn find_any_track_device_mut<'a>(
                 track.instrument.as_mut().map(TrackDeviceMut::Instrument)
             } else {
                 track
-                    .rack
-                    .devices
+                    .effects
                     .iter_mut()
                     .find(|device| device.id == device_id)
                     .map(TrackDeviceMut::Effect)

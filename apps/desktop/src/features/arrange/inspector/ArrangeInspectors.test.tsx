@@ -30,7 +30,7 @@ function recordingSession(): CreativeSession {
     armed: false,
     monitoring: 'off',
     midiInput: {},
-    rack: { devices: [], macros: [] },
+    effects: [],
   });
   session.arrangement.takes.push({
     id: 'take:1',
@@ -106,7 +106,7 @@ describe('Arrange Inspectors', () => {
       armed: false,
       monitoring: 'off' as const,
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     };
     session.arrangement.tracks.push(track);
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
@@ -155,7 +155,7 @@ describe('Arrange Inspectors', () => {
           resource: { type: 'builtInPreset' as const, presetId: '01-clean-sub-bass' },
         },
       },
-      rack: { devices: [], macros: [] },
+      effects: [],
     };
     session.arrangement.tracks.push(track);
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
@@ -384,7 +384,7 @@ describe('Arrange Inspectors', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
-      rack: { devices: [], macros: [] },
+      effects: [],
     });
     session.arrangement.takes.push({
       id: midiTakeId,

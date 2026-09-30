@@ -1,15 +1,15 @@
+use crate::api::output::{ProjectionDiagnostics, RenderResult};
+use crate::api::params::{RenderOptions, RenderRange};
 use crate::asset;
-use crate::execution::{ExecutionGraph, ProjectionDiagnostics, project_graph, resolve};
+use crate::execution::{ExecutionGraph, project_graph, resolve};
 use crate::instrument::BuiltInInstrumentCatalog;
-use riffra_core::{AssetId, CreativeSession, MusicalPosition};
-use serde::{Deserialize, Serialize};
+use riffra_core::{AssetId, CreativeSession};
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
 };
-use ts_rs::TS;
 
 mod worker;
 
@@ -34,52 +34,6 @@ pub(crate) trait RenderRuntime: Send + Sync {
 const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum RenderRange {
-    #[default]
-    EntireArrangement,
-    LoopRange,
-    TimeSelection {
-        #[ts(type = "string")]
-        start: MusicalPosition,
-        #[ts(type = "string")]
-        end: MusicalPosition,
-    },
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct RenderOptions {
-    #[serde(default)]
-    pub range: RenderRange,
-    #[serde(default)]
-    pub normalize: bool,
-    #[serde(default)]
-    pub track_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct RenderResult {
-    pub asset_id: AssetId,
-    pub path: String,
-    pub sample_rate: u32,
-    pub frames: u64,
-    pub duration_ms: u64,
-    pub clip_count: usize,
-    pub range_start_ms: u64,
-    pub range_end_ms: u64,
-    pub normalized: bool,
-    pub track_id: Option<String>,
-    pub state: String,
-    pub message: String,
-}
 
 struct RenderPlan {
     graph: ExecutionGraph,

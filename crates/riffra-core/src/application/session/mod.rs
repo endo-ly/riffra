@@ -3,7 +3,7 @@
 mod inspection;
 
 pub use inspection::{
-    ClipInspection, DeviceInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
+    ClipInspection, EffectInspection, InspectionCounts, InspectionSelection, InstrumentInspection,
     InstrumentSourceKind, MusicalMarkerView, MusicalRangeInspection, ProjectInspection,
     SessionInspection, SessionInspectionQuery, TrackInspection, inspect_canonical_state,
 };

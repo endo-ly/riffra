@@ -1,7 +1,7 @@
 use super::*;
 use riffra_core::{
     AudioTakeVariant, AutomationParameter, CreativeSession, FadeShape, InternalInstrumentResource,
-    MidiEventKind, MonitoringState, TrackInstrumentSource, TrackKind,
+    MidiEventKind, MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
 };
 
 /// Builds a live snapshot from canonical session state and already-resolved resources.
@@ -43,29 +43,18 @@ pub(crate) fn project_graph(
                     .instrument
                     .as_ref()
                     .and_then(|instrument| match &instrument.source {
-                        TrackInstrumentSource::Vst3 {
-                            path,
-                            parameter_values,
-                            state_data,
-                            disabled_placeholder,
-                        } => {
-                            if *disabled_placeholder {
-                                None
-                            } else if resources.existing_plugin_paths.contains(path) {
-                                Some(GraphInstrument::Vst3 {
-                                    id: instrument.id.clone(),
-                                    path: path.clone(),
-                                    state: GraphPluginState {
-                                        state_data: state_data.clone(),
-                                        parameter_values: parameter_values.clone(),
-                                        bypassed: instrument.bypassed,
-                                    },
-                                })
-                            } else {
-                                diagnostics.missing_device_ids.push(instrument.id.clone());
-                                None
-                            }
-                        }
+                        TrackInstrumentSource::Vst3(plugin) => plugin_state(
+                            &instrument.id,
+                            plugin,
+                            instrument.bypassed,
+                            resources,
+                            &mut diagnostics,
+                        )
+                        .map(|state| GraphInstrument::Vst3 {
+                            id: instrument.id.clone(),
+                            path: plugin.path.clone(),
+                            state,
+                        }),
                         TrackInstrumentSource::Internal {
                             definition_json,
                             resource: InternalInstrumentResource::BuiltInPreset { preset_id },
@@ -99,30 +88,20 @@ pub(crate) fn project_graph(
                     });
 
             let effects = track
-                .rack
-                .devices
+                .effects
                 .iter()
-                .filter(|device| device.kind == riffra_core::DeviceKind::Plugin)
                 .filter_map(|device| {
-                    if device.disabled_placeholder {
-                        return None;
-                    }
-                    let Some(path) = device.path.as_ref() else {
-                        diagnostics.missing_device_ids.push(device.id.clone());
-                        return None;
-                    };
-                    if !resources.existing_plugin_paths.contains(path) {
-                        diagnostics.missing_device_ids.push(device.id.clone());
-                        return None;
-                    }
-                    Some(GraphPluginDevice {
+                    plugin_state(
+                        &device.id,
+                        &device.plugin,
+                        device.bypassed,
+                        resources,
+                        &mut diagnostics,
+                    )
+                    .map(|state| GraphPluginDevice {
                         id: device.id.clone(),
-                        path: path.clone(),
-                        state: GraphPluginState {
-                            state_data: device.state_data.clone(),
-                            parameter_values: device.parameter_values.clone(),
-                            bypassed: device.bypassed,
-                        },
+                        path: device.plugin.path.clone(),
+                        state,
                     })
                 })
                 .collect();
@@ -230,11 +209,7 @@ pub(crate) fn project_graph(
                 muted: track.muted,
                 solo: track.solo,
                 armed: track.armed,
-                monitoring: match track.monitoring {
-                    MonitoringState::Off => GraphMonitoring::Off,
-                    MonitoringState::Auto => GraphMonitoring::Auto,
-                    MonitoringState::On => GraphMonitoring::On,
-                },
+                monitor_input: monitors_audio_input(track),
                 audio_input: track.audio_input.map(|route| GraphAudioInput {
                     channel_index: route.channel_index,
                 }),
@@ -277,28 +252,55 @@ pub(crate) fn project_graph(
     )
 }
 
+/// Decides whether a Track monitors its physical audio input: an Audio Track
+/// set to `On`, or set to `Auto` while armed.
+fn monitors_audio_input(track: &Track) -> bool {
+    track.kind == TrackKind::Audio
+        && match track.monitoring {
+            MonitoringState::On => true,
+            MonitoringState::Auto => track.armed,
+            MonitoringState::Off => false,
+        }
+}
+
+/// Projects an enabled plugin whose path is installed. A plugin that is not
+/// installed is recorded as a missing device; a disabled placeholder is
+/// skipped.
+fn plugin_state(
+    device_id: &str,
+    plugin: &Vst3Plugin,
+    bypassed: bool,
+    resources: &ResolvedResources,
+    diagnostics: &mut ProjectionDiagnostics,
+) -> Option<GraphPluginState> {
+    if plugin.disabled_placeholder {
+        return None;
+    }
+    if !resources.existing_plugin_paths.contains(&plugin.path) {
+        diagnostics.missing_device_ids.push(device_id.to_owned());
+        return None;
+    }
+    Some(GraphPluginState {
+        state_data: plugin.state_data.clone(),
+        parameter_values: plugin.parameter_values.clone(),
+        bypassed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use riffra_core::{
-        AudioClip, AudioInputRoute, AutomationLane, AutomationPoint, MidiClip, MidiEvent,
-        MidiInputRoute, MidiNote, RackDevice, Track, TrackInstrument,
+        AudioClip, AudioInputRoute, AutomationLane, AutomationPoint, EffectDevice, MidiClip,
+        MidiEvent, MidiInputRoute, MidiNote, Track, TrackInstrument,
     };
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    fn plugin_device(id: &str, name: &str, path: Option<&str>, disabled: bool) -> RackDevice {
-        RackDevice {
-            id: id.into(),
-            name: name.into(),
-            kind: riffra_core::DeviceKind::Plugin,
-            path: path.map(str::to_owned),
-            bypassed: false,
-            gain_db: 0.0,
-            parameter_values: Vec::new(),
-            state_data: None,
-            disabled_placeholder: disabled,
-        }
+    fn plugin_device(id: &str, name: &str, path: &str, disabled: bool) -> EffectDevice {
+        let mut device = EffectDevice::new(id.into(), name.into(), path.into()).unwrap();
+        device.plugin.disabled_placeholder = disabled;
+        device
     }
 
     fn resources() -> ResolvedResources {
@@ -341,9 +343,8 @@ mod tests {
         audio.monitoring = MonitoringState::Auto;
         audio.audio_input = Some(AudioInputRoute { channel_index: 3 });
         audio
-            .rack
-            .devices
-            .push(plugin_device("device:fx", "FX", Some("fx.vst3"), false));
+            .effects
+            .push(plugin_device("device:fx", "FX", "fx.vst3", false));
         let mut instrument = Track::instrument("track:instrument".into(), "Keys".into());
         instrument.midi_input = MidiInputRoute {
             device_id: Some("midi:1".into()),
@@ -510,7 +511,7 @@ mod tests {
         assert_eq!(graph.tracks[0].gain_db, -3.0);
         assert_eq!(graph.tracks[0].pan, 0.25);
         assert!(graph.tracks[0].muted && graph.tracks[0].solo && graph.tracks[0].armed);
-        assert_eq!(graph.tracks[0].monitoring, GraphMonitoring::Auto);
+        assert!(graph.tracks[0].monitor_input);
         assert_eq!(graph.tracks[0].effects.len(), 1);
         assert_eq!(graph.tracks[0].audio_clips.len(), 1);
         assert_eq!(graph.tracks[0].audio_clips[0].path, "audio/clip.wav");
@@ -558,6 +559,36 @@ mod tests {
     }
 
     #[test]
+    fn monitors_audio_input_only_for_audio_tracks_that_request_it() {
+        // Arrange
+        let cases = [
+            (TrackKind::Audio, MonitoringState::Off, true, false),
+            (TrackKind::Audio, MonitoringState::Auto, false, false),
+            (TrackKind::Audio, MonitoringState::Auto, true, true),
+            (TrackKind::Audio, MonitoringState::On, false, true),
+            (TrackKind::Instrument, MonitoringState::On, true, false),
+        ];
+
+        for (kind, monitoring, armed, expected) in cases {
+            let track = Track {
+                kind,
+                monitoring,
+                armed,
+                ..Track::audio("track:1".into(), "Track".into())
+            };
+
+            // Act
+            let monitor_input = monitors_audio_input(&track);
+
+            // Assert
+            assert_eq!(
+                monitor_input, expected,
+                "{kind:?} {monitoring:?} armed={armed}"
+            );
+        }
+    }
+
+    #[test]
     fn excludes_unresolved_and_disabled_resources_with_ordered_diagnostics() {
         #[derive(Clone, Copy)]
         enum MissingDevice {
@@ -584,10 +615,10 @@ mod tests {
             let mut session = CreativeSession::new(1);
             let mut track = Track::instrument("track:instrument".into(), "Keys".into());
             match missing_device {
-                MissingDevice::Plugin => track.rack.devices.push(plugin_device(
+                MissingDevice::Plugin => track.effects.push(plugin_device(
                     "device:missing",
                     "Missing",
-                    Some("missing.vst3"),
+                    "missing.vst3",
                     false,
                 )),
                 MissingDevice::Vst3Instrument => {
@@ -612,10 +643,10 @@ mod tests {
                     );
                 }
             }
-            track.rack.devices.push(plugin_device(
+            track.effects.push(plugin_device(
                 "device:disabled",
                 "Disabled",
-                Some("absent.vst3"),
+                "absent.vst3",
                 true,
             ));
             session.arrangement.tracks.push(track);
@@ -639,15 +670,12 @@ mod tests {
                 )
                 .unwrap(),
             );
-            if let Some(TrackInstrumentSource::Vst3 {
-                disabled_placeholder,
-                ..
-            }) = disabled_vst
+            if let Some(plugin) = disabled_vst
                 .instrument
                 .as_mut()
-                .map(|instrument| &mut instrument.source)
+                .and_then(TrackInstrument::as_vst3_mut)
             {
-                *disabled_placeholder = true;
+                plugin.disabled_placeholder = true;
             }
             session.arrangement.tracks.push(disabled_vst);
 

@@ -29,7 +29,7 @@ function sessionWithTrack() {
     armed: false,
     monitoring: 'off',
     midiInput: {},
-    rack: { devices: [], macros: [] },
+    effects: [],
   });
   return session;
 }

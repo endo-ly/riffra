@@ -5,4 +5,7 @@ import type { PluginEntry } from "./PluginEntry";
 import type { ProjectRecoveryState } from "./ProjectRecoveryState";
 import type { ProjectState } from "./ProjectState";
 
+/**
+ * Initial state of the Desktop WebView for the connected Host.
+ */
 export type BootstrapState = { canonical: CanonicalState, projectState: ProjectState, pluginCatalog: Array<PluginEntry>, runtimeStarted: boolean, runtimeStartupFinished: boolean, recovery: ProjectRecoveryState, safeMode: boolean, nativeAvailable: boolean, dataRoot: string, vst3Root: string, hostConnection: HostConnectionState, };

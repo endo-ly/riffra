@@ -36,7 +36,7 @@ set(request_template [=[
           "muted": false,
           "solo": false,
           "armed": false,
-          "monitoring": "off",
+          "monitorInput": false,
           "audioInput": null,
           "midiInput": {"deviceId": null, "channel": null},
           "volumeAutomation": [],

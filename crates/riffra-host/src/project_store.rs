@@ -59,6 +59,14 @@ impl ProjectStore {
     }
 
     /// Creates the new layout or opens the last active Project.
+    ///
+    /// When the active Project cannot be read, its files are left untouched
+    /// and a new empty Project becomes active instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the DataRoot layout or `workspace.json` is
+    /// invalid, or when the Project cannot be created or loaded.
     pub fn initialize(&self) -> Result<ProjectInitialization, SessionLoadError> {
         fs::create_dir_all(&self.projects_dir)?;
         for entry in fs::read_dir(&self.projects_dir)? {
@@ -70,24 +78,35 @@ impl ProjectStore {
         }
         ensure_shared_directories(&self.data_root)?;
 
-        let project_id = match self.project_directories()?.into_iter().next() {
-            Some(_) => self.read_or_repair_active_project()?,
-            None => {
-                let project_id = new_project_id();
-                let storage = self.session_store(&project_id).map_err(invalid_data)?;
-                storage
-                    .save(&CreativeSession::new(now_ms()))
-                    .map_err(SessionLoadError::from)?;
-                self.write_workspace(&project_id)?;
-                project_id
+        if self.project_directories()?.is_empty() {
+            return self.initialize_new_project();
+        }
+        let project_id = self.read_or_repair_active_project()?;
+        match self.load(&project_id) {
+            Ok(loaded) => {
+                self.set_active_memory(&project_id)?;
+                Ok(ProjectInitialization { loaded })
             }
-        };
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    %error,
+                    "active Project is unreadable; opening a new Project"
+                );
+                self.initialize_new_project()
+            }
+        }
+    }
+
+    fn initialize_new_project(&self) -> Result<ProjectInitialization, SessionLoadError> {
+        let project_id = new_project_id();
+        let storage = self.session_store(&project_id).map_err(invalid_data)?;
+        storage.save(&CreativeSession::new(now_ms()))?;
+        self.write_workspace(&project_id)?;
         self.set_active_memory(&project_id)?;
-        let loaded = self
-            .session_store(&project_id)
-            .map_err(invalid_data)?
-            .load_existing()?;
-        Ok(ProjectInitialization { loaded })
+        Ok(ProjectInitialization {
+            loaded: storage.load_existing()?,
+        })
     }
 
     /// Returns all Project summaries in stable display-name order.
@@ -455,6 +474,53 @@ mod tests {
             .unwrap();
         assert_eq!(summary.name, "Unreadable Project");
         assert!(summary.error.is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn directory_snapshot(directory: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                entries.extend(directory_snapshot(&path));
+            } else {
+                let payload = fs::read(&path).unwrap();
+                entries.push((path, payload));
+            }
+        }
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn opens_a_new_project_when_the_active_project_is_unreadable() {
+        // Arrange
+        let root = root("unreadable-active");
+        let store = ProjectStore::new(&root);
+        store.initialize().unwrap();
+        let unreadable_id = store.active_project_id().unwrap();
+        let unreadable_dir = root.join(PROJECTS_DIRECTORY).join(&unreadable_id);
+        let unversioned = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
+        fs::write(unreadable_dir.join("session.json"), &unversioned).unwrap();
+        fs::write(
+            unreadable_dir.join("generations").join("1000-1.json"),
+            &unversioned,
+        )
+        .unwrap();
+        let before = directory_snapshot(&unreadable_dir);
+
+        // Act
+        let reopened = ProjectStore::new(&root);
+        let initialized = reopened.initialize().unwrap();
+
+        // Assert
+        let active_id = reopened.active_project_id().unwrap();
+        assert_ne!(active_id, unreadable_id);
+        assert_eq!(initialized.loaded.session.project_name, None);
+        let workspace: WorkspaceState =
+            serde_json::from_slice(&fs::read(root.join(WORKSPACE_FILE)).unwrap()).unwrap();
+        assert_eq!(workspace.active_project_id, active_id);
+        assert_eq!(directory_snapshot(&unreadable_dir), before);
         let _ = fs::remove_dir_all(root);
     }
 

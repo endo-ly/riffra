@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
-use super::metadata::{
-    InstrumentPreviewDefinition, InstrumentRecommendedRange, read_definition_metadata,
-};
+use super::metadata::read_definition_metadata;
+use crate::api::output::{InstrumentPreviewDefinition, InstrumentRecommendedRange};
 
 const USER_INSTRUMENTS_DIRECTORY: &str = "instruments/user";
 const PROJECT_INSTRUMENTS_DIRECTORY: &str = "project-instruments";

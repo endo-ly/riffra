@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { TransportIcon } from './TransportIcon';
 import type { TransportControlsApi } from './transport-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
+import { tickToMusicalPosition } from '@/shared/session/musical-position';
 import { toast } from '@/shared/toasts';
 import styles from './TransportControls.module.css';
 
@@ -114,6 +115,7 @@ export function TransportControls(props: TransportControlsProps) {
             title={session.arrangement.loopRange.enabled ? 'Disable loop' : 'Enable loop'}
             onClick={() => {
               const range = session.arrangement.loopRange;
+              const timebase = session.arrangement.timebase;
               const barTicks =
                 (session.arrangement.timebase.ppq *
                   4 *
@@ -122,8 +124,11 @@ export function TransportControls(props: TransportControlsProps) {
               void api
                 .updateTimelineLoopRange(
                   !range.enabled,
-                  range.startTick,
-                  range.endTick > range.startTick ? range.endTick : barTicks * 4,
+                  tickToMusicalPosition(range.startTick, timebase),
+                  tickToMusicalPosition(
+                    range.endTick > range.startTick ? range.endTick : barTicks * 4,
+                    timebase,
+                  ),
                 )
                 .then((result) =>
                   applyArrangementMutation(result, applyCanonicalState, (message) =>

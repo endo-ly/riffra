@@ -1,12 +1,13 @@
 //! Canonical instrument assignments for Instrument Tracks.
 
+use crate::domain::plugin::Vst3Plugin;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
 /// One instrument assigned to a timeline Track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TrackInstrument {
     pub id: String,
     pub name: String,
@@ -16,7 +17,7 @@ pub struct TrackInstrument {
 
 /// The implementation source of a Track instrument.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all_fields = "camelCase")]
 pub enum TrackInstrumentSource {
     /// An instrument definition rendered by Riffra's built-in runtime.
@@ -27,27 +28,12 @@ pub enum TrackInstrumentSource {
         resource: InternalInstrumentResource,
     },
     /// An external VST3 instrument and its persisted plugin state.
-    Vst3 {
-        path: String,
-        #[serde(default)]
-        #[serde(rename = "parameterValues")]
-        #[ts(rename = "parameterValues")]
-        parameter_values: Vec<f32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        #[serde(rename = "stateData")]
-        #[ts(rename = "stateData")]
-        state_data: Option<String>,
-        #[serde(default)]
-        #[serde(rename = "disabledPlaceholder")]
-        #[ts(rename = "disabledPlaceholder")]
-        disabled_placeholder: bool,
-    },
+    Vst3(Vst3Plugin),
 }
 
 /// Resource origin for an internal instrument definition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
 #[ts(rename_all_fields = "camelCase")]
 pub enum InternalInstrumentResource {
     /// A preset shipped in the Riffra resource bundle.
@@ -74,12 +60,7 @@ impl TrackInstrument {
             id,
             name,
             bypassed: false,
-            source: TrackInstrumentSource::Vst3 {
-                path,
-                parameter_values: Vec::new(),
-                state_data: None,
-                disabled_placeholder: false,
-            },
+            source: TrackInstrumentSource::Vst3(Vst3Plugin::new(path)),
         };
         validate_and_normalize(&mut instrument)?;
         Ok(instrument)
@@ -149,38 +130,18 @@ impl TrackInstrument {
         self.bypassed = bypassed;
     }
 
-    /// Returns the VST3 source when this is an external instrument.
-    pub fn as_vst3(&self) -> Option<Vst3InstrumentSource<'_>> {
+    /// Returns the VST3 plugin when this is an external instrument.
+    pub fn as_vst3(&self) -> Option<&Vst3Plugin> {
         match &self.source {
-            TrackInstrumentSource::Vst3 {
-                path,
-                parameter_values,
-                state_data,
-                disabled_placeholder,
-            } => Some(Vst3InstrumentSource {
-                path,
-                parameter_values,
-                state_data: state_data.as_deref(),
-                disabled_placeholder: *disabled_placeholder,
-            }),
+            TrackInstrumentSource::Vst3(plugin) => Some(plugin),
             TrackInstrumentSource::Internal { .. } => None,
         }
     }
 
-    /// Returns the mutable VST3 source when this is an external instrument.
-    pub fn as_vst3_mut(&mut self) -> Option<Vst3InstrumentSourceMut<'_>> {
+    /// Returns the mutable VST3 plugin when this is an external instrument.
+    pub fn as_vst3_mut(&mut self) -> Option<&mut Vst3Plugin> {
         match &mut self.source {
-            TrackInstrumentSource::Vst3 {
-                path,
-                parameter_values,
-                state_data,
-                disabled_placeholder,
-            } => Some(Vst3InstrumentSourceMut {
-                path,
-                parameter_values,
-                state_data,
-                disabled_placeholder,
-            }),
+            TrackInstrumentSource::Vst3(plugin) => Some(plugin),
             TrackInstrumentSource::Internal { .. } => None,
         }
     }
@@ -192,7 +153,7 @@ impl TrackInstrument {
                 definition_json,
                 resource,
             } => Some((definition_json, resource)),
-            TrackInstrumentSource::Vst3 { .. } => None,
+            TrackInstrumentSource::Vst3(_) => None,
         }
     }
 
@@ -204,7 +165,7 @@ impl TrackInstrument {
                 ..
             } => Some(preset_id),
             TrackInstrumentSource::Internal { .. } => None,
-            TrackInstrumentSource::Vst3 { .. } => None,
+            TrackInstrumentSource::Vst3(_) => None,
         }
     }
 
@@ -222,23 +183,6 @@ impl TrackInstrument {
             _ => None,
         }
     }
-}
-
-/// Read-only VST3 fields used by runtime adapters without exposing enum
-/// matching at every call site.
-pub struct Vst3InstrumentSource<'a> {
-    pub path: &'a str,
-    pub parameter_values: &'a [f32],
-    pub state_data: Option<&'a str>,
-    pub disabled_placeholder: bool,
-}
-
-/// Mutable VST3 fields used by Core-owned plugin state operations.
-pub struct Vst3InstrumentSourceMut<'a> {
-    pub path: &'a mut String,
-    pub parameter_values: &'a mut Vec<f32>,
-    pub state_data: &'a mut Option<String>,
-    pub disabled_placeholder: &'a mut bool,
 }
 
 /// Validates and normalizes one instrument assignment.
@@ -273,29 +217,7 @@ pub(crate) fn validate_and_normalize(instrument: &mut TrackInstrument) -> Result
                 }
             }
         }
-        TrackInstrumentSource::Vst3 {
-            path,
-            parameter_values,
-            state_data,
-            ..
-        } => {
-            if path.trim().is_empty() {
-                return Err("VST3 instrument path must not be empty".into());
-            }
-            *path = path.trim().to_owned();
-            for value in parameter_values {
-                *value = if value.is_finite() {
-                    value.clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-            }
-            if let Some(state) = state_data.as_mut()
-                && state.chars().count() > 4_000_000
-            {
-                *state = state.chars().take(4_000_000).collect();
-            }
-        }
+        TrackInstrumentSource::Vst3(plugin) => plugin.validate_and_normalize()?,
     }
     Ok(())
 }
@@ -342,6 +264,32 @@ mod tests {
     }
 
     #[test]
+    fn tagged_sources_reject_unknown_keys() {
+        // Arrange
+        let mut source = serde_json::to_value(&built_in().source).unwrap();
+        let mut resource = source["resource"].clone();
+        source["presetId"] = "01-clean-sub-bass".into();
+        resource["definitionJson"] = "{}".into();
+
+        // Act
+        let source_error = serde_json::from_value::<TrackInstrumentSource>(source).unwrap_err();
+        let resource_error =
+            serde_json::from_value::<InternalInstrumentResource>(resource).unwrap_err();
+
+        // Assert
+        assert!(
+            source_error
+                .to_string()
+                .contains("unknown field `presetId`")
+        );
+        assert!(
+            resource_error
+                .to_string()
+                .contains("unknown field `definitionJson`")
+        );
+    }
+
+    #[test]
     fn built_in_definition_is_retained_as_opaque_payload() {
         let instrument = TrackInstrument::built_in(
             "device:instrument".into(),
@@ -382,30 +330,31 @@ mod tests {
     }
 
     #[test]
-    fn vst3_state_is_normalized_without_rack_conversion() {
-        let mut instrument = TrackInstrument {
-            id: "device:instrument".into(),
-            name: "Synth".into(),
-            bypassed: false,
-            source: TrackInstrumentSource::Vst3 {
-                path: "  Synth.vst3 ".into(),
-                parameter_values: vec![-1.0, 0.5, 2.0, f32::NAN],
-                state_data: Some("state".into()),
-                disabled_placeholder: false,
-            },
-        };
+    fn vst3_source_is_serialized_as_a_tagged_plugin() {
+        // Arrange
+        let instrument = TrackInstrument::vst3(
+            "device:instrument".into(),
+            "Synth".into(),
+            "Synth.vst3".into(),
+        )
+        .unwrap();
 
-        validate_and_normalize(&mut instrument).unwrap();
+        // Act
+        let encoded = serde_json::to_value(&instrument.source).unwrap();
 
-        let vst3 = match instrument.source {
-            TrackInstrumentSource::Vst3 {
-                path,
-                parameter_values,
-                ..
-            } => (path, parameter_values),
-            TrackInstrumentSource::Internal { .. } => unreachable!(),
-        };
-        assert_eq!(vst3.0, "Synth.vst3");
-        assert_eq!(vst3.1, [0.0, 0.5, 1.0, 0.0]);
+        // Assert
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "type": "vst3",
+                "path": "Synth.vst3",
+                "parameterValues": [],
+                "disabledPlaceholder": false
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<TrackInstrumentSource>(encoded).unwrap(),
+            instrument.source
+        );
     }
 }

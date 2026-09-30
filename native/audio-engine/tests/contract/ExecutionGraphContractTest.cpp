@@ -45,9 +45,8 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(full.graph.tracks[1].instrument->index(), 1u);
     EXPECT_EQ(full.graph.tracks[0].kind, TrackKindSpec::audio);
     EXPECT_EQ(full.graph.tracks[1].kind, TrackKindSpec::instrument);
-    EXPECT_EQ(full.graph.tracks[0].monitoring, MonitoringSpec::off);
-    EXPECT_EQ(full.graph.tracks[1].monitoring, MonitoringSpec::automatic);
-    EXPECT_EQ(full.graph.tracks[2].monitoring, MonitoringSpec::on);
+    EXPECT_TRUE(full.graph.tracks[0].monitorInput);
+    EXPECT_FALSE(full.graph.tracks[1].monitorInput);
     EXPECT_EQ(full.graph.tracks[0].audioClips[0].fadeShape, FadeShapeSpec::linear);
     EXPECT_EQ(full.graph.tracks[0].audioClips[1].fadeShape, FadeShapeSpec::equalPower);
     EXPECT_EQ(full.graph.tracks[0].audioClips[2].fadeShape, FadeShapeSpec::smooth);

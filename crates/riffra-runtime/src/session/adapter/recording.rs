@@ -6,7 +6,7 @@ pub fn set_audio_clip_take_variant(
     context: &SessionContext<'_>,
     clip_id: &str,
     variant: AudioTakeVariant,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_core_application(context, |core, store| {
         core.application(store)
             .set_audio_clip_take_variant(clip_id, variant)
@@ -75,7 +75,7 @@ pub fn activate_take(
     context: &SessionContext<'_>,
     session_id: &str,
     take_id: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
     let target_take = session
         .arrangement
@@ -106,7 +106,7 @@ pub fn activate_take(
 pub fn place_take_as_separate_clip(
     context: &SessionContext<'_>,
     take_id: &str,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
     let take = session
         .arrangement

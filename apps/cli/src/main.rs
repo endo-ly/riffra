@@ -5,7 +5,7 @@ mod output;
 mod resources;
 mod serve;
 
-use args::{Cli, CliCommand};
+use args::{Cli, CliCommand, RequestError};
 use attached::AttachedBackend;
 use clap::Parser;
 use output::{compact_agent_response, write_audio_diagnostics};
@@ -14,6 +14,8 @@ use riffra_control::{
     LocalHostRegistry, ProtocolError,
 };
 use riffra_runtime::Dispatcher;
+use riffra_runtime::api::params::EmptyParams;
+use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::thread;
@@ -37,6 +39,21 @@ impl From<&str> for RunFailure {
         Self::Local(message.to_owned())
     }
 }
+
+impl From<RequestError> for RunFailure {
+    fn from(error: RequestError) -> Self {
+        match error {
+            RequestError::Usage(message) => Self::Local(message),
+            RequestError::Params(error) => Self::Protocol(Box::new(ControlResponse::failure(
+                ONE_SHOT_REQUEST_ID,
+                None,
+                error.into(),
+            ))),
+        }
+    }
+}
+
+const ONE_SHOT_REQUEST_ID: &str = "one-shot";
 
 fn main() {
     let cli = Cli::parse_from(instrument::prepare_cli_args(std::env::args_os()));
@@ -161,19 +178,24 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         }
         return Err(RunFailure::Protocol(Box::new(response)));
     }
-    let request = if interactive {
+    let command = if interactive {
         if expected_sequence.is_some() {
             return Err("--expected-sequence cannot be combined with --interactive".into());
         }
         None
     } else {
-        let request = cli.request()?;
-        if !attach && matches!(request.name.as_str(), "undo" | "redo") {
+        let command = cli.request()?;
+        if !attach
+            && matches!(
+                command,
+                ControlCommand::Canonical(CanonicalCommand::Undo(_) | CanonicalCommand::Redo(_))
+            )
+        {
             return Err(
                 "undo and redo require --interactive because history is process-local".into(),
             );
         }
-        Some(request)
+        Some(command)
     };
     if attach {
         if data_root.is_some() {
@@ -183,16 +205,15 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
         if interactive {
             return attached.run_interactive().map_err(RunFailure::Local);
         }
-        let request = ControlRequest::new(
-            "one-shot",
-            request.expect("one-shot request is present"),
+        let response = attached.request(
+            ONE_SHOT_REQUEST_ID.into(),
+            command.expect("one-shot command is present"),
             expected_sequence,
-        );
-        let response = attached.request(&request)?;
+            None,
+        )?;
         let response = annotate_batch_error(response, batch_operation_lines.as_deref());
-        let response =
-            save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
-        let response = compact_agent_response(&request.command, response, None);
+        let response = save_plugin_state_response(plugin_state_output.as_deref(), response)?;
+        let response = compact_agent_response(response);
         if let Some((json, _)) = audio_diagnostics_options {
             if !response.ok {
                 return Err(RunFailure::Protocol(Box::new(response)));
@@ -214,43 +235,30 @@ fn run(cli: Cli) -> Result<(), RunFailure> {
     if interactive {
         return run_interactive(&dispatcher).map_err(RunFailure::Local);
     }
-    let request = ControlRequest::new(
-        "one-shot",
-        request.expect("one-shot request is present"),
-        expected_sequence,
-    );
-    let dispatched = match dispatcher.dispatch_request(request.clone()) {
+    let command = command.expect("one-shot command is present");
+    let dispatched = match dispatcher.dispatch(command, expected_sequence) {
         Ok(dispatched) => dispatched,
         Err(error) => {
             let response = annotate_batch_error(
-                ControlResponse::failure(request.request_id, None, error.protocol_error()),
+                ControlResponse::failure(ONE_SHOT_REQUEST_ID, None, error.protocol_error()),
                 batch_operation_lines.as_deref(),
             );
             return Err(RunFailure::Protocol(Box::new(response)));
         }
     };
     let response = ControlResponse::success(
-        request.request_id.clone(),
+        ONE_SHOT_REQUEST_ID,
         dispatched.sequence,
-        CommandResult {
-            result_type: dispatched.result_type.into(),
-            value: dispatched.value,
-        },
+        dispatched.output.into(),
     );
-    let response = annotate_batch_error(response, batch_operation_lines.as_deref());
-    let response = save_plugin_state_response(plugin_state_output.as_deref(), &request, response)?;
+    let response = save_plugin_state_response(plugin_state_output.as_deref(), response)?;
     if let Some((json, _)) = audio_diagnostics_options {
         if !response.ok {
             return Err(RunFailure::Protocol(Box::new(response)));
         }
         return write_audio_diagnostics(&response, json).map_err(RunFailure::Local);
     }
-    write_response(&compact_agent_response(
-        &request.command,
-        response,
-        Some(serde_json::to_value(dispatched.created_entity_ids).expect("entity ids serialize")),
-    ))
-    .map_err(RunFailure::Local)
+    write_response(&compact_agent_response(response)).map_err(RunFailure::Local)
 }
 
 fn annotate_batch_error(
@@ -287,13 +295,12 @@ fn annotate_batch_error(
 
 fn save_plugin_state_response(
     output: Option<&Path>,
-    request: &ControlRequest,
     mut response: ControlResponse,
 ) -> Result<ControlResponse, String> {
     let Some(output) = output else {
         return Ok(response);
     };
-    if request.command != "plugin.state.get" || !response.ok {
+    if !response.ok {
         return Ok(response);
     }
     let result = response
@@ -315,7 +322,10 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
     const MAX_ATTEMPTS: usize = 3;
     let registry = LocalHostRegistry::current_user();
     for attempt in 0..MAX_ATTEMPTS {
-        let discovered = match registry.discover() {
+        let discovered = match registry.discover(|registration| {
+            ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                .into_request(format!("discovery-{}", registration.instance_id), None)
+        }) {
             Ok(discovered) => discovered,
             Err(error) if attempt + 1 < MAX_ATTEMPTS => {
                 thread::sleep(Duration::from_millis(100));
@@ -356,7 +366,10 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
 
 fn list_hosts() -> Result<(), String> {
     let hosts = LocalHostRegistry::current_user()
-        .discover()
+        .discover(|registration| {
+            ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                .into_request(format!("discovery-{}", registration.instance_id), None)
+        })
         .map_err(|error| format!("Host discovery failed: {error}"))?;
     let entries = hosts
         .iter()
@@ -428,18 +441,11 @@ fn handle_request_at(
         );
     }
     match dispatcher.dispatch_request(request.clone()) {
-        Ok(result) => compact_agent_response(
-            &request.command,
-            ControlResponse::success(
-                request.request_id,
-                result.sequence,
-                CommandResult {
-                    result_type: result.result_type.into(),
-                    value: result.value,
-                },
-            ),
-            Some(serde_json::to_value(result.created_entity_ids).expect("entity ids serialize")),
-        ),
+        Ok(result) => compact_agent_response(ControlResponse::success(
+            request.request_id,
+            result.sequence,
+            result.output.into(),
+        )),
         Err(error) => {
             let error = error.protocol_error();
             let error = if error.code == ErrorCode::InvalidRequest {

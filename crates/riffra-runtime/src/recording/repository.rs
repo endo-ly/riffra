@@ -1,7 +1,7 @@
-use crate::{
-    asset,
-    recording::{DropoutInformation, RecordingCapture, RecordingCaptureStatus},
+use crate::api::output::{
+    DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
 };
+use crate::asset;
 use riffra_core::AssetId;
 use riffra_host::now_ms;
 use serde::{Deserialize, Serialize};
@@ -10,51 +10,6 @@ use std::{
     io::Write,
     path::{Component, Path, PathBuf},
 };
-use ts_rs::TS;
-
-/// UI read model assembled from the capture manifest and canonical Assets.
-///
-/// This type is never used as the persistent recording domain. The path fields
-/// are resolved/display-oriented data for Recovery; completed captures use
-/// their Asset IDs as the authoritative identity.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct RecordingAsset {
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    pub state: String,
-    pub error: Option<String>,
-    pub started_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub raw_file: Option<String>,
-    pub processed_file: Option<String>,
-    pub raw_path: Option<String>,
-    pub processed_path: Option<String>,
-    pub raw_asset_id: Option<AssetId>,
-    pub processed_asset_id: Option<AssetId>,
-    pub midi_asset_id: Option<AssetId>,
-    pub capture: Option<RecordingCapture>,
-    pub midi_file: Option<String>,
-    pub sample_rate: Option<u32>,
-    pub samples_written: u64,
-    pub dropped_midi_events: u64,
-    pub dropped_blocks: u64,
-    pub missing_samples: u64,
-    pub dropout_start_sample: Option<u64>,
-    pub dropout_end_sample: Option<u64>,
-    pub raw_attempted_samples: u64,
-    pub processed_attempted_samples: u64,
-    pub raw_dropped_blocks: u64,
-    pub processed_dropped_blocks: u64,
-    pub raw_missing_samples: u64,
-    pub processed_missing_samples: u64,
-    pub raw_dropout_start_sample: Option<u64>,
-    pub raw_dropout_end_sample: Option<u64>,
-    pub processed_dropout_start_sample: Option<u64>,
-    pub processed_dropout_end_sample: Option<u64>,
-    pub recovery_status: String,
-}
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -636,7 +591,7 @@ pub fn save_asset_ids(
     capture.raw_audio_asset_id = raw_asset_id;
     capture.processed_audio_asset_id = processed_asset_id;
     capture.midi_asset_id = midi_asset_id;
-    capture.dropout_information = crate::recording::DropoutInformation {
+    capture.dropout_information = DropoutInformation {
         samples_written: manifest.samples_written.unwrap_or_default(),
         dropped_midi_events: manifest.dropped_midi_events.unwrap_or_default(),
         dropped_blocks: manifest.dropped_blocks.unwrap_or_default(),

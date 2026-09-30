@@ -1,5 +1,5 @@
 use crate::domain::instrument::{self, TrackInstrument};
-use crate::domain::rack::{self, RackInstance};
+use crate::domain::plugin::{self, EffectDevice};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -13,14 +13,14 @@ pub enum TrackKind {
 
 /// A physical input channel routed to one Audio Track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AudioInputRoute {
     pub channel_index: u32,
 }
 
 /// A MIDI source and channel filter routed to one Instrument Track.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiInputRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -32,22 +32,16 @@ pub struct MidiInputRoute {
 
 /// A timeline track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Track {
     pub id: String,
     pub name: String,
     pub kind: TrackKind,
-    #[serde(default)]
     pub gain_db: f64,
-    #[serde(default)]
     pub pan: f64,
-    #[serde(default)]
     pub muted: bool,
-    #[serde(default)]
     pub solo: bool,
-    #[serde(default)]
     pub armed: bool,
-    #[serde(default)]
     pub monitoring: MonitoringState,
     /// Presentation color as `#rrggbb`. `None` delegates automatic coloring
     /// to the presentation layer.
@@ -57,12 +51,11 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub audio_input: Option<AudioInputRoute>,
-    #[serde(default)]
     pub midi_input: MidiInputRoute,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub instrument: Option<TrackInstrument>,
-    pub rack: RackInstance,
+    pub effects: Vec<EffectDevice>,
 }
 
 /// A partial update for a timeline Track.
@@ -83,20 +76,12 @@ pub struct TrackPatch {
 
 /// Audio Track input monitoring state. `Auto` monitors only while the track is
 /// armed; `On` always monitors; `Off` never monitors.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitoringState {
-    #[default]
     Off,
     Auto,
     On,
-}
-
-fn empty_track_rack() -> RackInstance {
-    RackInstance {
-        devices: Vec::new(),
-        macros: Vec::new(),
-    }
 }
 
 impl Track {
@@ -116,7 +101,7 @@ impl Track {
             audio_input: None,
             midi_input: MidiInputRoute::default(),
             instrument: None,
-            rack: empty_track_rack(),
+            effects: Vec::new(),
         }
     }
 
@@ -166,7 +151,7 @@ impl Track {
         if let Some(instrument) = &mut self.instrument {
             instrument::validate_and_normalize(instrument)?;
         }
-        rack::validate_and_normalize(&mut self.rack)?;
+        plugin::validate_and_normalize_effects(&mut self.effects)?;
         Ok(())
     }
 }

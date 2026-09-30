@@ -15,19 +15,17 @@
 //! production changes to Core, and compensates host resources when an external
 //! operation fails.
 
-mod rack;
+mod devices;
 mod recording;
-mod runtime;
 
-pub use rack::*;
+pub use devices::*;
 pub use recording::*;
-pub use runtime::*;
 
 use std::path::Path;
 
 use crate::RuntimeDriver;
+use crate::api::output::AudioStatus;
 use crate::asset;
-use crate::model::AudioStatus;
 use crate::plugins;
 use riffra_core::{AssetId, AssetKind, AudioTakeVariant, MidiInputRoute};
 
@@ -38,11 +36,10 @@ pub use crate::session::commit::{
 pub use crate::session::context::{SessionContext, current_session};
 pub use crate::session::error::AdapterError;
 pub use crate::session::transport::{prepare_arrangement_candidate, sync_arrangement_runtime};
-use riffra_core::application::SessionSettingsPatch;
 
 pub fn undo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = context
         .core
         .application(&context.storage)
@@ -55,7 +52,7 @@ pub fn undo(
 
 pub fn redo(
     context: &SessionContext<'_>,
-) -> Result<crate::model::ArrangementMutationResult, AdapterError> {
+) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = context
         .core
         .application(&context.storage)

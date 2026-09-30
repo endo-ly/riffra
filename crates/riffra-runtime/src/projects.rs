@@ -1,11 +1,10 @@
-use crate::model::{
-    ProjectActivationResult, ProjectRecoveryState, ProjectState, ProjectSummary, RecoveryCandidate,
+use crate::api::output::{
+    ProjectActivationResult, ProjectExport, ProjectRecoveryState, ProjectState, ProjectSummary,
+    RecoveryCandidate,
 };
 use riffra_core::{CanonicalState, CreativeSession};
 use riffra_host::{LoadedSession, ProjectStore, SessionStore};
-use serde::{Deserialize, Serialize};
 use std::path::Path;
-use ts_rs::TS;
 
 pub(crate) fn state(project_store: &ProjectStore) -> Result<ProjectState, String> {
     Ok(ProjectState {
@@ -124,15 +123,6 @@ pub(crate) fn result(activated: ActivatedProject) -> ProjectActivationResult {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectExport {
-    pub path: String,
-    pub session_id: String,
-    pub exported_at_ms: u64,
-    pub asset_count: usize,
-}
-
 pub fn export(
     data_root: &Path,
     session: &CreativeSession,
@@ -151,4 +141,27 @@ pub fn export(
 
 pub fn import(data_root: &Path, path: &Path) -> Result<CreativeSession, String> {
     riffra_host::import_project(data_root, path)
+}
+
+impl From<riffra_host::ProjectSummary> for ProjectSummary {
+    fn from(summary: riffra_host::ProjectSummary) -> Self {
+        Self {
+            project_id: summary.project_id,
+            name: summary.name,
+            updated_at_ms: summary.updated_at_ms,
+            error: summary.error,
+        }
+    }
+}
+
+impl From<riffra_host::RecoveryCandidate> for RecoveryCandidate {
+    fn from(candidate: riffra_host::RecoveryCandidate) -> Self {
+        Self {
+            file_name: candidate.file_name,
+            updated_at_ms: candidate.updated_at_ms,
+            session_id: candidate.session_id,
+            project_name: candidate.project_name,
+            note: candidate.note,
+        }
+    }
 }

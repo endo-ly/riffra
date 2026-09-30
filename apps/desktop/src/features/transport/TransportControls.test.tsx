@@ -98,7 +98,7 @@ describe('TransportControls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Count-in: Off' }));
 
     await waitFor(() => {
-      expect(updateLoop).toHaveBeenCalledWith(true, 0, 15_360);
+      expect(updateLoop).toHaveBeenCalledWith(true, '1:1', '5:1');
       expect(updateSettings).toHaveBeenNthCalledWith(1, { metronomeEnabled: true });
       expect(updateSettings).toHaveBeenNthCalledWith(2, { countInBeats: 4 });
     });

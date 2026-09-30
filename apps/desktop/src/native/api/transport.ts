@@ -1,26 +1,26 @@
 import type { RuntimeProjectionStatus } from '@/model/domain';
-import { invokeHost } from '../invoke';
+import { dispatchControl } from '../invoke';
 
 export async function getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus> {
-  return await invokeHost<RuntimeProjectionStatus>('get_runtime_projection_status');
+  return dispatchControl({ command: 'runtime.projection.get', params: {} });
 }
 
 export async function retryRuntimeProjection(): Promise<RuntimeProjectionStatus> {
-  return await invokeHost<RuntimeProjectionStatus>('retry_runtime_projection');
+  return dispatchControl({ command: 'runtime.projection.retry', params: {} });
 }
 
 export async function playTimeline(): Promise<void> {
-  await invokeHost<void>('play_timeline');
+  await dispatchControl({ command: 'transport.play', params: {} });
 }
 
 export async function stopTimeline(): Promise<void> {
-  await invokeHost<void>('stop_timeline');
+  await dispatchControl({ command: 'transport.stop', params: {} });
 }
 
 export async function goToStartTimeline(): Promise<void> {
-  await invokeHost<void>('go_to_start_timeline');
+  await dispatchControl({ command: 'transport.go-to-start', params: {} });
 }
 
 export async function seekTimeline(tick: number): Promise<void> {
-  await invokeHost<void>('seek_timeline', { tick });
+  await dispatchControl({ command: 'transport.seek', params: { tick } });
 }

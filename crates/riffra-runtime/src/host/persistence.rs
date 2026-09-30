@@ -1,6 +1,8 @@
 use super::HostState;
 use super::events::HostEventSubscription;
-use riffra_control::{ControlCommand, ControlRequest, new_instance_id};
+use crate::api::params::{PluginParameterPersistParams, PluginStatePersistParams};
+use crate::api::{ControlCommand, RuntimeCommand};
+use riffra_control::new_instance_id;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -213,38 +215,35 @@ fn flush_plugin_changes(
         {
             continue;
         }
-        let (command, params) = match &queued.change {
-            PendingPluginChange::State(change) => (
-                "plugin.state.persist",
-                serde_json::json!({
-                    "trackId": change.track_id,
-                    "deviceId": change.device_id,
-                    "parameterValues": change.parameter_values,
-                    "stateData": change.state_data,
-                    "bypassed": change.bypassed,
-                }),
-            ),
-            PendingPluginChange::Parameter(change) => (
-                "plugin.parameter.persist",
-                serde_json::json!({
-                    "trackId": change.track_id,
-                    "deviceId": change.device_id,
-                    "parameterIndex": change.parameter_index,
-                    "value": change.value,
-                }),
-            ),
-        };
+        let command: ControlCommand = match &queued.change {
+            PendingPluginChange::State(change) => {
+                RuntimeCommand::PluginStatePersist(PluginStatePersistParams {
+                    track_id: change.track_id.clone(),
+                    device_id: change.device_id.clone(),
+                    parameter_values: change.parameter_values.clone(),
+                    state_data: change.state_data.clone(),
+                    bypassed: change.bypassed,
+                })
+            }
+            PendingPluginChange::Parameter(change) => {
+                RuntimeCommand::PluginParameterPersist(PluginParameterPersistParams {
+                    track_id: change.track_id.clone(),
+                    device_id: change.device_id.clone(),
+                    parameter_index: change.parameter_index,
+                    value: change.value,
+                })
+            }
+        }
+        .into();
+        let command_name = command.name();
         let response = state.dispatch_persistence_request(
-            ControlRequest::new(
-                format!("plugin-persistence-{}", new_instance_id()),
-                ControlCommand::new(command, params),
-                None,
-            )
-            .with_expected_project_id(active_project_id.clone()),
+            command
+                .into_request(format!("plugin-persistence-{}", new_instance_id()), None)
+                .with_expected_project_id(active_project_id.clone()),
         );
         if !response.ok {
             tracing::warn!(
-                command,
+                command = command_name,
                 error = ?response.error,
                 "Host plugin state persistence failed"
             );

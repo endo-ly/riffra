@@ -1,33 +1,22 @@
 use crate::RuntimeBinaries;
+use crate::api::output::{ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState};
+use crate::api::{
+    CanonicalAccess, CanonicalCommand, CommandDecodeError, CommandExecutor, CommandScope,
+    ControlCommand, ControlOutput, attach_input_value, json_pointer_segment,
+};
 use crate::instrument::BuiltInInstrumentCatalog;
-use crate::model::{
-    ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState, TrackSummary,
-};
-use riffra_control::{ControlCommand, ControlRequest, ErrorCode, ProtocolError};
-use riffra_core::application::{
-    ApplicationMutation, AudioAssetClipPlacement, ChordVoicingInput, HarmonyEventInput,
-    HarmonyEventPatch, HarmonyRealizeSelection, MarkerPatch, MidiAssetClipPlacement, MidiNoteInput,
-    MidiNotePatch, MidiNoteUpdate, MusicalMidiNoteInput, MusicalNoteListRequest, MusicalNoteScope,
-    MusicalNoteTransformRequest, SessionInspectionQuery, SessionSettingsPatch,
-    inspect_canonical_state,
-};
+use riffra_control::{ControlRequest, ErrorCode, ProtocolError};
+use riffra_core::application::ApplicationMutation;
 use riffra_core::ports::{PortError, SessionStorage};
-use riffra_core::{
-    AppCore, ApplicationError, AssetId, AssetKind, AudioClipMove, AudioClipPatch,
-    AutomationParameter, AutomationPoint, CreativeSession, FrameRange, MidiClipMove, MidiClipPatch,
-    MidiInputRoute, PhrasePattern, PhrasePlacement, ProjectTimebase, RhythmPattern, TimelineTick,
-    TrackKind, TrackPatch,
-};
-use riffra_host::{DataRootLease, ProjectStore, SessionStore, now_ms};
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use riffra_core::{AppCore, ApplicationError, AssetId, CreativeSession};
+use riffra_host::{DataRootLease, ProjectStore, SessionStore};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-mod asset;
+mod canonical;
 mod clips;
 mod device;
 mod instrument;
@@ -35,14 +24,6 @@ mod music;
 mod project;
 mod session;
 mod track;
-
-pub(crate) use device::{
-    DeviceBypassParams, DeviceIdParams, DeviceInspectParams, DeviceParameterGetParams,
-    DeviceParameterListParams, DeviceParameterParams, EffectRemoveParams, EffectReorderParams,
-    MissingPluginReplaceParams, MissingRelinkParams, PluginDeviceParams, PluginPathParams,
-    PluginPresetSetParams, PluginStateSetParams,
-};
-pub(crate) use track::{AudioInputParams, MidiInputParams};
 
 #[derive(Debug)]
 pub enum DispatchError {
@@ -124,17 +105,17 @@ impl DispatchError {
         }
     }
 
+    fn requires_live_host() -> Self {
+        Self::RuntimeUnavailable("this command requires --attach to a running Riffra Host".into())
+    }
+
     fn attach_input_value(mut self, params: &Value) -> Self {
         if let Self::InvalidRequest {
             details: Some(Value::Object(details)),
             ..
         } = &mut self
-            && let Some(path) = details.get("path").and_then(Value::as_str)
-            && !details.contains_key("value")
-            && let Some(value) = params.pointer(path)
-            && should_include_error_value(value)
         {
-            details.insert("value".into(), value.clone());
+            attach_input_value(details, params);
         }
         self
     }
@@ -152,6 +133,7 @@ impl DispatchError {
         if let Some(Value::String(path)) = details.get_mut("path")
             && path.starts_with('/')
             && !path.starts_with("/params/")
+            && path != "/command"
         {
             *path = format!("/params{path}");
         }
@@ -171,6 +153,13 @@ impl From<String> for DispatchError {
 impl From<&'static str> for DispatchError {
     fn from(error: &'static str) -> Self {
         Self::CommandFailed(error.into())
+    }
+}
+
+impl From<CommandDecodeError> for DispatchError {
+    fn from(error: CommandDecodeError) -> Self {
+        let message = error.to_string();
+        Self::invalid_request_with_details(message, error.details())
     }
 }
 
@@ -306,25 +295,18 @@ pub struct HostDispatcher<'a, A> {
     data_root: PathBuf,
     sonalloy: PathBuf,
     built_in_instruments: Arc<BuiltInInstrumentCatalog>,
-    allow_runtime_commands: bool,
     validate_plugin_roles: bool,
 }
 
 /// Standalone dispatcher type retained as the CLI's editing entry point.
 pub type Dispatcher = HostDispatcher<'static, ()>;
 
+/// The typed result of one dispatched command and the canonical sequence it
+/// was answered at.
 #[derive(Debug)]
 pub struct DispatchResult {
-    pub result_type: &'static str,
-    pub value: Value,
+    pub output: ControlOutput,
     pub sequence: u64,
-    pub created_entity_ids: BTreeMap<String, Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TrackIdParams {
-    pub(crate) track_id: String,
 }
 
 impl HostDispatcher<'static, ()> {
@@ -361,9 +343,82 @@ impl HostDispatcher<'static, ()> {
             data_root,
             sonalloy,
             built_in_instruments,
-            allow_runtime_commands: false,
             validate_plugin_roles: false,
         })
+    }
+
+    /// Validates, decodes, and executes one request in Standalone mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request is malformed, requires a live Host,
+    /// fails its preconditions, or fails while executing.
+    pub fn dispatch_request(
+        &self,
+        request: ControlRequest,
+    ) -> Result<DispatchResult, DispatchError> {
+        request
+            .validate()
+            .map_err(|error| DispatchError::invalid_request(error.message))?;
+        let command = ControlCommand::decode(&request.command, request.params)?;
+        self.dispatch_checked(
+            command,
+            request.expected_sequence,
+            request.expected_project_id.as_deref(),
+        )
+    }
+
+    /// Executes one typed command in Standalone mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the command requires a live Host, the canonical
+    /// sequence differs from `expected_sequence`, or the command fails.
+    pub fn dispatch(
+        &self,
+        command: ControlCommand,
+        expected_sequence: Option<u64>,
+    ) -> Result<DispatchResult, DispatchError> {
+        self.dispatch_checked(command, expected_sequence, None)
+    }
+
+    fn dispatch_checked(
+        &self,
+        command: ControlCommand,
+        expected_sequence: Option<u64>,
+        expected_project_id: Option<&str>,
+    ) -> Result<DispatchResult, DispatchError> {
+        let policy = command.policy();
+        if policy.executor == CommandExecutor::Runtime {
+            return Err(DispatchError::requires_live_host());
+        }
+        if let (CommandScope::Project { .. }, Some(expected_project_id)) =
+            (policy.scope, expected_project_id)
+        {
+            let current_project_id = self.active_project_id()?;
+            if expected_project_id != current_project_id {
+                return Err(DispatchError::ProjectConflict {
+                    expected_project_id: expected_project_id.to_owned(),
+                    current_project_id,
+                });
+            }
+        }
+        let canonical = self.core.canonical_state()?;
+        if let Some(expected_sequence) = expected_sequence
+            && expected_sequence != canonical.sequence
+        {
+            return Err(DispatchError::Conflict {
+                expected_sequence,
+                current_sequence: canonical.sequence,
+            });
+        }
+        match (command, policy.executor) {
+            (ControlCommand::Canonical(command), CommandExecutor::Canonical { access }) => {
+                self.execute_canonical(command, access, canonical)
+            }
+            (ControlCommand::Project(command), _) => self.execute_project(command, canonical),
+            _ => Err(DispatchError::requires_live_host()),
+        }
     }
 }
 
@@ -383,7 +438,6 @@ impl<'a, A> HostDispatcher<'a, A> {
             data_root: self.data_root.clone(),
             sonalloy: self.sonalloy.clone(),
             built_in_instruments: Arc::clone(&self.built_in_instruments),
-            allow_runtime_commands: false,
             validate_plugin_roles: self.validate_plugin_roles,
         }
     }
@@ -415,231 +469,42 @@ impl<'a, A> HostDispatcher<'a, A> {
             data_root: data_root.to_path_buf(),
             sonalloy: sonalloy.to_path_buf(),
             built_in_instruments: Arc::clone(built_in_instruments),
-            allow_runtime_commands: true,
             validate_plugin_roles: true,
         }
     }
 
-    pub fn dispatch_request(
+    /// Executes one canonical command against `canonical`.
+    ///
+    /// Reads answer at the sequence of `canonical`; mutations answer at the
+    /// sequence they committed.
+    pub(crate) fn execute_canonical(
         &self,
-        request: ControlRequest,
+        command: CanonicalCommand,
+        access: CanonicalAccess,
+        canonical: riffra_core::CanonicalState,
     ) -> Result<DispatchResult, DispatchError> {
-        request
-            .validate()
-            .map_err(|error| DispatchError::invalid_request(error.message))?;
-        if !self.allow_runtime_commands && is_runtime_host_only(&request.command) {
-            return Err(DispatchError::RuntimeUnavailable(
-                "this command requires --attach to a running Riffra Host".into(),
-            ));
-        }
-        let canonical = self.core.canonical_state()?;
-        let request = if command_requires_project_id(&request.command)
-            && request.expected_project_id.is_none()
-        {
-            let project_id = self
-                .project_store
-                .as_ref()
-                .active_project_id()
-                .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
-            request.with_expected_project_id(project_id)
-        } else {
-            request
+        let mut wire = serde_json::to_value(&command).expect("canonical commands serialize");
+        let params = wire["params"].take();
+        let canonical_sequence = canonical.sequence;
+        let output = self
+            .run_canonical(command, canonical)
+            .map_err(|error| error.attach_input_value(&params))?;
+        let sequence = match access {
+            CanonicalAccess::Read => canonical_sequence,
+            CanonicalAccess::Mutation { .. } => self.core.snapshot()?.sequence,
         };
-        let current_project_id = self
-            .project_store
+        Ok(DispatchResult { output, sequence })
+    }
+
+    fn active_project_id(&self) -> Result<String, DispatchError> {
+        self.project_store
             .as_ref()
             .active_project_id()
-            .map_err(|error| DispatchError::CommandFailed(error.to_string()))?;
-        validate_project_precondition(
-            &request.command,
-            request.expected_project_id.as_deref(),
-            &current_project_id,
-        )
-        .map_err(|error| match error.code {
-            ErrorCode::Conflict => DispatchError::ProjectConflict {
-                expected_project_id: request.expected_project_id.clone().unwrap_or_default(),
-                current_project_id,
-            },
-            _ => DispatchError::invalid_request(error.message),
-        })?;
-        if let Some(expected_sequence) = request.expected_sequence
-            && expected_sequence != canonical.sequence
-        {
-            return Err(DispatchError::Conflict {
-                expected_sequence,
-                current_sequence: canonical.sequence,
-            });
-        }
-        self.dispatch_with_canonical(request.control_command(), canonical)
-    }
-
-    pub fn dispatch(&self, request: ControlCommand) -> Result<DispatchResult, DispatchError> {
-        let canonical = self.core.canonical_state()?;
-        self.dispatch_with_canonical(request, canonical)
-    }
-
-    fn apply_batch(
-        &self,
-        canonical: riffra_core::CanonicalState,
-        operations: Vec<ControlCommand>,
-        include_created_ids: bool,
-    ) -> Result<DispatchResult, DispatchError> {
-        if operations.is_empty() {
-            return Err(DispatchError::invalid_request(
-                "session apply requires at least one operation",
-            ));
-        }
-
-        let operation_count = operations.len();
-        let candidate = self.batch_candidate(canonical.session);
-        let mut created_entity_counts = BTreeMap::<String, usize>::new();
-        let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
-        for (operation_index, operation) in operations.into_iter().enumerate() {
-            let command = operation.name.clone();
-            if !session::is_batch_supported_operation(&operation) {
-                return Err(DispatchError::invalid_request(format!(
-                    "command '{command}' cannot be used in session apply"
-                ))
-                .with_batch_context(operation_index, &command));
-            }
-            let operation = session::resolve_batch_references(&candidate, operation)
-                .map_err(|error| error.with_batch_context(operation_index, &command))?;
-            let result = candidate
-                .dispatch(operation)
-                .map_err(|error| error.with_batch_context(operation_index, &command))?;
-            for (kind, ids) in result.created_entity_ids {
-                *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
-                if include_created_ids {
-                    created_entity_ids.entry(kind).or_default().extend(ids);
-                }
-            }
-        }
-
-        let candidate_session = candidate
-            .core
-            .snapshot()
-            .map_err(DispatchError::from)?
-            .session;
-        self.commit_batch_candidate(candidate_session, canonical.sequence)
-            .map_err(DispatchError::from)?;
-
-        let mut value = serde_json::json!({
-            "appliedCommands": operation_count,
-            "createdEntityCounts": created_entity_counts,
-        });
-        if let Value::Object(ref mut value) = value
-            && include_created_ids
-        {
-            value.insert(
-                "createdEntityIds".into(),
-                serde_json::json!(created_entity_ids),
-            );
-        }
-
-        Ok(DispatchResult {
-            result_type: "batchMutation",
-            value,
-            sequence: 0,
-            created_entity_ids: if include_created_ids {
-                created_entity_ids
-            } else {
-                BTreeMap::new()
-            },
-        })
-    }
-
-    pub(crate) fn dispatch_with_canonical(
-        &self,
-        request: ControlCommand,
-        canonical: riffra_core::CanonicalState,
-    ) -> Result<DispatchResult, DispatchError> {
-        if !self.allow_runtime_commands && is_runtime_host_only(&request.name) {
-            return Err(DispatchError::RuntimeUnavailable(
-                "this command requires --attach to a running Riffra Host".into(),
-            ));
-        }
-        let command = request.name.clone();
-        let canonical_sequence = canonical.sequence;
-        let params = request.params.clone();
-        let result = if session::handles(&command) {
-            session::dispatch(self, request, canonical.clone())
-        } else if track::handles(&command) {
-            track::dispatch(self, request, canonical.clone())
-        } else if clips::handles(&command) {
-            clips::dispatch(self, request, canonical.clone())
-        } else if music::handles(&command) {
-            music::dispatch(self, request, canonical.clone())
-        } else if asset::handles(&command) {
-            asset::dispatch(self, request, canonical.clone())
-        } else if project::handles(&command) {
-            project::dispatch(self, request, canonical.clone())
-        } else if instrument::handles(&command) {
-            instrument::dispatch(self, request)
-        } else if device::handles(&command) {
-            device::dispatch(self, request)
-        } else {
-            return Err(DispatchError::invalid_request(format!(
-                "unknown command: {command}"
-            )));
-        }
-        .map_err(|error: DispatchError| error.attach_input_value(&params))?;
-        let created_entity_ids = result.created_entity_ids.clone();
-        let sequence = if is_read_command(&command) {
-            canonical_sequence
-        } else {
-            self.core
-                .snapshot()
-                .map_err(|error| error.to_string())?
-                .sequence
-        };
-        if is_arrangement_mutation_command(&command) {
-            let canonical = self.core.canonical_state()?;
-            return Ok(DispatchResult {
-                result_type: "arrangementMutation",
-                value: serde_json::to_value(ArrangementMutationResult {
-                    canonical: canonical.clone(),
-                    projection: ArrangementProjectionOutcome::NotRequired,
-                    created_entity_ids: created_entity_ids.clone(),
-                })
-                .expect("arrangement mutation results serialize"),
-                sequence: canonical.sequence,
-                created_entity_ids,
-            });
-        }
-        Ok(DispatchResult {
-            result_type: result.result_type,
-            value: result.value,
-            sequence,
-            created_entity_ids,
-        })
-    }
-
-    fn session(&self, session: CreativeSession) -> DispatchResult {
-        self.value("session", session)
+            .map_err(|error| DispatchError::CommandFailed(error.to_string()))
     }
 
     fn project_state(&self) -> Result<ProjectState, DispatchError> {
         crate::projects::state(self.project_store.as_ref()).map_err(DispatchError::CommandFailed)
-    }
-
-    fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
-        let prepared = crate::projects::prepare(self.project_store.as_ref(), project_id)
-            .map_err(DispatchError::CommandFailed)?;
-        crate::library::index::refresh(
-            &self.data_root,
-            &prepared.storage,
-            &prepared.loaded.session,
-        );
-        let activated =
-            crate::projects::activate(self.project_store.as_ref(), prepared, |session| {
-                self.activate_core_session(session)
-            })
-            .map_err(DispatchError::CommandFailed)?;
-        self.set_core_recovery(activated.loaded.recovered_from_generation);
-        self.storage.replace_owned(activated.storage.clone());
-        let sequence = activated.canonical.sequence;
-        let activation = crate::projects::result(activated);
-        self.value_with_known_sequence("projectActivation", activation, sequence)
     }
 
     fn set_core_recovery(&self, recovered: bool) {
@@ -659,79 +524,37 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
     }
 
-    fn value_with_known_sequence<T: serde::Serialize>(
+    /// Reports a committed edit that created no entities.
+    fn edited(&self, _session: CreativeSession) -> Result<ControlOutput, DispatchError> {
+        self.arrangement_mutation(BTreeMap::new())
+    }
+
+    /// Reports a committed edit and the entities it created.
+    fn created(&self, mutation: ApplicationMutation) -> Result<ControlOutput, DispatchError> {
+        self.arrangement_mutation(mutation.created_entity_ids)
+    }
+
+    fn arrangement_mutation(
         &self,
-        result_type: &'static str,
-        value: T,
-        sequence: u64,
-    ) -> Result<DispatchResult, DispatchError> {
-        Ok(DispatchResult {
-            result_type,
-            value: serde_json::to_value(value).expect("project values must serialize"),
-            sequence,
-            created_entity_ids: BTreeMap::new(),
-        })
-    }
-
-    fn application_mutation(&self, mutation: ApplicationMutation) -> DispatchResult {
-        DispatchResult {
-            result_type: "session",
-            value: serde_json::to_value(mutation.session)
-                .expect("canonical mutation results serialize"),
-            sequence: 0,
-            created_entity_ids: mutation.created_entity_ids,
-        }
-    }
-
-    fn value<T: serde::Serialize>(&self, result_type: &'static str, value: T) -> DispatchResult {
-        DispatchResult {
-            result_type,
-            value: serde_json::to_value(value).expect("canonical values must serialize"),
-            sequence: 0,
-            created_entity_ids: BTreeMap::new(),
-        }
+        created_entity_ids: BTreeMap<String, Vec<String>>,
+    ) -> Result<ControlOutput, DispatchError> {
+        Ok(ControlOutput::ArrangementMutation(
+            ArrangementMutationResult {
+                canonical: self.core.canonical_state()?,
+                projection: ArrangementProjectionOutcome::NotRequired,
+                created_entity_ids,
+            },
+        ))
     }
 }
 
-fn is_read_command(command: &str) -> bool {
-    matches!(
-        command,
-        "session.get"
-            | "session.inspect"
-            | "history.get"
-            | "track.list"
-            | "audio-clip.list"
-            | "midi-clip.list"
-            | "music.harmony.resolve"
-            | "music.harmony.list"
-            | "music.note.list"
-            | "music.note.get"
-            | "music.phrase.preview"
-            | "music.region.list"
-            | "device.inspect"
-            | "device.parameter.list"
-            | "device.parameter.get"
-            | "plugin.preset.list"
-            | "plugin.preset.get"
-            | "plugin.state.get"
-            | "project.export"
-            | "project.list"
-            | "instrument.list"
-            | "instrument.save"
-            | "instrument.export"
-    )
-}
-
-pub fn command_requires_project_id(command: &str) -> bool {
-    !is_host_scoped_command(command)
-}
-
+/// Checks the active Project precondition of a Project-bound command.
 pub(crate) fn validate_project_precondition(
-    command: &str,
+    scope: CommandScope,
     expected_project_id: Option<&str>,
     current_project_id: &str,
 ) -> Result<(), ProtocolError> {
-    if !command_requires_project_id(command) {
+    if scope == CommandScope::Host {
         return Ok(());
     }
     let Some(expected_project_id) = expected_project_id else {
@@ -749,313 +572,258 @@ pub(crate) fn validate_project_precondition(
     Ok(())
 }
 
-fn is_host_scoped_command(command: &str) -> bool {
-    matches!(
-        command,
-        "host.status"
-            | "host.info"
-            | "host.bootstrap"
-            | "host.shutdown"
-            | "project.list"
-            | "instrument.list"
-            | "instrument.save"
-            | "instrument.export"
-            | "audio.emergency-mute"
-            | "midi.listening.enable"
-            | "midi.listening.disable"
-            | "audio.status"
-            | "audio.diagnostics"
-            | "audio.probe"
-            | "audio.channels.probe"
-            | "audio.recover"
-            | "audio.startup.retry"
-            | "audio.driver.get"
-            | "audio.driver.set"
-            | "asset.preview"
-            | "asset.preview.stop"
-            | "instrument.preview"
-            | "instrument.preview.stop"
-            | "plugin.catalog.list"
-            | "plugin.scan"
-            | "plugin.scan.start"
-            | "job.get"
-            | "job.cancel"
-            | "library.search"
-            | "library.asset.update"
-            | "library.related"
-            | "library.instrument.list"
-            | "library.instrument.favorite.set"
-            | "library.instrument.category.set"
-            | "library.instrument.tags.set"
-            | "library.instrument.collection.list"
-            | "library.instrument.collection.create"
-            | "library.instrument.collection.rename"
-            | "library.instrument.collection.delete"
-            | "library.instrument.collection.membership.set"
-            | "analysis.start"
-    )
-}
-
-fn is_arrangement_mutation_command(command: &str) -> bool {
-    matches!(
-        command,
-        "instrument.apply"
-            | "track.audio-input.set"
-            | "track.audio-input.clear"
-            | "track.midi-input.set"
-            | "track.midi-input.clear"
-            | "instrument.vst3.set"
-            | "instrument.clear"
-            | "effect.add"
-            | "effect.remove"
-            | "effect.reorder"
-            | "device.bypass"
-            | "device.parameter.set"
-            | "missing.relink"
-            | "missing.disable-plugin"
-            | "missing.replace-plugin"
-            | "undo"
-            | "redo"
-    )
-}
-
-fn is_runtime_host_only(command: &str) -> bool {
-    matches!(
-        command,
-        "runtime.projection.get"
-            | "runtime.projection.retry"
-            | "transport.play"
-            | "transport.stop"
-            | "transport.go-to-start"
-            | "transport.seek"
-            | "audio.status"
-            | "audio.diagnostics"
-            | "audio.probe"
-            | "audio.channels.probe"
-            | "audio.recover"
-            | "audio.startup.retry"
-            | "audio.driver.get"
-            | "audio.driver.set"
-            | "asset.preview"
-            | "asset.preview.stop"
-            | "instrument.preview.stop"
-            | "midi.send"
-            | "midi.panic"
-            | "device.inspect"
-            | "device.parameter.list"
-            | "device.parameter.get"
-            | "plugin.preset.list"
-            | "plugin.preset.get"
-            | "plugin.preset.set"
-            | "plugin.state.get"
-            | "plugin.state.set"
-            | "plugin.catalog.list"
-            | "plugin.scan"
-            | "plugin.scan.start"
-            | "missing.list"
-            | "record.start"
-            | "record.stop"
-            | "record.status"
-            | "record.list"
-            | "record.rename"
-            | "record.archive"
-            | "record.promote"
-            | "record.tag"
-            | "record.delete"
-            | "record.duplicates"
-            | "render.start"
-            | "job.get"
-            | "job.cancel"
-            | "library.search"
-            | "library.asset.update"
-            | "library.related"
-            | "analysis.start"
-    )
-}
-
-fn decode<T: DeserializeOwned>(value: Value) -> Result<T, DispatchError> {
-    let input = value.clone();
-    let input_bytes = serde_json::to_vec(&value).expect("JSON values must serialize");
-    let mut deserializer = serde_json::Deserializer::from_slice(&input_bytes);
-    serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
-        let (path, index) = json_path_to_pointer(error.path());
-        let mut details = serde_json::Map::new();
-        details.insert("path".into(), Value::String(path.clone()));
-        if let Some(index) = index {
-            details.insert("index".into(), serde_json::json!(index));
-        }
-        if let Some(value) = input.pointer(&path)
-            && should_include_error_value(value)
-        {
-            details.insert("value".into(), value.clone());
-        }
-        DispatchError::invalid_request_with_details(
-            format!("invalid command parameters: {}", error.inner()),
-            Value::Object(details),
-        )
-    })
-}
-
-fn json_path_to_pointer(path: &serde_path_to_error::Path) -> (String, Option<usize>) {
-    let mut pointer = String::new();
-    let mut innermost_index = None;
-    for segment in path.iter() {
-        match segment {
-            serde_path_to_error::Segment::Map { key } => {
-                pointer.push('/');
-                pointer.push_str(&json_pointer_segment(key));
-            }
-            serde_path_to_error::Segment::Seq { index } => {
-                pointer.push('/');
-                pointer.push_str(&index.to_string());
-                innermost_index = Some(*index);
-            }
-            serde_path_to_error::Segment::Enum { variant } => {
-                pointer.push('/');
-                pointer.push_str(&json_pointer_segment(variant));
-            }
-            serde_path_to_error::Segment::Unknown => {}
-        }
-    }
-    (pointer, innermost_index)
-}
-
-fn json_pointer_segment(value: &str) -> String {
-    value.replace('~', "~0").replace('/', "~1")
-}
-
-fn should_include_error_value(value: &Value) -> bool {
-    let small_shape = match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
-        Value::Array(values) => values.len() <= 4,
-        Value::Object(values) => values.len() <= 8,
-    };
-    small_shape && serde_json::to_vec(value).is_ok_and(|value| value.len() <= 512)
-}
-
 fn parse_asset_id(value: &str) -> Result<AssetId, DispatchError> {
     AssetId::from_normalized(value)
         .map_err(|error| DispatchError::invalid_request(format!("Asset id is invalid: {error}")))
 }
 
-fn parse_track_kind(value: &str) -> Result<TrackKind, DispatchError> {
-    match value {
-        "audio" => Ok(TrackKind::Audio),
-        "instrument" => Ok(TrackKind::Instrument),
-        _ => Err(DispatchError::invalid_request(
-            "track kind must be audio or instrument",
-        )),
-    }
-}
-
-fn parse_automation_parameter(value: &str) -> Result<AutomationParameter, DispatchError> {
-    match value {
-        "volume" => Ok(AutomationParameter::Volume),
-        "pan" => Ok(AutomationParameter::Pan),
-        _ => Err(DispatchError::invalid_request(
-            "automation parameter must be volume or pan",
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{Dispatcher, HostDispatcher};
-    use riffra_control::{ControlCommand, ErrorCode};
+    use crate::api::{CommandExecutor, ControlCommand};
+    use crate::test_support::{command, mutated_session, output_value};
+    use riffra_control::{ControlRequest, ErrorCode};
     use riffra_host::now_ms;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::fs;
 
-    fn request(command: &str, params: Value) -> ControlCommand {
-        ControlCommand {
-            name: command.into(),
-            params,
-        }
-    }
-
-    #[test]
-    fn project_precondition_classification_follows_active_project_dependency() {
-        for command in [
-            "host.status",
-            "host.info",
-            "host.bootstrap",
-            "host.shutdown",
-            "project.list",
-            "audio.emergency-mute",
-            "audio.probe",
-            "audio.driver.get",
-            "plugin.catalog.list",
-            "plugin.scan",
-            "instrument.list",
-            "instrument.save",
-            "instrument.export",
-            "instrument.preview",
-            "instrument.preview.stop",
-            "library.instrument.list",
-            "library.instrument.favorite.set",
-            "library.instrument.category.set",
-            "library.instrument.tags.set",
-            "library.instrument.collection.list",
-            "library.instrument.collection.create",
-            "library.instrument.collection.rename",
-            "library.instrument.collection.delete",
-            "library.instrument.collection.membership.set",
-        ] {
-            assert!(!super::command_requires_project_id(command), "{command}");
-        }
-
-        for command in [
-            "session.get",
-            "audio.master-gain.preview",
-            "track.mix.preview",
-            "track.add",
-            "project.export",
-            "transport.play",
-            "transport.stop",
-            "transport.go-to-start",
-            "transport.seek",
-            "record.start",
-            "record.stop",
-            "render.start",
-            "plugin.editor.open",
-            "take.comparison.start",
-            "instrument.vst3.set",
-            "instrument.apply",
-            "missing.disable-plugin",
-            "undo",
-            "redo",
-        ] {
-            assert!(super::command_requires_project_id(command), "{command}");
-        }
-
-        let error =
-            super::validate_project_precondition("track.add", Some("project-a"), "project-b")
-                .unwrap_err();
-        assert_eq!(error.code, ErrorCode::Conflict);
-        assert_eq!(error.details.unwrap()["currentProjectId"], "project-b");
-    }
-
-    #[test]
-    fn track_and_midi_note_edits_share_core_and_persist() {
-        let root = std::env::temp_dir().join(format!("riffra-dispatcher-{}", std::process::id()));
+    fn open(label: &str) -> (Dispatcher, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-dispatcher-{label}-{}",
+            riffra_control::new_instance_id()
+        ));
         let dispatcher = Dispatcher::open(
             root.clone(),
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
-        let track = dispatcher
-            .dispatch(request(
-                "track.add",
-                json!({"name":"Keys","kind":"instrument"}),
+        (dispatcher, root)
+    }
+
+    #[test]
+    fn unknown_command_request_reports_command_path() {
+        // Arrange
+        let (dispatcher, root) = open("unknown-command");
+
+        // Act
+        let error = dispatcher
+            .dispatch_request(ControlRequest::new(
+                "unknown-command",
+                "missing.command",
+                json!({}),
+                None,
             ))
+            .unwrap_err()
+            .protocol_error();
+
+        // Assert
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.details.unwrap()["path"], "/command");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn standalone_rejects_every_runtime_command() {
+        // Arrange
+        let (dispatcher, root) = open("runtime-only");
+        let device = json!({"trackId": "track:1", "deviceId": "device:1"});
+        let runtime_commands = [
+            ("host.status", json!({})),
+            ("host.info", json!({})),
+            ("host.bootstrap", json!({})),
+            ("host.shutdown", json!({})),
+            ("runtime.projection.get", json!({})),
+            ("runtime.projection.retry", json!({})),
+            ("transport.play", json!({})),
+            ("transport.stop", json!({})),
+            ("transport.go-to-start", json!({})),
+            ("transport.seek", json!({"tick": 0})),
+            ("audio.master-gain.preview", json!({"gainDb": 0.0})),
+            (
+                "track.mix.preview",
+                json!({"trackId": "track:1", "gainDb": 0.0}),
+            ),
+            ("audio.status", json!({})),
+            ("audio.diagnostics", json!({})),
+            ("audio.probe", json!({})),
+            (
+                "audio.channels.probe",
+                json!({"driver": "d", "inputDevice": "i", "outputDevice": "o"}),
+            ),
+            ("audio.recover", json!({})),
+            ("audio.startup.retry", json!({})),
+            ("audio.driver.get", json!({})),
+            (
+                "audio.driver.set",
+                json!({"driver": "d", "inputDevice": null, "inputChannel": 0, "outputDevice": null, "sampleRate": null, "bufferSize": null}),
+            ),
+            ("audio.emergency-mute", json!({"muted": true})),
+            ("audio.feedback-protection.reset", json!({})),
+            ("asset.preview", json!({"assetId": "asset:1"})),
+            ("asset.preview.stop", json!({})),
+            ("instrument.preview", json!({"instrumentId": "builtin:1"})),
+            ("instrument.preview.stop", json!({})),
+            ("midi.listening.enable", json!({})),
+            ("midi.listening.disable", json!({})),
+            (
+                "midi.send",
+                json!({"trackId": "track:1", "bytes": [144, 60, 100]}),
+            ),
+            ("midi.target.set", json!({"trackId": null})),
+            ("midi.panic", json!({"trackId": "track:1"})),
+            ("plugin.catalog.list", json!({})),
+            ("plugin.scan", json!({})),
+            ("plugin.scan.start", json!({})),
+            ("plugin.editor.open", device.clone()),
+            ("device.inspect", device.clone()),
+            ("device.parameter.list", device.clone()),
+            (
+                "device.parameter.get",
+                json!({"trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0}),
+            ),
+            ("plugin.preset.list", device.clone()),
+            ("plugin.preset.get", device.clone()),
+            (
+                "plugin.preset.set",
+                json!({"trackId": "track:1", "deviceId": "device:1", "presetIndex": 0}),
+            ),
+            ("plugin.state.get", device.clone()),
+            (
+                "plugin.state.set",
+                json!({"trackId": "track:1", "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
+            ),
+            (
+                "plugin.state.persist",
+                json!({"trackId": "track:1", "deviceId": "device:1", "parameterValues": [], "stateData": null, "bypassed": false}),
+            ),
+            (
+                "plugin.parameter.persist",
+                json!({"trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0, "value": 0.5}),
+            ),
+            ("missing.list", json!({})),
+            ("record.start", json!({})),
+            ("record.stop", json!({})),
+            ("record.status", json!({})),
+            ("record.list", json!({})),
+            ("record.rename", json!({"id": "take", "newName": "renamed"})),
+            ("record.archive", json!({"id": "take"})),
+            ("record.promote", json!({"id": "take"})),
+            (
+                "record.tag",
+                json!({"id": "take", "tag": null, "note": null}),
+            ),
+            ("record.delete", json!({"id": "take"})),
+            ("record.duplicates", json!({})),
+            (
+                "take.activate",
+                json!({"sessionId": "session", "takeId": "take"}),
+            ),
+            ("take.place-separate-clip", json!({"takeId": "take"})),
+            (
+                "audio-clip.take-variant.set",
+                json!({"clipId": "clip", "variant": "raw"}),
+            ),
+            ("take.comparison.start", json!({"takeId": "take"})),
+            ("take.comparison.switch", json!({"variant": "raw"})),
+            ("take.comparison.stop", json!({})),
+            (
+                "project.restore-generation",
+                json!({"fileName": "generation.json"}),
+            ),
+            ("render.start", json!({})),
+            ("job.get", json!({"id": "job"})),
+            ("job.cancel", json!({"id": "job"})),
+            ("analysis.start", json!({"path": "take.wav"})),
+            ("library.search", json!({"query": "kick"})),
+            (
+                "library.asset.update",
+                json!({"id": "asset", "tag": null, "note": null}),
+            ),
+            ("library.related", json!({"id": "asset"})),
+            ("library.instrument.list", json!({})),
+            (
+                "library.instrument.favorite.set",
+                json!({"instrumentId": "builtin:1", "favorite": true}),
+            ),
+            (
+                "library.instrument.category.set",
+                json!({"instrumentId": "builtin:1", "category": null}),
+            ),
+            (
+                "library.instrument.tags.set",
+                json!({"instrumentId": "builtin:1", "tags": []}),
+            ),
+            ("library.instrument.collection.list", json!({})),
+            (
+                "library.instrument.collection.create",
+                json!({"name": "Set"}),
+            ),
+            (
+                "library.instrument.collection.rename",
+                json!({"id": 1, "name": "Set"}),
+            ),
+            ("library.instrument.collection.delete", json!({"id": 1})),
+            (
+                "library.instrument.collection.membership.set",
+                json!({"collectionId": 1, "instrumentId": "builtin:1", "included": true}),
+            ),
+        ];
+
+        for (name, params) in runtime_commands {
+            // Act
+            let executor = ControlCommand::decode(name, params.clone())
+                .unwrap()
+                .policy()
+                .executor;
+            let error = dispatcher
+                .dispatch_request(ControlRequest::new(name, name, params, None))
+                .unwrap_err()
+                .protocol_error();
+
+            // Assert
+            assert_eq!(executor, CommandExecutor::Runtime, "{name}");
+            assert_eq!(error.code, ErrorCode::RuntimeUnavailable, "{name}");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn master_gain_set_updates_canonical_settings_in_standalone() {
+        // Arrange
+        let (dispatcher, root) = open("master-gain");
+
+        // Act
+        let result = dispatcher
+            .dispatch(
+                command("audio.master-gain.set", json!({"gainDb": -6.0})),
+                None,
+            )
             .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
-        let track_id = session.arrangement.tracks[0].id.clone();
+
+        // Assert
+        assert_eq!(mutated_session(&result).settings.master_db, -6.0);
+        assert_eq!(result.sequence, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn track_and_midi_note_edits_share_core_and_persist() {
+        let (dispatcher, root) = open("persist");
+        let track = dispatcher
+            .dispatch(
+                command("track.add", json!({"name":"Keys","kind":"instrument"})),
+                None,
+            )
+            .unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
         dispatcher
-            .dispatch(request(
-                "midi-clip.create",
-                json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
-            ))
+            .dispatch(
+                command(
+                    "midi-clip.create",
+                    json!({"trackId":track_id,"startTick":0,"durationTicks":3840}),
+                ),
+                None,
+            )
             .unwrap();
         drop(dispatcher);
 
@@ -1064,35 +832,38 @@ mod tests {
             crate::test_support::prepare_built_in_resource_root(&root),
         )
         .unwrap();
-        let result = reopened
-            .dispatch(request("session.get", json!({})))
-            .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(result.value).unwrap();
-        assert_eq!(session.arrangement.midi_clips.len(), 1);
+        let session = output_value(
+            &reopened
+                .dispatch(command("session.get", json!({})), None)
+                .unwrap(),
+        );
+        assert_eq!(
+            session["arrangement"]["midiClips"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn invalid_command_does_not_change_current_session() {
-        let root =
-            std::env::temp_dir().join(format!("riffra-dispatcher-invalid-{}", std::process::id()));
-        let dispatcher = Dispatcher::open(
-            root.clone(),
-            crate::test_support::prepare_built_in_resource_root(&root),
-        )
-        .unwrap();
-        let project_id = dispatcher
-            .dispatch(ControlCommand::new("project.list", serde_json::json!({})))
-            .unwrap()
-            .value["activeProjectId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let (dispatcher, root) = open("invalid");
+        let projects = output_value(
+            &dispatcher
+                .dispatch(command("project.list", json!({})), None)
+                .unwrap(),
+        );
+        let project_id = projects["activeProjectId"].as_str().unwrap();
         let current = root.join("projects").join(project_id).join("session.json");
         let before = fs::read(&current).unwrap();
         assert!(
             dispatcher
-                .dispatch(request("track.remove", json!({"trackId":"track:missing"}),))
+                .dispatch(
+                    command("track.remove", json!({"trackId":"track:missing"})),
+                    None
+                )
                 .is_err()
         );
         assert_eq!(fs::read(current).unwrap(), before);
@@ -1121,21 +892,21 @@ mod tests {
         fs::create_dir_all(&plugin_path).unwrap();
         crate::plugins::save(
             &root,
-            &crate::plugins::ScanReport {
+            &crate::api::output::ScanReport {
                 root: root.to_string_lossy().into_owned(),
                 started_at_ms: 0,
                 finished_at_ms: 0,
-                plugins: vec![crate::plugins::PluginEntry {
+                plugins: vec![crate::api::output::PluginEntry {
                     id: "vst3-synth".into(),
                     name: "Synth".into(),
                     vendor: None,
                     version: None,
-                    format: crate::plugins::PluginFormat::Vst3,
-                    role: Some(crate::plugins::PluginRole::Instrument),
+                    format: crate::api::output::PluginFormat::Vst3,
+                    role: Some(crate::api::output::PluginRole::Instrument),
                     path: plugin_path.to_string_lossy().into_owned(),
                     bundle: true,
                     modified_at_ms: None,
-                    scan_state: crate::plugins::PluginScanState::Validated,
+                    scan_state: crate::api::output::PluginScanState::Validated,
                 }],
                 issues: Vec::new(),
             },
@@ -1149,21 +920,24 @@ mod tests {
             &sonalloy,
             &built_in_instruments,
         );
-        let track = dispatcher
-            .dispatch(request(
-                "track.add",
-                json!({"name":"Lead","kind":"instrument"}),
-            ))
-            .unwrap();
-        let session: riffra_core::CreativeSession = serde_json::from_value(track.value).unwrap();
-        let track_id = session.arrangement.tracks[0].id.clone();
+        let execute = |name: &str, params: serde_json::Value| {
+            let command = command(name, params);
+            let CommandExecutor::Canonical { access } = command.policy().executor else {
+                unreachable!("{name} is a canonical command");
+            };
+            let ControlCommand::Canonical(command) = command else {
+                unreachable!("{name} is a canonical command");
+            };
+            dispatcher.execute_canonical(command, access, core.canonical_state().unwrap())
+        };
+        let track = execute("track.add", json!({"name":"Lead","kind":"instrument"})).unwrap();
+        let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
 
-        let error = dispatcher
-            .dispatch(request(
-                "session.apply",
-                json!({"operations":[{"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_path.display().to_string()}}]}),
-            ))
-            .unwrap_err();
+        let error = execute(
+            "session.apply",
+            json!({"operations":[{"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_path.display().to_string()}}]}),
+        )
+        .unwrap_err();
         assert!(
             error.protocol_error().details.unwrap()["cause"]
                 .as_str()

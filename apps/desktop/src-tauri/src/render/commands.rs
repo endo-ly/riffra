@@ -1,12 +1,13 @@
 //! Tauri boundary for Host-owned offline timeline rendering.
 
-use serde_json::json;
+use riffra_runtime::api::output::{BackgroundJobStatus, JobState, RenderResult};
+use riffra_runtime::api::params::{IdParams, RenderOptions, RenderStartParams};
+use riffra_runtime::api::{ControlOutput, RuntimeCommand};
 use tauri::{AppHandle, Manager};
 
-use crate::render::{RenderOptions, RenderResult};
 use crate::{AppState, NativeCommandError};
-use riffra_runtime::jobs::{BackgroundJobStatus, JobState};
 
+/// Starts a render job and waits until it reports its result.
 #[tauri::command]
 pub async fn render_timeline(
     options: Option<RenderOptions>,
@@ -14,12 +15,12 @@ pub async fn render_timeline(
 ) -> Result<RenderResult, NativeCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let queued: BackgroundJobStatus = state
+        let queued = state
             .host_connection
-            .dispatch("render.start", json!({ "options": options }))?;
+            .dispatch(RuntimeCommand::RenderStart(RenderStartParams { options }).into())?;
         let job_id = match queued {
-            BackgroundJobStatus::Render { id, .. } => id,
-            BackgroundJobStatus::Scan { .. } => {
+            ControlOutput::Job(Some(BackgroundJobStatus::Render { id, .. })) => id,
+            _ => {
                 return Err(NativeCommandError::command_failed(
                     "Host returned a non-render job for render.start",
                 ));
@@ -27,32 +28,27 @@ pub async fn render_timeline(
         };
         loop {
             std::thread::sleep(std::time::Duration::from_millis(40));
-            let status: Option<BackgroundJobStatus> = state
+            let status = state
                 .host_connection
-                .dispatch("job.get", json!({ "id": job_id }))?;
-            let Some(status) = status else {
-                return Err(NativeCommandError::command_failed(
-                    "Host render job disappeared before it reported a result",
-                ));
-            };
+                .dispatch(RuntimeCommand::JobGet(IdParams { id: job_id.clone() }).into())?;
             match status {
-                BackgroundJobStatus::Render {
+                ControlOutput::Job(Some(BackgroundJobStatus::Render {
                     state: JobState::Completed,
                     result: Some(result),
                     ..
-                } => return Ok(result),
-                BackgroundJobStatus::Render {
-                    state: JobState::Failed,
+                })) => return Ok(result),
+                ControlOutput::Job(Some(BackgroundJobStatus::Render {
+                    state: JobState::Failed | JobState::Cancelled,
                     message,
                     ..
+                })) => return Err(NativeCommandError::command_failed(message)),
+                ControlOutput::Job(Some(BackgroundJobStatus::Render { .. })) => {}
+                ControlOutput::Job(None) => {
+                    return Err(NativeCommandError::command_failed(
+                        "Host render job disappeared before it reported a result",
+                    ));
                 }
-                | BackgroundJobStatus::Render {
-                    state: JobState::Cancelled,
-                    message,
-                    ..
-                } => return Err(NativeCommandError::command_failed(message)),
-                BackgroundJobStatus::Render { .. } => {}
-                BackgroundJobStatus::Scan { .. } => {
+                _ => {
                     return Err(NativeCommandError::command_failed(
                         "Host returned a non-render job while polling render",
                     ));

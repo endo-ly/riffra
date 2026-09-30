@@ -188,10 +188,10 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           },
         ]
       : []),
-    ...props.track.rack.devices.map((device) => ({
+    ...props.track.effects.map((device) => ({
       id: device.id,
       name: device.name,
-      unavailable: device.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+      unavailable: device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
     })),
   ].filter((device) => !device.unavailable);
   const trackMenuItems: ReactNode[] = [];

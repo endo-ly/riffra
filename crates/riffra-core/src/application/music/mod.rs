@@ -18,20 +18,30 @@ use crate::{DomainError, InputLocation};
 use serde::{Deserialize, Serialize};
 
 /// A MIDI note described using musical position, duration, and pitch values.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MusicalMidiNoteInput {
     pub pitch: MusicalPitch,
     pub position: MusicalPosition,
     pub duration: MusicalDuration,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_non_null"
+    )]
+    #[ts(optional, type = "number")]
     pub velocity: Option<u8>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "optional_non_null"
+    )]
+    #[ts(optional, type = "number")]
     pub channel: Option<u8>,
 }
 
 /// A MIDI note exposed in musical coordinates rather than timeline ticks.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalMidiNoteView {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,7 +78,7 @@ pub struct MusicalNoteListRequest {
 }
 
 /// A grouped Note query response.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalNoteListView {
     /// Number of Notes across all returned Clips.
@@ -81,7 +91,7 @@ pub struct MusicalNoteListView {
 }
 
 /// The project timebase needed to interpret raw Note ticks.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalNoteTimebaseView {
     pub ppq: u32,
@@ -90,7 +100,7 @@ pub struct MusicalNoteTimebaseView {
 }
 
 /// A Clip group in a Note query response.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalNoteClipView {
     pub clip_id: String,
@@ -101,7 +111,7 @@ pub struct MusicalNoteClipView {
 }
 
 /// One Note in either the musical or raw response representation.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(untagged)]
 pub enum MusicalNoteListNoteView {
     /// A Note represented by musical coordinates.
@@ -111,7 +121,7 @@ pub enum MusicalNoteListNoteView {
 }
 
 /// A raw MIDI Note with Clip-relative timing.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RawMidiNoteView {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,18 +154,31 @@ pub struct MusicalNoteTransformRequest {
     pub transpose_semitones: Option<i16>,
 }
 
-fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    if value.is_null() {
-        return Err(serde::de::Error::custom("expected a value, found null"));
+/// An optional field that may be omitted but never set to `null`.
+mod optional_non_null {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S, T>(value: &Option<T>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Serialize,
+    {
+        value.serialize(serializer)
     }
-    T::deserialize(value)
-        .map(Some)
-        .map_err(serde::de::Error::custom)
+
+    pub(super) fn deserialize<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.is_null() {
+            return Err(serde::de::Error::custom("expected a value, found null"));
+        }
+        T::deserialize(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// Partial update for a MIDI note expressed in musical coordinates.
@@ -170,7 +193,7 @@ pub struct MusicalMidiNotePatch {
 }
 
 /// A music-level view of a named timeline range.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MusicalRegionView {
     pub id: String,

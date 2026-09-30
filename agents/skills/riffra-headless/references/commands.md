@@ -4,10 +4,12 @@
 
 コマンド引数はロングフラグ(camelCase を kebab-case 化)で渡し、完全な一覧は `riffra <command> --help` で確認できる。各系統に含まれるコマンドと実行できる場所は次のとおり。
 
-| 系統             | 主なコマンド                                                                           | 実行できる場所                 |
-| ---------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
-| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / rack / missing 復旧 | すべての実行形態               |
-| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin               | Live Host(`serve`)+ `--attach` |
+| 系統             | 主なコマンド                                                                                          | 実行できる場所                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------ |
+| 正準状態の編集   | session / track / music / clip / midi-note / marker / automation / instrument / effect / missing 復旧 | すべての実行形態               |
+| Runtime サービス | transport / audio / midi 送信 / record / render / job / library / plugin 実体の操作                   | Live Host(`serve`)+ `--attach` |
+
+Live Host が必要なコマンドを Standalone で実行すると、引数の内容にかかわらず `runtimeUnavailable` になる。
 
 ## 正準状態の編集
 
@@ -67,9 +69,9 @@ riffra --attach session apply --file ./song.jsonl --include-created-ids
 {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
 ```
 
-各行は `command` と `params` を持つ既存Control Commandであり、Batch専用の楽曲記法は使わない。`trackName`は候補Session上で一意に解決される。`clipName`は指定したTrack内のMIDI Clipから一意に解決されるため、`clipName`を使うときは `trackId` か `trackName` を併せる。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。同名が複数ある場合は曖昧さとして失敗する。解決結果はProtocolやCanonical identityには保存されない。
+各行は `command` と `params` を持つ既存Control Commandであり、Batch専用の楽曲記法は使わない。`trackName`は候補Session上で一意に解決される。`clipName`は指定したTrack内のMIDI Clipから一意に解決されるため、`clipName`を使うときは `trackId` か `trackName` を併せる。このときTrackの指定はClipを探す範囲としてだけ使われ、operationは解決した`clipId`で実行される。`trackId`と`trackName`、`clipId`と`clipName`は同時に指定できない。同名が複数ある場合は曖昧さとして失敗する。解決結果はProtocolやCanonical identityには保存されない。
 
-Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。`session.get`、`session.inspect`、`history`、Undo / Redo、Render、Transport、Recording、Asset importなどはBatchへ含めない。`instrument.apply` は組み込みinstrumentに限りBatchへ含められ、`user:` instrumentは単独のcommandとして実行する。
+Batchは全operationを候補Sessionへ適用してから、成功時だけ1回commitする。`expectedSequence`の不一致はoperation開始前にBatch全体を拒否し、途中の失敗、非対応コマンド、名前の未解決・曖昧さでもCanonical Sessionは変更されない。Batchへ含められるのは、正準状態を変えるコマンドのうちTrack・Clip・Note・Music・Marker・Range・Automation・設定・Instrument割り当て・Effect・Deviceの編集である。読み取り(`session.get`、`session.inspect`、`history.get`など)、Undo / Redo、Project操作、Assetの取り込みと配置(`asset.import-midi`、`*-clip.add-asset`)、VST3 instrumentの設定(`instrument.vst3.set`)、master gainの設定、欠落依存の解決(`missing.*`)、Runtimeサービス(Render、Transport、Recordingなど)は含めない。`instrument.apply` は組み込みinstrumentに限りBatchへ含められ、`user:` instrumentは単独のcommandとして実行する。
 
 成功応答はCanonical Sessionやoperationごとの結果を含まない。
 
@@ -91,7 +93,7 @@ Batchは全operationを候補Sessionへ適用してから、成功時だけ1回c
 
 interactive JSONLの構文エラーまたは検証エラーには、物理入力行が`error.details.inputLine`として付く。空行も行番号に含まれるため、エラー箇所は入力ファイルの実際の行番号で確認する。
 
-paramsのdeserializeエラーには、可能な範囲でJSON Pointer形式の`error.details.path`、配列要素のゼロ始まり`index`、問題の値が付く。大きなObjectやArrayの値はレスポンスを膨らませないため省略される。`inputLine`とこれらのdetailsは同じエラーへ共存する。
+paramsに未知のキーがある場合や型が違う場合は`invalidRequest`になる。paramsのdeserializeエラーには、可能な範囲でJSON Pointer形式の`error.details.path`、配列要素のゼロ始まり`index`、問題の値が付く。大きなObjectやArrayの値はレスポンスを膨らませないため省略される。`inputLine`とこれらのdetailsは同じエラーへ共存する。
 
 ```json
 {
@@ -427,7 +429,7 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 | `device parameter get`  | `--track-id` `--device-id` `--parameter-index`                                                 |
 | `device parameter set`  | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
 
-パスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。
+Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
 device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3のparameter list/getはHostから取得できる範囲のindex/valueを返し、parameter名が公開されない場合は推測しない。
 

@@ -1,4 +1,3 @@
-use crate::ControlCommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -100,15 +99,16 @@ impl ControlRequest {
     /// Creates a request for one backend command.
     pub fn new(
         request_id: impl Into<String>,
-        command: ControlCommand,
+        command: impl Into<String>,
+        params: Value,
         expected_sequence: Option<u64>,
     ) -> Self {
         Self {
             request_id: request_id.into(),
-            command: command.name,
+            command: command.into(),
             expected_sequence,
             expected_project_id: None,
-            params: command.params,
+            params,
         }
     }
 
@@ -143,11 +143,6 @@ impl ControlRequest {
             ));
         }
         Ok(())
-    }
-
-    /// Returns the command portion without its request envelope.
-    pub fn control_command(&self) -> ControlCommand {
-        ControlCommand::new(self.command.clone(), self.params.clone())
     }
 }
 

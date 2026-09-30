@@ -353,7 +353,7 @@ TimelineSnapshotSpec makeAudioTrackSnapshot(const int trackCount, const bool mon
             makeAudioTrack(primary ? juce::String("track:live")
                                    : juce::String("track:unrelated-") + juce::String(index));
         track.armed = primary && armFirstTrack;
-        track.monitoring = primary && monitorFirstTrack ? MonitoringSpec::on : MonitoringSpec::off;
+        track.monitorInput = primary && monitorFirstTrack;
         track.audioInput = AudioInputSpec{0};
         snapshot.graph.tracks.push_back(std::move(track));
     }

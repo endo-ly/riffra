@@ -2,7 +2,7 @@ use super::error::{NativeAudioError, NativeAudioResult};
 use super::lifecycle::remaining_timeout;
 use super::wire::SidecarCommand;
 use super::{AudioSupervisor, COMMAND_ACK_TIMEOUT};
-use crate::model::AudioStatus;
+use crate::api::output::AudioStatus;
 use crate::preferences::AudioPreferences;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

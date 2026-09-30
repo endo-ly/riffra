@@ -1,58 +1,39 @@
 use super::HostState;
+use crate::api::output::{ProjectActivationResult, ProjectState};
+use crate::api::{ControlOutput, ProjectCommand};
 use crate::execution::project_session;
-use crate::model::ProjectState;
 use crate::projects;
 use riffra_control::{ErrorCode, ProtocolError};
 use riffra_core::CanonicalState;
-use serde::Deserialize;
 use serde_json::Value;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 const PROJECT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub(super) fn handles(command: &str) -> bool {
-    matches!(
-        command,
-        "project.list"
-            | "project.create"
-            | "project.open"
-            | "project.rename"
-            | "project.import"
-            | "project.export"
-    )
-}
-
 pub(super) fn dispatch(
     state: &HostState,
-    command: &str,
-    params: Value,
+    command: ProjectCommand,
     current: CanonicalState,
-) -> Result<(&'static str, Value, u64), ProtocolError> {
+) -> Result<(ControlOutput, u64), ProtocolError> {
     match command {
-        "project.list" => Ok((
-            "projectState",
-            serde_json::to_value(project_state(state)?).map_err(serialize_error)?,
+        ProjectCommand::ProjectList(_) => Ok((
+            ControlOutput::ProjectState(project_state(state)?),
             current.sequence,
         )),
-        "project.export" => {
-            let params: ProjectExportParams = decode(params)?;
-            let export = projects::export(
-                &state.data_root,
-                &current.session,
-                riffra_host::now_ms(),
-                &params.output,
-            )
-            .map_err(command_error)?;
-            Ok((
-                "projectExport",
-                serde_json::to_value(export).map_err(serialize_error)?,
-                current.sequence,
-            ))
-        }
-        "project.create" => {
-            let params: ProjectCreateParams = decode(params)?;
+        ProjectCommand::ProjectExport(params) => Ok((
+            ControlOutput::ProjectExport(
+                projects::export(
+                    &state.data_root,
+                    &current.session,
+                    riffra_host::now_ms(),
+                    &params.output,
+                )
+                .map_err(command_error)?,
+            ),
+            current.sequence,
+        )),
+        ProjectCommand::ProjectCreate(params) => {
             ensure_switch_allowed(state)?;
             state.flush_plugin_persistence()?;
             let summary = state
@@ -61,14 +42,12 @@ pub(super) fn dispatch(
                 .map_err(|error| command_error(error.to_string()))?;
             activate_project(state, &summary.project_id, ProjectOperation::Create)
         }
-        "project.open" => {
-            let params: ProjectOpenParams = decode(params)?;
+        ProjectCommand::ProjectOpen(params) => {
             ensure_switch_allowed(state)?;
             state.flush_plugin_persistence()?;
             activate_project(state, &params.project_id, ProjectOperation::Open)
         }
-        "project.rename" => {
-            let params: ProjectRenameParams = decode(params)?;
+        ProjectCommand::ProjectRename(params) => {
             let context = state.session_context()?;
             state
                 .core
@@ -84,13 +63,11 @@ pub(super) fn dispatch(
                 .events
                 .emit(crate::HostEvent::ProjectStateChanged(project_state.clone()));
             Ok((
-                "projectState",
-                serde_json::to_value(project_state).map_err(serialize_error)?,
+                ControlOutput::ProjectState(project_state),
                 mutation.canonical.sequence,
             ))
         }
-        "project.import" => {
-            let params: ProjectImportParams = decode(params)?;
+        ProjectCommand::ProjectImport(params) => {
             ensure_switch_allowed(state)?;
             state.flush_plugin_persistence()?;
             let session =
@@ -101,10 +78,6 @@ pub(super) fn dispatch(
                 .map_err(|error| command_error(error.to_string()))?;
             activate_project(state, &summary.project_id, ProjectOperation::Import)
         }
-        _ => Err(ProtocolError::new(
-            ErrorCode::InvalidRequest,
-            format!("unknown project command: {command}"),
-        )),
     }
 }
 
@@ -149,7 +122,7 @@ fn activate_project(
     state: &HostState,
     project_id: &str,
     operation: ProjectOperation,
-) -> Result<(&'static str, Value, u64), ProtocolError> {
+) -> Result<(ControlOutput, u64), ProtocolError> {
     if state.core.safe_mode() {
         return activate_project_inner(state, project_id, operation);
     }
@@ -160,7 +133,7 @@ fn activate_project_inner(
     state: &HostState,
     project_id: &str,
     operation: ProjectOperation,
-) -> Result<(&'static str, Value, u64), ProtocolError> {
+) -> Result<(ControlOutput, u64), ProtocolError> {
     let previous_project_id = state
         .project_store
         .active_project_id()
@@ -208,7 +181,7 @@ fn activate_project_inner(
             ));
         }
     };
-    let activation = crate::model::ProjectActivationResult {
+    let activation = ProjectActivationResult {
         project_state: activated.project_state.clone(),
         canonical: activated.canonical.clone(),
         recovery: activated.recovery.clone(),
@@ -266,11 +239,7 @@ fn activate_project_inner(
         }
     }
     let sequence = activation.canonical.sequence;
-    Ok((
-        "projectActivation",
-        serde_json::to_value(activation).map_err(serialize_error)?,
-        sequence,
-    ))
+    Ok((ControlOutput::ProjectActivation(activation), sequence))
 }
 
 fn project_projection_key(
@@ -393,63 +362,20 @@ fn project_runtime_projection_error(error: crate::RuntimeError) -> ProtocolError
     }))
 }
 
-fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, ProtocolError> {
-    serde_json::from_value(value).map_err(|error| {
-        ProtocolError::new(
-            ErrorCode::InvalidRequest,
-            format!("invalid command parameters: {error}"),
-        )
-    })
-}
-
 fn command_error(message: impl Into<String>) -> ProtocolError {
     ProtocolError::new(ErrorCode::CommandFailed, message)
-}
-
-fn serialize_error(error: serde_json::Error) -> ProtocolError {
-    command_error(error.to_string())
 }
 
 fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
     ProtocolError::new(ErrorCode::RuntimeUnavailable, error.to_string())
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectCreateParams {
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectOpenParams {
-    project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectRenameParams {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectImportParams {
-    path: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectExportParams {
-    output: PathBuf,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{DawHost, HostConfig, NoopHostEventSink, RuntimeBinaries};
-    use riffra_control::{ControlCommand, ControlRequest, ErrorCode, new_instance_id};
+    use riffra_control::{ControlRequest, ErrorCode, new_instance_id};
     use serde_json::json;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     fn open_safe_host(label: &str) -> (DawHost, PathBuf) {
@@ -486,14 +412,15 @@ mod tests {
         let response = host.dispatch_control(
             ControlRequest::new(
                 "project-create",
-                ControlCommand::new("project.create", json!({"name": "Second"})),
+                "project.create",
+                json!({"name": "Second"}),
                 Some(0),
             )
             .with_expected_project_id(initial_project_id.clone()),
         );
 
         assert!(response.ok);
-        let activation: crate::model::ProjectActivationResult =
+        let activation: crate::api::output::ProjectActivationResult =
             serde_json::from_value(response.result.unwrap().value).unwrap();
         let active_project_id = activation.project_state.active_project_id.clone();
         assert_ne!(active_project_id, initial_project_id);
@@ -523,7 +450,8 @@ mod tests {
         let created = host.dispatch_control(
             ControlRequest::new(
                 "project-create",
-                ControlCommand::new("project.create", json!({"name": "Second"})),
+                "project.create",
+                json!({"name": "Second"}),
                 Some(0),
             )
             .with_expected_project_id(initial_project_id.clone()),
@@ -534,7 +462,8 @@ mod tests {
         let stale_export = host.dispatch_control(
             ControlRequest::new(
                 "stale-project-export",
-                ControlCommand::new("project.export", json!({"output": stale_export_path})),
+                "project.export",
+                json!({"output": stale_export_path}),
                 None,
             )
             .with_expected_project_id(initial_project_id.clone()),
@@ -549,7 +478,8 @@ mod tests {
         let stale_transport = host.dispatch_control(
             ControlRequest::new(
                 "host-owned-transport-play",
-                ControlCommand::new("transport.play", json!({})),
+                "transport.play",
+                json!({}),
                 None,
             )
             .with_expected_project_id(initial_project_id.clone()),
@@ -563,10 +493,8 @@ mod tests {
         let response = host.dispatch_control(
             ControlRequest::new(
                 "stale-track-add",
-                ControlCommand::new(
-                    "track.add",
-                    json!({"name": "Rejected", "kind": "instrument"}),
-                ),
+                "track.add",
+                json!({"name": "Rejected", "kind": "instrument"}),
                 None,
             )
             .with_expected_project_id(initial_project_id.clone()),

@@ -2,6 +2,7 @@ use super::control::{audio_error, command_error};
 use super::*;
 use crate::NativeAudioError;
 use crate::model::RuntimeStartupFinished;
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -183,16 +184,16 @@ impl HostState {
             .map_err(|error| error.to_string())
     }
 
-    pub(super) fn audio_diagnostics(&self, include_debug: bool) -> Result<Value, ProtocolError> {
+    pub(super) fn audio_diagnostics(
+        &self,
+        include_debug: bool,
+    ) -> Result<crate::api::output::AudioDiagnosticsReport, ProtocolError> {
         let status = self.core.audio().refresh_status().map_err(audio_error)?;
-        let report = audio_diagnostics_report(&status);
-        let mut value = serde_json::to_value(report).map_err(|error| {
-            command_error(format!("audio diagnostics could not be encoded: {error}"))
-        })?;
+        let mut report = audio_diagnostics_report(&status);
         if include_debug {
             let projection = self.runtime.status();
-            let debug = crate::model::AudioDiagnosticsDebug {
-                projection: crate::model::AudioDiagnosticsProjection {
+            let debug = crate::api::output::AudioDiagnosticsDebug {
+                projection: crate::api::output::AudioDiagnosticsProjection {
                     state: projection.state,
                     target_sequence: projection.target_projection_sequence,
                     active_sequence: projection.active_projection_sequence,
@@ -202,7 +203,7 @@ impl HostState {
                     last_error: projection.last_error,
                     last_projection_duration_ms: status.diagnostics.projection_duration_ms,
                 },
-                timeline: crate::model::AudioDiagnosticsTimeline {
+                timeline: crate::api::output::AudioDiagnosticsTimeline {
                     track_count: status.diagnostics.track_count,
                     instrument_runtime_count: status.diagnostics.instrument_runtime_count,
                     plugin_count: status.diagnostics.plugin_count,
@@ -212,13 +213,9 @@ impl HostState {
                     live_midi_drops: status.diagnostics.live_midi_drops,
                 },
             };
-            value["debug"] = serde_json::to_value(debug).map_err(|error| {
-                command_error(format!(
-                    "audio diagnostic details could not be encoded: {error}"
-                ))
-            })?;
+            report.debug = Some(debug);
         }
-        Ok(value)
+        Ok(report)
     }
 
     pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
@@ -300,9 +297,9 @@ impl HostState {
     }
 }
 
-fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnosticsReport {
-    crate::model::AudioDiagnosticsReport {
-        device: crate::model::AudioDiagnosticsDevice {
+fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDiagnosticsReport {
+    crate::api::output::AudioDiagnosticsReport {
+        device: crate::api::output::AudioDiagnosticsDevice {
             state: status.state,
             driver: status.driver.clone(),
             input_device: status.input_device.clone(),
@@ -313,7 +310,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
             active_input_channels: status.active_input_channels.clone(),
             active_output_channels: status.active_output_channels.clone(),
         },
-        mute: crate::model::AudioDiagnosticsMute {
+        mute: crate::api::output::AudioDiagnosticsMute {
             state: status.state,
             raw_reasons: status.mute_reasons,
             user_emergency: status.mute_reasons & 1 != 0,
@@ -321,13 +318,13 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
             device_fault: status.mute_reasons & 4 != 0,
             feedback_protection: status.mute_reasons & 8 != 0,
         },
-        realtime: crate::model::AudioDiagnosticsRealtime {
+        realtime: crate::api::output::AudioDiagnosticsRealtime {
             callback_count: status.diagnostics.callback_count,
             average_callback_duration_us: status.diagnostics.average_callback_duration_us,
             maximum_callback_duration_us: status.diagnostics.maximum_callback_duration_us,
             callback_overruns: status.diagnostics.callback_overruns,
         },
-        output: crate::model::AudioDiagnosticsOutput {
+        output: crate::api::output::AudioDiagnosticsOutput {
             pre_limiter_peak: status.diagnostics.pre_limiter_peak,
             limiter_gain_reduction_db: status.diagnostics.limiter_gain_reduction_db,
             hard_clip_samples: status.diagnostics.hard_clip_samples,
@@ -335,6 +332,7 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::model::AudioDiagnost
             invalid_samples: status.invalid_samples,
         },
         instrument_faults: status.diagnostics.instrument_faults.clone(),
+        debug: None,
     }
 }
 
@@ -409,7 +407,7 @@ mod tests {
         status
             .diagnostics
             .instrument_faults
-            .push(crate::model::AudioInstrumentFault {
+            .push(crate::api::output::AudioInstrumentFault {
                 track_id: "track:piano".into(),
                 instrument_type: "Built-in".into(),
                 fault_code: 0,

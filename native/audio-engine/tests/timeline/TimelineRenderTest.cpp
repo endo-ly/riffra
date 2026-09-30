@@ -187,7 +187,7 @@ TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeAudioTrackSnapshot(2, true, false);
-    snapshot.graph.tracks[1].monitoring = MonitoringSpec::on;
+    snapshot.graph.tracks[1].monitorInput = true;
     snapshot.graph.tracks[1].solo = true;
 
     TimelineEngine engine;
@@ -223,7 +223,7 @@ TEST(TimelineEngineTest, MergesMonitoredInputBeforeTrackProcessing) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, kSourceFrames);
-    snapshot.graph.tracks.front().monitoring = MonitoringSpec::on;
+    snapshot.graph.tracks.front().monitorInput = true;
     snapshot.graph.tracks.front().audioInput = AudioInputSpec{0};
 
     TimelineEngine engine;
@@ -306,7 +306,7 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
 
     auto snapshot = makeTestSnapshot();
     auto track = makeAudioTrack("track:guitar");
-    track.monitoring = MonitoringSpec::on;
+    track.monitorInput = true;
     track.audioInput = AudioInputSpec{0};
     snapshot.graph.tracks.push_back(std::move(track));
     ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 512, error));

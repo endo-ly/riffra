@@ -1,7 +1,10 @@
 use super::*;
 
 impl HostState {
-    pub(super) fn scan_plugins(&self, root: PathBuf) -> Result<plugins::ScanReport, String> {
+    pub(super) fn scan_plugins(
+        &self,
+        root: PathBuf,
+    ) -> Result<crate::api::output::ScanReport, String> {
         if self.core.safe_mode() {
             return Err("Safe Mode blocks VST3 discovery and load validation".into());
         }

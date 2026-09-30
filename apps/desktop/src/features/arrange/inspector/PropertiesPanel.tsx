@@ -12,6 +12,7 @@ import { MultiClipInspector } from './MultiClipInspector';
 import { MidiClipInspector } from './MidiClipInspector';
 import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
+import { tickToMusicalPosition } from '@/shared/session/musical-position';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
@@ -132,8 +133,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
                 );
                 return props.api.updateTimelineLoopRange(
                   true,
-                  clip.startTick,
-                  clip.startTick + endTicks,
+                  tickToMusicalPosition(clip.startTick, timebase),
+                  tickToMusicalPosition(clip.startTick + endTicks, timebase),
                 );
               }}
             />

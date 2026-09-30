@@ -1,7 +1,5 @@
-use super::metadata::{
-    InstrumentMetadata, InstrumentPreviewDefinition, InstrumentRecommendedRange,
-    validate_instrument_metadata,
-};
+use super::metadata::{InstrumentMetadata, validate_instrument_metadata};
+use crate::api::output::{InstrumentPreviewDefinition, InstrumentRecommendedRange};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

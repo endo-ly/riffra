@@ -6,42 +6,36 @@
 //! a boundary type and keep the generated files synchronized with the Rust
 //! definitions.
 
-use crate::analysis::AudioAnalysis;
-use crate::audio_preferences::AudioDriverConfig;
-use crate::library::LibraryAsset;
-use crate::model::{
-    ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
-    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, BootstrapState, DeviceChannels,
-    MidiDeviceInfo, ProjectActivationResult, ProjectRecoveryState, ProjectState,
-    RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
-    RuntimeProjectionStatus,
-};
-use crate::plugins::{
-    PluginEntry, PluginFormat, PluginRole, PluginScanState, ScanIssue, ScanReport,
-};
-use crate::recording::{
-    DropoutInformation, RecordingAsset, RecordingCapture, RecordingCaptureStatus,
-};
-use crate::render::{RenderOptions, RenderRange, RenderResult};
+use crate::model::BootstrapState;
 use riffra_core::{
     Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
     AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CanonicalState,
-    CreativeSession, DeviceKind, FrameDuration, FrameRange, HarmonyChord, HarmonyEvent,
+    CreativeSession, EffectDevice, FrameDuration, FrameRange, HarmonyChord, HarmonyEvent,
     HistoryState, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote,
-    MonitoringState, MusicalNoteName, ProjectTimebase, RackDevice, RackInstance, RackMacro,
-    RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord,
-    SessionSettings, TimelineLoopRange, TimelineRegion, Track, TrackKind,
+    MonitoringState, MusicalNoteName, ProjectTimebase, RecordingPassRecord, RecordingSessionRecord,
+    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange,
+    TimelineRegion, Track, TrackKind, Vst3Plugin,
 };
-use riffra_runtime::jobs::{BackgroundJobStatus, JobKind, JobState};
-use riffra_runtime::missing::MissingDependency;
-use riffra_runtime::projects::ProjectExport;
+use riffra_runtime::api::output::{
+    AudioAnalysis, BackgroundJobStatus, DropoutInformation, JobKind, JobState, LibraryAsset,
+    MissingDependency, PluginEntry, PluginFormat, PluginRole, PluginScanState, ProjectExport,
+    RecordingAsset, RecordingCapture, RecordingCaptureStatus, RenderResult, ScanIssue, ScanReport,
+};
+use riffra_runtime::api::params::{AudioDriverConfig, RenderOptions, RenderRange};
+use riffra_runtime::api::{ControlCommand, ControlOutput, typescript_result_map};
+use riffra_runtime::{
+    ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
+    AudioDeviceProbe, AudioDriverInfo, AudioState, AudioStatus, DeviceChannels, MidiDeviceInfo,
+    ProjectActivationResult, ProjectRecoveryState, ProjectState, RecordingFinalizationOutcome,
+    RecordingStatus, RecordingStopResult, RecoveryCandidate, RuntimeProjectionStatus,
+};
 use riffra_runtime::{
     ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
     AudioMeterFrame, DeviceCapabilities, DeviceInspection, DeviceParameterInfo, PluginPresetInfo,
     PluginStateSnapshot, ProjectionDiagnostics, RecordingFinalized, RecordingPhase,
     RuntimeProjectionState, RuntimeRestarted, RuntimeStartupFinished, TrackAudioMeter,
-    TrackDeviceSummary, TrackRackSummary, TrackSummary, TransportState, TransportStatus,
+    TrackEffectSummary, TrackSummary, TransportState, TransportStatus,
 };
 use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
@@ -58,10 +52,8 @@ fn export_types() {
     FrameRange::export_all(&cfg).expect("FrameRange bindings");
     FrameDuration::export_all(&cfg).expect("FrameDuration bindings");
     Marker::export_all(&cfg).expect("Marker bindings");
-    DeviceKind::export_all(&cfg).expect("DeviceKind bindings");
-    RackDevice::export_all(&cfg).expect("RackDevice bindings");
-    RackMacro::export_all(&cfg).expect("RackMacro bindings");
-    RackInstance::export_all(&cfg).expect("RackInstance bindings");
+    Vst3Plugin::export_all(&cfg).expect("Vst3Plugin bindings");
+    EffectDevice::export_all(&cfg).expect("EffectDevice bindings");
     ProjectTimebase::export_all(&cfg).expect("ProjectTimebase bindings");
     TimelineLoopRange::export_all(&cfg).expect("TimelineLoopRange bindings");
     TimelineRegion::export_all(&cfg).expect("TimelineRegion bindings");
@@ -127,8 +119,7 @@ fn export_types() {
     RecordingFinalizationOutcome::export_all(&cfg).expect("RecordingFinalizationOutcome bindings");
     ArrangementMutationResult::export_all(&cfg).expect("ArrangementMutationResult bindings");
     ArrangementProjectionOutcome::export_all(&cfg).expect("ArrangementProjectionOutcome bindings");
-    TrackDeviceSummary::export_all(&cfg).expect("TrackDeviceSummary bindings");
-    TrackRackSummary::export_all(&cfg).expect("TrackRackSummary bindings");
+    TrackEffectSummary::export_all(&cfg).expect("TrackEffectSummary bindings");
     TrackSummary::export_all(&cfg).expect("TrackSummary bindings");
     DeviceCapabilities::export_all(&cfg).expect("DeviceCapabilities bindings");
     DeviceInspection::export_all(&cfg).expect("DeviceInspection bindings");
@@ -159,4 +150,11 @@ fn export_types() {
     DropoutInformation::export_all(&cfg).expect("DropoutInformation bindings");
     RecordingCapture::export_all(&cfg).expect("RecordingCapture bindings");
     RecordingAsset::export_all(&cfg).expect("RecordingAsset bindings");
+    ControlCommand::export_all(&cfg).expect("ControlCommand bindings");
+    ControlOutput::export_all(&cfg).expect("ControlOutput bindings");
+    std::fs::write(
+        "../src/model/generated/ControlCommandResults.ts",
+        typescript_result_map(),
+    )
+    .expect("ControlCommandResults bindings");
 }
