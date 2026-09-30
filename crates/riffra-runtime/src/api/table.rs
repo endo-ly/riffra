@@ -449,8 +449,14 @@ mod tests {
 
         // Assert
         assert!(
-            matches!(error, CommandDecodeError::UnknownCommand(name) if name == "track.rename")
+            matches!(&error, CommandDecodeError::UnknownCommand(name) if name == "track.rename")
         );
+        let protocol_error: riffra_control::ProtocolError = error.into();
+        assert_eq!(
+            protocol_error.code,
+            riffra_control::ErrorCode::InvalidRequest
+        );
+        assert_eq!(protocol_error.details.unwrap()["path"], "/command");
     }
 
     #[test]

@@ -189,19 +189,25 @@ impl LocalHostRegistry {
 
     /// Verifies each entry through a live command round trip.
     ///
+    /// `verification_request` builds each Host's identity request from the
+    /// caller-owned command contract.
+    ///
     /// Entries are removed only when they are provably invalid: a dead owner
     /// process, or a handshake that identifies a different Host instance than
     /// the entry claims. A Host that is merely unreachable right now stays
     /// registered and is left out of this discovery result instead, so a
     /// busy or starting Host does not disappear from the Host Selector.
-    pub fn discover(&self) -> Result<Vec<LocalHostDiscovery>, String> {
+    pub fn discover(
+        &self,
+        verification_request: impl Fn(&LocalHostRegistration) -> ControlRequest,
+    ) -> Result<Vec<LocalHostDiscovery>, String> {
         let mut discovered = Vec::new();
         for registration in self.entries()? {
             if !process_exists(registration.pid) {
                 let _ = self.unregister(&registration.instance_id);
                 continue;
             }
-            match self.verify_registration(&registration) {
+            match self.verify_registration(&registration, &verification_request) {
                 Ok(client) => discovered.push(LocalHostDiscovery {
                     registration,
                     client,
@@ -222,14 +228,10 @@ impl LocalHostRegistry {
     fn verify_registration(
         &self,
         registration: &LocalHostRegistration,
+        verification_request: &impl Fn(&LocalHostRegistration) -> ControlRequest,
     ) -> Result<LocalHostClient, LocalHostClientError> {
         let client = LocalHostClient::connect_registration(registration);
-        let request = ControlRequest::new(
-            format!("discovery-{}", registration.instance_id),
-            "host.status",
-            serde_json::json!({}),
-            None,
-        );
+        let request = verification_request(registration);
         let response = client.request(&request)?;
         verify_host_status(registration, &response).map_err(LocalHostClientError::Handshake)?;
         Ok(client)
@@ -466,7 +468,12 @@ mod tests {
         registry.ensure_root().unwrap();
         std::fs::write(root.join("stale.json"), b"not-json").unwrap();
 
-        assert!(registry.discover().unwrap().is_empty());
+        assert!(
+            registry
+                .discover(|_| unreachable!("empty registry has no verification request"))
+                .unwrap()
+                .is_empty()
+        );
         assert!(!root.join("stale.json").exists());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -493,7 +500,12 @@ mod tests {
         let registration = LocalHostRegistration::from_descriptor(&root, &descriptor, 1);
         registry.register(&registration).unwrap();
 
-        assert!(registry.discover().unwrap().is_empty());
+        assert!(
+            registry
+                .discover(|_| unreachable!("dead process has no verification request"))
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             registry.entries().unwrap(),
             Vec::<LocalHostRegistration>::new()
@@ -514,7 +526,19 @@ mod tests {
         );
         registry.register(&registration).unwrap();
 
-        assert!(registry.discover().unwrap().is_empty());
+        assert!(
+            registry
+                .discover(|registration| {
+                    ControlRequest::new(
+                        format!("test-{}", registration.instance_id),
+                        String::new(),
+                        serde_json::json!({}),
+                        None,
+                    )
+                })
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(registry.entries().unwrap(), vec![registration.clone()]);
         registry.unregister(&registration.instance_id).unwrap();
         let _ = std::fs::remove_dir_all(root);

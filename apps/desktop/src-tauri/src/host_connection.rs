@@ -814,7 +814,10 @@ impl HostConnectionManager {
             HostTarget::Registration { instance_id } => {
                 let discovery = self
                     .registry
-                    .discover()
+                    .discover(|registration| {
+                        ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                            .into_request(format!("discovery-{}", registration.instance_id), None)
+                    })
                     .map_err(|error| format!("Local Host discovery failed: {error}"))?
                     .into_iter()
                     .find(|host| host.registration.instance_id == instance_id)
@@ -860,7 +863,10 @@ impl HostConnectionManager {
             .flatten();
         let discovered = self
             .registry
-            .discover()
+            .discover(|registration| {
+                ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                    .into_request(format!("discovery-{}", registration.instance_id), None)
+            })
             .map_err(|error| format!("Local Host discovery failed: {error}"))?;
         let mut hosts = Vec::new();
         for discovery in discovered.into_iter().filter(|host| {

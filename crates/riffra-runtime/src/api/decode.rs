@@ -30,7 +30,9 @@ impl From<CommandDecodeError> for ProtocolError {
     fn from(error: CommandDecodeError) -> Self {
         let protocol = ProtocolError::new(ErrorCode::InvalidRequest, error.to_string());
         match error {
-            CommandDecodeError::UnknownCommand(_) => protocol,
+            CommandDecodeError::UnknownCommand(_) => {
+                protocol.with_details(serde_json::json!({"path": "/command"}))
+            }
             CommandDecodeError::InvalidParams { details, .. } => protocol.with_details(details),
         }
     }

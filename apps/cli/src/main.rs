@@ -14,7 +14,8 @@ use riffra_control::{
     LocalHostRegistry, ProtocolError,
 };
 use riffra_runtime::Dispatcher;
-use riffra_runtime::api::{CanonicalCommand, ControlCommand};
+use riffra_runtime::api::params::EmptyParams;
+use riffra_runtime::api::{CanonicalCommand, ControlCommand, RuntimeCommand};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::thread;
@@ -321,7 +322,10 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
     const MAX_ATTEMPTS: usize = 3;
     let registry = LocalHostRegistry::current_user();
     for attempt in 0..MAX_ATTEMPTS {
-        let discovered = match registry.discover() {
+        let discovered = match registry.discover(|registration| {
+            ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                .into_request(format!("discovery-{}", registration.instance_id), None)
+        }) {
             Ok(discovered) => discovered,
             Err(error) if attempt + 1 < MAX_ATTEMPTS => {
                 thread::sleep(Duration::from_millis(100));
@@ -362,7 +366,10 @@ fn select_host(instance_id: Option<&str>) -> Result<LocalHostDiscovery, String> 
 
 fn list_hosts() -> Result<(), String> {
     let hosts = LocalHostRegistry::current_user()
-        .discover()
+        .discover(|registration| {
+            ControlCommand::from(RuntimeCommand::HostStatus(EmptyParams::default()))
+                .into_request(format!("discovery-{}", registration.instance_id), None)
+        })
         .map_err(|error| format!("Host discovery failed: {error}"))?;
     let entries = hosts
         .iter()
