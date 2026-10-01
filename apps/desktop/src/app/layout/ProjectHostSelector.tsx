@@ -12,10 +12,6 @@ import { openHostDataRoot } from '@/native/dialog';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './ProjectHostSelector.module.css';
 
-const PROJECT_NAME_MAX_LENGTH = 160;
-/** Below this count every Project is visible at once, so search adds nothing. */
-const PROJECT_SEARCH_MIN_COUNT = 6;
-
 interface ProjectHostSelectorProps {
   state: HostConnectionState;
   hosts: LocalHostInfo[];
@@ -98,7 +94,7 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
   }, [open, refreshSelector]);
 
   const commitProjectName = (draft: string) => {
-    const name = draft.trim().slice(0, PROJECT_NAME_MAX_LENGTH);
+    const name = draft.trim();
     if (!props.onRenameProject || name === activeName) return;
     void props.onRenameProject(name);
   };
@@ -218,7 +214,6 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
             aria-label="Project name"
             placeholder="Untitled Project"
             value={nameDraft}
-            maxLength={PROJECT_NAME_MAX_LENGTH}
             disabled={projectActionsDisabled}
             onChange={(event) => setNameDraft(event.target.value)}
             onBlur={(event) => {
@@ -257,17 +252,15 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
           {activeProject && ` · Updated ${formatUpdatedAt(activeProject.updatedAtMs)}`}
         </span>
       </div>
-      {projects.length >= PROJECT_SEARCH_MIN_COUNT && (
-        <label className={styles.search}>
-          <Icon name="search" />
-          <input
-            aria-label="Search Projects"
-            placeholder="Search Projects"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-      )}
+      <label className={styles.search}>
+        <Icon name="search" />
+        <input
+          aria-label="Search Projects"
+          placeholder="Search Projects"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
       <div className={styles.list} role="group" aria-label="Projects">
         {visibleProjects.map((project) => {
           const current = project.projectId === activeProjectId;
