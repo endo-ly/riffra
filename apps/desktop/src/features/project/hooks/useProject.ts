@@ -215,7 +215,14 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const refreshProjects = useCallback(async () => {
     try {
       const next = await listProjects();
-      setBoot((current) => (current ? { ...current, projectState: next } : current));
+      setBoot((current) =>
+        current
+          ? {
+              ...current,
+              projectState: { ...next, activeProjectId: current.projectState.activeProjectId },
+            }
+          : current,
+      );
       return next;
     } catch (error) {
       setProjectError(
@@ -237,7 +244,14 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     async (name: string) => {
       try {
         const next = await renameProjectApi(name);
-        setBoot((current) => (current ? { ...current, projectState: next } : current));
+        setBoot((current) =>
+          current
+            ? {
+                ...current,
+                projectState: { ...next, activeProjectId: current.projectState.activeProjectId },
+              }
+            : current,
+        );
         return next;
       } catch (error) {
         setProjectError(

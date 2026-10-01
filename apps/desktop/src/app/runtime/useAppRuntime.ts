@@ -108,8 +108,17 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     );
     const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
       if (disposed) return;
-      activeProjectIdRef.current = projectState.activeProjectId;
-      setBoot((current) => (current ? { ...current, projectState } : current));
+      setBoot((current) =>
+        current
+          ? {
+              ...current,
+              projectState: {
+                ...projectState,
+                activeProjectId: current.projectState.activeProjectId,
+              },
+            }
+          : current,
+      );
     });
     const unlistenProjectActivated = api.onProjectActivated(
       (activation: ProjectActivationResult) => {

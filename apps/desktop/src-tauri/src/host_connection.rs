@@ -1055,7 +1055,6 @@ impl HostConnectionManager {
             ControlOutput::ProjectActivation(activation) => {
                 Some(&activation.project_state.active_project_id)
             }
-            ControlOutput::ProjectState(state) => Some(&state.active_project_id),
             _ => None,
         };
         if let Some(project_id) = active_project_id {

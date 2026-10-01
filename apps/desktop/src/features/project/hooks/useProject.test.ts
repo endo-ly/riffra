@@ -232,4 +232,45 @@ describe('useProject', () => {
 
     expect(result.current.session).toEqual(current.session);
   });
+  it('keeps the activated identity when an earlier project list returns', async () => {
+    // Arrange
+    const api = new FakeNativeApi();
+    const initial = api.bootstrapState;
+    const next = activation('01900000-0000-7000-8000-000000000002');
+    let resolveList!: (value: typeof initial.projectState) => void;
+    api.setResponse(
+      'listProjects',
+      () => new Promise<typeof initial.projectState>((resolve) => (resolveList = resolve)),
+    );
+    let restoreBoot!: (boot: BootstrapState) => void;
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(initial);
+      restoreBoot = setBoot;
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+    act(() => restoreBoot(initial));
+    let listing!: ReturnType<typeof result.current.refreshProjects>;
+    act(() => {
+      listing = result.current.refreshProjects();
+    });
+    await waitFor(() => expect(resolveList).toBeDefined());
+
+    // Act
+    act(() => {
+      expect(result.current.applyProjectActivation(next)).toBe(true);
+    });
+    await act(async () => {
+      resolveList(initial.projectState);
+      await listing;
+    });
+
+    // Assert
+    expect(result.current.projectState?.activeProjectId).toBe(next.canonical.projectId);
+    expect(result.current.projectState?.projects).toEqual(initial.projectState.projects);
+    act(() => {
+      expect(result.current.applyCanonicalState({ ...next.canonical, sequence: 2 })).toBe(true);
+      expect(result.current.applyCanonicalState({ ...initial.canonical, sequence: 3 })).toBe(false);
+    });
+    expect(result.current.session).toEqual(next.canonical.session);
+  });
 });
