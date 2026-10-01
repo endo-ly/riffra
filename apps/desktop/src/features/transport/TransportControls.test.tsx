@@ -37,6 +37,7 @@ function Harness({
         return true;
       }}
       recordingActive={api.audio.recording.active}
+      positionTick={0}
       transportPlaying={transportPlaying}
       transportStarting={transportStarting}
       onPlay={onPlay}

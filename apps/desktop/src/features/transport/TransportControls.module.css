@@ -2,50 +2,33 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   user-select: none;
-}
-
-.transportActions {
-  height: 32px;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
 }
 
 .transportGroup {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: var(--space-1);
 }
 
-.transportGroup + .transportGroup {
-  margin-left: 5px;
-  padding-left: 7px;
-  border-left: 1px solid var(--color-border-subtle);
-}
-
-.transportActions button {
-  width: 26px;
-  height: 26px;
+.transportGroup button {
+  width: var(--size-control-dense);
+  height: var(--size-control-dense);
   display: grid;
   place-items: center;
   padding: 0;
   color: var(--color-text-secondary);
   background: transparent;
-  border: 0;
   border-radius: var(--radius-sm);
 }
 
-.transportActions button:hover:not(:disabled) {
+.transportGroup button:hover:not(:disabled) {
   color: var(--color-text-primary);
   background: var(--color-bg-control-hover);
 }
 
-.transportActions button:focus-visible {
+.transportGroup button:focus-visible {
   position: relative;
   /*
    * Control-local raise: the focus ring must paint above adjacent sibling
@@ -55,159 +38,156 @@
   z-index: 1;
 }
 
-.transportActions svg {
+.transportGroup svg {
   width: var(--size-icon-md);
   height: var(--size-icon-md);
 }
 
-.transportActions button.toggleActive {
+.transportGroup .toggleActive {
   color: var(--color-accent-primary);
   background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
 }
 
-.transportActions button.toggleActive:hover:not(:disabled) {
+.transportGroup .toggleActive:hover:not(:disabled) {
+  color: var(--color-accent-primary);
   background: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
 }
 
-.transportActions .playButton {
-  color: var(--color-accent-primary);
-}
-
-.transportActions .playButton:hover:not(:disabled) {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
-}
-
-.transportActions .playButton.playing {
+.transportGroup .playButton {
+  width: var(--size-control-normal);
+  height: var(--size-control-normal);
   color: var(--color-text-strong);
-  background: color-mix(in srgb, var(--color-accent-primary) 42%, black);
+  background: var(--color-bg-surface-raised);
 }
 
-.transportActions .playButton.playing:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-accent-primary) 50%, black);
+.transportGroup .playButton.playing {
+  color: var(--color-status-success);
 }
 
-.transportActions .playButton svg {
-  width: var(--size-icon-md);
-  height: var(--size-icon-md);
+.transportGroup .recordButton,
+.transportGroup .recordButton:hover:not(:disabled) {
+  color: var(--color-status-danger);
 }
 
-.transportActions .recordButton.active {
+.transportGroup .recordButton.active {
   color: var(--color-text-strong);
-  background: color-mix(in srgb, var(--color-status-danger) 46%, black);
+  background: var(--color-status-danger);
 }
 
-.transportActions .recordButton.active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-status-danger) 54%, black);
+.transportGroup .recordButton.active:hover:not(:disabled) {
+  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--color-status-danger) 85%, var(--color-text-strong));
 }
 
-.transportActions .countInButton {
-  width: auto;
-  min-width: 78px;
-  padding: 0 7px;
-  color: var(--color-text-muted);
+.transportGroup .countInButton {
+  position: relative;
+}
+
+.countInBadge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
-  white-space: nowrap;
+  line-height: 1;
 }
 
-.transportActions .countInButton.toggleActive {
-  color: var(--color-accent-primary);
-  background: transparent;
+.position {
+  height: var(--size-control-normal);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--size-control-normal);
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-sm);
 }
 
-.transportActions .countInButton.toggleActive:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
+.position strong {
+  color: var(--color-text-strong);
+  font-size: var(--font-size-readout);
+  font-weight: 500;
+}
+
+.position small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-control);
 }
 
 .timebase {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--color-border-subtle);
+  gap: var(--space-1);
 }
 
-.timebase label {
-  display: grid;
-  gap: 3px;
-}
-
-.timebase label > span {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-
-.timebase input,
+.tempo,
 .timebase select {
-  height: var(--size-control-dense);
-  box-sizing: border-box;
-  padding: 0 20px 0 6px;
+  height: var(--size-control-normal);
   color: var(--color-text-secondary);
-  font-family: 'DM Mono', Consolas, monospace;
-  font-size: var(--font-size-small);
-  font-variant-numeric: tabular-nums;
-  background-color: var(--color-bg-control);
-  border: 1px solid var(--color-border-default);
+  font-size: var(--font-size-control);
+  background-color: var(--color-bg-surface);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
 }
 
-.timebase input:hover,
-.timebase select:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
+.tempo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-2);
 }
 
-.timebase input:focus-visible,
-.timebase select:focus-visible {
-  border-color: var(--color-accent-primary);
+.tempo input,
+.timebase select {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.timebase input {
-  width: 58px;
+.tempo input {
+  width: calc(5ch + var(--space-2));
+  height: 100%;
+  padding: 0 0 0 var(--space-2);
+  color: inherit;
+  font-size: inherit;
+  text-align: right;
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.tempo span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-small);
 }
 
 .timebase select {
-  width: 62px;
+  padding: 0 calc(var(--space-4) + var(--space-1)) 0 var(--space-2);
+}
+
+.tempo:hover,
+.timebase select:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-default);
+}
+
+.tempo input:focus-visible,
+.timebase select:focus-visible {
+  outline: 0;
+}
+
+.tempo:focus-within,
+.timebase select:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 60%, transparent);
 }
 
 @media (max-width: 1280px) {
   .transport {
-    gap: 7px;
+    gap: var(--space-2);
   }
 
-  .transportActions .countInButton {
-    min-width: 70px;
-    padding: 0 5px;
-  }
-
-  .timebase {
-    gap: 4px;
-    padding-left: 7px;
-  }
-
-  .timebase input {
-    width: 52px;
-  }
-
-  .timebase select {
-    width: 56px;
-  }
-}
-
-@media (max-width: 1120px) {
-  .transportActions .countInButton {
-    min-width: 28px;
-    padding: 0;
-    overflow: hidden;
-    font-size: 0;
-  }
-
-  .transportActions .countInButton::after {
-    content: 'CI';
-    color: currentColor;
-    font-size: var(--font-size-small);
+  .position small {
+    display: none;
   }
 }

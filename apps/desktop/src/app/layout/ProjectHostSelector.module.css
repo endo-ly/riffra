@@ -62,16 +62,16 @@
 }
 
 .saveDot {
-  width: 6px;
-  height: 6px;
+  width: var(--size-status-dot);
+  height: var(--size-status-dot);
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--color-status-success);
 }
 
 .hostDot {
-  width: 7px;
-  height: 7px;
+  width: var(--size-status-dot);
+  height: var(--size-status-dot);
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--color-status-success);

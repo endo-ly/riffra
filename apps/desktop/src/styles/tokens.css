@@ -1,11 +1,12 @@
 :root {
   /* Typography */
+  --font-family-mono: 'DM Mono', Consolas, monospace;
   --font-size-micro: 9px;
   --font-size-small: 10px;
   --font-size-control: 11px;
   --font-size-emphasis: 12px;
-  --font-size-readout: 12px;
   --font-size-title: 14px;
+  --font-size-readout: 20px;
 
   /* Background roles */
   --color-bg-app: #090b0e;
@@ -45,6 +46,13 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
 
   /* Elevation */
   --shadow-popover: 0 10px 28px rgba(0, 0, 0, 0.42);
@@ -54,6 +62,7 @@
   /* Icon sizing */
   --size-icon-sm: 12px;
   --size-icon-md: 14px;
+  --size-status-dot: 6px;
 
   /* Motion */
   --duration-fast: 100ms;
@@ -84,6 +93,8 @@
   --size-control-normal: 28px;
   --size-toolbar: 40px;
   --size-global-control-bar: 48px;
+  --size-level-meter: 88px;
+  --size-level-meter-thickness: 4px;
   --size-play-surface-compact: 48px;
   --size-play-surface-expanded: 220px;
 }

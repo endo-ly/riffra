@@ -138,10 +138,7 @@ select.control {
 .stepper .value {
   min-width: 18px;
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }

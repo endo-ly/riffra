@@ -21,8 +21,6 @@ interface ArrangeRulerProps {
   timelineWidth: number;
   pixelsPerTick: number;
   mode: 'bars' | 'time';
-  position: string;
-  clock: string;
   scrollTop: number;
   loopRange: TimelineLoopRange;
   punchRange?: TimelinePunchRange;
@@ -62,10 +60,6 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
   return (
     <>
       <div className={styles.rulerCorner} style={{ top: props.scrollTop }}>
-        <div className={styles.rulerReadout}>
-          <strong>{props.position}</strong>
-          <small>{props.clock}</small>
-        </div>
         <div className={styles.rulerMode}>
           <span>TRACKS</span>
           <small>{props.mode === 'bars' ? 'BARS + BEATS' : 'MIN : SEC'}</small>

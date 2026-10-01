@@ -1,20 +1,20 @@
 .meter {
   position: relative;
-  display: inline-block;
-  height: 3px;
-  min-width: 45px;
+  display: block;
+  width: var(--size-level-meter);
+  height: var(--size-level-meter-thickness);
   overflow: hidden;
-  background: var(--color-border-subtle);
-  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--color-status-success) 0 70%,
+    var(--color-status-warning) 70% 88%,
+    var(--color-status-danger) 88%
+  );
+  border-radius: var(--radius-pill);
 }
 
 .meter i {
-  display: block;
-  height: 100%;
-  background: var(--color-accent-secondary);
-  border-radius: inherit;
-}
-
-.danger i {
-  background: var(--color-status-danger);
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-surface-raised);
 }

@@ -91,10 +91,7 @@
   top: 7px;
   left: 5px;
   color: var(--color-text-primary);
-  font:
-    600 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 600 var(--font-size-micro) var(--font-family-mono);
   white-space: nowrap;
 }
 
@@ -127,10 +124,7 @@
   left: 0;
   width: 100%;
   cursor: pointer;
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -222,10 +216,7 @@
   overflow: hidden;
   border-bottom: 1px solid rgba(198, 220, 225, 0.07);
   color: rgba(187, 211, 216, 0.55);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   pointer-events: none;
 }
 

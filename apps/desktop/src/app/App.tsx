@@ -102,6 +102,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     recordings,
     transportPlaying,
     transportStarting,
+    arrangementTransport,
     recordingCommandPending,
     startRecordingNow,
     runtimeProjectionStatus,
@@ -329,6 +330,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         applyCanonicalState={applyCanonicalState}
         transportPlaying={transportPlaying}
         transportStarting={transportStarting}
+        playheadTick={arrangementTransport.displayTick}
         onPlay={() => void playTransport()}
         onStop={() => void stopTransport()}
         onGoToStart={() => void goToStart()}
@@ -353,46 +355,84 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onRecover={recoverAudio}
       />
 
-      {boot.safeMode && (
-        <div className={`${styles.shellNotice} ${styles.safeModeNotice}`} role="status">
-          <strong>SAFE MODE</strong>
-          <span>
-            External VST3, MIDI input, driver changes, live preview and new recordings are isolated.
-            Project open, library access, offline analysis, render and export remain available.
-            Restart without <code>--safe-mode</code> to reconnect devices.
-          </span>
-        </div>
-      )}
-
-      {boot.recovery.recoveredFromGeneration && boot.recovery.recoveryCandidates.length > 0 && (
-        <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
-          <strong>RECOVERY CHOICE</strong>
-          <span>
-            The current session was recovered from an autosave generation. Choose a previous stable
-            generation if needed.
-          </span>
-          <div className={styles.recoveryActions}>
-            {boot.recovery.recoveryCandidates.slice(0, 5).map((candidate) => (
+      <div className={styles.bannerStack}>
+        {isMuted && (
+          <div className={`${styles.runtimeBanner} ${styles.dangerBanner}`} role="status">
+            <strong>OUTPUT MUTED</strong>
+            <span>
+              {feedbackSuspected
+                ? 'Feedback was detected, so all output was silenced automatically.'
+                : 'All audio output is silenced.'}
+            </span>
+          </div>
+        )}
+        {boot.safeMode && (
+          <div className={`${styles.shellNotice} ${styles.safeModeNotice}`} role="status">
+            <strong>SAFE MODE</strong>
+            <span>
+              External VST3, MIDI input, driver changes, live preview and new recordings are
+              isolated. Project open, library access, offline analysis, render and export remain
+              available. Restart without <code>--safe-mode</code> to reconnect devices.
+            </span>
+          </div>
+        )}
+        {boot.recovery.recoveredFromGeneration && boot.recovery.recoveryCandidates.length > 0 && (
+          <div className={`${styles.shellNotice} ${styles.recoveryNotice}`} role="status">
+            <strong>RECOVERY CHOICE</strong>
+            <span>
+              The current session was recovered from an autosave generation. Choose a previous
+              stable generation if needed.
+            </span>
+            <div className={styles.recoveryActions}>
+              {boot.recovery.recoveryCandidates.slice(0, 5).map((candidate) => (
+                <button
+                  className={surface.textButton}
+                  key={candidate.fileName}
+                  disabled={!hostConnected || projectSwitching}
+                  onClick={() => setRestoreCandidate(candidate.fileName)}
+                >
+                  {candidate.projectName ?? 'Untitled'} ·{' '}
+                  {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
+                </button>
+              ))}
               <button
                 className={surface.textButton}
-                key={candidate.fileName}
-                disabled={!hostConnected || projectSwitching}
-                onClick={() => setRestoreCandidate(candidate.fileName)}
+                disabled={projectSwitching}
+                onClick={dismissRecovery}
               >
-                {candidate.projectName ?? 'Untitled'} ·{' '}
-                {new Date(candidate.updatedAtMs).toLocaleString('ja-JP')}
+                Keep recovered session
               </button>
-            ))}
-            <button
-              className={surface.textButton}
-              disabled={projectSwitching}
-              onClick={dismissRecovery}
-            >
-              Keep recovered session
-            </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        {backgroundJob && (
+          <div className={styles.runtimeBanner}>
+            <strong>
+              {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
+            </strong>
+            <span>{backgroundJob.message}</span>
+            {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
+              <button
+                className={surface.textButton}
+                disabled={!hostConnected}
+                onClick={() => void cancelActiveJob()}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+        {!boot.nativeAvailable && (
+          <div className={styles.runtimeBanner}>
+            <strong>BROWSER PREVIEW</strong>
+            <span>
+              Native audio, VST3, MIDI, recording and Windows persistence are unavailable here. Open
+              the Tauri application to use product features; this preview does not report empty
+              results as successful operations.
+            </span>
+          </div>
+        )}
+      </div>
 
       {restoreCandidate && (
         <ConfirmDialog
@@ -405,35 +445,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
           }}
           onCancel={() => setRestoreCandidate(null)}
         />
-      )}
-
-      {!boot.nativeAvailable && (
-        <div className={styles.runtimeBanner}>
-          <strong>BROWSER PREVIEW</strong>
-          <span>
-            Native audio, VST3, MIDI, recording and Windows persistence are unavailable here. Open
-            the Tauri application to use product features; this preview does not report empty
-            results as successful operations.
-          </span>
-        </div>
-      )}
-
-      {backgroundJob && (
-        <div className={styles.runtimeBanner}>
-          <strong>
-            {backgroundJob.kind.toUpperCase()} JOB · {backgroundJob.state.toUpperCase()}
-          </strong>
-          <span>{backgroundJob.message}</span>
-          {['queued', 'running', 'cancelling'].includes(backgroundJob.state) && (
-            <button
-              className={surface.textButton}
-              disabled={!hostConnected}
-              onClick={() => void cancelActiveJob()}
-            >
-              Cancel
-            </button>
-          )}
-        </div>
       )}
 
       {missingDependencies.length > 0 && (
@@ -535,6 +546,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             <WorkspaceArrange
               key={projectState?.activeProjectId ?? 'no-project'}
               hostGeneration={hostConnectionState.generation}
+              transport={arrangementTransport}
               session={session}
               applyCanonicalState={applyCanonicalState}
               selection={arrange.selection}
@@ -559,16 +571,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             />
           </fieldset>
         </section>
-
-        {isMuted && (
-          <div className={styles.muteBanner} role="status">
-            <Icon name="stop" />
-            EMERGENCY MUTE ENGAGED —{' '}
-            {feedbackSuspected
-              ? 'acoustic feedback suspected; output silenced automatically'
-              : 'audio output is forced silent'}
-          </div>
-        )}
       </div>
 
       <div

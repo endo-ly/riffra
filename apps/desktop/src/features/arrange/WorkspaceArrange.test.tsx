@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceArrange } from './WorkspaceArrange';
+import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import {
   type ArrangementMutationResult,
   type CreativeSession,
@@ -50,9 +51,11 @@ function Harness({
     initialFocusedTrackId ?? null,
   );
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
+  const transport = useArrangementTransport(api, session.arrangement.timebase);
   return (
     <>
       <WorkspaceArrange
+        transport={transport}
         session={session}
         applyCanonicalState={(canonical) => {
           setSession(canonical.session);

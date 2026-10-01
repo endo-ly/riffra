@@ -2,10 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/model/domain';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
-export function useArrangeTransport(
+/** Arrangement Transport state shared by the Global Control Bar and the Arrange editors. */
+export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
+
+/**
+ * Follows the native Arrangement Transport and interpolates its playhead between
+ * transport statuses. The playhead restarts from the native position whenever the
+ * Host or the Active Project changes. Without a timebase it holds the last reported tick.
+ */
+export function useArrangementTransport(
   api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
-  timebase: ProjectTimebase,
+  timebase: ProjectTimebase | null,
   hostGeneration = 0,
+  projectId: string | null = null,
 ) {
   const [transport, setTransport] = useState<TransportStatus | null>(null);
   const [displayTick, setDisplayTick] = useState(0);
@@ -39,7 +48,7 @@ export function useArrangeTransport(
     setTransport(null);
     anchor.current = { tick: 0, at: performance.now(), playing: false };
     publishTick(0);
-  }, [hostGeneration]);
+  }, [hostGeneration, projectId]);
 
   useEffect(() => {
     const unlisten = api.onTransportStatus((status) => {
@@ -70,15 +79,18 @@ export function useArrangeTransport(
         publishTick(status.timelineTick);
       })
       .catch(() => undefined);
-  }, [api, hostGeneration]);
+  }, [api, hostGeneration, projectId]);
 
+  const bpm = timebase?.bpm;
+  const ppq = timebase?.ppq;
   useEffect(() => {
+    if (bpm === undefined || ppq === undefined) return;
     let frame = 0;
     let lastUiUpdate = 0;
     const update = (now: number) => {
       const current = anchor.current;
       const elapsed = current.playing ? performance.now() - current.at : 0;
-      const tick = current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60000;
+      const tick = current.tick + (elapsed * bpm * ppq) / 60000;
       // The playhead itself is animated by a tiny DOM-only component. The
       // editor needs a React snapshot only for the toolbar clock and editing
       // actions; rebuilding every ArrangeTrack on every animation frame made
@@ -92,7 +104,7 @@ export function useArrangeTransport(
     };
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
-  }, [timebase.bpm, timebase.ppq]);
+  }, [bpm, ppq]);
 
   const seekLocally = (tick: number) => {
     anchor.current = {

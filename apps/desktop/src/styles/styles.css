@@ -68,7 +68,7 @@ svg {
 }
 
 kbd {
-  font-family: 'DM Mono', Consolas, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
   font-weight: 500;
   color: var(--color-text-muted);

@@ -24,7 +24,6 @@ import { ToolbarButton } from '@/shared/ui/Toolbar';
 import {
   buildTrackTimeline,
   timelineObjectEndTick,
-  formatClock,
   formatMusicalPosition,
   ticksPerBar,
   ticksPerBeat,
@@ -42,7 +41,7 @@ import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hook
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
 import { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
-import { useArrangeTransport } from '@/features/arrange/hooks/useArrangeTransport';
+import type { ArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
 import {
   useArrangeContextMenus,
@@ -55,6 +54,7 @@ import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
   hostGeneration?: number;
+  transport: ArrangementTransport;
   session: CreativeSession;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   selection: ArrangeSelection;
@@ -92,11 +92,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<ArrangePluginPickerRequest | null>(null);
-  const { transport, displayTick, displayTickRef, seekLocally } = useArrangeTransport(
-    props.api,
-    timebase,
-    props.hostGeneration ?? 0,
-  );
+  const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
   const analyses = useWaveformAnalyses(
@@ -506,8 +502,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             timelineWidth={timelineWidth}
             pixelsPerTick={pixelsPerTick}
             mode={rulerMode}
-            position={formatMusicalPosition(displayTick, timebase)}
-            clock={formatClock(displayTick, timebase)}
             scrollTop={scrollTop}
             loopRange={ruler.loopPreview ?? arrangement.loopRange}
             punchRange={ruler.punchPreview ?? arrangement.punchRange}

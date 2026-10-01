@@ -45,10 +45,7 @@
 .eyebrow {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.14em;
 }
 

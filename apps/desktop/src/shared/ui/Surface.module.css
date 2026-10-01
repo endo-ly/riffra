@@ -64,7 +64,7 @@
 
 .statusTag {
   padding: 4px 6px;
-  font-family: 'DM Mono', monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
   border-radius: var(--radius-sm);

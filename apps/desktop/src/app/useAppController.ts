@@ -10,6 +10,7 @@ import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNo
 import { useRuntimeProjectionStatus } from '@/app/runtime/useRuntimeProjectionStatus';
 import { useBackgroundJobs } from '@/app/runtime/useBackgroundJobs';
 import { useTransportController } from '@/features/transport/hooks/useTransportController';
+import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useLibrary } from '@/features/library/hooks/useLibrary';
 import { useBrowserSearch } from '@/features/browser/hooks/useBrowserSearch';
 import { useInbox } from '@/features/library/hooks/useInbox';
@@ -114,6 +115,12 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       sessionRef,
       hostGeneration: hostConnection.state.generation,
     });
+  const arrangementTransport = useArrangementTransport(
+    api,
+    session?.arrangement.timebase ?? null,
+    hostConnection.state.generation,
+    projectId,
+  );
 
   const audioHook = useAudioSettings(api, {
     audio,
@@ -293,6 +300,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     recordings,
     transportPlaying,
     transportStarting,
+    arrangementTransport,
     recordingCommandPending,
     exportMessage,
     deviceProbe,

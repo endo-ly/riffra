@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-type TransportIconName = 'loop' | 'play' | 'stop' | 'rewind' | 'record' | 'metronome';
+type TransportIconName = 'loop' | 'play' | 'stop' | 'rewind' | 'record' | 'metronome' | 'countIn';
 
 const TRANSPORT_ICON_SHAPES: Record<TransportIconName, ReactNode> = {
   loop: (
@@ -18,6 +18,13 @@ const TRANSPORT_ICON_SHAPES: Record<TransportIconName, ReactNode> = {
     </>
   ),
   record: <circle cx="12" cy="12" r="6.5" />,
+  countIn: (
+    <>
+      <path d="M4 12h.01M8 12h.01M12 12h.01" strokeWidth="2.6" />
+      <path d="m15 9 3 3-3 3" />
+      <path d="M20.5 6v12" />
+    </>
+  ),
   metronome: (
     <>
       <path d="m9.5 4.5-3 15h11l-3-15Z" />

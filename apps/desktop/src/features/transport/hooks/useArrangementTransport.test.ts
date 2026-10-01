@@ -3,17 +3,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeNativeApi } from '@/native/native-api-fake';
-import { useArrangeTransport } from './useArrangeTransport';
+import { useArrangementTransport } from './useArrangementTransport';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('useArrangeTransport', () => {
+describe('useArrangementTransport', () => {
   it('publishes a stopped transport discontinuity to the clock and playhead', async () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() =>
-      useArrangeTransport(api, {
+      useArrangementTransport(api, {
         bpm: 120,
         ppq: 960,
         timeSignatureNumerator: 4,
@@ -32,5 +32,28 @@ describe('useArrangeTransport', () => {
 
     await waitFor(() => expect(result.current.displayTick).toBe(0));
     expect(result.current.displayTickRef.current).toBe(0);
+  });
+
+  it('restarts the playhead when the Active Project changes', async () => {
+    const api = new FakeNativeApi();
+    const timebase = {
+      bpm: 120,
+      ppq: 960,
+      timeSignatureNumerator: 4,
+      timeSignatureDenominator: 4,
+    };
+    const { result, rerender } = renderHook(
+      ({ projectId }) => useArrangementTransport(api, timebase, 0, projectId),
+      { initialProps: { projectId: 'project-a' } },
+    );
+    act(() => {
+      api.emitTransportStatus({ timelineTick: 3_840, discontinuity: 2 });
+    });
+    await waitFor(() => expect(result.current.displayTick).toBe(3_840));
+
+    rerender({ projectId: 'project-b' });
+
+    await waitFor(() => expect(result.current.displayTick).toBe(0));
+    expect(result.current.transport).toBeNull();
   });
 });

@@ -126,10 +126,7 @@
 .identityMeta {
   flex: 0 0 auto;
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
 }
 
 .section {
@@ -159,10 +156,7 @@
 
 .headerMeta {
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.02em;
 }
 
@@ -247,10 +241,7 @@
 
 .readoutRow strong {
   color: var(--color-text-secondary);
-  font:
-    var(--font-size-small) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-small) var(--font-family-mono);
   font-weight: 500;
 }
 
@@ -271,10 +262,7 @@
 }
 
 .mono {
-  font:
-    var(--font-size-small) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-small) var(--font-family-mono);
 }
 
 select.control {
@@ -288,10 +276,7 @@ select.control {
   place-items: center;
   padding: 0 6px;
   color: var(--color-text-primary);
-  font:
-    var(--font-size-small) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-small) var(--font-family-mono);
   font-weight: 500;
   text-align: right;
   background: var(--color-bg-control);
@@ -308,10 +293,7 @@ select.control {
   height: 20px;
   padding: 0 6px;
   color: var(--color-text-primary);
-  font:
-    var(--font-size-small) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-small) var(--font-family-mono);
   text-align: right;
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);

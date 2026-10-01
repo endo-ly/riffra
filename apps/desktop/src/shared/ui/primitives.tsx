@@ -47,18 +47,12 @@ export function Icon({ name, className }: { name: string; className?: string }) 
   );
 }
 
-export function Meter({
-  value,
-  danger = false,
-  className,
-}: {
-  value: number;
-  danger?: boolean;
-  className?: string;
-}) {
+/** Level meter whose lit length follows `value` (0–100) over a fixed safe/hot/clip scale. */
+export function Meter({ value }: { value: number }) {
+  const level = Math.max(0, Math.min(100, value));
   return (
-    <span className={`${styles.meter} ${className ?? ''} ${danger ? styles.danger : ''}`}>
-      <i style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+    <span className={styles.meter}>
+      <i style={{ left: `${level}%` }} />
     </span>
   );
 }

@@ -116,10 +116,7 @@
 .section h3 {
   margin: 0 0 11px;
   color: var(--color-text-secondary);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.14em;
 }
 

@@ -31,21 +31,13 @@ export function AudioMonitor(props: AudioMonitorProps) {
   return (
     <div className={styles.monitor} data-audio-monitor aria-label="Audio monitor">
       <div className={styles.levelMeter} aria-label="Input and output levels">
-        <span>IN</span>
-        <Meter
-          value={meters.inputPeak * 100}
-          danger={meters.inputPeak >= 0.98}
-          className={styles.meter}
-        />
-        <span>OUT</span>
-        <Meter
-          value={meters.outputPeak * 100}
-          danger={meters.outputPeak >= 0.98}
-          className={styles.meter}
-        />
+        <span>In</span>
+        <Meter value={meters.inputPeak * 100} />
+        <span>Out</span>
+        <Meter value={meters.outputPeak * 100} />
       </div>
       <label className={styles.master}>
-        <span>MASTER</span>
+        <span>Master</span>
         <strong>{masterDraftDb.toFixed(1)} dB</strong>
         <input
           aria-label="Master volume"

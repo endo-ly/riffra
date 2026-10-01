@@ -50,17 +50,29 @@
   pointer-events: auto;
 }
 
-.runtimeBanner {
+/* Shell banners share one stack under the control bar so they never overlap. */
+.bannerStack {
   position: fixed;
-  top: calc(var(--size-global-control-bar) + 10px);
+  top: calc(var(--size-global-control-bar) + var(--space-2));
   left: 50%;
   z-index: var(--z-banner);
+  width: min(760px, calc(100% - var(--space-4) * 2));
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.bannerStack > * {
+  pointer-events: auto;
+}
+
+.runtimeBanner {
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: min(760px, calc(100% - 32px));
   padding: 9px 12px;
-  transform: translateX(-50%);
   color: var(--color-status-warning);
   font-size: var(--font-size-micro);
   line-height: 1.45;
@@ -71,24 +83,16 @@
 }
 .runtimeBanner strong {
   flex: 0 0 auto;
-  color: var(--color-status-warning);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  color: inherit;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.14em;
 }
 
 .shellNotice {
-  position: fixed;
-  top: calc(var(--size-global-control-bar) + 4px);
-  left: 50%;
-  z-index: var(--z-banner);
+  justify-self: stretch;
   display: grid;
   gap: 5px;
-  width: min(760px, calc(100% - 32px));
   padding: 10px 12px;
-  transform: translateX(-50%);
   font-size: var(--font-size-micro);
   line-height: 1.5;
   border-radius: var(--radius-md);
@@ -96,10 +100,7 @@
 }
 
 .shellNotice strong {
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.14em;
 }
 
@@ -115,17 +116,13 @@
 
 .safeModeNotice code {
   color: var(--color-status-warning);
-  font-family: 'DM Mono', monospace;
+  font-family: var(--font-family-mono);
 }
 
 .recoveryNotice {
   color: var(--color-accent-primary);
   background: color-mix(in srgb, var(--color-accent-primary) 14%, var(--color-bg-panel));
   border: 1px solid color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
-}
-
-.safeModeNotice ~ .recoveryNotice {
-  top: calc(var(--size-global-control-bar) + 94px);
 }
 
 .recoveryNotice strong {
@@ -137,24 +134,12 @@
   flex-wrap: wrap;
   gap: 4px 10px;
 }
-.muteBanner {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  z-index: var(--z-banner);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 13px;
-  color: var(--color-text-on-accent);
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  background: var(--color-status-danger);
-  border: 1px solid var(--color-status-danger);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-toast);
+.dangerBanner {
+  color: var(--color-status-danger);
+  background: color-mix(in srgb, var(--color-status-danger) 16%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent);
 }
+
 .commandBackdrop {
   position: fixed;
   inset: 0;

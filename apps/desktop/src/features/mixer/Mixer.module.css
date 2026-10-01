@@ -198,7 +198,7 @@
 .faderControl output,
 .masterFader output {
   color: var(--color-text-secondary);
-  font-family: 'DM Mono', Consolas, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
   letter-spacing: 0;
   white-space: nowrap;
@@ -289,7 +289,7 @@
 .meterColumn > span,
 .meterColumn > small {
   color: var(--color-text-disabled);
-  font-family: 'DM Mono', Consolas, monospace;
+  font-family: var(--font-family-mono);
   font-size: 9px;
   white-space: nowrap;
 }
@@ -474,7 +474,7 @@
 .diagnostics dt,
 .diagnostics dd {
   margin: 0;
-  font-family: 'DM Mono', Consolas, monospace;
+  font-family: var(--font-family-mono);
   font-size: 9px;
 }
 

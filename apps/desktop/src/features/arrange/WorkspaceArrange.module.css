@@ -55,36 +55,12 @@
   height: 34px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 0 13px;
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-bottom: 1px solid var(--color-border-default);
-}
-
-.rulerReadout {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-}
-
-.rulerReadout strong {
-  color: var(--color-text-primary);
-  font:
-    600 var(--font-size-readout) 'DM Mono',
-    Consolas,
-    monospace;
-  letter-spacing: 0.02em;
-}
-
-.rulerReadout small {
-  color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
 }
 
 .rulerMode {
@@ -102,10 +78,7 @@
 }
 .rulerMode small {
   color: var(--color-text-disabled);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
 }
 
 .ruler {
@@ -130,10 +103,7 @@
   top: 7px;
   left: 6px;
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -583,10 +553,7 @@
   height: 22px;
   padding: 0;
   color: var(--color-text-muted);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   background: var(--color-bg-control);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
@@ -650,10 +617,7 @@
 
 .trackControl output {
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   text-align: right;
 }
 
@@ -717,10 +681,7 @@
 
 .automationHeader strong {
   color: var(--color-accent-primary);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.08em;
 }
 
@@ -855,10 +816,7 @@
   display: grid;
   place-items: center;
   color: var(--color-status-danger);
-  font:
-    700 var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.08em;
   pointer-events: none;
 }
@@ -902,10 +860,7 @@
 }
 .clipHeader span {
   color: color-mix(in srgb, var(--color-text-primary) 63%, transparent);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   white-space: nowrap;
 }
 
@@ -930,10 +885,7 @@
   left: 7px;
   bottom: 7px;
   color: color-mix(in srgb, var(--color-text-primary) 40%, transparent);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.08em;
 }
 .clipGainLine {
@@ -1141,10 +1093,7 @@
 }
 .selectionChip span {
   color: var(--color-text-muted);
-  font:
-    var(--font-size-micro) 'DM Mono',
-    Consolas,
-    monospace;
+  font: var(--font-size-micro) var(--font-family-mono);
 }
 .selectionChip button {
   padding: 3px 7px;

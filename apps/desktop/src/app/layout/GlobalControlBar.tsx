@@ -36,6 +36,7 @@ interface GlobalControlBarProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   transportPlaying: boolean;
   transportStarting: boolean;
+  playheadTick: number;
   onPlay: () => void;
   onStop: () => void;
   onGoToStart: () => void;
@@ -136,6 +137,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}
           onToggleRecording={props.onToggleRecording}
+          positionTick={props.playheadTick}
           api={props.transportControlsApi}
         />
       </fieldset>
@@ -179,9 +181,8 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
             <span className={styles.audioStatusDot} />
             <span className={styles.audioStatusText}>
               <strong>{audioStateLabel}</strong>
-              <small>{audioDetail || 'Audio device'}</small>
+              {audioDetail && <small>{audioDetail}</small>}
             </span>
-            <Icon name="chevron" />
           </button>
         </div>
         <button
@@ -192,7 +193,7 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           aria-pressed={props.isMuted}
           title={props.isMuted ? 'Unmute' : 'Emergency mute'}
         >
-          <Icon name="stop" />
+          MUTE
         </button>
         {props.audio.feedbackSuspected && (
           <button
