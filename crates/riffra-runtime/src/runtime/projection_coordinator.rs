@@ -14,7 +14,6 @@ pub type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Syn
 
 struct ProjectionCoordinatorSync {
     state: Mutex<Machine>,
-    preparation: Mutex<(Option<Request>, bool)>,
     worker_wake: Condvar,
     operation_wake: Condvar,
 }
@@ -42,7 +41,6 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 Instant::now(),
                 now_ms(),
             )),
-            preparation: Mutex::new((None, false)),
             worker_wake: Condvar::new(),
             operation_wake: Condvar::new(),
         });
@@ -71,12 +69,10 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         canonical: bool,
     ) -> Result<CanonicalSubmit, RuntimeError> {
         let mut machine = self.state.state.lock().expect("projection lock poisoned");
-        let mut effects = machine
-            .step(
-                Input::GenerationObserved(self.driver.runtime_generation()),
-                Instant::now(),
-            )
-            .effects;
+        let mut effects = machine.step(
+            Input::GenerationObserved(self.driver.runtime_generation()),
+            Instant::now(),
+        );
         let operation = machine.next_operation();
         let input = if canonical {
             Input::SubmitCanonical {
@@ -93,21 +89,16 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 waiter: Some(operation),
             }
         };
-        let transition = machine.step(input, Instant::now());
-        effects.extend(transition.effects);
-        if matches!(
-            transition.outcome,
-            Ok(Some(CanonicalSubmit::Adopted)) | Err(_)
-        ) || deadline.is_none()
-        {
+        let submitted = machine.step(input, Instant::now());
+        let result = response(&submitted);
+        effects.extend(submitted);
+        if matches!(result, Ok(Some(CanonicalSubmit::Adopted)) | Err(_)) || deadline.is_none() {
             machine.remove_waiter(operation);
         }
         let status = machine.status();
         drop(machine);
         notify_effects(&self.state, &self.status_hook, effects, status);
-        transition
-            .outcome?
-            .ok_or_else(|| RuntimeError::Internal("submission outcome is missing".into()))
+        result.map(|result| result.expect("submission produces a submission result"))
     }
 
     pub(crate) fn submit_with_canonical_deadline(
@@ -222,26 +213,18 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     ) -> Result<(), RuntimeError> {
         self.step(Input::GenerationObserved(self.driver.runtime_generation()));
         let mut machine = self.state.state.lock().expect("projection lock poisoned");
-        let transition = machine.step(Input::PromoteCandidate { key }, Instant::now());
+        let effects = machine.step(Input::PromoteCandidate { key }, Instant::now());
+        let result = response(&effects);
         let status = machine.status();
         drop(machine);
-        notify_effects(&self.state, &self.status_hook, transition.effects, status);
-        transition.outcome.map(|_| ())
+        notify_effects(&self.state, &self.status_hook, effects, status);
+        result.map(|_| ())
     }
 }
 
 impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
     fn drop(&mut self) {
         self.step(Input::Stop);
-        {
-            let mut work = self
-                .state
-                .preparation
-                .lock()
-                .expect("preparation lock poisoned");
-            *work = (None, true);
-            self.state.worker_wake.notify_all();
-        }
         self.driver.force_shutdown();
         // Native plugins may remain inside foreign code during shutdown.
         // Detaching avoids an unbounded join on the closing thread.
@@ -257,7 +240,7 @@ fn transition(
     input: Input,
 ) -> Vec<Effect> {
     let mut machine = sync.state.lock().expect("projection lock poisoned");
-    let effects = machine.step(input, Instant::now()).effects;
+    let effects = machine.step(input, Instant::now());
     let status = machine.status();
     drop(machine);
     let mut native = Vec::new();
@@ -278,24 +261,30 @@ fn notify_effects(
     effects: Vec<Effect>,
     status: RuntimeProjectionStatus,
 ) {
+    sync.worker_wake.notify_one();
     for effect in effects {
         match effect {
-            Effect::Prepare(request) => {
-                let mut work = sync.preparation.lock().expect("preparation lock poisoned");
-                let (pending, stopped) = &mut *work;
-                if !*stopped {
-                    *pending = Some(request);
-                    sync.worker_wake.notify_one();
-                }
-            }
             Effect::Complete { waiter, result } => {
                 let _ = (waiter, result);
                 sync.operation_wake.notify_all();
             }
             Effect::PublishStatus => hook(status.clone()),
-            Effect::Commit(_) | Effect::Discard(_) => {}
+            Effect::Prepare(_)
+            | Effect::Commit(_)
+            | Effect::Discard(_)
+            | Effect::Respond { .. } => {}
         }
     }
+}
+
+fn response(effects: &[Effect]) -> Result<Option<CanonicalSubmit>, RuntimeError> {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Respond { result } => Some(result.clone()),
+            _ => None,
+        })
+        .expect("command transition produces a response")
 }
 
 fn timeout(request: &Request, maximum: Duration) -> Result<Duration, RuntimeError> {
@@ -320,19 +309,23 @@ fn worker_loop<D: ProjectionDriver>(
 ) {
     loop {
         let request = {
-            let mut work = sync.preparation.lock().expect("preparation lock poisoned");
+            let mut machine = sync.state.lock().expect("projection lock poisoned");
             loop {
-                let (pending, stopped) = &mut *work;
-                if *stopped {
-                    return;
+                let effects = machine.step(Input::WorkRequested, Instant::now());
+                if let Some(work) = effects.into_iter().find_map(|effect| match effect {
+                    Effect::Prepare(request) => Some(Ok(request)),
+                    Effect::Respond { result: Err(error) } => Some(Err(error)),
+                    _ => None,
+                }) {
+                    match work {
+                        Ok(request) => break request,
+                        Err(_) => return,
+                    }
                 }
-                if let Some(request) = pending.take() {
-                    break request;
-                }
-                work = sync
+                machine = sync
                     .worker_wake
-                    .wait(work)
-                    .expect("preparation condition variable poisoned");
+                    .wait(machine)
+                    .expect("projection condition variable poisoned");
             }
         };
         let result = timeout(&request, TIMELINE_PREPARE_TIMEOUT).and_then(|timeout| {
