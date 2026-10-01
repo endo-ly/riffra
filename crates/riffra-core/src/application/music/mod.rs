@@ -211,7 +211,7 @@ struct ResolvedMidiNoteInput {
     channel: u8,
 }
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
@@ -224,7 +224,7 @@ where
     /// positive, the Track is missing or not an Instrument Track, or the
     /// canonical commit cannot be persisted.
     pub fn create_musical_midi_clip_with_created_ids(
-        &self,
+        &mut self,
         track_id: &str,
         start: MusicalPosition,
         end: MusicalPosition,
@@ -267,7 +267,7 @@ where
     /// a note precedes the Clip, the Clip is missing, or the canonical commit
     /// cannot be persisted.
     pub fn insert_musical_notes_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         inputs: Vec<MusicalMidiNoteInput>,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -310,7 +310,7 @@ where
 
     /// Lists MIDI notes using absolute musical positions.
     pub fn list_musical_notes(
-        &self,
+        &mut self,
         request: MusicalNoteListRequest,
     ) -> Result<MusicalNoteListView, ApplicationError> {
         let session = self.get_session()?;
@@ -409,7 +409,7 @@ where
     /// Applies one atomic music-level transform to Notes selected by scope and
     /// pre-transform musical conditions.
     pub fn transform_musical_notes(
-        &self,
+        &mut self,
         request: MusicalNoteTransformRequest,
     ) -> Result<ApplicationMutation, ApplicationError> {
         if request
@@ -564,7 +564,7 @@ where
 
     /// Updates one MIDI note using only the supplied musical fields.
     pub fn update_musical_note(
-        &self,
+        &mut self,
         clip_id: &str,
         note_id: &str,
         patch: MusicalMidiNotePatch,
@@ -623,7 +623,7 @@ where
 
     /// Removes one MIDI note by its stable identity.
     pub fn remove_musical_note(
-        &self,
+        &mut self,
         clip_id: &str,
         note_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -632,7 +632,7 @@ where
 
     /// Resizes a MIDI Clip using absolute musical positions.
     pub fn resize_musical_midi_clip(
-        &self,
+        &mut self,
         clip_id: &str,
         start: Option<MusicalPosition>,
         end: Option<MusicalPosition>,
@@ -662,7 +662,7 @@ where
     /// # Errors
     ///
     /// Returns an error when the canonical session cannot be read.
-    pub fn list_regions(&self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
+    pub fn list_regions(&mut self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
         let session = self.get_session()?;
         let timebase = session.arrangement.timebase;
         Ok(session
@@ -686,7 +686,7 @@ where
     /// Returns an error when the name, positions, or range is invalid, or the
     /// canonical commit cannot be persisted.
     pub fn add_region_with_created_ids(
-        &self,
+        &mut self,
         name: String,
         start: MusicalPosition,
         end: MusicalPosition,
@@ -715,7 +715,7 @@ where
     /// Returns an error when the region is missing, an updated field is
     /// invalid, or the canonical commit cannot be persisted.
     pub fn update_region(
-        &self,
+        &mut self,
         region_id: &str,
         name: Option<String>,
         start: Option<MusicalPosition>,
@@ -744,7 +744,7 @@ where
     ///
     /// Returns an error when the region is missing or the canonical commit
     /// cannot be persisted.
-    pub fn remove_region(&self, region_id: &str) -> Result<CreativeSession, ApplicationError> {
+    pub fn remove_region(&mut self, region_id: &str) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
             arrangement.remove_region(region_id).map_err(Into::into)
         })
@@ -1035,7 +1035,6 @@ fn normalize_region_name(name: String) -> Result<String, ApplicationError> {
 mod tests {
     use super::*;
     use crate::PortError;
-    use std::path::PathBuf;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -1051,19 +1050,14 @@ mod tests {
     #[test]
     fn musical_notes_use_absolute_positions_and_one_commit() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track_id,
                 "5:1".parse().unwrap(),
@@ -1072,7 +1066,8 @@ mod tests {
             )
             .unwrap();
         let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_musical_notes_with_created_ids(
                 &clip_id,
                 vec![
@@ -1116,7 +1111,7 @@ mod tests {
             30_720
         );
         assert!(
-            application
+            core.application(&storage)
                 .insert_musical_notes_with_created_ids(
                     &clip_id,
                     vec![MusicalMidiNoteInput {
@@ -1135,18 +1130,13 @@ mod tests {
     #[test]
     fn musical_note_crud_and_clip_resize_keep_absolute_positions() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
@@ -1155,7 +1145,8 @@ mod tests {
             )
             .unwrap();
         let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_musical_notes_with_created_ids(
                 &clip_id,
                 vec![MusicalMidiNoteInput {
@@ -1171,7 +1162,8 @@ mod tests {
             .id
             .clone();
 
-        let listed = application
+        let listed = core
+            .application(&storage)
             .list_musical_notes(MusicalNoteListRequest {
                 scope: MusicalNoteScope {
                     clip_id: Some(clip_id.clone()),
@@ -1191,7 +1183,7 @@ mod tests {
         assert_eq!(note.duration.to_string(), "1/4");
         assert_eq!(note.channel, 2);
 
-        application
+        core.application(&storage)
             .update_musical_note(
                 &clip_id,
                 &note_id,
@@ -1202,28 +1194,31 @@ mod tests {
                 },
             )
             .unwrap();
-        application
+        core.application(&storage)
             .resize_musical_midi_clip(&clip_id, Some("1:2".parse().unwrap()), None)
             .unwrap();
 
-        let fetched = application.get_musical_note(&clip_id, &note_id).unwrap();
+        let fetched = core
+            .application(&storage)
+            .get_musical_note(&clip_id, &note_id)
+            .unwrap();
         assert_eq!(fetched.position.to_string(), "3:1");
         assert_eq!(fetched.duration.to_string(), "1/2");
-        application.remove_musical_note(&clip_id, &note_id).unwrap();
-        assert!(application.get_musical_note(&clip_id, &note_id).is_err());
+        core.application(&storage)
+            .remove_musical_note(&clip_id, &note_id)
+            .unwrap();
+        assert!(
+            core.application(&storage)
+                .get_musical_note(&clip_id, &note_id)
+                .is_err()
+        );
     }
 
-    fn track_with_notes() -> (MemoryStorage, AppCore<()>, String, String, String) {
+    fn track_with_notes() -> (MemoryStorage, AppCore, String, String, String) {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track_id = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track_id = core
+            .application(&storage)
             .add_track_with_created_ids("Drums", TrackKind::Instrument)
             .unwrap()
             .session
@@ -1231,7 +1226,8 @@ mod tests {
             .tracks[0]
             .id
             .clone();
-        let first_clip = application
+        let first_clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track_id,
                 "1:1".parse().unwrap(),
@@ -1244,7 +1240,8 @@ mod tests {
             .midi_clips[0]
             .id
             .clone();
-        let second_clip = application
+        let second_clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track_id,
                 "5:1".parse().unwrap(),
@@ -1260,7 +1257,7 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        application
+        core.application(&storage)
             .insert_musical_notes_with_created_ids(
                 &first_clip,
                 vec![
@@ -1281,7 +1278,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        application
+        core.application(&storage)
             .insert_musical_notes_with_created_ids(
                 &second_clip,
                 vec![MusicalMidiNoteInput {
@@ -1299,9 +1296,9 @@ mod tests {
 
     #[test]
     fn track_note_queries_are_deterministic() {
-        let (_storage, core, track_id, _first_clip, second_clip) = track_with_notes();
-        let application = core.application(&_storage);
-        let listed = application
+        let (_storage, mut core, track_id, _first_clip, second_clip) = track_with_notes();
+        let listed = core
+            .application(&_storage)
             .list_musical_notes(MusicalNoteListRequest {
                 scope: MusicalNoteScope {
                     clip_id: None,
@@ -1321,7 +1318,8 @@ mod tests {
         assert_eq!(note.id, None);
         assert_eq!(note.pitch.to_string(), "D2");
 
-        let raw = application
+        let raw = core
+            .application(&_storage)
             .list_musical_notes(MusicalNoteListRequest {
                 scope: MusicalNoteScope {
                     clip_id: Some(second_clip.clone()),
@@ -1344,9 +1342,8 @@ mod tests {
 
     #[test]
     fn musical_note_transform_clamps_velocity_and_is_atomic() {
-        let (_storage, core, _track_id, first_clip, second_clip) = track_with_notes();
-        let application = core.application(&_storage);
-        application
+        let (_storage, mut core, _track_id, first_clip, second_clip) = track_with_notes();
+        core.application(&_storage)
             .transform_musical_notes(MusicalNoteTransformRequest {
                 scope: MusicalNoteScope {
                     clip_id: Some(second_clip.clone()),
@@ -1361,13 +1358,13 @@ mod tests {
                 transpose_semitones: None,
             })
             .unwrap();
-        let transformed = core.canonical_state().unwrap();
+        let transformed = core.canonical_state();
         let transformed_note = &transformed.session.arrangement.midi_clips[1].notes[0];
         assert_eq!(transformed_note.start_tick, TimelineTick(3_920));
         assert_eq!(transformed_note.velocity, 127);
 
         assert!(
-            application
+            core.application(&_storage)
                 .transform_musical_notes(MusicalNoteTransformRequest {
                     scope: MusicalNoteScope {
                         clip_id: Some(first_clip),
@@ -1383,7 +1380,7 @@ mod tests {
                 })
                 .is_err()
         );
-        let unchanged = core.canonical_state().unwrap();
+        let unchanged = core.canonical_state();
         assert_eq!(
             unchanged.session.arrangement.midi_clips[0].notes[1].start_tick,
             TimelineTick(14_400)
@@ -1392,8 +1389,7 @@ mod tests {
 
     #[test]
     fn musical_note_transform_rejects_noop_and_out_of_range_transpose() {
-        let (_storage, core, _track_id, _first_clip, second_clip) = track_with_notes();
-        let application = core.application(&_storage);
+        let (_storage, mut core, _track_id, _first_clip, second_clip) = track_with_notes();
         let request = |velocity_offset, transpose_semitones| MusicalNoteTransformRequest {
             scope: MusicalNoteScope {
                 clip_id: Some(second_clip.clone()),
@@ -1408,23 +1404,23 @@ mod tests {
             transpose_semitones,
         };
 
-        let before = core.canonical_state().unwrap();
+        let before = core.canonical_state();
         assert!(
-            application
+            core.application(&_storage)
                 .transform_musical_notes(request(Some(0), None))
                 .is_err()
         );
         assert!(
-            application
+            core.application(&_storage)
                 .transform_musical_notes(request(None, Some(0)))
                 .is_err()
         );
         assert!(
-            application
+            core.application(&_storage)
                 .transform_musical_notes(request(None, Some(i16::MAX)))
                 .is_err()
         );
-        let after = core.canonical_state().unwrap();
+        let after = core.canonical_state();
 
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(after.session, before.session);
@@ -1433,20 +1429,14 @@ mod tests {
     #[test]
     fn musical_clip_and_region_ranges_require_positive_duration() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
         assert!(
-            application
+            core.application(&storage)
                 .create_musical_midi_clip_with_created_ids(
                     &track_id,
                     "5:2".parse().unwrap(),
@@ -1456,7 +1446,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            application
+            core.application(&storage)
                 .add_region_with_created_ids(
                     " ".into(),
                     "1:1".parse().unwrap(),
@@ -1465,7 +1455,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            application
+            core.application(&storage)
                 .add_region_with_created_ids(
                     "A'".into(),
                     "1:1".parse().unwrap(),
@@ -1473,7 +1463,7 @@ mod tests {
                 )
                 .is_ok()
         );
-        let regions = application.list_regions().unwrap();
+        let regions = core.application(&storage).list_regions().unwrap();
         assert_eq!(regions[0].name, "A'");
     }
 }

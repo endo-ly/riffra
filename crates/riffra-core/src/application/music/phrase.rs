@@ -37,7 +37,7 @@ pub struct ResolvedPhrase {
     pub end_tick: TimelineTick,
 }
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
@@ -49,7 +49,7 @@ where
     /// Returns an error when the pattern, placement, channel, or generated
     /// pitch is invalid, or when the canonical commit cannot be persisted.
     pub fn insert_phrase_pattern_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         pattern: PhrasePattern,
         placements: Vec<PhrasePlacement>,
@@ -90,7 +90,7 @@ where
     /// Returns an error when the pattern, placement, Clip, generated note, or
     /// Clip capacity is invalid.
     pub fn resolve_phrase_pattern(
-        &self,
+        &mut self,
         clip_id: &str,
         pattern: PhrasePattern,
         placements: Vec<PhrasePlacement>,
@@ -231,7 +231,6 @@ mod tests {
     use crate::PortError;
     use crate::app::AppCore;
     use crate::domain::{CreativeSession, MidiNote, PhraseNote, TrackKind};
-    use std::path::PathBuf;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -247,18 +246,13 @@ mod tests {
     #[test]
     fn phrase_pattern_expands_placements_and_repeats_in_one_commit() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
@@ -285,7 +279,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_phrase_pattern_with_created_ids(
                 &clip_id,
                 pattern,
@@ -311,18 +306,13 @@ mod tests {
     #[test]
     fn phrase_repeats_round_the_absolute_rational_offset_once() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
@@ -342,7 +332,8 @@ mod tests {
         )
         .unwrap();
 
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_phrase_pattern_with_created_ids(
                 &clip_id,
                 pattern,
@@ -368,18 +359,13 @@ mod tests {
     #[test]
     fn phrase_generation_stops_at_the_canonical_note_limit() {
         let setup_storage = MemoryStorage::default();
-        let setup_core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let setup_application = setup_core.application(&setup_storage);
-        let track = setup_application
+        let mut setup_core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = setup_core
+            .application(&setup_storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let clip = setup_application
+        let clip = setup_core
+            .application(&setup_storage)
             .create_musical_midi_clip_with_created_ids(
                 &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
@@ -401,8 +387,7 @@ mod tests {
             .collect();
         let clip_id = midi_clip.id.clone();
         let storage = MemoryStorage::default();
-        let core = AppCore::new(PathBuf::from("data"), session, (), false, false);
-        let application = core.application(&storage);
+        let mut core = AppCore::new("project:test".into(), session, 0);
         let pattern = PhrasePattern::new(
             "1/4".parse().unwrap(),
             vec![PhraseNote {
@@ -415,7 +400,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            application
+            core.application(&storage)
                 .insert_phrase_pattern_with_created_ids(
                     &clip_id,
                     pattern,

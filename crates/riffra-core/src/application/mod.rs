@@ -151,20 +151,20 @@ pub struct MidiAssetClipPlacement {
 }
 
 /// Core application facade bound to one host-provided persistence Port.
-pub struct Application<'a, A, S: ?Sized> {
-    core: &'a AppCore<A>,
+pub struct Application<'a, S: ?Sized> {
+    core: &'a mut AppCore,
     storage: &'a S,
 }
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
-    pub(crate) fn new(core: &'a AppCore<A>, storage: &'a S) -> Self {
+    pub(crate) fn new(core: &'a mut AppCore, storage: &'a S) -> Self {
         Self { core, storage }
     }
 
-    fn commit_arrangement<F>(&self, edit: F) -> Result<CreativeSession, ApplicationError>
+    fn commit_arrangement<F>(&mut self, edit: F) -> Result<CreativeSession, ApplicationError>
     where
         F: FnOnce(&mut Arrangement) -> Result<(), ApplicationError>,
     {
@@ -173,7 +173,7 @@ where
     }
 
     fn commit_arrangement_with_created_ids<F>(
-        &self,
+        &mut self,
         edit: F,
     ) -> Result<ApplicationMutation, ApplicationError>
     where
@@ -192,7 +192,7 @@ where
     /// # Errors
     /// Returns an error when the canonical base changed or persistence fails.
     pub fn commit_prepared(
-        &self,
+        &mut self,
         prepared: PreparedSession,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit_prepared(self.storage, prepared)
@@ -204,7 +204,7 @@ where
     /// # Errors
     /// Returns an error when the canonical base changed or persistence fails.
     pub fn commit_prepared_candidate(
-        &self,
+        &mut self,
         candidate: CreativeSession,
         expected_sequence: u64,
     ) -> Result<CreativeSession, ApplicationError> {

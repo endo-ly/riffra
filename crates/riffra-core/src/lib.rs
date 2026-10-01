@@ -10,20 +10,17 @@ pub mod domain;
 mod errors;
 pub mod ports;
 
-pub use app::{
-    AppCore, CanonicalSessionHandle, CanonicalSnapshot, CanonicalState, HistoryState,
-    PreparedSession,
-};
+pub use app::{AppCore, CanonicalSnapshot, CanonicalState, HistoryState, PreparedSession};
 pub use domain::*;
 pub use errors::{ApplicationError, DomainError, InputLocation};
 pub use ports::{PortError, ProjectionKey, SessionStorage};
 
-impl<A> AppCore<A> {
+impl AppCore {
     /// Creates an application facade over the canonical Core state.
     pub fn application<'a, S: SessionStorage + ?Sized>(
-        &'a self,
+        &'a mut self,
         storage: &'a S,
-    ) -> application::Application<'a, A, S> {
+    ) -> application::Application<'a, S> {
         application::Application::new(self, storage)
     }
 }

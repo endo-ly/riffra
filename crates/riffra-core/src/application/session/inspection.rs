@@ -638,6 +638,7 @@ mod tests {
 
     fn canonical(session: CreativeSession) -> CanonicalState {
         CanonicalState {
+            project_id: "project:test".into(),
             session,
             sequence: 7,
             history: HistoryState::default(),

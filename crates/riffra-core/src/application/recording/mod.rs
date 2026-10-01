@@ -2,14 +2,14 @@
 
 use super::*;
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
     /// Merges the production fields owned by a completed recording onto the
     /// latest canonical snapshot.
     pub fn commit_recording(
-        &self,
+        &mut self,
         base: &CreativeSession,
         candidate: CreativeSession,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -19,7 +19,7 @@ where
 
     /// Selects the raw or processed source for an Audio Clip backed by a Take.
     pub fn set_audio_clip_take_variant(
-        &self,
+        &mut self,
         clip_id: &str,
         variant: AudioTakeVariant,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -35,7 +35,7 @@ where
     /// when the Take is MIDI-backed. Audio source selection and all canonical
     /// slot/clip updates stay in Core.
     pub fn activate_take(
-        &self,
+        &mut self,
         session_id: &str,
         take_id: &str,
         midi_clip: Option<MidiClip>,
@@ -123,7 +123,7 @@ where
     /// asset is an infrastructure concern. Core assigns the new clip identity
     /// and owns the arrangement mutation.
     pub fn place_take_as_separate_clip_with_created_ids(
-        &self,
+        &mut self,
         take_id: &str,
         mut midi_clip: Option<MidiClip>,
     ) -> Result<super::ApplicationMutation, ApplicationError> {
@@ -214,7 +214,7 @@ where
 
     /// Repoints every production reference from one Asset id to another.
     pub fn replace_asset_references(
-        &self,
+        &mut self,
         old_asset_id: &AssetId,
         new_asset_id: AssetId,
     ) -> Result<CreativeSession, ApplicationError> {

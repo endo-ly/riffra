@@ -17,11 +17,6 @@ impl History {
         self.redo.clear();
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-    }
-
     pub(crate) fn take_undo(&mut self) -> Option<CreativeSession> {
         self.undo.pop()
     }
