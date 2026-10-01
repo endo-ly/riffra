@@ -8,6 +8,19 @@ use std::time::Instant;
 
 type OperationId = u64;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionOperation {
+    pub(crate) operation_id: u64,
+    pub(crate) key: ProjectionKey,
+}
+
+#[derive(Debug)]
+pub(super) enum CanonicalSubmit {
+    Adopted,
+    Deferred(ProjectionOperation),
+    Queued(ProjectionOperation),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Environment {
     runtime_generation: u64,
@@ -114,6 +127,11 @@ pub(super) enum Input {
     Stop,
 }
 
+pub(super) struct Transition {
+    pub(super) effects: Vec<Effect>,
+    pub(super) outcome: Result<Option<CanonicalSubmit>, RuntimeError>,
+}
+
 pub(super) enum Effect {
     Prepare(Request),
     Commit(OperationId),
@@ -158,9 +176,10 @@ impl Machine {
         self.next_operation_id + 1
     }
 
-    pub(super) fn step(&mut self, input: Input, now: Instant) -> Vec<Effect> {
+    pub(super) fn step(&mut self, input: Input, now: Instant) -> Transition {
         let before = self.status();
         let mut effects = Vec::new();
+        let mut outcome = Ok(None);
         match input {
             Input::SubmitCanonical {
                 key,
@@ -168,7 +187,9 @@ impl Machine {
                 deadline,
                 waiter,
             } => {
-                self.submit((key, projection), deadline, waiter, true, now, &mut effects);
+                outcome = self
+                    .submit((key, projection), deadline, waiter, true, now, &mut effects)
+                    .map(Some);
             }
             Input::SubmitCandidate {
                 key,
@@ -176,14 +197,16 @@ impl Machine {
                 deadline,
                 waiter,
             } => {
-                self.submit(
-                    (key, projection),
-                    deadline,
-                    waiter,
-                    false,
-                    now,
-                    &mut effects,
-                );
+                outcome = self
+                    .submit(
+                        (key, projection),
+                        deadline,
+                        waiter,
+                        false,
+                        now,
+                        &mut effects,
+                    )
+                    .map(Some);
             }
             Input::PromoteCandidate { key } => {
                 if let Some(active) = self.active.as_mut()
@@ -191,6 +214,7 @@ impl Machine {
                     && active.key == key
                     && self.job.is_none()
                     && self.queued.is_none()
+                    && !self.counters.stopped
                 {
                     if let Origin::Candidate(operation) = active.origin {
                         self.counters.operation = operation;
@@ -202,6 +226,10 @@ impl Machine {
                         projection: active.projection.clone(),
                     });
                     self.counters.error = None;
+                } else {
+                    outcome = Err(RuntimeError::Internal(
+                        "prepared runtime candidate is no longer available".into(),
+                    ));
                 }
             }
             Input::Prepared { operation, result } => {
@@ -354,7 +382,7 @@ impl Machine {
         if before != self.status() {
             effects.push(Effect::PublishStatus);
         }
-        effects
+        Transition { effects, outcome }
     }
 
     fn submit(
@@ -365,7 +393,7 @@ impl Machine {
         canonical: bool,
         now: Instant,
         effects: &mut Vec<Effect>,
-    ) {
+    ) -> Result<CanonicalSubmit, RuntimeError> {
         let (key, projection) = graph;
         self.next_operation_id += 1;
         let operation = self.next_operation_id;
@@ -394,9 +422,9 @@ impl Machine {
         };
         if let Some(error) = rejected {
             if let Some(waiter) = waiter {
-                self.complete(waiter, Err(error), effects);
+                self.complete(waiter, Err(error.clone()), effects);
             }
-            return;
+            return Err(error);
         }
         if canonical {
             self.canonical = Some(CanonicalIntent {
@@ -417,7 +445,7 @@ impl Machine {
                 if let Some(waiter) = waiter {
                     self.complete(waiter, Ok(self.status()), effects);
                 }
-                return;
+                return Ok(CanonicalSubmit::Adopted);
             }
             let matching_job = self
                 .job
@@ -435,7 +463,10 @@ impl Machine {
                         .expect("waiter registered")
                         .operation = existing;
                 }
-                return;
+                return Ok(CanonicalSubmit::Deferred(ProjectionOperation {
+                    operation_id: operation,
+                    key,
+                }));
             }
             if let Some(queued) = self.queued.as_mut()
                 && same_projected_graph(&queued.projection, &projection)
@@ -448,7 +479,10 @@ impl Machine {
                 }
                 queued.key = key;
                 queued.origin = Origin::Canonical;
-                return;
+                return Ok(CanonicalSubmit::Deferred(ProjectionOperation {
+                    operation_id: operation,
+                    key,
+                }));
             }
         }
         let request = Request {
@@ -479,6 +513,10 @@ impl Machine {
         } else {
             self.start(request, now, effects);
         }
+        Ok(CanonicalSubmit::Queued(ProjectionOperation {
+            operation_id: operation,
+            key,
+        }))
     }
 
     fn start(&mut self, request: Request, now: Instant, effects: &mut Vec<Effect>) {
@@ -734,20 +772,6 @@ impl Machine {
         }
     }
 
-    pub(super) fn preparation(&self) -> Option<Request> {
-        (!self.counters.stopped)
-            .then(|| {
-                self.job
-                    .as_ref()
-                    .filter(|job| job.phase == JobPhase::Preparing)
-                    .map(|job| job.request.clone())
-            })
-            .flatten()
-    }
-
-    pub(super) fn stopped(&self) -> bool {
-        self.counters.stopped
-    }
     pub(super) fn result(
         &self,
         operation: OperationId,
@@ -756,12 +780,6 @@ impl Machine {
             .get(&operation)
             .and_then(|waiter| waiter.result.as_ref())
     }
-    pub(super) fn follows_existing(&self, waiter: OperationId) -> bool {
-        self.waiters
-            .get(&waiter)
-            .is_some_and(|waiter| waiter.operation != self.next_operation_id)
-    }
-
     pub(super) fn remove_waiter(&mut self, operation: OperationId) {
         self.waiters.remove(&operation);
     }
@@ -785,9 +803,6 @@ impl Machine {
             .queued
             .as_ref()
             .is_some_and(|request| request.key == key)
-    }
-    pub(super) fn promotable(&self, key: ProjectionKey) -> bool {
-        self.ready_for(key)
     }
 }
 
@@ -887,16 +902,18 @@ mod tests {
                 waiter: Some(operation),
             }
         };
-        (operation, machine.step(input, now))
+        (operation, machine.step(input, now).effects)
     }
     fn finish(machine: &mut Machine, operation: u64, now: Instant) {
-        let effects = machine.step(
-            Input::Prepared {
-                operation,
-                result: Ok(()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation,
+                    result: Ok(()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -932,19 +949,76 @@ mod tests {
     }
 
     #[test]
+    fn submission_outcome_reports_queued_deferred_and_adopted_work() {
+        // Arrange
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let graph = snapshot(1);
+        let first = machine.next_operation();
+        // Act
+        let queued = machine.step(
+            Input::SubmitCanonical {
+                key: key(1, 1),
+                projection: graph.clone(),
+                deadline: None,
+                waiter: Some(first),
+            },
+            now,
+        );
+        let alias = machine.next_operation();
+        let deferred = machine.step(
+            Input::SubmitCanonical {
+                key: key(2, 2),
+                projection: reidentify(&graph, 2),
+                deadline: None,
+                waiter: Some(alias),
+            },
+            now,
+        );
+        finish(&mut machine, first, now);
+        let adopted = machine.step(
+            Input::SubmitCanonical {
+                key: key(3, 3),
+                projection: reidentify(&graph, 3),
+                deadline: None,
+                waiter: None,
+            },
+            now,
+        );
+        // Assert
+        assert!(
+            matches!(queued.outcome, Ok(Some(CanonicalSubmit::Queued(operation))) if operation.operation_id == first)
+        );
+        assert!(queued.effects.iter().any(
+            |effect| matches!(effect, Effect::Prepare(request) if request.operation == first)
+        ));
+        assert!(
+            matches!(deferred.outcome, Ok(Some(CanonicalSubmit::Deferred(operation))) if operation.operation_id == alias)
+        );
+        no_prepare(&deferred.effects);
+        assert!(matches!(
+            adopted.outcome,
+            Ok(Some(CanonicalSubmit::Adopted))
+        ));
+        no_prepare(&adopted.effects);
+        assert_eq!(machine.status().active_projection_sequence, Some(3));
+    }
+    #[test]
     fn keeps_only_the_latest_queued_snapshot() {
         let now = Instant::now();
         let mut machine = machine(now);
         let (first, _) = submit(&mut machine, snapshot(1), key(1, 1), true, now);
         let (second, _) = submit(&mut machine, snapshot(2), key(2, 2), true, now);
         let (third, _) = submit(&mut machine, snapshot(3), key(3, 3), true, now);
-        let effects = machine.step(
-            Input::Prepared {
-                operation: first,
-                result: Ok(()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation: first,
+                    result: Ok(()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -978,7 +1052,7 @@ mod tests {
             Some(Err(RuntimeError::Superseded { .. }))
         ));
         assert!(matches!(machine.result(following), Some(Ok(_))));
-        assert!(machine.preparation().is_none());
+        assert!(machine.job.is_none());
         assert_eq!(machine.status().active_projection_sequence, Some(3));
     }
 
@@ -1014,7 +1088,7 @@ mod tests {
             machine.result(committing),
             Some(Err(RuntimeError::Superseded { .. }))
         ));
-        assert_eq!(machine.preparation().unwrap().operation, latest);
+        assert_eq!(machine.job.as_ref().unwrap().request.operation, latest);
     }
 
     #[test]
@@ -1022,18 +1096,20 @@ mod tests {
         let now = Instant::now();
         let mut machine = machine(now);
         let (operation, _) = submit(&mut machine, snapshot(4), key(4, 4), true, now);
-        let effects = machine.step(
-            Input::Prepared {
-                operation,
-                result: Err(RuntimeError::Native {
-                    kind: "timelineBusy".into(),
-                    message: "busy".into(),
-                    operation: "prepare".into(),
-                    details: None,
-                }),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation,
+                    result: Err(RuntimeError::Native {
+                        kind: "timelineBusy".into(),
+                        message: "busy".into(),
+                        operation: "prepare".into(),
+                        details: None,
+                    }),
+                },
+                now,
+            )
+            .effects;
         assert!(effects.iter().any(
             |effect| matches!(effect, Effect::Prepare(request) if request.operation == operation)
         ));
@@ -1047,13 +1123,15 @@ mod tests {
         let graph = snapshot(10);
         active(&mut machine, graph.clone(), key(1, 10), now);
         let (operation, _) = submit(&mut machine, snapshot(11), key(2, 11), true, now);
-        let effects = machine.step(
-            Input::Prepared {
-                operation,
-                result: Err(failed()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation,
+                    result: Err(failed()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -1103,8 +1181,17 @@ mod tests {
         let mut machine = machine(now);
         let (candidate, _) = submit(&mut machine, snapshot(11), key(1, 11), false, now);
         finish(&mut machine, candidate, now);
-        let effects = machine.step(Input::PromoteCandidate { key: key(1, 11) }, now);
-        no_prepare(&effects);
+        let transition = machine.step(Input::PromoteCandidate { key: key(1, 11) }, now);
+        assert!(matches!(transition.outcome, Ok(None)));
+        no_prepare(&transition.effects);
+        let before = machine.status();
+        assert!(
+            machine
+                .step(Input::PromoteCandidate { key: key(2, 12) }, now)
+                .outcome
+                .is_err()
+        );
+        assert_eq!(machine.status(), before);
         assert_eq!(machine.status().active_projection_sequence, Some(1));
         assert_eq!(machine.status().state, RuntimeProjectionState::Active);
     }
@@ -1152,13 +1239,15 @@ mod tests {
                 actual: 2
             }))
         ));
-        let effects = machine.step(
-            Input::Prepared {
-                operation: candidate,
-                result: Ok(()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation: candidate,
+                    result: Ok(()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -1206,13 +1295,15 @@ mod tests {
             machine.result(candidate),
             Some(Err(RuntimeError::Cancelled { .. }))
         ));
-        let effects = machine.step(
-            Input::Prepared {
-                operation: candidate,
-                result: Ok(()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation: candidate,
+                    result: Ok(()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -1330,7 +1421,7 @@ mod tests {
         let (candidate, _) = submit(&mut machine, snapshot(13), key(3, 13), false, now);
         finish(&mut machine, running, now);
         assert!(matches!(machine.result(following), Some(Ok(_))));
-        assert_eq!(machine.preparation().unwrap().operation, candidate);
+        assert_eq!(machine.job.as_ref().unwrap().request.operation, candidate);
     }
     #[test]
     fn defers_to_the_running_canonical_before_a_queued_candidate() {
@@ -1344,7 +1435,7 @@ mod tests {
         no_prepare(&effects);
         finish(&mut machine, running, now);
         assert!(matches!(machine.result(following), Some(Ok(_))));
-        assert_eq!(machine.preparation().unwrap().operation, candidate);
+        assert_eq!(machine.job.as_ref().unwrap().request.operation, candidate);
     }
     #[test]
     fn stop_and_deadline_complete_waiters_without_accepting_late_work() {
@@ -1359,13 +1450,15 @@ mod tests {
             machine.result(operation),
             Some(Err(RuntimeError::Timeout { .. }))
         ));
-        let effects = machine.step(
-            Input::Prepared {
-                operation,
-                result: Ok(()),
-            },
-            now + Duration::from_secs(2),
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation,
+                    result: Ok(()),
+                },
+                now + Duration::from_secs(2),
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -1393,13 +1486,15 @@ mod tests {
         let (operation, _) = submit(&mut machine, snapshot(13), key(13, 13), true, now);
         let play = transport.request_play(Some(key(13, 13)));
 
-        let effects = machine.step(
-            Input::Prepared {
-                operation,
-                result: Err(failed()),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::Prepared {
+                    operation,
+                    result: Err(failed()),
+                },
+                now,
+            )
+            .effects;
         assert!(
             effects
                 .iter()
@@ -1595,15 +1690,17 @@ mod tests {
         let mut machine = machine(now);
         let operation = machine.next_operation();
         let deadline = now + Duration::from_secs(30);
-        let effects = machine.step(
-            Input::SubmitCanonical {
-                key: key(31, 31),
-                projection: snapshot(31),
-                deadline: Some(deadline),
-                waiter: Some(operation),
-            },
-            now,
-        );
+        let effects = machine
+            .step(
+                Input::SubmitCanonical {
+                    key: key(31, 31),
+                    projection: snapshot(31),
+                    deadline: Some(deadline),
+                    waiter: Some(operation),
+                },
+                now,
+            )
+            .effects;
         assert!(effects.iter().any(
             |effect| matches!(effect,Effect::Prepare(request) if request.deadline==Some(deadline))
         ));

@@ -1,5 +1,7 @@
 use super::ports::ProjectionDriver;
-use super::projection_machine::{Effect, Input, Machine, Request};
+use super::projection_machine::{
+    CanonicalSubmit, Effect, Input, Machine, ProjectionOperation, Request,
+};
 use super::{RuntimeError, TIMELINE_PREPARE_TIMEOUT, is_retryable_native_kind, now_ms};
 use crate::api::output::RuntimeProjectionStatus;
 use crate::execution::ProjectedTimeline;
@@ -10,21 +12,9 @@ use std::time::{Duration, Instant};
 
 pub type ProjectionStatusHook = Arc<dyn Fn(RuntimeProjectionStatus) + Send + Sync>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProjectionOperation {
-    pub(crate) operation_id: u64,
-    pub(crate) key: ProjectionKey,
-}
-
-#[derive(Debug)]
-pub(super) enum CanonicalSubmit {
-    Adopted,
-    Deferred(ProjectionOperation),
-    Queued(ProjectionOperation),
-}
-
 struct ProjectionCoordinatorSync {
     state: Mutex<Machine>,
+    preparation: Mutex<(Option<Request>, bool)>,
     worker_wake: Condvar,
     operation_wake: Condvar,
 }
@@ -52,6 +42,7 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 Instant::now(),
                 now_ms(),
             )),
+            preparation: Mutex::new((None, false)),
             worker_wake: Condvar::new(),
             operation_wake: Condvar::new(),
         });
@@ -80,10 +71,12 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
         canonical: bool,
     ) -> Result<CanonicalSubmit, RuntimeError> {
         let mut machine = self.state.state.lock().expect("projection lock poisoned");
-        let mut effects = machine.step(
-            Input::GenerationObserved(self.driver.runtime_generation()),
-            Instant::now(),
-        );
+        let mut effects = machine
+            .step(
+                Input::GenerationObserved(self.driver.runtime_generation()),
+                Instant::now(),
+            )
+            .effects;
         let operation = machine.next_operation();
         let input = if canonical {
             Input::SubmitCanonical {
@@ -100,28 +93,21 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
                 waiter: Some(operation),
             }
         };
-        effects.extend(machine.step(input, Instant::now()));
-        let following = machine.follows_existing(operation);
-        let completed = machine.result(operation).cloned();
-        if completed.is_some() || deadline.is_none() {
+        let transition = machine.step(input, Instant::now());
+        effects.extend(transition.effects);
+        if matches!(
+            transition.outcome,
+            Ok(Some(CanonicalSubmit::Adopted)) | Err(_)
+        ) || deadline.is_none()
+        {
             machine.remove_waiter(operation);
         }
         let status = machine.status();
         drop(machine);
         notify_effects(&self.state, &self.status_hook, effects, status);
-        if let Some(result) = completed {
-            result?;
-            return Ok(CanonicalSubmit::Adopted);
-        }
-        let operation = ProjectionOperation {
-            operation_id: operation,
-            key,
-        };
-        Ok(if following {
-            CanonicalSubmit::Deferred(operation)
-        } else {
-            CanonicalSubmit::Queued(operation)
-        })
+        transition
+            .outcome?
+            .ok_or_else(|| RuntimeError::Internal("submission outcome is missing".into()))
     }
 
     pub(crate) fn submit_with_canonical_deadline(
@@ -236,22 +222,26 @@ impl<D: ProjectionDriver> ProjectionCoordinator<D> {
     ) -> Result<(), RuntimeError> {
         self.step(Input::GenerationObserved(self.driver.runtime_generation()));
         let mut machine = self.state.state.lock().expect("projection lock poisoned");
-        if !machine.promotable(key) {
-            return Err(RuntimeError::Internal(
-                "prepared runtime candidate is no longer available".into(),
-            ));
-        }
-        let effects = machine.step(Input::PromoteCandidate { key }, Instant::now());
+        let transition = machine.step(Input::PromoteCandidate { key }, Instant::now());
         let status = machine.status();
         drop(machine);
-        notify_effects(&self.state, &self.status_hook, effects, status);
-        Ok(())
+        notify_effects(&self.state, &self.status_hook, transition.effects, status);
+        transition.outcome.map(|_| ())
     }
 }
 
 impl<D: ProjectionDriver> Drop for ProjectionCoordinator<D> {
     fn drop(&mut self) {
         self.step(Input::Stop);
+        {
+            let mut work = self
+                .state
+                .preparation
+                .lock()
+                .expect("preparation lock poisoned");
+            *work = (None, true);
+            self.state.worker_wake.notify_all();
+        }
         self.driver.force_shutdown();
         // Native plugins may remain inside foreign code during shutdown.
         // Detaching avoids an unbounded join on the closing thread.
@@ -267,7 +257,7 @@ fn transition(
     input: Input,
 ) -> Vec<Effect> {
     let mut machine = sync.state.lock().expect("projection lock poisoned");
-    let effects = machine.step(input, Instant::now());
+    let effects = machine.step(input, Instant::now()).effects;
     let status = machine.status();
     drop(machine);
     let mut native = Vec::new();
@@ -291,10 +281,12 @@ fn notify_effects(
     for effect in effects {
         match effect {
             Effect::Prepare(request) => {
-                // The request is held by Machine::job; the condition variable
-                // schedules that single slot without a second work queue.
-                let _ = request;
-                sync.worker_wake.notify_one();
+                let mut work = sync.preparation.lock().expect("preparation lock poisoned");
+                let (pending, stopped) = &mut *work;
+                if !*stopped {
+                    *pending = Some(request);
+                    sync.worker_wake.notify_one();
+                }
             }
             Effect::Complete { waiter, result } => {
                 let _ = (waiter, result);
@@ -328,18 +320,19 @@ fn worker_loop<D: ProjectionDriver>(
 ) {
     loop {
         let request = {
-            let mut machine = sync.state.lock().expect("projection lock poisoned");
+            let mut work = sync.preparation.lock().expect("preparation lock poisoned");
             loop {
-                if machine.stopped() {
+                let (pending, stopped) = &mut *work;
+                if *stopped {
                     return;
                 }
-                if let Some(request) = machine.preparation() {
+                if let Some(request) = pending.take() {
                     break request;
                 }
-                machine = sync
+                work = sync
                     .worker_wake
-                    .wait(machine)
-                    .expect("projection condition variable poisoned");
+                    .wait(work)
+                    .expect("preparation condition variable poisoned");
             }
         };
         let result = timeout(&request, TIMELINE_PREPARE_TIMEOUT).and_then(|timeout| {

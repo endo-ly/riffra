@@ -66,8 +66,8 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-use self::projection_coordinator::CanonicalSubmit;
 use self::projection_coordinator::ProjectionCoordinator;
+use self::projection_machine::CanonicalSubmit;
 use self::transport::PlayDecision;
 use self::transport_executor::TransportExecutor;
 use crate::api::output::{RuntimeProjectionState, RuntimeProjectionStatus};

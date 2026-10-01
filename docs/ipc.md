@@ -135,6 +135,8 @@ Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モ
 
 ## 4. 境界 B: シェル → WebView イベント
 
+DesktopのActive Projectは初期bootstrapと`ProjectActivationResult`で確定する。`ProjectState`の一覧応答と名称更新イベントは一覧情報を更新し、現在のActive Project IDを維持する。
+
 | イベント                    | ペイロード                | 意味                                                                                                                          |
 | --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `runtime-startup-finished`  | `RuntimeStartupFinished`  | スタートアップ時のランタイム初期化完了（セーフモードでは即通知）                                                              |
