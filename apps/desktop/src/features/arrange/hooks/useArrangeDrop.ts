@@ -1,6 +1,5 @@
 import { useCallback, type DragEvent } from 'react';
 import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
-import { getHostGeneration } from '@/native/invoke';
 import { readAssetDrag } from '@/shared/asset-drag';
 import { RIFFRA_INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
@@ -18,7 +17,6 @@ interface UseArrangeDropOptions {
   > &
     Pick<ArrangeWorkspaceApi, 'applyInstrument'>;
   commit: ArrangeCommit;
-  hostGeneration: number;
   pixelsPerTick: number;
   snapTick: ArrangeSnapTick;
   setMessage: (message: string) => void;
@@ -30,7 +28,6 @@ const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Fi
 export function useArrangeDrop({
   api,
   commit,
-  hostGeneration,
   pixelsPerTick,
   snapTick,
   setMessage,
@@ -94,7 +91,6 @@ export function useArrangeDrop({
         return;
       }
       for (const file of Array.from(files)) {
-        if (getHostGeneration() !== hostGeneration) return;
         if (!/\.midi?$/i.test(file.name)) continue;
         const stem = file.name.replace(/\.(mid|midi)$/i, '');
         try {
@@ -102,7 +98,6 @@ export function useArrangeDrop({
             stem,
             Array.from(new Uint8Array(await file.arrayBuffer())),
           );
-          if (getHostGeneration() !== hostGeneration) return;
           if (!assetId) continue;
           await commit(api.addMidiClipToArrangement(assetId, stem, undefined, trackId));
         } catch {
@@ -110,7 +105,7 @@ export function useArrangeDrop({
         }
       }
     },
-    [api, commit, hostGeneration, setMessage],
+    [api, commit, setMessage],
   );
 
   const handleDrop = useCallback(

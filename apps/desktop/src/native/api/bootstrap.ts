@@ -17,6 +17,7 @@ export async function bootstrap(): Promise<BootstrapState> {
     {},
     {
       canonical: {
+        projectId: defaultProjectState().activeProjectId,
         session,
         sequence: 0,
         history: { canUndo: false, canRedo: false },

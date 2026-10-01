@@ -1,16 +1,16 @@
 use crate::api::output::{
-    ProjectActivationResult, ProjectExport, ProjectRecoveryState, ProjectState, ProjectSummary,
-    RecoveryCandidate,
+    ProjectExport, ProjectRecoveryState, ProjectState, ProjectSummary, RecoveryCandidate,
 };
-use riffra_core::{CanonicalState, CreativeSession};
+use riffra_core::CreativeSession;
 use riffra_host::{LoadedSession, ProjectStore, SessionStore};
 use std::path::Path;
 
-pub(crate) fn state(project_store: &ProjectStore) -> Result<ProjectState, String> {
+pub(crate) fn state(
+    project_store: &ProjectStore,
+    project_id: &str,
+) -> Result<ProjectState, String> {
     Ok(ProjectState {
-        active_project_id: project_store
-            .active_project_id()
-            .map_err(|error| error.to_string())?,
+        active_project_id: project_id.to_owned(),
         projects: project_store
             .list()
             .map_err(|error| error.to_string())?
@@ -25,14 +25,6 @@ pub(crate) struct PreparedActivation {
     pub storage: SessionStore,
     pub project_state: ProjectState,
     pub recovery: ProjectRecoveryState,
-}
-
-pub(crate) struct ActivatedProject {
-    pub loaded: LoadedSession,
-    pub storage: SessionStore,
-    pub project_state: ProjectState,
-    pub recovery: ProjectRecoveryState,
-    pub canonical: CanonicalState,
 }
 
 pub(crate) fn prepare(
@@ -63,39 +55,6 @@ pub(crate) fn prepare(
     })
 }
 
-pub(crate) fn activate<A>(
-    project_store: &ProjectStore,
-    prepared: PreparedActivation,
-    activate_core: impl FnOnce(CreativeSession) -> Result<CanonicalState, A>,
-) -> Result<ActivatedProject, String>
-where
-    A: std::fmt::Display,
-{
-    let project_id = prepared.project_state.active_project_id.clone();
-    let previous_project_id = project_store
-        .set_active(&project_id)
-        .map_err(|error| error.to_string())?;
-    let canonical = match activate_core(prepared.loaded.session.clone()) {
-        Ok(canonical) => canonical,
-        Err(error) => {
-            let rollback = project_store.set_active(&previous_project_id);
-            return Err(match rollback {
-                Ok(_) => error.to_string(),
-                Err(rollback_error) => format!(
-                    "Project activation failed: {error}; active Project rollback failed: {rollback_error}"
-                ),
-            });
-        }
-    };
-    Ok(ActivatedProject {
-        loaded: prepared.loaded,
-        storage: prepared.storage,
-        project_state: prepared.project_state,
-        recovery: prepared.recovery,
-        canonical,
-    })
-}
-
 pub(crate) fn recovery(
     storage: &SessionStore,
     recovered_from_generation: bool,
@@ -113,14 +72,6 @@ pub(crate) fn recovery(
             Vec::new()
         },
     })
-}
-
-pub(crate) fn result(activated: ActivatedProject) -> ProjectActivationResult {
-    ProjectActivationResult {
-        project_state: activated.project_state,
-        canonical: activated.canonical,
-        recovery: activated.recovery,
-    }
 }
 
 pub fn export(

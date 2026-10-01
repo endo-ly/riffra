@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeProjectionStatus } from '@/model/domain';
 import type { NativeEventApi, TransportApi } from '@/native/native-api';
-import { getHostGeneration } from '@/native/invoke';
-
 type RuntimeProjectionApi = Pick<
   NativeEventApi & TransportApi,
   'getRuntimeProjectionStatus' | 'retryRuntimeProjection' | 'onRuntimeProjectionStatus'
@@ -76,23 +74,14 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
   );
   const [retrying, setRetrying] = useState(false);
   const retryInFlight = useRef(false);
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
     let disposed = false;
     let receivedEvent = false;
-    const effectGeneration = hostGeneration;
     setViewState(initialRuntimeProjectionViewState);
     retryInFlight.current = false;
     setRetrying(false);
     const publish = (next: RuntimeProjectionStatus) => {
-      if (
-        disposed ||
-        currentHostGeneration.current !== effectGeneration ||
-        getHostGeneration() !== effectGeneration
-      )
-        return;
+      if (disposed) return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     };
     const unlisten = api.onRuntimeProjectionStatus((next) => {
@@ -115,7 +104,6 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
     if (retryInFlight.current) return;
     retryInFlight.current = true;
     setRetrying(true);
-    const requestGeneration = hostGeneration;
     setViewState((current) => ({
       status: {
         ...current.status,
@@ -127,10 +115,8 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
     }));
     try {
       const next = await api.retryRuntimeProjection();
-      if (requestGeneration !== currentHostGeneration.current) return;
       setViewState((current) => reduceRuntimeProjectionStatus(current, next));
     } catch {
-      if (requestGeneration !== currentHostGeneration.current) return;
       setViewState((current) => ({
         status: {
           ...current.status,
@@ -145,9 +131,8 @@ export function useRuntimeProjectionStatus(api: RuntimeProjectionApi, hostGenera
       }));
     } finally {
       retryInFlight.current = false;
-      if (requestGeneration === currentHostGeneration.current) setRetrying(false);
+      setRetrying(false);
     }
-  }, [api, hostGeneration]);
-
+  }, [api]);
   return { status: viewState.status, failure: viewState.failure, retrying, retry };
 }

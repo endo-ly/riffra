@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
-import { getHostGeneration, HostConnectionChangedError } from '@/native/invoke';
-
+import { HostConnectionChangedError } from '@/native/invoke';
 interface ArrangeCommandOptions {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
 }
@@ -12,11 +11,9 @@ export function useArrangeCommands({ applyCanonicalState }: ArrangeCommandOption
 
   const commit = useCallback(
     async (operation: Promise<ArrangementMutationResult | null>) => {
-      const requestGeneration = getHostGeneration();
       setMessage('');
       try {
         const next = await operation;
-        if (getHostGeneration() !== requestGeneration) return null;
         if (!next) {
           setMessage('The edit was not applied.');
           return null;
@@ -26,7 +23,6 @@ export function useArrangeCommands({ applyCanonicalState }: ArrangeCommandOption
         return next.canonical.session;
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return null;
-        if (getHostGeneration() !== requestGeneration) return null;
         const detail = error instanceof Error ? error.message : String(error);
         setMessage(detail);
         return null;

@@ -4,9 +4,7 @@ use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;
 use serde::{Deserialize, Serialize};
 use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use ts_rs::TS;
@@ -24,6 +22,8 @@ pub struct CanonicalSnapshot {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalState {
+    /// Identity of the project owning this revision.
+    pub project_id: String,
     /// Canonical production state at the revision boundary.
     pub session: CreativeSession,
     /// Process-local canonical commit revision.
@@ -40,6 +40,22 @@ pub struct PreparedSession {
 }
 
 impl PreparedSession {
+    /// Builds a validated candidate from a consistent canonical snapshot.
+    ///
+    /// # Errors
+    /// Returns an error when editing or session validation fails.
+    pub fn from_snapshot(
+        snapshot: &CanonicalSnapshot,
+        edit: impl FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
+    ) -> Result<Self, ApplicationError> {
+        let mut session = snapshot.session.clone();
+        edit(&mut session)?;
+        let session = session
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)?;
+        Ok(Self::new(session, snapshot.sequence))
+    }
+
     pub(crate) fn new(session: CreativeSession, expected_sequence: u64) -> Self {
         Self {
             session,
@@ -65,22 +81,6 @@ impl PreparedSession {
     }
 }
 
-/// A read-only handle for integrations that outlive one command invocation.
-#[derive(Clone)]
-pub struct CanonicalSessionHandle {
-    session: Arc<Mutex<CreativeSession>>,
-}
-
-impl CanonicalSessionHandle {
-    /// Captures the current canonical production state.
-    pub fn snapshot(&self) -> Result<CreativeSession, ApplicationError> {
-        self.session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)
-            .map(|session| session.clone())
-    }
-}
-
 /// Read-only history capabilities exposed to a host UI.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -91,430 +91,167 @@ pub struct HistoryState {
     pub can_redo: bool,
 }
 
-/// Platform-independent application state shared by every Riffra host.
-pub struct AppCore<A> {
-    data_root: PathBuf,
-    session: Arc<Mutex<CreativeSession>>,
-    audio: A,
-    recovered_from_generation: std::sync::atomic::AtomicBool,
-    safe_mode: bool,
-    operation_gate: Mutex<()>,
-    projection_version: AtomicU64,
-    history: Mutex<History>,
+/// Canonical state and history for one project.
+pub struct AppCore {
+    project_id: String,
+    snapshot: Arc<CanonicalSnapshot>,
+    history: History,
 }
 
-impl<A> AppCore<A> {
-    /// Creates application state from an already-loaded canonical session.
-    pub fn new(
-        data_root: PathBuf,
-        session: CreativeSession,
-        audio: A,
-        recovered_from_generation: bool,
-        safe_mode: bool,
-    ) -> Self {
+impl AppCore {
+    /// Creates canonical state for one project at the supplied sequence.
+    pub fn new(project_id: String, session: CreativeSession, sequence: u64) -> Self {
         Self {
-            data_root,
-            session: Arc::new(Mutex::new(session)),
-            audio,
-            recovered_from_generation: std::sync::atomic::AtomicBool::new(
-                recovered_from_generation,
-            ),
-            safe_mode,
-            operation_gate: Mutex::new(()),
-            projection_version: AtomicU64::new(0),
-            history: Mutex::new(History::default()),
+            project_id,
+            snapshot: Arc::new(CanonicalSnapshot { session, sequence }),
+            history: History::default(),
         }
     }
 
-    /// Returns the root used for durable application data.
-    pub fn data_root(&self) -> &Path {
-        &self.data_root
+    /// Returns the identity of this project.
+    pub fn project_id(&self) -> &str {
+        &self.project_id
     }
 
-    /// Returns the shared canonical session handle for host integrations that
-    /// must observe state while outliving a single command.
-    pub fn shared_session(&self) -> CanonicalSessionHandle {
-        CanonicalSessionHandle {
-            session: Arc::clone(&self.session),
+    /// Captures the current committed session and sequence.
+    pub fn snapshot(&self) -> Arc<CanonicalSnapshot> {
+        Arc::clone(&self.snapshot)
+    }
+
+    /// Captures canonical state and history at the same revision.
+    pub fn canonical_state(&self) -> CanonicalState {
+        CanonicalState {
+            project_id: self.project_id.clone(),
+            session: self.snapshot.session.clone(),
+            sequence: self.snapshot.sequence,
+            history: self.history_state(),
         }
     }
 
-    /// Returns the host-provided live audio service.
-    pub fn audio(&self) -> &A {
-        &self.audio
-    }
-
-    /// Reports whether the active Project was loaded from a recovery generation.
-    pub fn recovered_from_generation(&self) -> bool {
-        self.recovered_from_generation.load(Ordering::Acquire)
-    }
-
-    /// Updates recovery metadata when the active Project changes.
-    pub fn set_recovered_from_generation(&self, recovered: bool) {
-        self.recovered_from_generation
-            .store(recovered, Ordering::Release);
-    }
-
-    /// Reports whether external devices and plugins are isolated.
-    pub fn safe_mode(&self) -> bool {
-        self.safe_mode
-    }
-
-    /// Replaces the canonical session while switching Project containers.
-    ///
-    /// Activation advances the canonical sequence and clears all history. It
-    /// deliberately does not persist the session because the ProjectStore has
-    /// already completed the Project-scoped save before activation.
-    ///
-    /// # Errors
-    /// Returns the committed canonical state, or an error when the supplied
-    /// session is invalid or Core state is unavailable.
-    pub fn activate_session(
-        &self,
-        session: CreativeSession,
-    ) -> Result<CanonicalState, ApplicationError> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let session = session
-            .validate_and_normalize()
-            .map_err(ApplicationError::InvalidSession)?;
-        let mut canonical = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let mut history = self
-            .history
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        self.begin_exchange();
-        *canonical = session.clone();
-        history.clear();
-        self.end_exchange();
-        Ok(CanonicalState {
-            session,
-            sequence: self.projection_version.load(Ordering::Acquire) / 2,
-            history: HistoryState::default(),
-        })
-    }
-
-    /// Captures the canonical session and projection sequence as one pair.
-    pub fn snapshot(&self) -> Result<CanonicalSnapshot, ApplicationError> {
-        loop {
-            let before = self.projection_version.load(Ordering::Acquire);
-            if !before.is_multiple_of(2) {
-                std::thread::yield_now();
-                continue;
-            }
-            let session = self
-                .session
-                .lock()
-                .map_err(|_| ApplicationError::StateLock)?
-                .clone();
-            let after = self.projection_version.load(Ordering::Acquire);
-            if before == after && after.is_multiple_of(2) {
-                return Ok(CanonicalSnapshot {
-                    session,
-                    sequence: after / 2,
-                });
-            }
-            std::thread::yield_now();
-        }
-    }
-
-    /// Captures the canonical session, revision, and history capabilities as
-    /// one consistent state for host synchronization.
-    pub fn canonical_state(&self) -> Result<CanonicalState, ApplicationError> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let sequence = self.projection_version.load(Ordering::Acquire) / 2;
-        let session = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        let history = self
-            .history
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        Ok(CanonicalState {
-            session,
-            sequence,
-            history: HistoryState {
-                can_undo: history.can_undo(),
-                can_redo: history.can_redo(),
-            },
-        })
-    }
-
-    /// Commits one user-intent mutation through validation, persistence, the
-    /// canonical state exchange, and Core-owned history.
-    pub(crate) fn commit<S, F>(
-        &self,
+    pub(crate) fn commit<S: SessionStorage + ?Sized>(
+        &mut self,
         storage: &S,
-        edit: F,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-        F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
-    {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let current = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        let mut candidate = current.clone();
+        edit: impl FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
+    ) -> Result<CreativeSession, ApplicationError> {
+        let mut candidate = self.snapshot.session.clone();
         edit(&mut candidate)?;
-        self.commit_candidate_locked(storage, current, candidate)
+        self.commit_candidate(storage, candidate)
     }
 
-    pub(crate) fn prepare<F>(&self, edit: F) -> Result<PreparedSession, ApplicationError>
-    where
-        F: FnOnce(&mut CreativeSession) -> Result<(), ApplicationError>,
-    {
-        let snapshot = self.snapshot()?;
-        let mut candidate = snapshot.session;
-        edit(&mut candidate)?;
-        candidate = candidate
-            .validate_and_normalize()
-            .map_err(ApplicationError::InvalidSession)?;
-        Ok(PreparedSession {
-            session: candidate,
-            expected_sequence: snapshot.sequence,
-        })
-    }
-
-    pub(crate) fn commit_prepared<S>(
-        &self,
+    pub(crate) fn commit_prepared<S: SessionStorage + ?Sized>(
+        &mut self,
         storage: &S,
         prepared: PreparedSession,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let current = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        let current_sequence = self.projection_version.load(Ordering::Acquire) / 2;
-        if current_sequence != prepared.expected_sequence {
+    ) -> Result<CreativeSession, ApplicationError> {
+        if self.snapshot.sequence != prepared.expected_sequence {
             return Err(ApplicationError::Conflict {
                 expected_sequence: prepared.expected_sequence,
-                current_sequence,
+                current_sequence: self.snapshot.sequence,
             });
         }
-        self.commit_candidate_locked(storage, current, prepared.session)
+        self.commit_candidate(storage, prepared.session)
     }
 
-    /// Commits a prepared candidate. This is useful for a long-running host
-    /// operation that merges only its owned fields onto the latest snapshot.
-    pub(crate) fn commit_candidate<S>(
-        &self,
+    pub(crate) fn commit_candidate<S: SessionStorage + ?Sized>(
+        &mut self,
         storage: &S,
         candidate: CreativeSession,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let current = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        self.commit_candidate_locked(storage, current, candidate)
-    }
-
-    /// Commits a candidate merged with the latest canonical state while the
-    /// operation boundary is held, preventing stale long-running results from
-    /// erasing edits made after the operation started.
-    pub(crate) fn commit_merged<S, F>(
-        &self,
-        storage: &S,
-        base: &CreativeSession,
-        candidate: CreativeSession,
-        merge: F,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-        F: FnOnce(&CreativeSession, &CreativeSession, CreativeSession) -> CreativeSession,
-    {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let current = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        let merged = merge(&current, base, candidate);
-        self.commit_candidate_locked(storage, current, merged)
-    }
-
-    /// Undoes the latest committed user edit and persists the restored state.
-    pub(crate) fn undo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        self.restore_history_entry(storage, true)
-    }
-
-    /// Redoes the latest undone user edit and persists the restored state.
-    pub(crate) fn redo<S>(&self, storage: &S) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        self.restore_history_entry(storage, false)
-    }
-
-    /// Returns the current Core-owned history capabilities.
-    pub(crate) fn history_state(&self) -> Result<HistoryState, ApplicationError> {
-        let history = self
-            .history
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        Ok(HistoryState {
-            can_undo: history.can_undo(),
-            can_redo: history.can_redo(),
-        })
-    }
-
-    fn commit_candidate_locked<S>(
-        &self,
-        storage: &S,
-        current: CreativeSession,
-        mut candidate: CreativeSession,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        candidate = candidate
+    ) -> Result<CreativeSession, ApplicationError> {
+        let mut candidate = candidate
             .validate_and_normalize()
             .map_err(ApplicationError::InvalidSession)?;
-        if candidate == current {
-            return Ok(current);
+        if candidate == self.snapshot.session {
+            return Ok(candidate);
         }
         candidate.updated_at_ms =
-            next_update_timestamp(current.updated_at_ms, candidate.updated_at_ms);
+            next_update_timestamp(self.snapshot.session.updated_at_ms, candidate.updated_at_ms);
         storage
             .save(&candidate)
             .map_err(application_error_from_port)?;
-
-        self.begin_exchange();
-        if let Ok(mut session) = self.session.lock() {
-            *session = candidate.clone();
-        } else {
-            self.end_exchange();
-            return Err(ApplicationError::StateLock);
-        }
-        self.end_exchange();
-        self.history
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .record(current);
+        self.history.record(self.snapshot.session.clone());
+        self.exchange(candidate.clone());
         Ok(candidate)
     }
 
-    fn restore_history_entry<S>(
-        &self,
+    pub(crate) fn commit_merged<S: SessionStorage + ?Sized>(
+        &mut self,
+        storage: &S,
+        base: &CreativeSession,
+        candidate: CreativeSession,
+        merge: impl FnOnce(&CreativeSession, &CreativeSession, CreativeSession) -> CreativeSession,
+    ) -> Result<CreativeSession, ApplicationError> {
+        let candidate = merge(&self.snapshot.session, base, candidate);
+        self.commit_candidate(storage, candidate)
+    }
+
+    pub(crate) fn undo<S: SessionStorage + ?Sized>(
+        &mut self,
+        storage: &S,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.restore_history_entry(storage, true)
+    }
+    pub(crate) fn redo<S: SessionStorage + ?Sized>(
+        &mut self,
+        storage: &S,
+    ) -> Result<CreativeSession, ApplicationError> {
+        self.restore_history_entry(storage, false)
+    }
+    pub(crate) fn history_state(&self) -> HistoryState {
+        HistoryState {
+            can_undo: self.history.can_undo(),
+            can_redo: self.history.can_redo(),
+        }
+    }
+
+    fn restore_history_entry<S: SessionStorage + ?Sized>(
+        &mut self,
         storage: &S,
         undo: bool,
-    ) -> Result<CreativeSession, ApplicationError>
-    where
-        S: SessionStorage + ?Sized,
-    {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
-        let current = self
-            .session
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?
-            .clone();
-        let history_entry = {
-            let mut history = self
-                .history
-                .lock()
-                .map_err(|_| ApplicationError::StateLock)?;
-            if undo {
-                history.take_undo()
-            } else {
-                history.take_redo()
-            }
+    ) -> Result<CreativeSession, ApplicationError> {
+        let entry = if undo {
+            self.history.take_undo()
+        } else {
+            self.history.take_redo()
         }
         .ok_or(ApplicationError::HistoryEmpty)?;
-        let mut target = match history_entry.clone().validate_and_normalize() {
+        let result = entry
+            .clone()
+            .validate_and_normalize()
+            .map_err(ApplicationError::InvalidSession)
+            .and_then(|mut target| {
+                target.updated_at_ms = next_update_timestamp(
+                    self.snapshot.session.updated_at_ms,
+                    target.updated_at_ms,
+                );
+                storage.save(&target).map_err(application_error_from_port)?;
+                Ok(target)
+            });
+        let target = match result {
             Ok(target) => target,
             Err(error) => {
-                let mut history = self
-                    .history
-                    .lock()
-                    .map_err(|_| ApplicationError::StateLock)?;
                 if undo {
-                    history.push_undo(history_entry);
+                    self.history.push_undo(entry);
                 } else {
-                    history.push_redo(history_entry);
+                    self.history.push_redo(entry);
                 }
-                return Err(ApplicationError::InvalidSession(error));
+                return Err(error);
             }
         };
-        target.updated_at_ms = next_update_timestamp(current.updated_at_ms, target.updated_at_ms);
-        if let Err(error) = storage.save(&target) {
-            let mut history = self
-                .history
-                .lock()
-                .map_err(|_| ApplicationError::StateLock)?;
-            if undo {
-                history.push_undo(history_entry);
-            } else {
-                history.push_redo(history_entry);
-            }
-            return Err(application_error_from_port(error));
-        }
-        self.begin_exchange();
-        if let Ok(mut session) = self.session.lock() {
-            *session = target.clone();
-        } else {
-            self.end_exchange();
-            return Err(ApplicationError::StateLock);
-        }
-        self.end_exchange();
-        let mut history = self
-            .history
-            .lock()
-            .map_err(|_| ApplicationError::StateLock)?;
+        let current = self.snapshot.session.clone();
         if undo {
-            history.push_redo(current);
+            self.history.push_redo(current);
         } else {
-            history.push_undo(current);
+            self.history.push_undo(current);
         }
+        self.exchange(target.clone());
         Ok(target)
     }
 
-    fn begin_exchange(&self) {
-        let previous = self.projection_version.fetch_add(1, Ordering::AcqRel);
-        debug_assert!(previous.is_multiple_of(2));
-    }
-
-    fn end_exchange(&self) {
-        self.projection_version.fetch_add(1, Ordering::Release);
+    fn exchange(&mut self, session: CreativeSession) {
+        self.snapshot = Arc::new(CanonicalSnapshot {
+            session,
+            sequence: self.snapshot.sequence + 1,
+        });
     }
 }
 
@@ -541,7 +278,7 @@ mod tests {
         TrackKind,
     };
     use crate::ports::{PortError, SessionStorage};
-    use std::sync::{Arc, Barrier, Mutex};
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct MemoryStorage {
@@ -563,18 +300,10 @@ mod tests {
         }
     }
 
-    struct NoopAudio;
-
     #[test]
     fn commit_persists_and_records_history() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
         let committed = core
             .application(&storage)
@@ -583,19 +312,13 @@ mod tests {
 
         assert_eq!(committed.session.arrangement.tracks.len(), 1);
         assert_eq!(storage.sessions.lock().unwrap().len(), 1);
-        assert!(core.history_state().unwrap().can_undo);
+        assert!(core.history_state().can_undo);
     }
 
     #[test]
     fn add_track_normalizes_the_canonical_name() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
         let committed = core
             .application(&storage)
@@ -608,13 +331,7 @@ mod tests {
     #[test]
     fn adding_an_audio_asset_creates_the_missing_audio_track() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
         let asset_id = mint_asset_id();
 
         let committed = core
@@ -647,13 +364,7 @@ mod tests {
     #[test]
     fn adding_a_midi_asset_creates_the_track_and_replaces_transient_ids() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
         let asset_id = mint_asset_id();
 
         let committed = core
@@ -690,29 +401,26 @@ mod tests {
     #[test]
     fn creating_an_empty_midi_clip_is_core_owned_and_requires_an_instrument_track() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let audio = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let audio = core
+            .application(&storage)
             .add_track_with_created_ids("Audio", TrackKind::Audio)
             .unwrap();
         let audio_id = audio.session.arrangement.tracks[0].id.clone();
 
-        let error = application
+        let error = core
+            .application(&storage)
             .create_midi_clip_with_created_ids(&audio_id, TimelineTick(0), 960, None)
             .unwrap_err();
         assert!(error.to_string().contains("requires an Instrument Track"));
 
-        let instrument = application
+        let instrument = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let instrument_id = instrument.session.arrangement.tracks[1].id.clone();
-        let committed = application
+        let committed = core
+            .application(&storage)
             .create_midi_clip_with_created_ids(
                 &instrument_id,
                 TimelineTick(480),
@@ -735,24 +443,19 @@ mod tests {
     #[test]
     fn batch_midi_note_insert_and_remove_each_have_one_undoable_commit() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .create_midi_clip_with_created_ids(&track_id, TimelineTick(0), 1_920, None)
             .unwrap();
         let before_insert_saves = storage.sessions.lock().unwrap().len();
 
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_midi_notes_with_created_ids(
                 "midi-clip:missing",
                 vec![crate::application::MidiNoteInput {
@@ -766,10 +469,11 @@ mod tests {
             .unwrap_err();
         assert!(inserted.to_string().contains("not found"));
 
-        let clip_id = core.snapshot().unwrap().session.arrangement.midi_clips[0]
+        let clip_id = core.snapshot().session.clone().arrangement.midi_clips[0]
             .id
             .clone();
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![
@@ -807,12 +511,14 @@ mod tests {
         let existing_note_id = inserted.session.arrangement.midi_clips[0].notes[0]
             .id
             .clone();
-        let empty_selection = application
+        let empty_selection = core
+            .application(&storage)
             .duplicate_midi_notes_with_created_ids(&clip_id, Vec::new(), 1_920)
             .unwrap_err();
         assert!(empty_selection.to_string().contains("no midi notes"));
 
-        let missing_note = application
+        let missing_note = core
+            .application(&storage)
             .duplicate_midi_notes_with_created_ids(
                 &clip_id,
                 vec![existing_note_id.clone(), "note:missing".into()],
@@ -821,7 +527,8 @@ mod tests {
             .unwrap_err();
         assert!(missing_note.to_string().contains("not found"));
 
-        let duplicate_selection = application
+        let duplicate_selection = core
+            .application(&storage)
             .duplicate_midi_notes_with_created_ids(
                 &clip_id,
                 vec![existing_note_id.clone(), existing_note_id],
@@ -841,7 +548,10 @@ mod tests {
         assert_eq!(redone_insert.arrangement.midi_clips[0].notes.len(), 2);
 
         let before_remove_saves = storage.sessions.lock().unwrap().len();
-        let removed = application.remove_midi_notes(&clip_id, note_ids).unwrap();
+        let removed = core
+            .application(&storage)
+            .remove_midi_notes(&clip_id, note_ids)
+            .unwrap();
         assert!(removed.arrangement.midi_clips[0].notes.is_empty());
         assert_eq!(
             storage.sessions.lock().unwrap().len(),
@@ -856,23 +566,19 @@ mod tests {
     #[test]
     fn midi_note_duplicate_and_paste_reject_out_of_range_notes() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        let created = application
+        let created = core
+            .application(&storage)
             .create_midi_clip_with_created_ids(&track_id, TimelineTick(0), 1_920, None)
             .unwrap();
         let clip_id = created.session.arrangement.midi_clips[0].id.clone();
-        let inserted = application
+        let inserted = core
+            .application(&storage)
             .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
@@ -888,18 +594,20 @@ mod tests {
             .id
             .clone();
 
-        let duplicated = application
+        let duplicated = core
+            .application(&storage)
             .duplicate_midi_notes_with_created_ids(&clip_id, vec![note_id], 1_920)
             .unwrap_err();
         assert!(duplicated.to_string().contains("invalid note"));
-        let unchanged = core.snapshot().unwrap();
+        let unchanged = core.snapshot();
         assert_eq!(
             unchanged.session.arrangement.midi_clips[0].duration_ticks,
             1_920
         );
         assert_eq!(unchanged.session.arrangement.midi_clips[0].notes.len(), 1);
 
-        let pasted = application
+        let pasted = core
+            .application(&storage)
             .insert_midi_notes_with_created_ids(
                 &clip_id,
                 vec![crate::application::MidiNoteInput {
@@ -912,7 +620,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(pasted.to_string().contains("invalid note"));
-        let unchanged = core.snapshot().unwrap();
+        let unchanged = core.snapshot();
         assert_eq!(
             unchanged.session.arrangement.midi_clips[0].duration_ticks,
             1_920
@@ -923,19 +631,14 @@ mod tests {
     #[test]
     fn prepared_plugin_commit_uses_the_runtime_validated_candidate() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let with_track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let with_track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = with_track.session.arrangement.tracks[0].id.clone();
-        let prepared = application
+        let prepared = core
+            .application(&storage)
             .prepare_track_instrument(
                 &track_id,
                 TrackInstrument::vst3(
@@ -948,7 +651,10 @@ mod tests {
             .unwrap();
         let validated_arrangement = prepared.session().arrangement.clone();
 
-        let committed = application.commit_prepared(prepared).unwrap();
+        let committed = core
+            .application(&storage)
+            .commit_prepared(prepared)
+            .unwrap();
 
         assert_eq!(committed.arrangement, validated_arrangement);
     }
@@ -956,15 +662,9 @@ mod tests {
     #[test]
     fn core_executes_a_complete_daw_edit_history_and_save_flow() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let with_track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let with_track = core
+            .application(&storage)
             .add_track_with_created_ids("Audio", TrackKind::Audio)
             .unwrap();
         let track_id = with_track.session.arrangement.tracks[0].id.clone();
@@ -979,8 +679,12 @@ mod tests {
             48_000,
         );
 
-        let with_clip = application.add_audio_clip(clip, |_| true).unwrap();
-        let moved = application
+        let with_clip = core
+            .application(&storage)
+            .add_audio_clip(clip, |_| true)
+            .unwrap();
+        let moved = core
+            .application(&storage)
             .move_audio_clips(vec![AudioClipMove {
                 clip_id: "clip:1".into(),
                 start_tick: TimelineTick(960),
@@ -988,7 +692,7 @@ mod tests {
             }])
             .unwrap();
 
-        application
+        core.application(&storage)
             .trim_audio_clip(
                 "clip:1",
                 TimelineTick(960),
@@ -999,15 +703,16 @@ mod tests {
                 48_000,
             )
             .unwrap();
-        application
+        core.application(&storage)
             .split_audio_clip_with_created_ids("clip:1", TimelineTick(1_440))
             .unwrap();
 
-        let with_midi_track = application
+        let with_midi_track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let midi_track_id = with_midi_track.session.arrangement.tracks[1].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1023,7 +728,7 @@ mod tests {
             })
             .unwrap();
 
-        application
+        core.application(&storage)
             .add_track_effect_with_created_ids(&track_id, "Gain".into(), "builtin:gain".into())
             .unwrap();
 
@@ -1041,18 +746,21 @@ mod tests {
         assert_eq!(redone.arrangement.midi_clips.len(), 1);
         assert!(storage.sessions.lock().unwrap().len() >= 10);
 
-        let duplicated = application
+        let duplicated = core
+            .application(&storage)
             .duplicate_track_with_created_ids(&track_id)
             .unwrap();
         assert_eq!(duplicated.session.arrangement.tracks.len(), 3);
         assert_eq!(duplicated.session.arrangement.audio_clips.len(), 4);
 
-        let marked = application
+        let marked = core
+            .application(&storage)
             .add_marker_with_created_ids(TimelineTick(1_920), "  Chorus  ".into())
             .unwrap();
         assert_eq!(marked.session.arrangement.markers[0].name, "Chorus");
 
-        let settings = application
+        let settings = core
+            .application(&storage)
             .update_session_settings(crate::application::SessionSettingsPatch {
                 master_db: Some(-6.0),
                 ..Default::default()
@@ -1064,13 +772,7 @@ mod tests {
     #[test]
     fn session_settings_are_normalized_at_the_application_boundary() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
         let committed = core
             .application(&storage)
@@ -1090,19 +792,13 @@ mod tests {
     #[test]
     fn application_facade_owns_midi_note_edits() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1118,13 +814,15 @@ mod tests {
             })
             .unwrap();
 
-        let with_note = application
+        let with_note = core
+            .application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
         let note_id = with_note.session.arrangement.midi_clips[0].notes[0]
             .id
             .clone();
-        let updated = application
+        let updated = core
+            .application(&storage)
             .update_midi_notes(
                 "midi:1",
                 vec![crate::application::MidiNoteUpdate {
@@ -1138,37 +836,36 @@ mod tests {
             .unwrap();
         assert_eq!(updated.arrangement.midi_clips[0].notes[0].note, 61);
 
-        let duplicated = application
+        let duplicated = core
+            .application(&storage)
             .duplicate_midi_notes_with_created_ids("midi:1", vec![note_id.clone()], 480)
             .unwrap();
         assert_eq!(duplicated.session.arrangement.midi_clips[0].notes.len(), 2);
-        let removed = application.remove_midi_note("midi:1", &note_id).unwrap();
+        let removed = core
+            .application(&storage)
+            .remove_midi_note("midi:1", &note_id)
+            .unwrap();
         assert_eq!(removed.arrangement.midi_clips[0].notes.len(), 1);
     }
 
     #[test]
     fn application_facade_owns_plugin_state_edits() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
-        let track = application
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Synth", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
         let instrument =
             TrackInstrument::vst3("device:synth".into(), "Synth".into(), "Synth.vst3".into())
                 .unwrap();
-        application
+        core.application(&storage)
             .set_track_instrument(&track_id, Some(instrument))
             .unwrap();
-        let with_state = application
+        let with_state = core
+            .application(&storage)
             .persist_track_plugin_state(
                 &track_id,
                 "device:synth",
@@ -1185,7 +882,10 @@ mod tests {
         assert_eq!(vst3.parameter_values, [0.25]);
         assert_eq!(vst3.state_data.as_deref(), Some("state"));
         assert!(instrument.bypassed);
-        let disabled = application.disable_missing_plugin("device:synth").unwrap();
+        let disabled = core
+            .application(&storage)
+            .disable_missing_plugin("device:synth")
+            .unwrap();
         assert!(
             disabled.arrangement.tracks[0]
                 .instrument
@@ -1199,7 +899,8 @@ mod tests {
         let replacement =
             TrackInstrument::vst3("device:synth".into(), "Other".into(), "Other.vst3".into())
                 .unwrap();
-        let replaced = application
+        let replaced = core
+            .application(&storage)
             .replace_track_instrument("device:synth", replacement)
             .unwrap();
         assert_eq!(
@@ -1213,11 +914,12 @@ mod tests {
             "Other.vst3"
         );
 
-        let built_in_track = application
+        let built_in_track = core
+            .application(&storage)
             .add_track_with_created_ids("Built-in", TrackKind::Instrument)
             .unwrap();
         let built_in_track_id = built_in_track.session.arrangement.tracks[1].id.clone();
-        application
+        core.application(&storage)
             .set_track_instrument(
                 &built_in_track_id,
                 Some(
@@ -1232,12 +934,12 @@ mod tests {
             )
             .unwrap();
         assert!(
-            application
+            core.application(&storage)
                 .disable_missing_plugin("device:built-in")
                 .is_err()
         );
         assert!(
-            application
+            core.application(&storage)
                 .replace_track_instrument(
                     "device:built-in",
                     TrackInstrument::vst3(
@@ -1254,20 +956,14 @@ mod tests {
     #[test]
     fn undo_and_redo_are_core_owned_and_persisted() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
         core.application(&storage)
             .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap();
 
         let undone = core.undo(&storage).unwrap();
         assert!(undone.arrangement.tracks.is_empty());
-        assert!(core.history_state().unwrap().can_redo);
+        assert!(core.history_state().can_redo);
 
         let redone = core.redo(&storage).unwrap();
         assert_eq!(redone.arrangement.tracks[0].name, "Main");
@@ -1275,52 +971,10 @@ mod tests {
     }
 
     #[test]
-    fn project_activation_swaps_canonical_state_without_persisting_or_retaining_history() {
-        let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        core.application(&storage)
-            .add_track_with_created_ids("Old project", TrackKind::Audio)
-            .unwrap();
-        let saved_before_activation = storage.sessions.lock().unwrap().len();
-
-        let mut next = CreativeSession::new(2);
-        let next_session_id = next.session_id.clone();
-        next.project_name = Some("Next project".into());
-        let activated = core.activate_session(next).unwrap();
-
-        assert_eq!(
-            activated.session.project_name.as_deref(),
-            Some("Next project")
-        );
-        assert_eq!(core.canonical_state().unwrap().sequence, 2);
-        assert_eq!(
-            core.canonical_state().unwrap().session.session_id,
-            next_session_id
-        );
-        assert_eq!(core.history_state().unwrap(), HistoryState::default());
-        assert_eq!(
-            storage.sessions.lock().unwrap().len(),
-            saved_before_activation
-        );
-    }
-
-    #[test]
     fn stale_merge_uses_latest_canonical_state() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let base = core.snapshot().unwrap().session;
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let base = core.snapshot().session.clone();
         core.application(&storage)
             .add_track_with_created_ids("Current", TrackKind::Audio)
             .unwrap();
@@ -1339,54 +993,9 @@ mod tests {
     }
 
     #[test]
-    fn long_running_operation_merges_after_a_newer_commit_without_losing_it() {
-        let storage = Arc::new(MemoryStorage::default());
-        let core = Arc::new(AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        ));
-        let base = core.snapshot().unwrap().session;
-        let mut candidate = base.clone();
-        candidate.project_name = Some("operation a".into());
-        let release = Arc::new(Barrier::new(2));
-        let operation = {
-            let core = Arc::clone(&core);
-            let storage = Arc::clone(&storage);
-            let release = Arc::clone(&release);
-            std::thread::spawn(move || {
-                release.wait();
-                core.commit_merged(&*storage, &base, candidate, |current, _, candidate| {
-                    let mut merged = current.clone();
-                    merged.project_name = candidate.project_name;
-                    merged
-                })
-                .unwrap()
-            })
-        };
-
-        core.application(&*storage)
-            .add_track_with_created_ids("operation b", TrackKind::Audio)
-            .unwrap();
-        release.wait();
-        let committed = operation.join().unwrap();
-
-        assert_eq!(committed.project_name.as_deref(), Some("operation a"));
-        assert_eq!(committed.arrangement.tracks[0].name, "operation b");
-    }
-
-    #[test]
     fn canonical_snapshot_keeps_sequence_with_session() {
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let snapshot = core.snapshot().unwrap();
+        let core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let snapshot = core.snapshot();
         assert_eq!(snapshot.sequence, 0);
         assert!(!snapshot.session.session_id.is_empty());
     }
@@ -1394,28 +1003,22 @@ mod tests {
     #[test]
     fn canonical_state_keeps_history_with_the_same_revision() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
-        let initial = core.canonical_state().unwrap();
+        let initial = core.canonical_state();
         assert_eq!(initial.sequence, 0);
         assert_eq!(initial.history, HistoryState::default());
 
         core.application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let committed = core.canonical_state().unwrap();
+        let committed = core.canonical_state();
         assert_eq!(committed.sequence, 1);
         assert!(committed.history.can_undo);
         assert_eq!(committed.session.arrangement.tracks.len(), 1);
 
         core.undo(&storage).unwrap();
-        let undone = core.canonical_state().unwrap();
+        let undone = core.canonical_state();
         assert_eq!(undone.sequence, 2);
         assert!(!undone.history.can_undo);
         assert!(undone.history.can_redo);
@@ -1424,19 +1027,14 @@ mod tests {
     #[test]
     fn stale_prepared_commit_returns_typed_conflict_without_mutating_state() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        let prepared = application
+        let prepared = core
+            .application(&storage)
             .prepare_track_instrument(
                 &track_id,
                 TrackInstrument::vst3(
@@ -1447,16 +1045,19 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        application
+        core.application(&storage)
             .update_session_settings(crate::application::SessionSettingsPatch {
                 project_name: Some(Some("Newer".into())),
                 ..Default::default()
             })
             .unwrap();
-        let current = core.canonical_state().unwrap();
+        let current = core.canonical_state();
         let saved = storage.sessions.lock().unwrap().len();
 
-        let error = application.commit_prepared(prepared).unwrap_err();
+        let error = core
+            .application(&storage)
+            .commit_prepared(prepared)
+            .unwrap_err();
 
         assert_eq!(
             error,
@@ -1465,20 +1066,14 @@ mod tests {
                 current_sequence: 2,
             }
         );
-        assert_eq!(core.canonical_state().unwrap(), current);
+        assert_eq!(core.canonical_state(), current);
         assert_eq!(storage.sessions.lock().unwrap().len(), saved);
     }
 
     #[test]
     fn persistence_failure_leaves_canonical_state_and_history_unchanged() {
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let before = core.snapshot().unwrap();
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let before = core.snapshot();
 
         let error = core
             .application(&FailingStorage)
@@ -1486,22 +1081,16 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, ApplicationError::Storage("disk full".into()));
-        let after = core.snapshot().unwrap();
+        let after = core.snapshot();
         assert_eq!(after.session, before.session);
         assert_eq!(after.sequence, before.sequence);
-        assert_eq!(core.history_state().unwrap(), HistoryState::default());
+        assert_eq!(core.history_state(), HistoryState::default());
     }
 
     #[test]
     fn add_track_leaves_coloring_to_the_ui() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
 
         let committed = core
             .application(&storage)
@@ -1514,19 +1103,13 @@ mod tests {
     #[test]
     fn transform_midi_notes_touches_only_the_selected_notes() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1541,10 +1124,11 @@ mod tests {
                 recording_take_id: None,
             })
             .unwrap();
-        application
+        core.application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
-        let with_second = application
+        let with_second = core
+            .application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
             .unwrap();
         let ids: Vec<String> = with_second.session.arrangement.midi_clips[0]
@@ -1553,7 +1137,8 @@ mod tests {
             .map(|note| note.id.clone())
             .collect();
 
-        let transformed = application
+        let transformed = core
+            .application(&storage)
             .transform_midi_notes("midi:1", vec![ids[0].clone()], 2, -10)
             .unwrap();
 
@@ -1573,19 +1158,13 @@ mod tests {
     #[test]
     fn transform_midi_notes_without_ids_transforms_every_note() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1600,14 +1179,15 @@ mod tests {
                 recording_take_id: None,
             })
             .unwrap();
-        application
+        core.application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
-        application
+        core.application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(480), 64, 240, 40, 1)
             .unwrap();
 
-        let transformed = application
+        let transformed = core
+            .application(&storage)
             .transform_midi_notes("midi:1", Vec::new(), -3, 5)
             .unwrap();
 
@@ -1619,19 +1199,13 @@ mod tests {
     #[test]
     fn transform_midi_notes_clamps_pitch_and_velocity() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1646,11 +1220,12 @@ mod tests {
                 recording_take_id: None,
             })
             .unwrap();
-        application
+        core.application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 120, 480, 20, 1)
             .unwrap();
 
-        let transformed = application
+        let transformed = core
+            .application(&storage)
             .transform_midi_notes("midi:1", Vec::new(), 30, -200)
             .unwrap();
 
@@ -1662,19 +1237,13 @@ mod tests {
     #[test]
     fn transform_midi_notes_rejects_unknown_note_ids() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            NoopAudio,
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        application
+        core.application(&storage)
             .add_midi_clip(MidiClip {
                 id: "midi:1".into(),
                 name: "Pattern".into(),
@@ -1689,11 +1258,12 @@ mod tests {
                 recording_take_id: None,
             })
             .unwrap();
-        application
+        core.application(&storage)
             .add_midi_note_with_created_ids("midi:1", TimelineTick(0), 60, 480, 100, 1)
             .unwrap();
 
-        let error = application
+        let error = core
+            .application(&storage)
             .transform_midi_notes("midi:1", vec!["midi-note:missing".into()], 1, 0)
             .unwrap_err();
 

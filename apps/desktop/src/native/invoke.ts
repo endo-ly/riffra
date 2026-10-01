@@ -2,7 +2,6 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { ControlCommand, ControlCommandResults } from '@/model/generated';
 
 let currentHostGeneration = 0;
-let currentProjectEpoch = 0;
 let hostConnected = true;
 
 export interface NativeCommandErrorPayload {
@@ -73,15 +72,6 @@ export class HostConnectionChangedError extends Error {
   }
 }
 
-/** Rejection used when a Project-bound response belongs to a previous Project. */
-export class ProjectChangedError extends HostConnectionChangedError {
-  constructor() {
-    super();
-    this.message = 'Project changed while the operation was in flight';
-    this.name = 'ProjectChangedError';
-  }
-}
-
 export function setHostGeneration(generation: number): void {
   currentHostGeneration = generation;
 }
@@ -92,15 +82,6 @@ export function setHostConnectionAvailability(connected: boolean): void {
 
 export function getHostGeneration(): number {
   return currentHostGeneration;
-}
-
-export function getProjectEpoch(): number {
-  return currentProjectEpoch;
-}
-
-export function advanceProjectEpoch(): number {
-  currentProjectEpoch += 1;
-  return currentProjectEpoch;
 }
 
 /**
@@ -121,15 +102,14 @@ export async function invokeHost<T>(
     throw new HostConnectionChangedError();
   }
   const generation = currentHostGeneration;
-  const projectEpoch = currentProjectEpoch;
-  const value = await invokeNative<T>(command, args);
-  if (generation !== currentHostGeneration) {
-    throw new HostConnectionChangedError();
+  try {
+    const value = await invokeNative<T>(command, args);
+    if (generation !== currentHostGeneration) throw new HostConnectionChangedError();
+    return value;
+  } catch (error) {
+    if (generation !== currentHostGeneration) throw new HostConnectionChangedError();
+    throw error;
   }
-  if (projectEpoch !== currentProjectEpoch) {
-    throw new ProjectChangedError();
-  }
-  return value;
 }
 
 interface LatestWaiter<T> {
@@ -139,7 +119,6 @@ interface LatestWaiter<T> {
 
 interface LatestQueue<T> {
   generation: number;
-  projectEpoch: number;
   pendingArgs: Record<string, unknown> | null;
   waiters: LatestWaiter<T>[];
   running: boolean;
@@ -167,20 +146,18 @@ export async function invokeHostOrFallback<T>(
   return invokeHost<T>(command, args);
 }
 
-/** Coalesces Host-owned high-frequency updates with Host and Project guards. */
+/** Coalesces Host-owned high-frequency updates with a Host connection guard. */
 function invokeLatestHost<T>(
   command: string,
   args: Record<string, unknown>,
   key: string,
 ): Promise<T> {
   const generation = currentHostGeneration;
-  const projectEpoch = currentProjectEpoch;
-  const queueKey = `host:${generation}:project:${projectEpoch}:${key}`;
+  const queueKey = `host:${generation}:${key}`;
   let queue = latestQueues.get(queueKey) as LatestQueue<T> | undefined;
   if (!queue) {
     queue = {
       generation,
-      projectEpoch,
       pendingArgs: null,
       waiters: [],
       running: false,
@@ -212,25 +189,14 @@ async function drainLatestHostQueue<T>(
       const args = queue.pendingArgs;
       queue.pendingArgs = null;
       const waiters = queue.waiters.splice(0);
-      if (
-        queue.generation !== currentHostGeneration ||
-        queue.projectEpoch !== currentProjectEpoch
-      ) {
-        const error =
-          queue.generation !== currentHostGeneration
-            ? new HostConnectionChangedError()
-            : new ProjectChangedError();
+      if (queue.generation !== currentHostGeneration) {
+        const error = new HostConnectionChangedError();
         waiters.forEach(({ reject }) => reject(error));
         continue;
       }
       try {
         const result = await invokeHost<T>(command, args);
-        if (queue.projectEpoch !== currentProjectEpoch) {
-          const error = new ProjectChangedError();
-          waiters.forEach(({ reject }) => reject(error));
-        } else {
-          waiters.forEach(({ resolve }) => resolve(result));
-        }
+        waiters.forEach(({ resolve }) => resolve(result));
       } catch (error) {
         waiters.forEach(({ reject }) => reject(error));
       }

@@ -1,53 +1,60 @@
 //! Standalone Project container commands.
-
 use super::{DispatchError, DispatchResult, HostDispatcher};
+use crate::api::output::ProjectActivationResult;
 use crate::api::{ControlOutput, ProjectCommand};
+use crate::host::open_project::{Committed, OpenProject, ProjectWriter};
 use riffra_core::application::SessionSettingsPatch;
 use riffra_host::now_ms;
 
-impl<A> HostDispatcher<'_, A> {
+impl HostDispatcher<'_> {
     pub(super) fn execute_project(
         &self,
+        writer: Option<&mut ProjectWriter<'_>>,
         command: ProjectCommand,
         canonical: riffra_core::CanonicalState,
     ) -> Result<DispatchResult, DispatchError> {
         let sequence = canonical.sequence;
         let output = match command {
-            ProjectCommand::ProjectList(_) => ControlOutput::ProjectState(self.project_state()?),
+            ProjectCommand::ProjectList(_) => {
+                ControlOutput::ProjectState(self.project_state(&canonical.project_id)?)
+            }
             ProjectCommand::ProjectCreate(params) => {
+                let writer = writer.expect("project mutation holds the writer");
                 let summary = self
                     .project_store
                     .as_ref()
                     .create(params.name)
                     .map_err(|error| error.to_string())?;
-                return self.activate_project(&summary.project_id);
+                return self.activate_project(writer, &summary.project_id);
             }
             ProjectCommand::ProjectOpen(params) => {
-                return self.activate_project(&params.project_id);
+                let writer = writer.expect("project mutation holds the writer");
+                return self.activate_project(writer, &params.project_id);
             }
             ProjectCommand::ProjectRename(params) => {
-                let session = self
-                    .core
-                    .application(&self.storage)
-                    .update_session_settings(SessionSettingsPatch {
+                let writer = writer.expect("project mutation holds the writer");
+                let committed = writer.commit(|mut app| {
+                    app.update_session_settings(SessionSettingsPatch {
                         project_name: Some(Some(params.name)),
                         ..Default::default()
-                    })?;
-                let storage = self.storage.store().map_err(DispatchError::from)?;
-                crate::library::index::refresh(&self.data_root, &storage, &session);
+                    })
+                })?;
+                let sequence = committed.snapshot.canonical.sequence;
+                self.publish_standalone(writer, committed);
                 return Ok(DispatchResult {
-                    output: ControlOutput::ProjectState(self.project_state()?),
-                    sequence: self.core.snapshot()?.sequence,
+                    output: ControlOutput::ProjectState(self.project_state(&canonical.project_id)?),
+                    sequence,
                 });
             }
             ProjectCommand::ProjectImport(params) => {
+                let writer = writer.expect("project mutation holds the writer");
                 let session = crate::projects::import(&self.data_root, &params.path)?;
                 let summary = self
                     .project_store
                     .as_ref()
                     .create_from_session(&session)
                     .map_err(|error| error.to_string())?;
-                return self.activate_project(&summary.project_id);
+                return self.activate_project(writer, &summary.project_id);
             }
             ProjectCommand::ProjectExport(params) => {
                 ControlOutput::ProjectExport(crate::projects::export(
@@ -61,24 +68,43 @@ impl<A> HostDispatcher<'_, A> {
         Ok(DispatchResult { output, sequence })
     }
 
-    fn activate_project(&self, project_id: &str) -> Result<DispatchResult, DispatchError> {
+    fn activate_project(
+        &self,
+        writer: &mut ProjectWriter<'_>,
+        project_id: &str,
+    ) -> Result<DispatchResult, DispatchError> {
         let prepared = crate::projects::prepare(self.project_store.as_ref(), project_id)
             .map_err(DispatchError::CommandFailed)?;
-        crate::library::index::refresh(
-            &self.data_root,
-            &prepared.storage,
-            &prepared.loaded.session,
+        let next = OpenProject {
+            storage: prepared.storage,
+            core: riffra_core::AppCore::new(
+                project_id.into(),
+                prepared.loaded.session,
+                writer.project().core.snapshot().sequence + 1,
+            ),
+            recovered_from_generation: prepared.loaded.recovered_from_generation,
+        };
+        self.project_store
+            .as_ref()
+            .write_workspace(project_id)
+            .map_err(|error| error.to_string())?;
+        writer.replace(next);
+        let snapshot = self.core.cell().read();
+        let canonical = snapshot.canonical.clone();
+        self.publish_standalone(
+            writer,
+            Committed {
+                snapshot,
+                value: (),
+            },
         );
-        let activated =
-            crate::projects::activate(self.project_store.as_ref(), prepared, |session| {
-                self.activate_core_session(session)
-            })
-            .map_err(DispatchError::CommandFailed)?;
-        self.set_core_recovery(activated.loaded.recovered_from_generation);
-        self.storage.replace_owned(activated.storage.clone());
-        let sequence = activated.canonical.sequence;
+        let sequence = canonical.sequence;
         Ok(DispatchResult {
-            output: ControlOutput::ProjectActivation(crate::projects::result(activated)),
+            output: ControlOutput::ProjectActivation(ProjectActivationResult {
+                project_state: prepared.project_state,
+                canonical,
+                recovery: prepared.recovery,
+            }),
             sequence,
         })
     }

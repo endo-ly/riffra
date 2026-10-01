@@ -57,7 +57,7 @@ impl AudioSupervisor {
         for _ in 0..3 {
             expected_generation = self.sidecar_generation();
             self.wait_until_ready(expected_generation, SIDECAR_READY_TIMEOUT)?;
-            let _command_gate =
+            let _native_command =
                 self.process
                     .command_gate
                     .lock()

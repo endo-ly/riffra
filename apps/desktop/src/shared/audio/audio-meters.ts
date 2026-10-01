@@ -73,7 +73,8 @@ function publishAudioMeterSnapshot(next: AudioMeters): void {
 }
 
 /** Publishes a native meter frame and marks the source as available. */
-export function publishAudioMeters(next: AudioMeterFrame): void {
+export function publishAudioMeters(next: AudioMeterFrame, projectId: string | null): void {
+  if (projectId === null || next.projectId !== projectId) return;
   publishAudioMeterSnapshot({ ...next, available: true });
 }
 

@@ -9,9 +9,10 @@ use crate::api::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-impl<A> HostDispatcher<'_, A> {
-    pub(super) fn apply_batch(
+impl HostDispatcher<'_> {
+    pub(super) fn apply_batch<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         canonical: riffra_core::CanonicalState,
         params: SessionApplyParams,
     ) -> Result<ControlOutput, DispatchError> {
@@ -22,21 +23,27 @@ impl<A> HostDispatcher<'_, A> {
         }
 
         let applied_commands = params.operations.len();
-        let candidate = self.batch_candidate(canonical.session);
+        let mut candidate = riffra_core::AppCore::new(
+            canonical.project_id.clone(),
+            canonical.session,
+            canonical.sequence,
+        );
+        let memory = super::MemorySessionStorage;
         let mut created_entity_counts = BTreeMap::<String, usize>::new();
         let mut created_entity_ids = BTreeMap::<String, Vec<String>>::new();
         for (operation_index, operation) in params.operations.into_iter().enumerate() {
             let BatchOperation { command, params } = operation;
-            let created = batch_operation(&candidate, &command, params)
-                .map_err(|error| error.with_batch_context(operation_index, &command))?;
+            let created =
+                batch_operation(self, &mut candidate.application(&memory), &command, params)
+                    .map_err(|error| error.with_batch_context(operation_index, &command))?;
             for (kind, ids) in created {
                 *created_entity_counts.entry(kind.clone()).or_default() += ids.len();
                 created_entity_ids.entry(kind).or_default().extend(ids);
             }
         }
 
-        let candidate_session = candidate.core.snapshot()?.session;
-        self.commit_batch_candidate(candidate_session, canonical.sequence)?;
+        let candidate_session = candidate.snapshot().session.clone();
+        application.commit_prepared_candidate(candidate_session, canonical.sequence)?;
 
         Ok(ControlOutput::BatchMutation(BatchMutationResult {
             applied_commands,
@@ -50,11 +57,12 @@ impl<A> HostDispatcher<'_, A> {
 /// Resolves, decodes, validates, and applies one operation to the candidate,
 /// returning the entities it created.
 fn batch_operation(
-    candidate: &HostDispatcher<'_, ()>,
+    dispatcher: &HostDispatcher<'_>,
+    candidate: &mut riffra_core::application::Application<'_, super::MemorySessionStorage>,
     name: &str,
     params: Value,
 ) -> Result<BTreeMap<String, Vec<String>>, DispatchError> {
-    let params = resolve_batch_references(candidate, params)?;
+    let params = resolve_batch_references(&candidate.canonical_state(), params)?;
     let command = ControlCommand::decode(name, params)?;
     let policy = command.policy();
     let (
@@ -71,11 +79,9 @@ fn batch_operation(
     {
         return Err(unsupported(name));
     }
-    let canonical = candidate.core.canonical_state()?;
-    match candidate
-        .execute_canonical(command, access, canonical)?
-        .output
-    {
+    let canonical = candidate.canonical_state();
+    let _ = access;
+    match dispatcher.run_canonical(candidate, command, canonical)? {
         ControlOutput::ArrangementMutation(mutation) => Ok(mutation.created_entity_ids),
         output => unreachable!("batchable commands report arrangement mutations: {output:?}"),
     }
@@ -89,8 +95,8 @@ fn unsupported(name: &str) -> DispatchError {
 /// candidate. A `clipName` is looked up within the Track, and the Track and
 /// Clip references are replaced by the `clipId`. Runs before decoding
 /// because the names are not params fields.
-fn resolve_batch_references<A>(
-    dispatcher: &HostDispatcher<'_, A>,
+fn resolve_batch_references(
+    canonical: &riffra_core::CanonicalState,
     params: Value,
 ) -> Result<Value, DispatchError> {
     let mut params = match params {
@@ -108,7 +114,6 @@ fn resolve_batch_references<A>(
             .get("trackName")
             .and_then(Value::as_str)
             .ok_or_else(|| DispatchError::invalid_request("trackName must be a string"))?;
-        let canonical = dispatcher.core.canonical_state()?;
         let matches = canonical
             .session
             .arrangement
@@ -150,7 +155,6 @@ fn resolve_batch_references<A>(
             .get("clipName")
             .and_then(Value::as_str)
             .ok_or_else(|| DispatchError::invalid_request("clipName must be a string"))?;
-        let canonical = dispatcher.core.canonical_state()?;
         let matches = canonical
             .session
             .arrangement
@@ -764,8 +768,10 @@ mod tests {
             .unwrap();
         let existing_id = dispatcher
             .core
-            .canonical_state()
-            .unwrap()
+            .cell()
+            .read()
+            .canonical
+            .clone()
             .session
             .arrangement
             .tracks[0]

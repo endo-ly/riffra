@@ -6,9 +6,10 @@ use crate::api::params::ClipAddAssetParams;
 use riffra_core::application::{AudioAssetClipPlacement, MidiAssetClipPlacement};
 use riffra_core::{AssetKind, TimelineTick};
 
-impl<A> HostDispatcher<'_, A> {
-    pub(super) fn add_audio_clip(
+impl HostDispatcher<'_> {
+    pub(super) fn add_audio_clip<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: ClipAddAssetParams,
     ) -> Result<ControlOutput, DispatchError> {
         let asset_id = parse_asset_id(&params.asset_id)?;
@@ -24,24 +25,24 @@ impl<A> HostDispatcher<'_, A> {
             return Err("Audio Asset has no usable frames.".into());
         }
         self.created(
-            self.core
-                .application(&self.storage)
-                .add_audio_asset_clip_with_created_ids(
-                    AudioAssetClipPlacement {
-                        asset_id,
-                        name: params.name,
-                        start_tick: params.start_tick.map(TimelineTick),
-                        track_id: params.track_id,
-                        sample_rate: metadata.sample_rate,
-                        source_frames: metadata.frame_count,
-                    },
-                    |id| riffra_host::load(&self.data_root, id).is_some(),
-                )?,
+            application.add_audio_asset_clip_with_created_ids(
+                AudioAssetClipPlacement {
+                    asset_id,
+                    name: params.name,
+                    start_tick: params.start_tick.map(TimelineTick),
+                    track_id: params.track_id,
+                    sample_rate: metadata.sample_rate,
+                    source_frames: metadata.frame_count,
+                },
+                |id| riffra_host::load(&self.data_root, id).is_some(),
+            )?,
+            application,
         )
     }
 
-    pub(super) fn add_midi_clip(
+    pub(super) fn add_midi_clip<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: ClipAddAssetParams,
     ) -> Result<ControlOutput, DispatchError> {
         let asset_id = parse_asset_id(&params.asset_id)?;
@@ -54,26 +55,25 @@ impl<A> HostDispatcher<'_, A> {
             .map_err(|error| format!("MIDI Asset could not be read: {error}"))?;
         let (duration_ticks, notes, events) = riffra_host::parse_smf(&bytes)?;
         self.created(
-            self.core
-                .application(&self.storage)
-                .add_midi_asset_clip_with_created_ids(MidiAssetClipPlacement {
-                    asset_id,
-                    name: params.name,
-                    start_tick: params.start_tick.map(TimelineTick),
-                    track_id: params.track_id,
-                    duration_ticks,
-                    notes,
-                    events,
-                })?,
+            application.add_midi_asset_clip_with_created_ids(MidiAssetClipPlacement {
+                asset_id,
+                name: params.name,
+                start_tick: params.start_tick.map(TimelineTick),
+                track_id: params.track_id,
+                duration_ticks,
+                notes,
+                events,
+            })?,
+            application,
         )
     }
 
-    pub(super) fn audio_source_frames(&self, clip_id: &str) -> Result<u64, DispatchError> {
-        let session = self
-            .core
-            .snapshot()
-            .map_err(|error| error.to_string())?
-            .session;
+    pub(super) fn audio_source_frames<S: riffra_core::SessionStorage + ?Sized>(
+        &self,
+        application: &mut riffra_core::application::Application<'_, S>,
+        clip_id: &str,
+    ) -> Result<u64, DispatchError> {
+        let session = application.get_session()?;
         let clip = session
             .arrangement
             .audio_clips

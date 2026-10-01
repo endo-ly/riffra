@@ -9,7 +9,9 @@ interface UseStartupRuntimeRestoreOptions {
   boot: BootstrapState | null;
   runtimeStarted: boolean;
   runtimeStartupFinished: boolean;
-  activeJobId: { current: string | null };
+  activeJobId: {
+    current: string | null;
+  };
   backgroundJob: BackgroundJobStatus | null;
   scanPlugins: () => Promise<boolean>;
   retryStartupRuntime: () => Promise<AudioStatus>;
@@ -31,9 +33,6 @@ export function useStartupRuntimeRestore({
 }: UseStartupRuntimeRestoreOptions) {
   const startupScanStarted = useRef(false);
   const startupRuntimeRestoreAttempted = useRef(false);
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
     startupScanStarted.current = false;
     startupRuntimeRestoreAttempted.current = false;
@@ -41,21 +40,18 @@ export function useStartupRuntimeRestore({
 
   const restoreRuntimeAfterScan = useCallback(async () => {
     if (startupRuntimeRestoreAttempted.current || runtimeStarted) return;
-    const requestGeneration = hostGeneration;
     startupRuntimeRestoreAttempted.current = true;
     try {
       const nextAudio = await retryStartupRuntime();
-      if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
+      setAudio(nextAudio);
     } catch {
-      if (currentHostGeneration.current !== requestGeneration) return;
       showToast(
         'vst3-scan',
         'Audio preparation after the plugin scan failed. Check the Arrange status and retry.',
         { kind: 'error' },
       );
     }
-  }, [hostGeneration, retryStartupRuntime, runtimeStarted, setAudio]);
-
+  }, [retryStartupRuntime, runtimeStarted, setAudio]);
   useEffect(() => {
     if (
       startupScanStarted.current ||

@@ -84,7 +84,12 @@ function Harness({
 
 function mutationResult(session: CreativeSession): ArrangementMutationResult {
   return {
-    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    canonical: {
+      projectId: '01900000-0000-7000-8000-000000000001',
+      session,
+      sequence: 0,
+      history: { canUndo: false, canRedo: false },
+    },
     createdEntityIds: {},
     projection: { state: 'notRequired' },
   };
@@ -1927,6 +1932,7 @@ describe('WorkspaceArrange', () => {
     Object.defineProperty(ruler, 'getBoundingClientRect', {
       value: () => ({ left: 0, top: 0, width: 400, height: 32, right: 400, bottom: 32 }),
     });
+
     fireEvent.pointerDown(ruler, { clientX: 96 });
     expect(api.calls).toContain('seekTimeline');
 

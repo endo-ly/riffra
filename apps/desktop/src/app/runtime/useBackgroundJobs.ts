@@ -11,13 +11,9 @@ export function useBackgroundJobs(
 ) {
   const [backgroundJob, setBackgroundJob] = useState<BackgroundJobStatus | null>(null);
   const activeJobId = useRef<string | null>(null);
-  const currentHostGeneration = useRef(hostGeneration);
   const mounted = useRef(false);
   const clearStatusTimer = useRef<number | null>(null);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
-    currentHostGeneration.current = hostGeneration;
     activeJobId.current = null;
     setBackgroundJob(null);
     if (clearStatusTimer.current !== null) {
@@ -43,26 +39,21 @@ export function useBackgroundJobs(
       onCompleted: (result: NonNullable<J['result']>) => void,
       onFailed: (message: string) => void,
     ): Promise<boolean> => {
-      const requestGeneration = hostGeneration;
       if (activeJobId.current) return false;
       let started: J;
       try {
         started = await start();
       } catch (error) {
-        if (currentHostGeneration.current !== requestGeneration) return false;
         onFailed(error instanceof Error ? error.message : String(error));
         return false;
       }
-      if (currentHostGeneration.current !== requestGeneration) return false;
       activeJobId.current = started.id;
       if (mounted.current) setBackgroundJob(started);
       let latest: J = started;
       try {
         while (!terminalJobStates.includes(latest.state)) {
           await new Promise((resolve) => window.setTimeout(resolve, 75));
-          if (currentHostGeneration.current !== requestGeneration) return false;
           const next = await api.getBackgroundJob(started.id);
-          if (currentHostGeneration.current !== requestGeneration) return false;
           if (!next) {
             onFailed('Background job disappeared before it reported a result.');
             return false;
@@ -70,7 +61,6 @@ export function useBackgroundJobs(
           latest = next as J;
           if (mounted.current) setBackgroundJob(next);
         }
-        if (currentHostGeneration.current !== requestGeneration) return false;
         if (latest.state !== 'completed' || latest.result == null) {
           onFailed(
             latest.state === 'completed'
@@ -82,15 +72,13 @@ export function useBackgroundJobs(
         onCompleted(latest.result);
         return true;
       } catch (error) {
-        if (currentHostGeneration.current !== requestGeneration) return false;
         onFailed(error instanceof Error ? error.message : String(error));
         return false;
       } finally {
-        const isCurrentGeneration = currentHostGeneration.current === requestGeneration;
-        if (isCurrentGeneration && activeJobId.current === started.id) {
+        if (activeJobId.current === started.id) {
           activeJobId.current = null;
         }
-        if (isCurrentGeneration && mounted.current) {
+        if (mounted.current) {
           if (clearStatusTimer.current !== null) {
             window.clearTimeout(clearStatusTimer.current);
           }
@@ -103,24 +91,20 @@ export function useBackgroundJobs(
         }
       }
     },
-    [api, hostGeneration],
+    [api],
   );
 
   const cancelActiveJob = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     const id = activeJobId.current;
     if (!id) return;
     try {
       const status = await api.cancelBackgroundJob(id);
-      if (status && mounted.current && currentHostGeneration.current === requestGeneration) {
+      if (status && mounted.current) {
         setBackgroundJob(status);
       }
     } catch (error) {
-      if (currentHostGeneration.current === requestGeneration) {
-        logNativeError('cancelBackgroundJob')(error);
-      }
+      logNativeError('cancelBackgroundJob')(error);
     }
-  }, [api, hostGeneration]);
-
+  }, [api]);
   return { activeJobId, backgroundJob, runBackgroundJob, cancelActiveJob };
 }

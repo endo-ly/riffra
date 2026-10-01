@@ -41,8 +41,6 @@ use crate::library;
 use crate::model::RecordingFinalized;
 use crate::recording::materialize;
 use crate::runtime::RuntimeReconciler;
-use crate::session::commit;
-use riffra_core::AppCore;
 use riffra_core::{
     AssetId, AssetKind, AudioClip, AudioTakeVariant, CreativeSession, MidiClip, Provenance,
     ProvenanceOperation, RecordingPassRecord, RecordingSessionRecord, RecordingSessionTrackSlot,
@@ -56,7 +54,7 @@ use riffra_core::{MidiEvent, MidiEventKind, MidiNote};
 /// keeps the operation signatures small without pulling in `tauri::State`.
 #[derive(Clone)]
 pub struct RecordingContext {
-    pub core: Arc<AppCore<AudioSupervisor>>,
+    pub(crate) host: Arc<crate::host::HostState>,
     pub audio: AudioSupervisor,
     pub(crate) runtime: Arc<RuntimeReconciler<AudioSupervisor>>,
     pub storage: riffra_host::SessionStore,
@@ -99,8 +97,9 @@ fn start_recording_in_session(
         format!("Recording Inbox could not be created; no audio was started: {error}")
     })?;
     let directory = inbox.join(format!("take-{}", riffra_host::now_ms()));
-    let projection = context.core.snapshot().map_err(|error| error.to_string())?;
-    let session = projection.session;
+    let projection = context.host.project.read();
+    let projection = &projection.canonical;
+    let session = &projection.session;
     let armed_tracks = session
         .arrangement
         .tracks
@@ -130,7 +129,7 @@ fn start_recording_in_session(
             &context.data_root,
             context.built_in_instruments.as_ref(),
             &project_id,
-            &session,
+            session,
         )),
         riffra_core::ProjectionKey {
             sequence: projection.sequence,
@@ -145,7 +144,7 @@ fn start_recording_in_session(
         .start_arrange_recording(&directory, session.settings.count_in_beats)?;
     let capture = Some(build_startup_capture(
         &directory,
-        &session,
+        session,
         &status,
         recording_session_id,
     ));
@@ -300,10 +299,7 @@ fn queue_recording_finalization(
             worker_context.audio.finish_recording_finalization();
             worker_context.audio.emit_status();
             match result {
-                Ok(Some(mutation)) => {
-                    worker_context
-                        .events
-                        .emit(HostEvent::CanonicalStateChanged(mutation.canonical));
+                Ok(Some(_)) => {
                     worker_context
                         .events
                         .emit(HostEvent::RecordingFinalized(RecordingFinalized {
@@ -349,10 +345,7 @@ fn recording_stop_result(
     finalization: RecordingFinalizationOutcome,
 ) -> Result<RecordingStopResult, String> {
     context.audio.overlay_diagnostics(&mut audio);
-    let canonical = context
-        .core
-        .canonical_state()
-        .map_err(|error| error.to_string())?;
+    let canonical = context.host.project.read().canonical.clone();
     Ok(RecordingStopResult {
         canonical,
         audio,
@@ -639,11 +632,7 @@ fn prepare_arrange_finalization(
         return Err("Arrange recording manifest contains an invalid Native Clock range.".into());
     }
     let segments = capture_segments_for_manifest(&manifest)?;
-    let session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
+    let session = context.host.project.read().canonical.session.clone();
     let base_session = session.clone();
     let timebase = session.arrangement.timebase;
     let sample_to_ticks = |samples: u64| {
@@ -1180,37 +1169,26 @@ fn finalize_arrange_recording(
         &prepared.files,
     )?;
     let (base_session, candidate_session) = materialize_arrange_candidate(prepared, outputs)?;
-    commit_recording_session(context, &base_session, candidate_session)?;
-    let canonical = context
-        .core
-        .canonical_state()
-        .map_err(|error| error.to_string())?;
-    let project_id = context
-        .storage
-        .project_id()
-        .map_err(|error| error.to_string())?;
-    commit::finalize_arrangement_mutation(
-        canonical,
-        context.runtime.as_ref(),
-        &context.data_root,
-        context.built_in_instruments.as_ref(),
-        &project_id,
-        context.safe_mode,
-    )
+    commit_recording_session(context, &base_session, candidate_session)
 }
 
 fn commit_recording_session(
     context: &RecordingContext,
     base: &CreativeSession,
     candidate: CreativeSession,
-) -> Result<(), String> {
-    let committed = context
-        .core
-        .application(&context.storage)
-        .commit_recording(base, candidate)
+) -> Result<ArrangementMutationResult, String> {
+    let mut writer = context.host.project.write();
+    let project_id = context
+        .storage
+        .project_id()
         .map_err(|error| error.to_string())?;
-    crate::library::index::refresh(&context.data_root, &context.storage, &committed);
-    Ok(())
+    if writer.project().core.project_id() != project_id {
+        return Err("recording Project is no longer active".into());
+    }
+    let committed = writer
+        .commit(|mut app| app.commit_recording(base, candidate))
+        .map_err(|error| error.to_string())?;
+    Ok(context.host.publish_commit(&writer, committed).0)
 }
 
 fn next_recording_pass_ordinal(
@@ -1357,11 +1335,7 @@ fn place_recording_on_timeline(
     if armed_track_ids.is_empty() {
         return Ok(None);
     }
-    let mut session = context
-        .core
-        .snapshot()
-        .map_err(|error| error.to_string())?
-        .session;
+    let mut session = context.host.project.read().canonical.session.clone();
     let base_session = session.clone();
     let start_tick = listed
         .as_ref()
@@ -1646,23 +1620,7 @@ fn place_recording_on_timeline(
             });
     }
     session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-    commit_recording_session(context, &base_session, session)?;
-    let canonical = context
-        .core
-        .canonical_state()
-        .map_err(|error| error.to_string())?;
-    let project_id = context
-        .storage
-        .project_id()
-        .map_err(|error| error.to_string())?;
-    Ok(Some(commit::finalize_arrangement_mutation(
-        canonical,
-        context.runtime.as_ref(),
-        &context.data_root,
-        context.built_in_instruments.as_ref(),
-        &project_id,
-        context.safe_mode,
-    )?))
+    commit_recording_session(context, &base_session, session).map(Some)
 }
 
 /// Lists Recording read models from the Inbox and re-syncs the Library Read
@@ -1749,8 +1707,7 @@ fn relocate_take(context: &RecordingContext, old_id: &str, new_id: &str) -> Resu
 mod tests {
     use super::*;
     use crate::audio::AudioSupervisor;
-    use crate::runtime::RuntimeReconciler;
-    use riffra_core::{CreativeSession, Track};
+    use riffra_core::{AppCore, CreativeSession, Track};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1784,27 +1741,23 @@ mod tests {
     }
 
     fn context_for(data_root: &Path, audio: &AudioSupervisor, safe_mode: bool) -> RecordingContext {
-        let core = Arc::new(AppCore::new(
-            data_root.to_path_buf(),
+        let host = crate::host::HostState::for_test(
+            data_root,
             CreativeSession::new(0),
             audio.clone(),
-            false,
-            false,
-        ));
-        let runtime = Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap());
+            safe_mode,
+        );
+        let storage = host.project.write().project().storage.clone();
         RecordingContext {
-            core,
+            storage,
+            runtime: Arc::clone(&host.runtime),
             audio: audio.clone(),
-            runtime,
-            storage: riffra_host::SessionStore::new(
-                data_root,
-                "01900000-0000-7000-8000-000000000001",
-            ),
             data_root: data_root.to_path_buf(),
-            built_in_instruments: Arc::new(crate::test_support::empty_built_in_catalog().clone()),
+            built_in_instruments: Arc::clone(&host.built_in_instruments),
             events: Arc::new(crate::NoopHostEventSink),
             jobs: crate::jobs::JobRegistry::default(),
             safe_mode,
+            host,
         }
     }
 
@@ -1824,13 +1777,7 @@ mod tests {
                 track_slots: Vec::new(),
                 pass_ids: Vec::new(),
             });
-        let core = AppCore::new(
-            root.clone(),
-            base.clone(),
-            AudioSupervisor::offline("test"),
-            false,
-            true,
-        );
+        let mut core = AppCore::new("project:test".into(), base.clone(), 0);
         core.application(&storage)
             .update_session_settings(riffra_core::application::SessionSettingsPatch {
                 note: Some("edited while recording was processing".into()),
@@ -1913,19 +1860,20 @@ mod tests {
             .arrangement
             .tracks
             .push(Track::audio("track:unarmed".into(), "Unarmed".into()));
-        let core = AppCore::new(root.clone(), session, audio.clone(), false, false);
-        let ctx = RecordingContext {
-            core: Arc::new(core),
-            audio: audio.clone(),
-            runtime: Arc::new(RuntimeReconciler::new(Arc::new(audio.clone())).unwrap()),
-            storage: riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001"),
-            data_root: root.clone(),
-            built_in_instruments: Arc::new(crate::test_support::empty_built_in_catalog().clone()),
-            events: Arc::new(crate::NoopHostEventSink),
-            jobs: crate::jobs::JobRegistry::default(),
-            safe_mode: false,
-        };
-
+        let ctx = context_for(&root, &audio, false);
+        let storage = ctx.host.project.write().project().storage.clone();
+        ctx.host
+            .project
+            .write()
+            .replace(crate::host::open_project::OpenProject {
+                storage,
+                core: AppCore::new(
+                    ctx.host.project.read().canonical.project_id.clone(),
+                    session,
+                    0,
+                ),
+                recovered_from_generation: false,
+            });
         let error = start_recording(&ctx).unwrap_err();
 
         assert_eq!(error, "No tracks are armed for recording.");

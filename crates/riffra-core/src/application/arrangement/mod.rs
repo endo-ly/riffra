@@ -2,28 +2,28 @@
 
 use super::*;
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
     /// Lists Tracks from the canonical production state.
-    pub fn list_tracks(&self) -> Result<Vec<Track>, ApplicationError> {
+    pub fn list_tracks(&mut self) -> Result<Vec<Track>, ApplicationError> {
         Ok(self.get_session()?.arrangement.tracks)
     }
 
     /// Lists all Timeline Clips from the canonical production state.
-    pub fn list_audio_clips(&self) -> Result<Vec<AudioClip>, ApplicationError> {
+    pub fn list_audio_clips(&mut self) -> Result<Vec<AudioClip>, ApplicationError> {
         Ok(self.get_session()?.arrangement.audio_clips)
     }
 
     /// Lists all MIDI Clips from the canonical production state.
-    pub fn list_midi_clips(&self) -> Result<Vec<MidiClip>, ApplicationError> {
+    pub fn list_midi_clips(&mut self) -> Result<Vec<MidiClip>, ApplicationError> {
         Ok(self.get_session()?.arrangement.midi_clips)
     }
 
     /// Adds a Track and returns the identity allocated by Core.
     pub fn add_track_with_created_ids(
-        &self,
+        &mut self,
         name: impl Into<String>,
         kind: TrackKind,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -42,7 +42,7 @@ where
     }
 
     /// Removes a Track and its owned Timeline objects.
-    pub fn remove_track(&self, track_id: &str) -> Result<CreativeSession, ApplicationError> {
+    pub fn remove_track(&mut self, track_id: &str) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
             arrangement.remove_track(track_id).map_err(Into::into)
         })
@@ -50,7 +50,7 @@ where
 
     /// Duplicates a Track and returns every identity allocated for its copy.
     pub fn duplicate_track_with_created_ids(
-        &self,
+        &mut self,
         track_id: &str,
     ) -> Result<ApplicationMutation, ApplicationError> {
         let mutation = self.commit_arrangement_with_created_ids(|arrangement, created| {
@@ -123,7 +123,7 @@ where
 
     /// Applies a validated Track mix and routing patch.
     pub fn update_track(
-        &self,
+        &mut self,
         track_id: &str,
         patch: TrackPatch,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -191,7 +191,7 @@ where
 
     /// Reorders a Track without changing its owned timeline objects.
     pub fn reorder_track(
-        &self,
+        &mut self,
         track_id: &str,
         target_index: usize,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -204,7 +204,7 @@ where
 
     /// Adds an already-validated Audio Clip after checking the host asset index.
     pub fn add_audio_clip(
-        &self,
+        &mut self,
         clip: AudioClip,
         asset_exists: impl Fn(&crate::domain::asset::AssetId) -> bool,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -217,7 +217,7 @@ where
 
     /// Adds an Audio Asset Clip and returns identities allocated by Core.
     pub fn add_audio_asset_clip_with_created_ids(
-        &self,
+        &mut self,
         placement: AudioAssetClipPlacement,
         asset_exists: impl Fn(&crate::domain::asset::AssetId) -> bool,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -280,7 +280,7 @@ where
     }
 
     /// Adds an already-validated MIDI Clip.
-    pub fn add_midi_clip(&self, clip: MidiClip) -> Result<CreativeSession, ApplicationError> {
+    pub fn add_midi_clip(&mut self, clip: MidiClip) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| arrangement.add_midi_clip(clip).map_err(Into::into))
     }
 
@@ -295,7 +295,7 @@ where
     /// Returns an error when the track is missing, is not an Instrument Track,
     /// or the resulting Clip cannot be validated or persisted.
     pub fn create_midi_clip_with_created_ids(
-        &self,
+        &mut self,
         track_id: &str,
         start_tick: TimelineTick,
         duration_ticks: u64,
@@ -323,7 +323,7 @@ where
     /// Returns an error when the target Track or MIDI content is invalid, or
     /// when the resulting session cannot be persisted.
     pub fn add_midi_asset_clip_with_created_ids(
-        &self,
+        &mut self,
         placement: MidiAssetClipPlacement,
     ) -> Result<ApplicationMutation, ApplicationError> {
         let mutation = self.commit_arrangement_with_created_ids(|arrangement, created| {
@@ -385,7 +385,7 @@ where
 
     /// Replaces the project timebase through the canonical domain operation.
     pub fn update_timebase(
-        &self,
+        &mut self,
         timebase: ProjectTimebase,
     ) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
@@ -395,7 +395,7 @@ where
 
     /// Updates the transport loop range through the canonical domain operation.
     pub fn update_loop_range(
-        &self,
+        &mut self,
         enabled: bool,
         start_tick: TimelineTick,
         end_tick: TimelineTick,
@@ -409,7 +409,7 @@ where
 
     /// Updates the transport punch range through the canonical domain operation.
     pub fn update_punch_range(
-        &self,
+        &mut self,
         enabled: bool,
         start_tick: TimelineTick,
         end_tick: TimelineTick,
@@ -423,7 +423,7 @@ where
 
     /// Applies a validated Audio Clip patch and commits the result.
     pub fn update_audio_clip(
-        &self,
+        &mut self,
         clip_id: &str,
         patch: AudioClipPatch,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -436,7 +436,7 @@ where
 
     /// Applies a validated MIDI Clip patch and commits the result.
     pub fn update_midi_clip(
-        &self,
+        &mut self,
         clip_id: &str,
         patch: MidiClipPatch,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -449,7 +449,7 @@ where
 
     /// Moves Audio Clips as one atomic arrangement edit.
     pub fn move_audio_clips(
-        &self,
+        &mut self,
         moves: Vec<AudioClipMove>,
     ) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
@@ -459,7 +459,7 @@ where
 
     /// Moves MIDI Clips as one atomic arrangement edit.
     pub fn move_midi_clips(
-        &self,
+        &mut self,
         moves: Vec<MidiClipMove>,
     ) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
@@ -469,7 +469,7 @@ where
 
     /// Removes selected Audio and MIDI Clips in one atomic edit.
     pub fn remove_timeline_clips(
-        &self,
+        &mut self,
         audio_clip_ids: Vec<String>,
         midi_clip_ids: Vec<String>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -482,7 +482,7 @@ where
 
     /// Pastes selected Clips and returns the newly allocated Clip IDs.
     pub fn paste_timeline_clips_with_created_ids(
-        &self,
+        &mut self,
         audio_clip_ids: Vec<String>,
         midi_clip_ids: Vec<String>,
         start_tick: TimelineTick,
@@ -517,7 +517,7 @@ where
 
     /// Trims an Audio Clip after the host validates its source length.
     pub fn trim_audio_clip(
-        &self,
+        &mut self,
         clip_id: &str,
         start_tick: TimelineTick,
         source_range: FrameRange,
@@ -532,7 +532,7 @@ where
 
     /// Splits an Audio Clip and returns the newly created right-hand Clip ID.
     pub fn split_audio_clip_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         split_tick: TimelineTick,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -547,7 +547,7 @@ where
 
     /// Duplicates an Audio Clip and returns its new Clip ID.
     pub fn duplicate_audio_clip_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
     ) -> Result<ApplicationMutation, ApplicationError> {
         let duplicate_id = next_id("clip:duplicate");
@@ -565,7 +565,7 @@ where
 
     /// Trims a MIDI Clip and its contained notes/events.
     pub fn trim_midi_clip(
-        &self,
+        &mut self,
         clip_id: &str,
         start_tick: TimelineTick,
         duration_ticks: u64,
@@ -579,7 +579,7 @@ where
 
     /// Splits a MIDI Clip and returns the newly created right-hand Clip ID.
     pub fn split_midi_clip_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         split_tick: TimelineTick,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -594,7 +594,7 @@ where
 
     /// Duplicates a MIDI Clip and returns its new Clip ID.
     pub fn duplicate_midi_clip_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
     ) -> Result<ApplicationMutation, ApplicationError> {
         let duplicate_id = next_id("midi-clip:duplicate");
@@ -608,7 +608,7 @@ where
 
     /// Adds one MIDI note and returns its Core-allocated identity.
     pub fn add_midi_note_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         start_tick: TimelineTick,
         pitch: u8,
@@ -663,7 +663,7 @@ where
     /// Returns an error for an empty input, invalid MIDI values, an unknown
     /// Clip, or a note that would make the Clip invalid.
     pub fn insert_midi_notes_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         inputs: Vec<MidiNoteInput>,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -718,7 +718,7 @@ where
 
     /// Applies one atomic set of updates to notes in a MIDI clip.
     pub fn update_midi_notes(
-        &self,
+        &mut self,
         clip_id: &str,
         updates: Vec<MidiNoteUpdate>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -795,7 +795,7 @@ where
 
     /// Removes one MIDI note from an existing MIDI clip.
     pub fn remove_midi_note(
-        &self,
+        &mut self,
         clip_id: &str,
         note_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -829,7 +829,7 @@ where
     /// Returns an error for an empty selection, an unknown Clip, or a missing
     /// Note ID.
     pub fn remove_midi_notes(
-        &self,
+        &mut self,
         clip_id: &str,
         note_ids: Vec<String>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -846,7 +846,7 @@ where
     /// # Errors
     ///
     /// Returns an error when the Clip is unknown or persistence fails.
-    pub fn clear_midi_notes(&self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
+    pub fn clear_midi_notes(&mut self, clip_id: &str) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
             arrangement.clear_midi_notes(clip_id).map_err(Into::into)
         })
@@ -858,7 +858,7 @@ where
     /// all notes in the clip are transformed. Pitch and velocity are clamped
     /// to `0..=127`.
     pub fn transform_midi_notes(
-        &self,
+        &mut self,
         clip_id: &str,
         note_ids: Vec<String>,
         transpose_semitones: i16,
@@ -914,7 +914,7 @@ where
 
     /// Quantizes selected MIDI notes to a positive grid.
     pub fn quantize_midi_notes(
-        &self,
+        &mut self,
         clip_id: &str,
         note_ids: Vec<String>,
         grid_ticks: u64,
@@ -928,7 +928,7 @@ where
 
     /// Duplicates MIDI notes and returns all newly allocated Note IDs.
     pub fn duplicate_midi_notes_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         note_ids: Vec<String>,
         offset_ticks: u64,
@@ -947,7 +947,7 @@ where
 
     /// Adds a timeline marker and returns its Core-allocated identity.
     pub fn add_marker_with_created_ids(
-        &self,
+        &mut self,
         tick: TimelineTick,
         name: String,
     ) -> Result<ApplicationMutation, ApplicationError> {
@@ -971,7 +971,7 @@ where
 
     /// Updates one timeline marker.
     pub fn update_marker(
-        &self,
+        &mut self,
         marker_id: &str,
         patch: MarkerPatch,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -1000,7 +1000,7 @@ where
     }
 
     /// Removes one timeline marker.
-    pub fn remove_marker(&self, marker_id: &str) -> Result<CreativeSession, ApplicationError> {
+    pub fn remove_marker(&mut self, marker_id: &str) -> Result<CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
             let before = arrangement.markers.len();
             arrangement.markers.retain(|marker| marker.id != marker_id);
@@ -1017,7 +1017,7 @@ where
 
     /// Applies a crossfade between two neighboring Audio Clips.
     pub fn crossfade_audio_clips(
-        &self,
+        &mut self,
         first_id: &str,
         second_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {

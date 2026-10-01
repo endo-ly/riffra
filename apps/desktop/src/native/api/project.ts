@@ -12,6 +12,7 @@ import { dispatchControl, dispatchControlOrFallback, invokeHostOrFallback } from
 function defaultArrangementMutation(): ArrangementMutationResult {
   return {
     canonical: {
+      projectId: defaultProjectState().activeProjectId,
       session: defaultSession(),
       sequence: 0,
       history: { canUndo: false, canRedo: false },
@@ -82,6 +83,7 @@ function defaultProjectActivationResult(): ProjectActivationResult {
   return {
     projectState: defaultProjectState(),
     canonical: {
+      projectId: defaultProjectState().activeProjectId,
       session: defaultSession(),
       sequence: 0,
       history: { canUndo: false, canRedo: false },

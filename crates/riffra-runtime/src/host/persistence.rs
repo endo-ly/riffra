@@ -1,8 +1,5 @@
 use super::HostState;
 use super::events::HostEventSubscription;
-use crate::api::params::{PluginParameterPersistParams, PluginStatePersistParams};
-use crate::api::{ControlCommand, RuntimeCommand};
-use riffra_control::new_instance_id;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,17 +12,17 @@ pub(super) struct PluginStatePersistenceCoordinator {
 }
 
 pub(super) enum PluginPersistenceCommand {
-    FlushProject {
+    TakePending {
         project_id: String,
-        result: mpsc::Sender<Result<(), String>>,
+        result: mpsc::Sender<Vec<QueuedPluginChange>>,
     },
-    KeepProject {
-        project_id: String,
+    Acknowledge {
+        orders: Vec<u64>,
         result: mpsc::Sender<()>,
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginStateEvent {
     project_id: String,
@@ -36,7 +33,7 @@ struct PluginStateEvent {
     bypassed: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginParameterEvent {
     project_id: String,
@@ -46,13 +43,14 @@ struct PluginParameterEvent {
     value: f32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum PendingPluginChange {
     State(PluginStateEvent),
     Parameter(PluginParameterEvent),
 }
 
-struct QueuedPluginChange {
+#[derive(Clone)]
+pub(super) struct QueuedPluginChange {
     order: u64,
     project_id: String,
     change: PendingPluginChange,
@@ -81,22 +79,20 @@ impl PluginStatePersistenceCoordinator {
                     loop {
                         while let Ok(command) = command_receiver.try_recv() {
                             match command {
-                                PluginPersistenceCommand::FlushProject { project_id, result } => {
+                                PluginPersistenceCommand::TakePending { project_id, result } => {
                                     while let Ok(frame) = subscription.try_recv() {
                                         collect_plugin_change(&mut pending, frame, &mut next_order);
                                     }
-                                    let outcome = flush_plugin_changes(
-                                        &state,
-                                        &mut pending,
-                                        Some(&project_id),
-                                    );
-                                    let _ = result.send(outcome);
+                                    let mut changes: Vec<_> = pending
+                                        .values()
+                                        .filter(|queued| queued.project_id == project_id)
+                                        .cloned()
+                                        .collect();
+                                    changes.sort_by_key(|queued| queued.order);
+                                    let _ = result.send(changes);
                                 }
-                                PluginPersistenceCommand::KeepProject { project_id, result } => {
-                                    while let Ok(frame) = subscription.try_recv() {
-                                        collect_plugin_change(&mut pending, frame, &mut next_order);
-                                    }
-                                    pending.retain(|_, change| change.project_id == project_id);
+                                PluginPersistenceCommand::Acknowledge { orders, result } => {
+                                    pending.retain(|_, queued| !orders.contains(&queued.order));
                                     let _ = result.send(());
                                 }
                             }
@@ -105,7 +101,7 @@ impl PluginStatePersistenceCoordinator {
                             while let Ok(frame) = subscription.try_recv() {
                                 collect_plugin_change(&mut pending, frame, &mut next_order);
                             }
-                            let _ = flush_plugin_changes(&state, &mut pending, None);
+                            let _ = flush_plugin_changes(&state, &mut pending, true);
                             break;
                         }
                         match subscription.recv_timeout(std::time::Duration::from_millis(24)) {
@@ -113,10 +109,10 @@ impl PluginStatePersistenceCoordinator {
                                 collect_plugin_change(&mut pending, frame, &mut next_order)
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {
-                                let _ = flush_plugin_changes(&state, &mut pending, None);
+                                let _ = flush_plugin_changes(&state, &mut pending, false);
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                let _ = flush_plugin_changes(&state, &mut pending, None);
+                                let _ = flush_plugin_changes(&state, &mut pending, true);
                                 break;
                             }
                         }
@@ -190,77 +186,123 @@ fn collect_plugin_change(
     }
 }
 
+impl HostState {
+    pub(super) fn take_pending_plugin_changes(
+        &self,
+        writer: &mut super::open_project::ProjectWriter<'_>,
+    ) -> Result<(), riffra_control::ProtocolError> {
+        let commands = self
+            .plugin_persistence_commands
+            .lock()
+            .map_err(|_| super::control::command_error("plugin persistence lock was poisoned"))?
+            .clone();
+        if let Some(commands) = commands {
+            let (result, receiver) = mpsc::channel();
+            commands
+                .send(PluginPersistenceCommand::TakePending {
+                    project_id: writer.project().core.project_id().to_owned(),
+                    result,
+                })
+                .map_err(|_| {
+                    super::control::command_error("plugin persistence worker is unavailable")
+                })?;
+            let changes = receiver.recv().map_err(|_| {
+                super::control::command_error("plugin persistence worker stopped unexpectedly")
+            })?;
+            let mut orders = Vec::new();
+            let mut failure = None;
+            for change in changes {
+                match self.apply_plugin_change(writer, &change) {
+                    Ok(()) => orders.push(change.order),
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+            }
+            // Keep failed and unprocessed changes owned by the worker. Only
+            // acknowledge exact arrival orders, so newer events remain pending.
+            let (result, receiver) = mpsc::channel();
+            commands
+                .send(PluginPersistenceCommand::Acknowledge { orders, result })
+                .map_err(|_| {
+                    super::control::command_error("plugin persistence worker is unavailable")
+                })?;
+            receiver.recv().map_err(|_| {
+                super::control::command_error("plugin persistence worker stopped unexpectedly")
+            })?;
+            if let Some(error) = failure {
+                return Err(super::control::command_error(error));
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_plugin_change(
+        &self,
+        writer: &mut super::open_project::ProjectWriter<'_>,
+        queued: &QueuedPluginChange,
+    ) -> Result<(), String> {
+        if queued.project_id != writer.project().core.project_id() {
+            return Ok(());
+        }
+        let committed = writer
+            .commit(|mut app| match &queued.change {
+                PendingPluginChange::State(change) => app.persist_track_plugin_state(
+                    &change.track_id,
+                    &change.device_id,
+                    change.parameter_values.clone(),
+                    change.state_data.clone(),
+                    change.bypassed,
+                ),
+                PendingPluginChange::Parameter(change) => {
+                    if change.parameter_index < 0 || !change.value.is_finite() {
+                        return Err(riffra_core::ApplicationError::InvalidCommand(
+                            "plugin parameter value is invalid".into(),
+                        ));
+                    }
+                    app.set_track_device_parameter(
+                        &change.track_id,
+                        &change.device_id,
+                        change.parameter_index as usize,
+                        change.value,
+                    )
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        self.publish_commit(writer, committed);
+        Ok(())
+    }
+}
+
 fn flush_plugin_changes(
     state: &std::sync::Weak<HostState>,
     pending: &mut HashMap<PluginChangeKey, QueuedPluginChange>,
-    expected_project_id: Option<&str>,
+    final_flush: bool,
 ) -> Result<(), String> {
     let Some(state) = state.upgrade() else {
         pending.clear();
         return Ok(());
     };
-    let active_project_id = state
-        .project_store
-        .active_project_id()
-        .map_err(|error| error.to_string())?;
-    if expected_project_id.is_some_and(|project_id| project_id != active_project_id) {
-        return Err("active Project changed before plugin state could be flushed".into());
-    }
+    let mut writer = if final_flush {
+        state.project.write()
+    } else {
+        let Some(writer) = state.project.try_write() else {
+            return Ok(());
+        };
+        writer
+    };
     let mut changes = pending.drain().collect::<Vec<_>>();
-    changes.sort_by_key(|(_, change)| change.order);
+    changes.sort_by_key(|(_, queued)| queued.order);
     let mut failure = None;
     for (key, queued) in changes {
-        if expected_project_id.is_some_and(|project_id| project_id != queued.project_id)
-            || queued.project_id != active_project_id
-        {
-            continue;
-        }
-        let command: ControlCommand = match &queued.change {
-            PendingPluginChange::State(change) => {
-                RuntimeCommand::PluginStatePersist(PluginStatePersistParams {
-                    track_id: change.track_id.clone(),
-                    device_id: change.device_id.clone(),
-                    parameter_values: change.parameter_values.clone(),
-                    state_data: change.state_data.clone(),
-                    bypassed: change.bypassed,
-                })
-            }
-            PendingPluginChange::Parameter(change) => {
-                RuntimeCommand::PluginParameterPersist(PluginParameterPersistParams {
-                    track_id: change.track_id.clone(),
-                    device_id: change.device_id.clone(),
-                    parameter_index: change.parameter_index,
-                    value: change.value,
-                })
-            }
-        }
-        .into();
-        let command_name = command.name();
-        let response = state.dispatch_persistence_request(
-            command
-                .into_request(format!("plugin-persistence-{}", new_instance_id()), None)
-                .with_expected_project_id(active_project_id.clone()),
-        );
-        if !response.ok {
-            tracing::warn!(
-                command = command_name,
-                error = ?response.error,
-                "Host plugin state persistence failed"
-            );
+        if let Err(error) = state.apply_plugin_change(&mut writer, &queued) {
+            tracing::warn!(%error, "Host plugin state persistence failed");
             pending.insert(key, queued);
-            failure.get_or_insert_with(|| {
-                response
-                    .error
-                    .map(|error| error.message)
-                    .unwrap_or_else(|| "plugin state persistence failed".into())
-            });
+            failure.get_or_insert(error);
         }
     }
-    if let Some(error) = failure {
-        Err(error)
-    } else {
-        Ok(())
-    }
+    failure.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -345,5 +387,215 @@ mod tests {
         );
 
         assert!(pending.is_empty());
+    }
+    fn plugin_host() -> (std::path::PathBuf, Arc<HostState>) {
+        let root = std::env::temp_dir().join(format!(
+            "riffra-plugin-writer-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = riffra_core::CreativeSession::new(1);
+        let mut track = riffra_core::Track::audio("track:1".into(), "Track".into());
+        let mut effect = riffra_core::EffectDevice::new(
+            "device:1".into(),
+            "Effect".into(),
+            "effect.vst3".into(),
+        )
+        .unwrap();
+        effect.plugin.parameter_values = vec![0.0];
+        track.effects.push(effect);
+        session.arrangement.tracks.push(track);
+        let host = HostState::for_test(
+            &root,
+            session,
+            crate::AudioSupervisor::offline("test"),
+            true,
+        );
+        (root, host)
+    }
+    fn parameter_change(project_id: &str, value: f32) -> riffra_control::HostEventFrame {
+        riffra_control::HostEventFrame::new(
+            "track-plugin-parameter-changed",
+            serde_json::json!({
+                "projectId": project_id, "trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0, "value": value,
+            }),
+        )
+    }
+    #[test]
+    fn periodic_persistence_cannot_interleave_a_command_with_its_publication() {
+        let (root, state) = plugin_host();
+        let mut writer = state.project.write();
+        let committed = writer
+            .commit(|mut app| {
+                app.update_session_settings(riffra_core::application::SessionSettingsPatch {
+                    project_name: Some(Some("command".into())),
+                    ..Default::default()
+                })
+            })
+            .unwrap();
+        let own_snapshot = committed.snapshot.clone();
+        let weak = Arc::downgrade(&state);
+        let frame = parameter_change(&own_snapshot.canonical.project_id, 0.75);
+        let periodic = std::thread::spawn(move || {
+            let mut pending = HashMap::new();
+            collect_plugin_change(&mut pending, frame, &mut 0);
+            flush_plugin_changes(&weak, &mut pending, false).unwrap();
+            pending
+        });
+
+        let mut pending = periodic.join().unwrap();
+        let (result, _) = state.publish_commit(&writer, committed);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(result.canonical, own_snapshot.canonical);
+        drop(writer);
+        flush_plugin_changes(&Arc::downgrade(&state), &mut pending, true).unwrap();
+
+        assert!(pending.is_empty());
+        assert_eq!(result.canonical.sequence, 1);
+        assert_eq!(
+            result.canonical.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .parameter_values,
+            [0.0]
+        );
+        assert_eq!(state.project.read().canonical.sequence, 2);
+        assert_eq!(
+            state.project.read().canonical.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .parameter_values,
+            [0.75]
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn switching_applies_pending_parameters_to_the_project_being_closed() {
+        let (root, state) = plugin_host();
+        let next = state.project_store.create(Some("Next".into())).unwrap();
+        let worker = PluginStatePersistenceCoordinator::start(
+            Arc::downgrade(&state),
+            state.event_hub.subscribe_plugin_persistence(),
+        );
+        *state.plugin_persistence_commands.lock().unwrap() = Some(worker.commands.clone());
+        let writer = state.project.write();
+        let previous = writer.project().core.canonical_state();
+        let storage = writer.project().storage.clone();
+        state
+            .events
+            .emit(crate::HostEvent::TrackPluginParameterChanged(
+                crate::model::TrackPluginParameterChanged {
+                    project_id: previous.project_id.clone(),
+                    track_id: "track:1".into(),
+                    device_id: "device:1".into(),
+                    parameter_index: 0,
+                    value: 0.5,
+                },
+            ));
+
+        let result = super::super::project::dispatch(
+            &state,
+            Some(writer),
+            crate::api::ProjectCommand::ProjectOpen(crate::api::params::ProjectOpenParams {
+                project_id: next.project_id.clone(),
+            }),
+            previous,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            result.0,
+            crate::api::ControlOutput::ProjectActivation(_)
+        ));
+        assert_eq!(state.project.read().canonical.project_id, next.project_id);
+        assert_eq!(
+            storage.load_existing().unwrap().session.arrangement.tracks[0].effects[0]
+                .plugin
+                .parameter_values,
+            [0.5]
+        );
+        assert!(
+            state
+                .project
+                .read()
+                .canonical
+                .session
+                .arrangement
+                .tracks
+                .is_empty()
+        );
+        worker.shutdown();
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn failed_switch_retains_failed_and_unprocessed_plugin_changes_for_retry() {
+        // Arrange
+        let (root, state) = plugin_host();
+        let next = state.project_store.create(Some("Next".into())).unwrap();
+        let worker = PluginStatePersistenceCoordinator::start(
+            Arc::downgrade(&state),
+            state.event_hub.subscribe_plugin_persistence(),
+        );
+        *state.plugin_persistence_commands.lock().unwrap() = Some(worker.commands.clone());
+        let mut writer = state.project.write();
+        let previous = writer.project().core.canonical_state();
+        for (device_id, value) in [("deleted", 0.25), ("device:1", 0.75)] {
+            state
+                .events
+                .emit(crate::HostEvent::TrackPluginParameterChanged(
+                    crate::model::TrackPluginParameterChanged {
+                        project_id: previous.project_id.clone(),
+                        track_id: "track:1".into(),
+                        device_id: device_id.into(),
+                        parameter_index: 0,
+                        value,
+                    },
+                ));
+        }
+        // Act: both attempts must fail before the active Project changes.
+        for _ in 0..2 {
+            assert!(state.take_pending_plugin_changes(&mut writer).is_err());
+            assert_eq!(
+                state.project.read().canonical.project_id,
+                previous.project_id
+            );
+            let (result, receiver) = mpsc::channel();
+            worker
+                .commands
+                .send(PluginPersistenceCommand::TakePending {
+                    project_id: previous.project_id.clone(),
+                    result,
+                })
+                .unwrap();
+            let changes = receiver.recv().unwrap();
+            assert_eq!(changes.len(), 2);
+            assert!(
+                matches!(&changes[1].change, PendingPluginChange::Parameter(change) if change.value == 0.75)
+            );
+        }
+        drop(writer);
+        let failed = super::super::project::dispatch(
+            &state,
+            Some(state.project.write()),
+            crate::api::ProjectCommand::ProjectOpen(crate::api::params::ProjectOpenParams {
+                project_id: next.project_id,
+            }),
+            previous.clone(),
+        );
+        // Assert
+        assert!(failed.is_err());
+        assert_eq!(
+            state.project.read().canonical.project_id,
+            previous.project_id
+        );
+        worker.shutdown();
+        // Final flush still applies the healthy change after retaining the failure.
+        assert_eq!(
+            state.project.read().canonical.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .parameter_values,
+            [0.75]
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

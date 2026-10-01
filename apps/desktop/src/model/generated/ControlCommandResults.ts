@@ -142,8 +142,6 @@ export type ControlCommandResults = {
   'plugin.preset.set': OutputValue<'arrangementMutation'>;
   'plugin.state.get': OutputValue<'pluginState'>;
   'plugin.state.set': OutputValue<'arrangementMutation'>;
-  'plugin.state.persist': OutputValue<'arrangementMutation'>;
-  'plugin.parameter.persist': OutputValue<'arrangementMutation'>;
   'missing.list': OutputValue<'missing'>;
   'record.start': OutputValue<'audioStatus'>;
   'record.stop': OutputValue<'recordingStop'>;

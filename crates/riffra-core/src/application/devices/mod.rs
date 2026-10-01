@@ -2,13 +2,13 @@
 
 use super::*;
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
     /// Routes or clears a physical audio input on an Audio Track.
     pub fn set_track_audio_input(
-        &self,
+        &mut self,
         track_id: &str,
         channel_index: Option<u32>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -33,7 +33,7 @@ where
 
     /// Routes or clears a MIDI input on an Instrument Track.
     pub fn set_track_midi_input(
-        &self,
+        &mut self,
         track_id: &str,
         route: MidiInputRoute,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -65,7 +65,7 @@ where
 
     /// Assigns or clears an Instrument Track's instrument device.
     pub fn set_track_instrument(
-        &self,
+        &mut self,
         track_id: &str,
         instrument: Option<TrackInstrument>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -97,7 +97,7 @@ where
         track_id: &str,
         instrument: TrackInstrument,
     ) -> Result<crate::PreparedSession, ApplicationError> {
-        self.core.prepare(|session| {
+        PreparedSession::from_snapshot(&self.core.snapshot(), |session| {
             let track = session
                 .arrangement
                 .tracks
@@ -121,7 +121,7 @@ where
     /// independent of the canonical commit sequence and remains unique across
     /// process restarts and candidate sessions.
     pub fn add_track_effect_with_created_ids(
-        &self,
+        &mut self,
         track_id: &str,
         name: String,
         path: String,
@@ -171,27 +171,26 @@ where
         path: String,
     ) -> Result<(crate::PreparedSession, String), ApplicationError> {
         let device_id = next_id("device:effect");
-        self.core
-            .prepare(|session| {
-                let track = session
-                    .arrangement
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.id == track_id)
-                    .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-                track.effects.push(
-                    EffectDevice::new(device_id.clone(), name, path)
-                        .map_err(ApplicationError::InvalidCommand)?,
-                );
-                session.arrangement.revision = session.arrangement.revision.saturating_add(1);
-                Ok(())
-            })
-            .map(|prepared| (prepared, device_id))
+        PreparedSession::from_snapshot(&self.core.snapshot(), |session| {
+            let track = session
+                .arrangement
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            track.effects.push(
+                EffectDevice::new(device_id.clone(), name, path)
+                    .map_err(ApplicationError::InvalidCommand)?,
+            );
+            session.arrangement.revision = session.arrangement.revision.saturating_add(1);
+            Ok(())
+        })
+        .map(|prepared| (prepared, device_id))
     }
 
     /// Removes one effect device from a Track.
     pub fn remove_track_effect(
-        &self,
+        &mut self,
         track_id: &str,
         device_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -216,7 +215,7 @@ where
 
     /// Reorders every effect in one Track.
     pub fn reorder_track_effects(
-        &self,
+        &mut self,
         track_id: &str,
         ordered_device_ids: Vec<String>,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -259,7 +258,7 @@ where
 
     /// Changes one device's bypass state.
     pub fn set_track_device_bypassed(
-        &self,
+        &mut self,
         track_id: &str,
         device_id: &str,
         bypassed: bool,
@@ -273,7 +272,7 @@ where
 
     /// Changes one normalized device parameter.
     pub fn set_track_device_parameter(
-        &self,
+        &mut self,
         track_id: &str,
         device_id: &str,
         parameter_index: usize,
@@ -299,7 +298,7 @@ where
 
     /// Replaces automation and reports a newly created lane identity.
     pub fn set_track_automation_with_created_ids(
-        &self,
+        &mut self,
         track_id: &str,
         parameter: AutomationParameter,
         mut points: Vec<AutomationPoint>,
@@ -348,7 +347,7 @@ where
 
     /// Persists a complete state snapshot emitted by a native Plugin Editor.
     pub fn persist_track_plugin_state(
-        &self,
+        &mut self,
         track_id: &str,
         device_id: &str,
         parameter_values: Vec<f32>,
@@ -373,7 +372,7 @@ where
 
     /// Persists one parameter emitted by a native Plugin Editor.
     pub fn persist_track_plugin_parameter(
-        &self,
+        &mut self,
         track_id: &str,
         device_id: &str,
         parameter_index: usize,
@@ -399,7 +398,7 @@ where
 
     /// Marks a Track Plugin as a disabled placeholder after it was found missing.
     pub fn disable_missing_plugin(
-        &self,
+        &mut self,
         device_id: &str,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
@@ -418,7 +417,7 @@ where
 
     /// Replaces a Track effect while preserving its slot identity.
     pub fn replace_track_plugin(
-        &self,
+        &mut self,
         device_id: &str,
         device: EffectDevice,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -443,7 +442,7 @@ where
 
     /// Replaces a VST3 Instrument while preserving its slot identity.
     pub fn replace_track_instrument(
-        &self,
+        &mut self,
         device_id: &str,
         instrument: TrackInstrument,
     ) -> Result<CreativeSession, ApplicationError> {
@@ -484,7 +483,7 @@ where
         name: String,
         path: String,
     ) -> Result<crate::PreparedSession, ApplicationError> {
-        self.core.prepare(|session| {
+        PreparedSession::from_snapshot(&self.core.snapshot(), |session| {
             match find_any_track_device_mut(session, device_id)? {
                 TrackDeviceMut::Instrument(current) => {
                     if current.as_vst3().is_none() {

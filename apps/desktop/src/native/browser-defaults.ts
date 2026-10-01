@@ -3,6 +3,7 @@ import type { CanonicalState, CreativeSession, ProjectState } from '@/model/gene
 /** Creates the canonical state used by browser fixtures and fallback paths. */
 export function canonicalState(session: CreativeSession): CanonicalState {
   return {
+    projectId: defaultProjectState().activeProjectId,
     session,
     sequence: 0,
     history: { canUndo: false, canRedo: false },

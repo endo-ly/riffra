@@ -63,28 +63,6 @@ pub struct PluginStateSetParams {
     pub state: PluginStateSnapshot,
 }
 
-/// Persists plugin state captured from an open native editor.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-#[ts(optional_fields = nullable)]
-pub struct PluginStatePersistParams {
-    pub track_id: String,
-    pub device_id: String,
-    pub parameter_values: Vec<f32>,
-    pub state_data: Option<String>,
-    pub bypassed: bool,
-}
-
-/// Persists one parameter changed in an open native editor.
-#[derive(Clone, Debug, Deserialize, Serialize, TS)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct PluginParameterPersistParams {
-    pub track_id: String,
-    pub device_id: String,
-    pub parameter_index: i32,
-    pub value: f32,
-}
-
 /// Replaces a missing audio Asset with a file on disk.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

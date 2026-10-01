@@ -1,15 +1,12 @@
 import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
-import { getHostGeneration, getProjectEpoch } from '@/native/invoke';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor } from '@/features/arrange/inspector/track-colors';
 import { MixerMeter } from './MixerMeter';
 import { useTrackMixControl } from './hooks/useTrackMixControl';
 import styles from './Mixer.module.css';
-
 type MixerTrackApi = Pick<ArrangeApi, 'updateTrack'> & Pick<AudioApi, 'previewTrackMix'>;
-
 interface MixerTrackChannelStripProps {
   sessionId: string;
   track: Track;
@@ -24,7 +21,6 @@ interface MixerTrackChannelStripProps {
   onError?: (message: string) => void;
   disabled?: boolean;
 }
-
 export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
   const { track } = props;
   const [pendingSwitch, setPendingSwitch] = useState<'muted' | 'solo' | 'armed' | null>(null);
@@ -45,23 +41,11 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     if (props.disabled || pendingSwitch !== null) return;
     props.onSelect();
     setPendingSwitch(field);
-    const generationAtRequest = getHostGeneration();
-    const projectEpochAtRequest = getProjectEpoch();
     try {
       const result = await props.api.updateTrack(track.id, { [field]: !track[field] });
-      if (
-        getHostGeneration() !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       if (!props.applyCanonicalState(result.canonical)) return;
       if (result.projection.state === 'failed') props.onError?.(result.projection.message);
     } catch (error) {
-      if (
-        getHostGeneration() !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       props.onError?.(error instanceof Error ? error.message : String(error));
     } finally {
       setPendingSwitch(null);
@@ -70,7 +54,6 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
   const commitValue = (parameter: 'gainDb' | 'pan', value: number) => {
     void mix.commit(parameter, value);
   };
-
   return (
     <article
       className={`${styles.channel}${props.selected ? ` ${styles.selected}` : ''}`}
@@ -213,16 +196,13 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
     </article>
   );
 }
-
 function isMixAdjustmentKey(key: string): boolean {
   return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
 }
-
 function formatPan(pan: number): string {
   if (Math.abs(pan) < 0.005) return 'C';
   return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
 }
-
 function formatDb(gainDb: number): string {
   if (gainDb <= -90) return '−∞ dB';
   return `${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(1)} dB`;

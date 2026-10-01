@@ -1,6 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type { NativeEventApi } from '@/native/native-api';
-import { getHostGeneration } from '@/native/invoke';
 import { toast } from '@/shared/toasts';
 
 interface RuntimeRestartNotificationOptions {
@@ -13,18 +12,10 @@ export function useRuntimeRestartNotification({
   api,
   hostGeneration = 0,
 }: RuntimeRestartNotificationOptions) {
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
     let disposed = false;
     const unlisten = api.onRuntimeRestarted(() => {
-      if (
-        disposed ||
-        currentHostGeneration.current !== hostGeneration ||
-        getHostGeneration() !== hostGeneration
-      )
-        return;
+      if (disposed) return;
       toast('Audio engine restarted.');
     });
     return () => {

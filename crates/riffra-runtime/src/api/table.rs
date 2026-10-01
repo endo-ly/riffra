@@ -59,6 +59,14 @@ macro_rules! control_commands {
             $( #[serde(rename = $runtime_name)] $runtime($runtime_params), )*
         }
 
+        impl CanonicalCommand {
+            pub(crate) fn access(&self) -> CanonicalAccess {
+                match self {
+                    $( Self::$canonical(_) => control_commands!(@access $access $(($batch))?), )*
+                }
+            }
+        }
+
         impl ControlCommand {
             /// Decodes wire params for the command named `name`.
             ///
@@ -357,8 +365,6 @@ control_commands! {
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;
         PluginStateGet = "plugin.state.get" (TrackDeviceParams) -> PluginState, project;
         PluginStateSet = "plugin.state.set" (PluginStateSetParams) -> ArrangementMutation, project;
-        PluginStatePersist = "plugin.state.persist" (PluginStatePersistParams) -> ArrangementMutation, project;
-        PluginParameterPersist = "plugin.parameter.persist" (PluginParameterPersistParams) -> ArrangementMutation, project;
         MissingList = "missing.list" (EmptyParams) -> Missing, project;
 
         RecordStart = "record.start" (RecordStartParams) -> AudioStatus, project;

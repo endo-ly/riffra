@@ -199,11 +199,13 @@ describe('App native boundary', () => {
     });
 
     api.emitCanonicalStateChanged({
+      projectId: api.bootstrapState.projectState.activeProjectId,
       session: newer,
       sequence: 2,
       history: { canUndo: true, canRedo: false },
     });
     api.emitCanonicalStateChanged({
+      projectId: api.bootstrapState.projectState.activeProjectId,
       session: older,
       sequence: 1,
       history: { canUndo: false, canRedo: false },

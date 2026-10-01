@@ -26,11 +26,6 @@ pub(crate) struct OfflineRenderRequest {
     pub(crate) normalize: bool,
 }
 
-/// Runtime-owned renderer for a prepared Execution Graph.
-pub(crate) trait RenderRuntime: Send + Sync {
-    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String>;
-}
-
 const MAX_RENDER_MINUTES: f64 = 30.0;
 const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
@@ -43,25 +38,6 @@ struct RenderPlan {
     clip_count: usize,
     source_ids: Vec<AssetId>,
     output_path: PathBuf,
-}
-
-pub(crate) fn render_timeline_with_options(
-    renderer: &impl RenderRuntime,
-    data_root: &Path,
-    built_in_instruments: &BuiltInInstrumentCatalog,
-    session: &CreativeSession,
-    created_at_ms: u64,
-    options: RenderOptions,
-) -> Result<RenderResult, String> {
-    render_timeline_with_renderer(
-        data_root,
-        built_in_instruments,
-        session,
-        created_at_ms,
-        options,
-        |request| renderer.render_timeline_offline(request),
-        None,
-    )
 }
 
 /// Renders one timeline while allowing the owning background job to cancel

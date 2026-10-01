@@ -10,10 +10,10 @@ use crate::audio::{AudioSupervisor, NativeAudioError, NativeAudioResult, SIDECAR
 use crate::execution::project_session;
 use crate::instrument::BuiltInInstrumentCatalog;
 use crate::runtime::RuntimeReconciler;
-use riffra_core::{AppCore, CanonicalSnapshot};
+use riffra_core::CanonicalSnapshot;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const STARTUP_SAFETY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -146,11 +146,10 @@ impl StartupAudioPort for AudioSupervisor {
 
 /// Runs the complete startup transaction for a normal live Host.
 pub(crate) fn initialize_runtime<F>(
-    core: &AppCore<AudioSupervisor>,
+    audio: &AudioSupervisor,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
-    command_gate: &Mutex<()>,
     capture_target: F,
     shutting_down: &AtomicBool,
 ) -> Result<StartupInitialization, String>
@@ -159,33 +158,33 @@ where
 {
     'generation: for _ in 0..STARTUP_RUNTIME_GENERATION_RETRY_LIMIT {
         if shutting_down.load(Ordering::Acquire) {
-            core.audio().mark_startup_failed();
+            audio.mark_startup_failed();
             return Err(NativeAudioError::ShuttingDown.to_string());
         }
 
         let mut last_status = None;
         for _ in 0..STARTUP_RUNTIME_TARGET_RETRY_LIMIT {
             if shutting_down.load(Ordering::Acquire) {
-                core.audio().mark_startup_failed();
+                audio.mark_startup_failed();
                 return Err(NativeAudioError::ShuttingDown.to_string());
             }
-            let target = match capture_startup_target(command_gate, &capture_target) {
+            let target = match capture_target() {
                 Ok(target) => target,
                 Err(error) => {
-                    core.audio().mark_startup_failed();
+                    audio.mark_startup_failed();
                     return Err(error);
                 }
             };
-            let status = match initialize_audio_safety(core) {
+            let status = match initialize_audio_safety(audio) {
                 Ok(status) => status,
                 Err(error) => {
-                    core.audio().mark_startup_failed();
+                    audio.mark_startup_failed();
                     return Err(error);
                 }
             };
             last_status = Some(status.clone());
             if !safe_for_startup_restore(&status) {
-                core.audio().mark_startup_failed();
+                audio.mark_startup_failed();
                 return Ok(StartupInitialization {
                     status,
                     runtime_error: Some(
@@ -195,9 +194,9 @@ where
                 });
             }
 
-            let generation = core.audio().sidecar_generation();
+            let generation = audio.sidecar_generation();
             match restore_startup_runtime(
-                core,
+                audio,
                 runtime,
                 data_root,
                 built_in_instruments,
@@ -206,8 +205,7 @@ where
             ) {
                 Ok(()) => {
                     let status = match release_startup_mute_for_target(
-                        core.audio(),
-                        command_gate,
+                        audio,
                         &capture_target,
                         &target,
                         generation,
@@ -217,7 +215,7 @@ where
                         Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                         Err(StartupRuntimeError::TargetChanged) => continue,
                         Err(StartupRuntimeError::Feature(release_error)) => {
-                            core.audio().mark_startup_failed();
+                            audio.mark_startup_failed();
                             return Ok(StartupInitialization {
                                 status,
                                 runtime_error: Some(format!(
@@ -226,14 +224,14 @@ where
                             });
                         }
                         Err(StartupRuntimeError::Safety(error)) => {
-                            core.audio().mark_startup_failed();
+                            audio.mark_startup_failed();
                             return Ok(StartupInitialization {
                                 status,
                                 runtime_error: Some(error),
                             });
                         }
                     };
-                    if !core.audio().mark_startup_completed(generation) {
+                    if !audio.mark_startup_completed(generation) {
                         continue 'generation;
                     }
                     return Ok(StartupInitialization {
@@ -244,7 +242,7 @@ where
                 Err(StartupRuntimeError::GenerationChanged(_)) => continue 'generation,
                 Err(StartupRuntimeError::TargetChanged) => continue,
                 Err(StartupRuntimeError::Safety(error)) => {
-                    core.audio().mark_startup_failed();
+                    audio.mark_startup_failed();
                     return Ok(StartupInitialization {
                         status,
                         runtime_error: Some(error),
@@ -252,15 +250,14 @@ where
                 }
                 Err(StartupRuntimeError::Feature(error)) => {
                     match release_startup_mute_for_target(
-                        core.audio(),
-                        command_gate,
+                        audio,
                         &capture_target,
                         &target,
                         generation,
                         &status,
                     ) {
                         Ok(released) => {
-                            core.audio().mark_startup_failed();
+                            audio.mark_startup_failed();
                             return Ok(StartupInitialization {
                                 status: released,
                                 runtime_error: Some(format!(
@@ -272,7 +269,7 @@ where
                         Err(StartupRuntimeError::TargetChanged) => continue,
                         Err(StartupRuntimeError::Feature(release_error))
                         | Err(StartupRuntimeError::Safety(release_error)) => {
-                            core.audio().mark_startup_failed();
+                            audio.mark_startup_failed();
                             return Ok(StartupInitialization {
                                 status,
                                 runtime_error: Some(format!(
@@ -284,7 +281,7 @@ where
                 }
             }
         }
-        core.audio().mark_startup_failed();
+        audio.mark_startup_failed();
         return Ok(StartupInitialization {
             status: last_status.unwrap_or_default(),
             runtime_error: Some(
@@ -293,14 +290,14 @@ where
         });
     }
 
-    core.audio().mark_startup_failed();
+    audio.mark_startup_failed();
     Err(format!(
         "native audio startup did not converge after {STARTUP_RUNTIME_GENERATION_RETRY_LIMIT} sidecar generations"
     ))
 }
 
-fn initialize_audio_safety(core: &AppCore<AudioSupervisor>) -> Result<AudioStatus, String> {
-    initialize_audio_safety_with(core.audio(), STARTUP_SAFETY_TIMEOUT)
+fn initialize_audio_safety(audio: &AudioSupervisor) -> Result<AudioStatus, String> {
+    initialize_audio_safety_with(audio, STARTUP_SAFETY_TIMEOUT)
 }
 
 fn initialize_audio_safety_with<A: StartupAudioPort>(
@@ -358,16 +355,16 @@ fn initialize_safety_generation<A: StartupAudioPort>(
 }
 
 fn restore_startup_runtime(
-    core: &AppCore<AudioSupervisor>,
+    audio: &AudioSupervisor,
     runtime: &RuntimeReconciler<AudioSupervisor>,
     data_root: &Path,
     built_in_instruments: &BuiltInInstrumentCatalog,
     target: &StartupTarget,
     generation: u64,
 ) -> Result<(), StartupRuntimeError> {
-    if sidecar_transitioned(core.audio(), generation) {
+    if sidecar_transitioned(audio, generation) {
         return Err(StartupRuntimeError::GenerationChanged(
-            generation_changed_message(core.audio(), generation),
+            generation_changed_message(audio, generation),
         ));
     }
 
@@ -389,30 +386,16 @@ fn restore_startup_runtime(
             StartupRuntimeError::Feature(format!("arrangement runtime restoration failed: {error}"))
         })?;
 
-    if sidecar_transitioned(core.audio(), generation) {
+    if sidecar_transitioned(audio, generation) {
         return Err(StartupRuntimeError::GenerationChanged(
-            generation_changed_message(core.audio(), generation),
+            generation_changed_message(audio, generation),
         ));
     }
     Ok(())
 }
 
-fn capture_startup_target<F>(
-    command_gate: &Mutex<()>,
-    capture_target: &F,
-) -> Result<StartupTarget, String>
-where
-    F: Fn() -> Result<StartupTarget, String>,
-{
-    let _command_gate = command_gate
-        .lock()
-        .map_err(|_| "Host command gate was poisoned".to_owned())?;
-    capture_target()
-}
-
 fn release_startup_mute_for_target<F>(
     audio: &AudioSupervisor,
-    command_gate: &Mutex<()>,
     capture_target: &F,
     target: &StartupTarget,
     generation: u64,
@@ -421,9 +404,6 @@ fn release_startup_mute_for_target<F>(
 where
     F: Fn() -> Result<StartupTarget, String>,
 {
-    let _command_gate = command_gate
-        .lock()
-        .map_err(|_| StartupRuntimeError::Feature("Host command gate was poisoned".to_owned()))?;
     let current_target = capture_target().map_err(StartupRuntimeError::Feature)?;
     if !startup_targets_match(&current_target, target) {
         tracing::info!("startup runtime target changed before releasing the safety mute");

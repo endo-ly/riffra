@@ -316,7 +316,7 @@ pub enum RuntimeProjectionState {
 }
 
 /// Observable projection state shared by GUI and headless Hosts.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeProjectionStatus {
     pub state: RuntimeProjectionState,

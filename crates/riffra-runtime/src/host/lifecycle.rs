@@ -2,6 +2,41 @@ use super::*;
 use crate::model::RuntimeStartupFinished;
 use crate::runtime::RuntimeReconciler;
 
+pub(super) struct HostLifecycle {
+    gate: RwLock<()>,
+    pub(super) shutting_down: AtomicBool,
+}
+
+pub(super) type LifecycleGuard<'a> = std::sync::RwLockReadGuard<'a, ()>;
+
+impl HostLifecycle {
+    pub(super) fn new() -> Self {
+        Self {
+            gate: RwLock::new(()),
+            shutting_down: AtomicBool::new(false),
+        }
+    }
+    pub(super) fn enter(&self) -> Result<LifecycleGuard<'_>, ProtocolError> {
+        let guard = self.gate.read().expect("host lifecycle lock was poisoned");
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(ProtocolError::new(
+                ErrorCode::HostUnavailable,
+                "Riffra Host has shut down",
+            ));
+        }
+        Ok(guard)
+    }
+    pub(super) fn request_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Release);
+    }
+    fn close(&self) {
+        self.request_shutdown();
+        // Drain accepted work before teardown. Waiting entrants must be able to
+        // acquire the lock and reject shutdown before their threads are joined.
+        drop(self.gate.write().expect("host lifecycle lock was poisoned"));
+    }
+}
+
 impl DawHost {
     /// Opens a live Host, acquires its Data Root lease, and publishes Host
     /// control after canonical state is ready.
@@ -20,13 +55,10 @@ impl DawHost {
         let built_in_instruments =
             crate::instrument::BuiltInInstrumentCatalog::load(&config.built_in_instruments_root)
                 .map_err(HostError::State)?;
-        let loaded = project_store
+        let initialized = project_store
             .initialize()
-            .map_err(|error| HostError::Session(error.to_string()))?
-            .loaded;
-        let storage = project_store
-            .active_session_store()
             .map_err(|error| HostError::Session(error.to_string()))?;
+        let storage = initialized.storage.clone();
         let preferences = load_or_default(&config.data_root).map_err(HostError::State)?;
         let event_hub = HostEventHub::new(events);
         let events: SharedHostEventSink = event_hub.clone();
@@ -62,13 +94,13 @@ impl DawHost {
             _lease: lease,
             identity: identity.clone(),
             data_root: config.data_root.clone(),
-            core: Arc::new(AppCore::new(
-                config.data_root.clone(),
-                loaded.session,
-                (*audio).clone(),
-                loaded.recovered_from_generation,
-                config.safe_mode,
-            )),
+            project: super::open_project::ProjectCell::new(super::open_project::OpenProject {
+                storage: initialized.storage,
+                core: AppCore::new(initialized.project_id, initialized.loaded.session, 0),
+                recovered_from_generation: initialized.loaded.recovered_from_generation,
+            }),
+            audio: (*audio).clone(),
+            safe_mode: config.safe_mode,
             project_store,
             runtime,
             built_in_instruments: Arc::new(built_in_instruments),
@@ -78,11 +110,8 @@ impl DawHost {
             render_worker: render::RenderWorker::new(config.binaries.render.clone()),
             jobs: JobRegistry::default(),
             audio_preferences: Mutex::new(preferences.clone()),
-            recording_gate: Mutex::new(()),
-            _command_gate: Mutex::new(()),
             startup_gate: Mutex::new(()),
-            lifecycle_gate: RwLock::new(()),
-            shutting_down: AtomicBool::new(false),
+            lifecycle: HostLifecycle::new(),
             shutdown_requested: AtomicBool::new(false),
             plugin_persistence_commands: Mutex::new(None),
         });
@@ -140,15 +169,10 @@ impl DawHost {
 
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
-        self.state.shutting_down.store(true, Ordering::Release);
-        // Wait for ordinary Host commands before closing the event fan-out.
-        // Persistence flushes use their dedicated dispatch path and can finish
-        // while this write barrier is held.
-        let _lifecycle_shutdown = self
-            .state
-            .lifecycle_gate
-            .write()
-            .expect("Host lifecycle gate was poisoned");
+        self.state.lifecycle.request_shutdown();
+        // Cancel native waits before draining operations that may be waiting on them.
+        self.state.audio.force_shutdown();
+        self.state.lifecycle.close();
         self.state.event_hub.close();
         if let Ok(mut persistence) = self.plugin_persistence.lock()
             && let Some(persistence) = persistence.take()
@@ -160,9 +184,6 @@ impl DawHost {
         {
             control.shutdown();
         }
-        // Wake recording-finalization workers before joining them. A stopped
-        // sidecar is a terminal outcome for an in-flight native completion.
-        self.state.core.audio().force_shutdown();
         self.state.jobs.cancel_all_and_wait();
         if let Ok(mut startup) = self.startup.lock()
             && let Some(startup) = startup.take()
@@ -191,22 +212,21 @@ fn queue_runtime_startup(
             let Some(state) = weak_state.upgrade() else {
                 return;
             };
-            if state.shutting_down.load(Ordering::Acquire) {
+            let Ok(_lifecycle) = state.lifecycle.enter() else {
                 return;
-            }
-            let audio = state.core.audio();
+            };
+            let audio = &state.audio;
             let _startup = state
                 .startup_gate
                 .lock()
                 .expect("Host startup gate was poisoned");
             let initialized = startup::initialize_runtime(
-                &state.core,
+                &state.audio,
                 &state.runtime,
                 &state.data_root,
                 &state.built_in_instruments,
-                &state._command_gate,
-                || state.capture_startup_target_under_command_gate(),
-                &state.shutting_down,
+                || state.capture_startup_target(),
+                &state.lifecycle.shutting_down,
             );
             let succeeded = initialized
                 .as_ref()
@@ -296,7 +316,7 @@ mod tests {
             built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
                 &data_root,
             ),
-            safe_mode: true,
+            safe_mode: false,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
@@ -307,9 +327,20 @@ mod tests {
         let host = Arc::new(DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap());
         let inflight = host
             .state
-            .lifecycle_gate
-            .read()
+            .lifecycle
+            .enter()
             .expect("Host lifecycle gate was not poisoned");
+        let waiting_host = Arc::clone(&host);
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+        let native_wait = std::thread::spawn(move || {
+            let _operation = waiting_host.state.lifecycle.enter().unwrap();
+            waiting_tx.send(()).unwrap();
+            waiting_host
+                .state
+                .audio
+                .wait_for_next_generation(u64::MAX, std::time::Duration::from_secs(45))
+        });
+        waiting_rx.recv().unwrap();
         let (finished_tx, finished_rx) = std::sync::mpsc::channel();
         let shutdown_host = Arc::clone(&host);
         let shutdown_thread = std::thread::spawn(move || {
@@ -329,6 +360,10 @@ mod tests {
                 .is_ok()
         );
         shutdown_thread.join().unwrap();
+        assert!(matches!(
+            native_wait.join().unwrap(),
+            Err(crate::NativeAudioError::ShuttingDown)
+        ));
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
@@ -424,12 +459,23 @@ mod tests {
         };
         let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
 
-        assert_eq!(host.with_lifecycle(|| Ok::<_, String>(7)), Ok(7));
-        host.shutdown();
-        assert_eq!(
-            host.with_lifecycle(|| Ok::<_, String>(7)),
-            Err("Riffra Host has shut down".to_owned())
+        assert!(
+            host.dispatch_control(ControlRequest::new(
+                "before",
+                "host.status",
+                serde_json::json!({}),
+                None
+            ))
+            .ok
         );
+        host.shutdown();
+        let response = host.dispatch_control(ControlRequest::new(
+            "after",
+            "host.status",
+            serde_json::json!({}),
+            None,
+        ));
+        assert_eq!(response.error.unwrap().code, ErrorCode::HostUnavailable);
 
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);

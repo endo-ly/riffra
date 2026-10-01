@@ -11,10 +11,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 import {
   HostConnectionChangedError,
   NativeCommandError,
-  ProjectChangedError,
-  advanceProjectEpoch,
   dispatchLatestControl,
   invoke,
+  invokeHost,
   setHostConnectionAvailability,
   setHostGeneration,
 } from '@/native/invoke';
@@ -77,21 +76,32 @@ describe('native invoke bridge', () => {
     expect(new NativeCommandError({ reason: 'unknown' }).code).toBe('commandFailed');
   });
 
+  it.each(['success', 'failure'] as const)(
+    'rejects an old Host %s at the invoke boundary',
+    async (outcome) => {
+      let settle!: () => void;
+      tauriInvoke.mockImplementation(
+        () =>
+          new Promise((resolve, reject) => {
+            settle = () =>
+              outcome === 'success' ? resolve({ revision: 7 }) : reject('native failure');
+          }),
+      );
+      const pending = invokeHost('dispatch_control', mute(true));
+      const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
+
+      setHostGeneration(1);
+      settle();
+
+      await rejection;
+      expect(tauriInvoke).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('does not send a coalesced update to a newer Host generation', async () => {
     const pending = dispatchLatestControl(mute(true), 'track:mute');
     const rejection = expect(pending).rejects.toBeInstanceOf(HostConnectionChangedError);
     setHostGeneration(1);
-
-    await vi.advanceTimersByTimeAsync(20);
-
-    await rejection;
-    expect(tauriInvoke).not.toHaveBeenCalled();
-  });
-
-  it('does not send a coalesced update to a newer Project', async () => {
-    const pending = dispatchLatestControl(mute(true), 'track:mute');
-    const rejection = expect(pending).rejects.toBeInstanceOf(ProjectChangedError);
-    advanceProjectEpoch();
 
     await vi.advanceTimersByTimeAsync(20);
 

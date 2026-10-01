@@ -8,7 +8,7 @@ use crate::instrument::UserInstrumentStore;
 use crate::library;
 use std::fs;
 
-impl<A> HostDispatcher<'_, A> {
+impl HostDispatcher<'_> {
     pub(super) fn list_instruments(&self) -> Result<ControlOutput, DispatchError> {
         Ok(ControlOutput::InstrumentLibrary(
             library::instruments::list(&self.data_root, self.built_in_instruments.as_ref())
@@ -47,11 +47,12 @@ impl<A> HostDispatcher<'_, A> {
         }))
     }
 
-    pub(super) fn apply_instrument(
+    pub(super) fn apply_instrument<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: InstrumentApplyParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let snapshot = self.core.snapshot()?;
+        let snapshot = application.canonical_state();
         let track = snapshot
             .session
             .arrangement
@@ -78,9 +79,7 @@ impl<A> HostDispatcher<'_, A> {
                 definition.definition_json.clone(),
             )
             .map_err(DispatchError::CommandFailed)?;
-            self.core
-                .application(&self.storage)
-                .set_track_instrument(&params.track_id, Some(instrument))?;
+            application.set_track_instrument(&params.track_id, Some(instrument))?;
         } else if params.instrument_id.starts_with("user:") {
             let store = UserInstrumentStore::new(&self.data_root, &self.sonalloy);
             let user = store
@@ -98,8 +97,7 @@ impl<A> HostDispatcher<'_, A> {
             )
             .map_err(DispatchError::CommandFailed)
             .and_then(|instrument| {
-                self.core
-                    .application(&self.storage)
+                application
                     .set_track_instrument(&params.track_id, Some(instrument))
                     .map_err(DispatchError::from)
             });
@@ -114,10 +112,13 @@ impl<A> HostDispatcher<'_, A> {
             )));
         }
 
-        self.arrangement_mutation(if creates_device {
-            [("devices".to_owned(), vec![device_id])].into()
-        } else {
-            Default::default()
-        })
+        self.arrangement_mutation(
+            if creates_device {
+                [("devices".to_owned(), vec![device_id])].into()
+            } else {
+                Default::default()
+            },
+            application,
+        )
     }
 }

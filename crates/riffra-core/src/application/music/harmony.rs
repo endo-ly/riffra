@@ -73,7 +73,7 @@ pub struct MusicalHarmonyEventView {
     pub chord: HarmonyChord,
 }
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
@@ -83,7 +83,10 @@ where
     ///
     /// Returns an error when the symbol is not accepted by the harmony
     /// resolver.
-    pub fn resolve_harmony_chord(&self, symbol: &str) -> Result<HarmonyChord, ApplicationError> {
+    pub fn resolve_harmony_chord(
+        &mut self,
+        symbol: &str,
+    ) -> Result<HarmonyChord, ApplicationError> {
         HarmonyChord::resolve(symbol).map_err(Into::into)
     }
 
@@ -95,7 +98,7 @@ where
     /// Returns an error when an input is invalid or the canonical commit
     /// cannot be persisted.
     pub fn insert_harmony_events_with_created_ids(
-        &self,
+        &mut self,
         inputs: Vec<HarmonyEventInput>,
     ) -> Result<super::ApplicationMutation, ApplicationError> {
         if inputs.is_empty() {
@@ -133,7 +136,7 @@ where
     /// Returns an error when the event or patch is invalid, or the canonical
     /// commit cannot be persisted.
     pub fn update_harmony_event(
-        &self,
+        &mut self,
         event_id: &str,
         patch: HarmonyEventPatch,
     ) -> Result<crate::domain::CreativeSession, ApplicationError> {
@@ -209,7 +212,7 @@ where
     /// Returns an error when an id is empty, duplicated, or unknown, or when
     /// the canonical commit cannot be persisted.
     pub fn remove_harmony_events(
-        &self,
+        &mut self,
         event_ids: Vec<String>,
     ) -> Result<crate::domain::CreativeSession, ApplicationError> {
         self.commit_arrangement(|arrangement| {
@@ -224,7 +227,9 @@ where
     /// # Errors
     ///
     /// Returns an error when the canonical session cannot be read.
-    pub fn list_harmony_events(&self) -> Result<Vec<MusicalHarmonyEventView>, ApplicationError> {
+    pub fn list_harmony_events(
+        &mut self,
+    ) -> Result<Vec<MusicalHarmonyEventView>, ApplicationError> {
         let session = self.get_session()?;
         let timebase = session.arrangement.timebase;
         Ok(session
@@ -248,7 +253,7 @@ where
     /// Returns an error when the clip, selection, voicing, rhythm, or generated
     /// notes are invalid, or when the canonical commit cannot be persisted.
     pub fn realize_harmony_with_created_ids(
-        &self,
+        &mut self,
         clip_id: &str,
         selection: HarmonyRealizeSelection,
         voicing: ChordVoicingInput,
@@ -469,7 +474,6 @@ mod tests {
     use crate::PortError;
     use crate::app::AppCore;
     use crate::domain::{CreativeSession, RhythmPattern, RhythmStep, TrackKind};
-    use std::path::PathBuf;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -485,15 +489,8 @@ mod tests {
     #[test]
     fn harmony_events_are_inserted_as_one_canonical_edit_and_listed_musically() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        core.application(&storage)
             .insert_harmony_events_with_created_ids(vec![
                 HarmonyEventInput {
                     start: "2:1".parse().unwrap(),
@@ -517,12 +514,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(storage.0.lock().unwrap().len(), 1);
-        let events = application.list_harmony_events().unwrap();
+        let events = core.application(&storage).list_harmony_events().unwrap();
         assert_eq!(events[0].start.to_string(), "1:1");
         assert_eq!(events[1].start.to_string(), "2:1");
         assert_eq!(events[1].chord.name, "G7b9#11");
 
-        let updated = application
+        let updated = core
+            .application(&storage)
             .update_harmony_event(
                 &events[0].id,
                 HarmonyEventPatch {
@@ -541,25 +539,25 @@ mod tests {
         assert_eq!(storage.0.lock().unwrap().len(), 2);
 
         assert!(
-            application
+            core.application(&storage)
                 .remove_harmony_events(vec![events[0].id.clone(), "missing".into()])
                 .is_err()
         );
-        assert_eq!(application.list_harmony_events().unwrap().len(), 2);
+        assert_eq!(
+            core.application(&storage)
+                .list_harmony_events()
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]
     fn harmony_definition_patch_replaces_explicit_fields_without_inheriting_them() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let inserted = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let inserted = core
+            .application(&storage)
             .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
                 start: "1:1".parse().unwrap(),
                 end: "2:1".parse().unwrap(),
@@ -572,7 +570,8 @@ mod tests {
             .unwrap();
         let event_id = inserted.session.arrangement.harmony_events[0].id.clone();
 
-        let updated = application
+        let updated = core
+            .application(&storage)
             .update_harmony_event(
                 &event_id,
                 HarmonyEventPatch {
@@ -590,7 +589,7 @@ mod tests {
         assert_eq!(chord.root, None);
         assert_eq!(chord.bass, None);
         assert!(
-            application
+            core.application(&storage)
                 .update_harmony_event(
                     &event_id,
                     HarmonyEventPatch {
@@ -605,18 +604,13 @@ mod tests {
     #[test]
     fn rhythm_pattern_repeats_inside_a_harmony_event() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track.session.arrangement.tracks[0].id,
                 "1:1".parse().unwrap(),
@@ -625,7 +619,7 @@ mod tests {
             )
             .unwrap();
         let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
-        application
+        core.application(&storage)
             .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
                 start: "1:1".parse().unwrap(),
                 end: "2:1".parse().unwrap(),
@@ -637,7 +631,8 @@ mod tests {
             }])
             .unwrap();
 
-        let realized = application
+        let realized = core
+            .application(&storage)
             .realize_harmony_with_created_ids(
                 &clip_id,
                 HarmonyRealizeSelection::default(),
@@ -683,19 +678,14 @@ mod tests {
     #[test]
     fn realization_places_slash_bass_first_and_uses_shared_note_insertion_rules() {
         let storage = MemoryStorage::default();
-        let core = AppCore::new(
-            PathBuf::from("data"),
-            CreativeSession::new(1),
-            (),
-            false,
-            false,
-        );
-        let application = core.application(&storage);
-        let track = application
+        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+        let track = core
+            .application(&storage)
             .add_track_with_created_ids("Keys", TrackKind::Instrument)
             .unwrap();
         let track_id = track.session.arrangement.tracks[0].id.clone();
-        let clip = application
+        let clip = core
+            .application(&storage)
             .create_musical_midi_clip_with_created_ids(
                 &track_id,
                 "1:1".parse().unwrap(),
@@ -704,7 +694,7 @@ mod tests {
             )
             .unwrap();
         let clip_id = clip.session.arrangement.midi_clips[0].id.clone();
-        application
+        core.application(&storage)
             .insert_harmony_events_with_created_ids(vec![HarmonyEventInput {
                 start: "1:1".parse().unwrap(),
                 end: "3:1".parse().unwrap(),
@@ -715,7 +705,8 @@ mod tests {
                 label: None,
             }])
             .unwrap();
-        let realized = application
+        let realized = core
+            .application(&storage)
             .realize_harmony_with_created_ids(
                 &clip_id,
                 HarmonyRealizeSelection::default(),

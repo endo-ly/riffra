@@ -2,7 +2,7 @@
 
 use crate::audio::wire::{OfflineRenderEnvelope, RenderMessage, SIDECAR_PROTOCOL_VERSION};
 use crate::execution::OfflineRenderRequest as OfflineRenderRequestSpec;
-use crate::render::{OfflineRenderRequest, RenderRuntime};
+use crate::render::OfflineRenderRequest;
 use std::{
     io::{Read, Write},
     path::PathBuf,
@@ -71,10 +71,6 @@ impl RenderWorker {
     /// Creates an adapter for an explicit worker executable.
     pub(crate) fn new(executable: PathBuf) -> Self {
         Self { executable }
-    }
-
-    fn render(&self, request: OfflineRenderRequest) -> Result<(), RenderWorkerError> {
-        self.render_with_cancellation(request, None)
     }
 
     fn render_with_cancellation(
@@ -205,12 +201,6 @@ impl RenderWorker {
     }
 }
 
-impl RenderRuntime for RenderWorker {
-    fn render_timeline_offline(&self, request: OfflineRenderRequest) -> Result<(), String> {
-        self.render(request).map_err(|error| error.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,7 +281,7 @@ mod tests {
 
         // Act
         worker
-            .render_timeline_offline(request)
+            .render_timeline_offline_cancellable(request, &AtomicBool::new(false))
             .expect("offline render should succeed");
 
         // Assert

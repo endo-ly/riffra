@@ -90,14 +90,14 @@ WebView から Host への操作は、すべて `dispatch_control` 1 本で送�
 
 Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モジュールにある表（`api/table.rs`）で 1 回だけ定義する。表の 1 行は、命令名・Params 型・結果型・性質を持つ。Standalone dispatcher、Live Host、CLI、Desktop はすべてこの表から生成された型を使い、命令名の文字列リストを別に持たない。
 
-| 性質     | 値                                        | 意味                                                                                           |
-| -------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| scope    | `host`                                    | `expectedProjectId` を要求しない                                                               |
-|          | `project`                                 | Active Project に紐づき、`expectedProjectId` を要求する。Live Host では command gate を取る    |
-|          | `project(long)`                           | Project の確定だけを守り、command gate を取らない長時間処理（VST3 のロードを伴う編集など）     |
-| executor | `canonical`（`read` / `mutation(batch)`） | 正準状態を読む・変える。Standalone でも実行でき、`batch` の命令は `session.apply` に含められる |
-|          | `project`                                 | Project container の一覧・作成・切替・Import / Export                                          |
-|          | `runtime`                                 | Live Host の Runtime を要する。Standalone は `runtimeUnavailable` を返す                       |
+| 性質     | 値                                        | 意味                                                                                                                                  |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| scope    | `host`                                    | `expectedProjectId` を要求しない                                                                                                      |
+|          | `project`                                 | Active Project に紐づき、`expectedProjectId` を要求する。Live Host では Projectの書き込み権を取る                                     |
+|          | `project(long)`                           | 準備時は確定スナップショットを読み、コミット直前に書き込み権とProject ID・sequenceを照合する長時間処理（VST3 のロードを伴う編集など） |
+| executor | `canonical`（`read` / `mutation(batch)`） | 正準状態を読む・変える。Standalone でも実行でき、`batch` の命令は `session.apply` に含められる                                        |
+|          | `project`                                 | Project container の一覧・作成・切替・Import / Export                                                                                 |
+|          | `runtime`                                 | Live Host の Runtime を要する。Standalone は `runtimeUnavailable` を返す                                                              |
 
 - 要求は最初に `ControlCommand::decode` で型付きの命令になる。未知の命令名、未知の Params キー、型違いは `invalidRequest` になり、`details` に JSON Pointer 形式の `path`、配列要素の `index`、小さな値の `value` が付く
 - 実行側は executor ごとの命令を網羅的に `match` する。表に命令を足して実装を書き忘れるとコンパイルエラーになる
@@ -110,7 +110,7 @@ Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モ
 - Native 音声エラーは `kind`、`operation`、`details` を保ったまま `NativeAudioError`、Host の `ProtocolError`、Tauri の `NativeCommandError` へ渡す。境界ごとに情報を文字列へ潰さない
 - セーフモード中の音声系・プラグイン系命令は明示エラーを返す（`architecture.md §7`）
 - 要求された操作に失敗した場合は、現在の状態を保ったままエラーと状態を返す
-- 制作状態を変更する命令の応答に含まれる `CanonicalState` は「その操作を含む最新の正準状態」であり、UI は `canonical.session` を表示状態へ反映する
+- 制作状態を変更する命令の応答に含まれる `CanonicalState` は、その操作自身が確定したスナップショットである。`projectId`、`sequence`、セッション、履歴を一体として返す
 
 ```json
 {
@@ -127,13 +127,15 @@ Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モ
 
 ### 3.4 UI 呼び出しの順序
 
-- 順序の所有者は Core と Host command gate。フロントエンドは応答の `CanonicalState` を確定順序として受け入れる
+- 確定順序はCoreとHostのProject書き込み権が管理する。フロントエンドは状態を反映する入口で `CanonicalState.projectId` が現在のActive Projectと一致し、sequenceが受け入れ済みの値より新しい場合だけ採用する
 - 中間値を捨ててよい連続制御は `dispatchLatestControl` で集約して最終値のみ送信する。集約された待機者には同一の確定応答を返す
 - `dispatchControlOrFallback` は非ネイティブ環境（ブラウザプレビュー・スモークテスト）専用のフォールバック。ネイティブ実行時は失敗をそのまま reject する
 
 ---
 
 ## 4. 境界 B: シェル → WebView イベント
+
+DesktopのActive Projectは初期bootstrapと`ProjectActivationResult`で確定する。`ProjectState`の一覧応答と名称更新イベントは一覧情報を更新し、現在のActive Project IDを維持する。
 
 | イベント                    | ペイロード                | 意味                                                                                                                          |
 | --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -150,7 +152,7 @@ Host に頼める操作（Control Command）は、`riffra-runtime` の `api` モ
 
 `audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`（Track ID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
 
-購読は `src/native/api/events.ts` のラッパ経由。用途は表示更新に限る
+Desktopのイベントゲートは現在の接続世代のイベントだけをWebViewへ送る。接続切替後に旧世代のイベントは届かない。フックはこの保証を前提に購読し、コンポーネント破棄後のコールバックだけを自身で止める。購読は `src/native/api/events.ts` のラッパを使い、用途は表示更新に限る
 
 - エディタ由来の state / parameter 変更は Host 内の正準保存で完結する
 

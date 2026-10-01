@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/model/domain';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
-import { getHostGeneration } from '@/native/invoke';
-
 export function useArrangeTransport(
   api: Pick<NativeEventApi, 'onTransportStatus'> & Pick<AudioApi, 'getAudioStatus'>,
   timebase: ProjectTimebase,
@@ -14,9 +12,6 @@ export function useArrangeTransport(
   const displayTickRef = useRef(0);
   const anchor = useRef({ tick: 0, at: performance.now(), playing: false });
   const receivedTransportStatus = useRef(false);
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   const publishTick = (tick: number) => {
     displayTickRef.current = tick;
     setDisplayTick(tick);
@@ -48,7 +43,6 @@ export function useArrangeTransport(
 
   useEffect(() => {
     const unlisten = api.onTransportStatus((status) => {
-      if (getHostGeneration() !== currentHostGeneration.current) return;
       receivedTransportStatus.current = true;
       setTransport((previous) =>
         transportMeaningfullyChanged(previous, status) ? status : previous,
@@ -67,17 +61,10 @@ export function useArrangeTransport(
   }, [api]);
 
   useEffect(() => {
-    const effectGeneration = hostGeneration;
     api
       .getAudioStatus()
       .then((status) => {
-        if (
-          currentHostGeneration.current !== effectGeneration ||
-          getHostGeneration() !== effectGeneration ||
-          receivedTransportStatus.current ||
-          status.timelineTick == null
-        )
-          return;
+        if (receivedTransportStatus.current || status.timelineTick == null) return;
         anchor.current.tick = status.timelineTick;
         anchor.current.at = performance.now();
         publishTick(status.timelineTick);
@@ -91,7 +78,7 @@ export function useArrangeTransport(
     const update = (now: number) => {
       const current = anchor.current;
       const elapsed = current.playing ? performance.now() - current.at : 0;
-      const tick = current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60_000;
+      const tick = current.tick + (elapsed * timebase.bpm * timebase.ppq) / 60000;
       // The playhead itself is animated by a tiny DOM-only component. The
       // editor needs a React snapshot only for the toolbar clock and editing
       // actions; rebuilding every ArrangeTrack on every animation frame made

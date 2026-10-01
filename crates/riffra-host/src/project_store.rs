@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
 };
 use uuid::Uuid;
 
@@ -36,6 +35,10 @@ pub struct ProjectSummary {
 /// State loaded while opening a DataRoot.
 #[derive(Debug)]
 pub struct ProjectInitialization {
+    /// Identity of the loaded Project container.
+    pub project_id: String,
+    /// Storage bound to the loaded Project container.
+    pub storage: SessionStore,
     /// The active Project's loaded Session.
     pub loaded: crate::LoadedSession,
 }
@@ -45,7 +48,6 @@ pub struct ProjectInitialization {
 pub struct ProjectStore {
     data_root: PathBuf,
     projects_dir: PathBuf,
-    active_project_id: Arc<RwLock<String>>,
 }
 
 impl ProjectStore {
@@ -54,7 +56,6 @@ impl ProjectStore {
         Self {
             data_root: data_root.to_path_buf(),
             projects_dir: data_root.join(PROJECTS_DIRECTORY),
-            active_project_id: Arc::new(RwLock::new(String::new())),
         }
     }
 
@@ -84,8 +85,12 @@ impl ProjectStore {
         let project_id = self.read_or_repair_active_project()?;
         match self.load(&project_id) {
             Ok(loaded) => {
-                self.set_active_memory(&project_id)?;
-                Ok(ProjectInitialization { loaded })
+                let storage = self.session_store(&project_id).map_err(invalid_data)?;
+                Ok(ProjectInitialization {
+                    project_id,
+                    storage,
+                    loaded,
+                })
             }
             Err(error) => {
                 tracing::warn!(
@@ -103,9 +108,10 @@ impl ProjectStore {
         let storage = self.session_store(&project_id).map_err(invalid_data)?;
         storage.save(&CreativeSession::new(now_ms()))?;
         self.write_workspace(&project_id)?;
-        self.set_active_memory(&project_id)?;
         Ok(ProjectInitialization {
             loaded: storage.load_existing()?,
+            project_id,
+            storage,
         })
     }
 
@@ -130,19 +136,6 @@ impl ProjectStore {
                 .then_with(|| left.project_id.cmp(&right.project_id))
         });
         Ok(summaries)
-    }
-
-    /// Returns the UUID of the active Project.
-    pub fn active_project_id(&self) -> io::Result<String> {
-        let project_id = self
-            .active_project_id
-            .read()
-            .map_err(|_| io::Error::other("active Project lock poisoned"))?
-            .clone();
-        if project_id.is_empty() {
-            return Err(io::Error::other("ProjectStore has not been initialized"));
-        }
-        Ok(project_id)
     }
 
     /// Creates a new Project container without changing the active reference.
@@ -170,25 +163,13 @@ impl ProjectStore {
             .and_then(|store| store.load_existing())
     }
 
-    /// Switches the active Project reference after the caller has validated it.
-    pub fn set_active(&self, project_id: &str) -> io::Result<String> {
-        self.require_existing_project(project_id)?;
-        let previous = self.active_project_id()?;
-        self.write_workspace(project_id)?;
-        if let Err(error) = self.set_active_memory(project_id) {
-            let _ = self.write_workspace(&previous);
-            return Err(error);
-        }
-        Ok(previous)
-    }
-
-    /// Returns a SessionStore for the active Project at this instant.
+    /// Records the Project to open on the next Host startup.
     ///
-    /// The returned store remains bound to this Project even if the active
-    /// Project changes later.
-    pub fn active_session_store(&self) -> io::Result<SessionStore> {
-        let project_id = self.active_project_id()?;
-        self.session_store(&project_id)
+    /// # Errors
+    /// Returns an error when the Project does not exist or the workspace cannot be saved.
+    pub fn write_workspace(&self, project_id: &str) -> io::Result<()> {
+        self.require_existing_project(project_id)?;
+        self.persist_workspace(project_id)
     }
 
     /// Returns a SessionStore fixed to one Project.
@@ -239,16 +220,7 @@ impl ProjectStore {
         Ok(first)
     }
 
-    fn set_active_memory(&self, project_id: &str) -> io::Result<()> {
-        let mut active = self
-            .active_project_id
-            .write()
-            .map_err(|_| io::Error::other("active Project lock poisoned"))?;
-        *active = project_id.to_owned();
-        Ok(())
-    }
-
-    fn write_workspace(&self, project_id: &str) -> io::Result<()> {
+    fn persist_workspace(&self, project_id: &str) -> io::Result<()> {
         validate_project_id(project_id).map_err(invalid_data)?;
         let workspace = self.data_root.join(WORKSPACE_FILE);
         let temporary = self.data_root.join(format!(
@@ -318,34 +290,34 @@ mod tests {
         let root = root("active");
         let first = ProjectStore::new(&root);
         let initialized = first.initialize().unwrap();
-        let first_id = first.active_project_id().unwrap();
+        let first_id = initialized.project_id.clone();
         assert_eq!(initialized.loaded.session.project_name, None);
         assert!(root.join("renders").is_dir());
         assert!(!root.join("exports").exists());
 
         let second = first.create(Some("Second".into())).unwrap();
-        first.set_active(&second.project_id).unwrap();
+        first.write_workspace(&second.project_id).unwrap();
         drop(first);
 
         let reopened = ProjectStore::new(&root);
-        reopened.initialize().unwrap();
-        assert_eq!(reopened.active_project_id().unwrap(), second.project_id);
+        let reopened_project = reopened.initialize().unwrap();
+        assert_eq!(reopened_project.project_id, second.project_id);
         assert_ne!(first_id, second.project_id);
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn active_session_store_remains_bound_after_switching_projects() {
+    fn session_store_remains_bound_after_recording_another_workspace_project() {
         let root = root("fixed-storage");
         let store = ProjectStore::new(&root);
-        store.initialize().unwrap();
-        let first_id = store.active_project_id().unwrap();
-        let first_storage = store.active_session_store().unwrap();
+        let initialized = store.initialize().unwrap();
+        let first_id = initialized.project_id;
+        let first_storage = initialized.storage;
         let second = store.create(Some("Second".into())).unwrap();
         let mut first_session = first_storage.load_or_create().unwrap().session;
         first_session.settings.note = "first remains first".into();
 
-        store.set_active(&second.project_id).unwrap();
+        store.write_workspace(&second.project_id).unwrap();
         first_storage.save(&first_session).unwrap();
 
         assert_eq!(
@@ -377,8 +349,7 @@ mod tests {
     fn rejects_a_malformed_workspace_without_changing_existing_projects() {
         let root = root("malformed-workspace");
         let store = ProjectStore::new(&root);
-        store.initialize().unwrap();
-        let project_id = store.active_project_id().unwrap();
+        let project_id = store.initialize().unwrap().project_id;
         fs::write(root.join(WORKSPACE_FILE), b"not-json").unwrap();
 
         let reopened = ProjectStore::new(&root);
@@ -421,8 +392,7 @@ mod tests {
     fn lists_projects_by_name_and_keeps_project_storage_separate() {
         let root = root("list");
         let store = ProjectStore::new(&root);
-        store.initialize().unwrap();
-        let first_id = store.active_project_id().unwrap();
+        let first_id = store.initialize().unwrap().project_id;
         let second = store.create(Some("Alpha".into())).unwrap();
         let first = store.session_store(&first_id).unwrap();
         let second_store = store.session_store(&second.project_id).unwrap();
@@ -497,8 +467,7 @@ mod tests {
         // Arrange
         let root = root("unreadable-active");
         let store = ProjectStore::new(&root);
-        store.initialize().unwrap();
-        let unreadable_id = store.active_project_id().unwrap();
+        let unreadable_id = store.initialize().unwrap().project_id;
         let unreadable_dir = root.join(PROJECTS_DIRECTORY).join(&unreadable_id);
         let unversioned = serde_json::to_vec(&CreativeSession::new(1_000)).unwrap();
         fs::write(unreadable_dir.join("session.json"), &unversioned).unwrap();
@@ -514,7 +483,7 @@ mod tests {
         let initialized = reopened.initialize().unwrap();
 
         // Assert
-        let active_id = reopened.active_project_id().unwrap();
+        let active_id = initialized.project_id;
         assert_ne!(active_id, unreadable_id);
         assert_eq!(initialized.loaded.session.project_name, None);
         let workspace: WorkspaceState =

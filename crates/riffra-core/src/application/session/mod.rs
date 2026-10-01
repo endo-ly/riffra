@@ -10,34 +10,34 @@ pub use inspection::{
 
 use super::*;
 
-impl<'a, A, S> Application<'a, A, S>
+impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
     /// Undoes the latest committed production edit.
-    pub fn undo(&self) -> Result<CreativeSession, ApplicationError> {
+    pub fn undo(&mut self) -> Result<CreativeSession, ApplicationError> {
         self.core.undo(self.storage)
     }
 
     /// Redoes the latest undone production edit.
-    pub fn redo(&self) -> Result<CreativeSession, ApplicationError> {
+    pub fn redo(&mut self) -> Result<CreativeSession, ApplicationError> {
         self.core.redo(self.storage)
     }
 
     /// Returns the current Core-owned history capabilities.
     pub fn history_state(&self) -> Result<crate::HistoryState, ApplicationError> {
-        self.core.history_state()
+        Ok(self.core.history_state())
     }
 
     /// Returns the canonical production snapshot.
     pub fn get_session(&self) -> Result<CreativeSession, ApplicationError> {
-        Ok(self.core.snapshot()?.session)
+        Ok(self.core.snapshot().session.clone())
     }
 
     /// Restores a complete project generation through the canonical commit
     /// boundary.
     pub fn restore_project(
-        &self,
+        &mut self,
         session: CreativeSession,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit_candidate(self.storage, session)
@@ -45,7 +45,7 @@ where
 
     /// Updates session-wide production settings.
     pub fn update_session_settings(
-        &self,
+        &mut self,
         patch: SessionSettingsPatch,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {

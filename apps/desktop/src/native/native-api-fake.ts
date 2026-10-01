@@ -1130,6 +1130,7 @@ const voidMethodNames = new Set<keyof NativeApi>([
 
 function mergeBootstrap(overrides: Partial<BootstrapState> = {}): BootstrapState {
   const canonical = overrides.canonical ?? {
+    projectId: overrides.projectState?.activeProjectId ?? '01900000-0000-7000-8000-000000000001',
     session: defaultSession(),
     sequence: 0,
     history: { canUndo: false, canRedo: false },

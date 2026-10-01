@@ -1,20 +1,20 @@
 use crate::RuntimeBinaries;
 use crate::api::output::{ArrangementMutationResult, ArrangementProjectionOutcome, ProjectState};
 use crate::api::{
-    CanonicalAccess, CanonicalCommand, CommandDecodeError, CommandExecutor, CommandScope,
-    ControlCommand, ControlOutput, attach_input_value, json_pointer_segment,
+    CanonicalAccess, CanonicalCommand, CommandDecodeError, CommandScope, ControlCommand,
+    ControlOutput, attach_input_value, json_pointer_segment,
 };
 use crate::instrument::BuiltInInstrumentCatalog;
 use riffra_control::{ControlRequest, ErrorCode, ProtocolError};
 use riffra_core::application::ApplicationMutation;
 use riffra_core::ports::{PortError, SessionStorage};
 use riffra_core::{AppCore, ApplicationError, AssetId, CreativeSession};
-use riffra_host::{DataRootLease, ProjectStore, SessionStore};
+use riffra_host::{DataRootLease, ProjectStore};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod canonical;
 mod clips;
@@ -192,43 +192,16 @@ impl From<ApplicationError> for DispatchError {
     }
 }
 
-enum CoreRef<'a, A> {
-    Owned(AppCore<A>),
-    Borrowed(&'a AppCore<A>),
+enum CoreRef<'a> {
+    Owned(crate::host::open_project::ProjectCell),
+    Borrowed(&'a crate::host::open_project::ProjectCell),
 }
 
-enum StorageRef<'a> {
-    Owned(Mutex<SessionStore>),
-    Borrowed(&'a SessionStore),
-    Memory(Arc<MemorySessionStorage>),
-}
-
-#[derive(Default)]
-struct MemorySessionStorage;
-
-impl SessionStorage for MemorySessionStorage {
-    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
-        Ok(())
-    }
-}
-
-impl StorageRef<'_> {
-    fn store(&self) -> Result<SessionStore, String> {
+impl CoreRef<'_> {
+    fn cell(&self) -> &crate::host::open_project::ProjectCell {
         match self {
-            Self::Owned(storage) => storage
-                .lock()
-                .map(|storage| storage.clone())
-                .map_err(|_| "session storage lock was poisoned".into()),
-            Self::Borrowed(storage) => Ok((*storage).clone()),
-            Self::Memory(_) => Err("candidate session has no persistent storage".into()),
-        }
-    }
-
-    fn replace_owned(&self, storage: SessionStore) {
-        if let Self::Owned(current) = self {
-            *current
-                .lock()
-                .expect("standalone session storage lock must not be poisoned") = storage;
+            Self::Owned(project) => project,
+            Self::Borrowed(project) => project,
         }
     }
 }
@@ -237,7 +210,6 @@ enum ProjectStoreRef<'a> {
     Owned(ProjectStore),
     Borrowed(&'a ProjectStore),
 }
-
 impl ProjectStoreRef<'_> {
     fn as_ref(&self) -> &ProjectStore {
         match self {
@@ -247,50 +219,18 @@ impl ProjectStoreRef<'_> {
     }
 }
 
-impl<'a> SessionStorage for StorageRef<'a> {
-    fn save(&self, session: &CreativeSession) -> Result<(), PortError> {
-        match self {
-            Self::Owned(storage) => storage
-                .lock()
-                .map_err(|_| PortError::Storage("session storage lock was poisoned".into()))
-                .and_then(|storage| SessionStorage::save(&*storage, session)),
-            Self::Borrowed(storage) => SessionStorage::save(*storage, session),
-            Self::Memory(storage) => SessionStorage::save(storage.as_ref(), session),
-        }
-    }
-}
-
-impl<'a, A> CoreRef<'a, A> {
-    fn snapshot(&self) -> Result<riffra_core::CanonicalSnapshot, ApplicationError> {
-        match self {
-            Self::Owned(core) => core.snapshot(),
-            Self::Borrowed(core) => (*core).snapshot(),
-        }
-    }
-
-    fn canonical_state(&self) -> Result<riffra_core::CanonicalState, ApplicationError> {
-        match self {
-            Self::Owned(core) => core.canonical_state(),
-            Self::Borrowed(core) => (*core).canonical_state(),
-        }
-    }
-
-    fn application<'b>(
-        &'b self,
-        storage: &'b StorageRef<'a>,
-    ) -> riffra_core::application::Application<'b, A, StorageRef<'a>> {
-        match self {
-            Self::Owned(core) => core.application(storage),
-            Self::Borrowed(core) => (*core).application(storage),
-        }
+#[derive(Default)]
+struct MemorySessionStorage;
+impl SessionStorage for MemorySessionStorage {
+    fn save(&self, _session: &CreativeSession) -> Result<(), PortError> {
+        Ok(())
     }
 }
 
 /// Shared canonical command application used by Standalone and live Hosts.
-pub struct HostDispatcher<'a, A> {
+pub struct HostDispatcher<'a> {
     _lease: Option<DataRootLease>,
-    core: CoreRef<'a, A>,
-    storage: StorageRef<'a>,
+    core: CoreRef<'a>,
     project_store: ProjectStoreRef<'a>,
     data_root: PathBuf,
     sonalloy: PathBuf,
@@ -298,47 +238,37 @@ pub struct HostDispatcher<'a, A> {
     validate_plugin_roles: bool,
 }
 
-/// Standalone dispatcher type retained as the CLI's editing entry point.
-pub type Dispatcher = HostDispatcher<'static, ()>;
+/// Standalone canonical editing entry point.
+pub type Dispatcher = HostDispatcher<'static>;
 
-/// The typed result of one dispatched command and the canonical sequence it
-/// was answered at.
+/// Typed command output and its canonical revision.
 #[derive(Debug)]
 pub struct DispatchResult {
     pub output: ControlOutput,
     pub sequence: u64,
 }
 
-impl HostDispatcher<'static, ()> {
+impl HostDispatcher<'static> {
     /// Opens the standalone canonical editing dispatcher.
     pub fn open(data_root: PathBuf, built_in_instruments_root: PathBuf) -> Result<Self, String> {
         let lease = DataRootLease::acquire(&data_root)
             .map_err(|error| format!("data root could not be opened: {error}"))?;
-        let built_in_instruments = Arc::new(
-            BuiltInInstrumentCatalog::load(built_in_instruments_root).map_err(|error| {
-                format!("built-in instrument catalog could not be opened: {error}")
-            })?,
-        );
+        let built_in_instruments =
+            Arc::new(BuiltInInstrumentCatalog::load(built_in_instruments_root)?);
         let project_store = ProjectStore::new(&data_root);
-        let loaded = project_store
+        let initialized = project_store
             .initialize()
-            .map_err(|error| error.to_string())?
-            .loaded;
-        let storage = project_store
-            .active_session_store()
             .map_err(|error| error.to_string())?;
-        let core = AppCore::new(
-            data_root.clone(),
-            loaded.session,
-            (),
-            loaded.recovered_from_generation,
-            false,
-        );
+        let project =
+            crate::host::open_project::ProjectCell::new(crate::host::open_project::OpenProject {
+                storage: initialized.storage,
+                core: AppCore::new(initialized.project_id, initialized.loaded.session, 0),
+                recovered_from_generation: initialized.loaded.recovered_from_generation,
+            });
         let sonalloy = RuntimeBinaries::beside_current_executable()?.sonalloy;
         Ok(Self {
             _lease: Some(lease),
-            core: CoreRef::Owned(core),
-            storage: StorageRef::Owned(Mutex::new(storage)),
+            core: CoreRef::Owned(project),
             project_store: ProjectStoreRef::Owned(project_store),
             data_root,
             sonalloy,
@@ -346,13 +276,13 @@ impl HostDispatcher<'static, ()> {
             validate_plugin_roles: false,
         })
     }
+}
 
-    /// Validates, decodes, and executes one request in Standalone mode.
+impl<'a> HostDispatcher<'a> {
+    /// Validates and executes a standalone request.
     ///
     /// # Errors
-    ///
-    /// Returns an error when the request is malformed, requires a live Host,
-    /// fails its preconditions, or fails while executing.
+    /// Returns an error for invalid requests, failed preconditions, or execution failure.
     pub fn dispatch_request(
         &self,
         request: ControlRequest,
@@ -368,12 +298,10 @@ impl HostDispatcher<'static, ()> {
         )
     }
 
-    /// Executes one typed command in Standalone mode.
+    /// Executes a standalone command.
     ///
     /// # Errors
-    ///
-    /// Returns an error when the command requires a live Host, the canonical
-    /// sequence differs from `expected_sequence`, or the command fails.
+    /// Returns an error for failed preconditions or execution failure.
     pub fn dispatch(
         &self,
         command: ControlCommand,
@@ -389,21 +317,23 @@ impl HostDispatcher<'static, ()> {
         expected_project_id: Option<&str>,
     ) -> Result<DispatchResult, DispatchError> {
         let policy = command.policy();
-        if policy.executor == CommandExecutor::Runtime {
+        if matches!(command, ControlCommand::Runtime(_)) {
             return Err(DispatchError::requires_live_host());
         }
+        let mut writer = (policy.scope != CommandScope::Host).then(|| self.core.cell().write());
+        let canonical = writer.as_ref().map_or_else(
+            || self.core.cell().read().canonical.clone(),
+            |writer| writer.project().core.canonical_state(),
+        );
         if let (CommandScope::Project { .. }, Some(expected_project_id)) =
             (policy.scope, expected_project_id)
+            && expected_project_id != canonical.project_id
         {
-            let current_project_id = self.active_project_id()?;
-            if expected_project_id != current_project_id {
-                return Err(DispatchError::ProjectConflict {
-                    expected_project_id: expected_project_id.to_owned(),
-                    current_project_id,
-                });
-            }
+            return Err(DispatchError::ProjectConflict {
+                expected_project_id: expected_project_id.into(),
+                current_project_id: canonical.project_id,
+            });
         }
-        let canonical = self.core.canonical_state()?;
         if let Some(expected_sequence) = expected_sequence
             && expected_sequence != canonical.sequence
         {
@@ -412,50 +342,37 @@ impl HostDispatcher<'static, ()> {
                 current_sequence: canonical.sequence,
             });
         }
-        match (command, policy.executor) {
-            (ControlCommand::Canonical(command), CommandExecutor::Canonical { access }) => {
-                self.execute_canonical(command, access, canonical)
+        match command {
+            ControlCommand::Canonical(command) => {
+                let access = command.access();
+                if access == CanonicalAccess::Read {
+                    return self.execute_read_canonical(command, canonical);
+                }
+                let (result, committed) = self.execute_canonical(
+                    writer
+                        .as_mut()
+                        .expect("canonical mutation holds the writer"),
+                    command,
+                    access,
+                    canonical,
+                )?;
+                self.publish_standalone(
+                    writer
+                        .as_ref()
+                        .expect("canonical mutation holds the writer"),
+                    committed,
+                );
+                Ok(result)
             }
-            (ControlCommand::Project(command), _) => self.execute_project(command, canonical),
-            _ => Err(DispatchError::requires_live_host()),
-        }
-    }
-}
-
-impl<'a, A> HostDispatcher<'a, A> {
-    fn batch_candidate(&self, session: CreativeSession) -> HostDispatcher<'static, ()> {
-        HostDispatcher {
-            _lease: None,
-            core: CoreRef::Owned(AppCore::new(
-                self.data_root.clone(),
-                session,
-                (),
-                false,
-                false,
-            )),
-            storage: StorageRef::Memory(Arc::new(MemorySessionStorage)),
-            project_store: ProjectStoreRef::Owned(ProjectStore::new(&self.data_root)),
-            data_root: self.data_root.clone(),
-            sonalloy: self.sonalloy.clone(),
-            built_in_instruments: Arc::clone(&self.built_in_instruments),
-            validate_plugin_roles: self.validate_plugin_roles,
+            ControlCommand::Project(command) => {
+                self.execute_project(writer.as_mut(), command, canonical)
+            }
+            ControlCommand::Runtime(_) => Err(DispatchError::requires_live_host()),
         }
     }
 
-    fn commit_batch_candidate(
-        &self,
-        candidate: CreativeSession,
-        expected_sequence: u64,
-    ) -> Result<CreativeSession, ApplicationError> {
-        self.core
-            .application(&self.storage)
-            .commit_prepared_candidate(candidate, expected_sequence)
-    }
-
-    /// Creates a dispatcher view over an already-owned live Host.
     pub(crate) fn borrowed(
-        core: &'a AppCore<A>,
-        storage: &'a SessionStore,
+        project: &'a crate::host::open_project::ProjectCell,
         project_store: &'a ProjectStore,
         data_root: &'a Path,
         sonalloy: &'a Path,
@@ -463,8 +380,7 @@ impl<'a, A> HostDispatcher<'a, A> {
     ) -> Self {
         Self {
             _lease: None,
-            core: CoreRef::Borrowed(core),
-            storage: StorageRef::Borrowed(storage),
+            core: CoreRef::Borrowed(project),
             project_store: ProjectStoreRef::Borrowed(project_store),
             data_root: data_root.to_path_buf(),
             sonalloy: sonalloy.to_path_buf(),
@@ -473,74 +389,98 @@ impl<'a, A> HostDispatcher<'a, A> {
         }
     }
 
-    /// Executes one canonical command against `canonical`.
-    ///
-    /// Reads answer at the sequence of `canonical`; mutations answer at the
-    /// sequence they committed.
-    pub(crate) fn execute_canonical(
+    pub(crate) fn execute_read_canonical(
         &self,
         command: CanonicalCommand,
-        access: CanonicalAccess,
         canonical: riffra_core::CanonicalState,
     ) -> Result<DispatchResult, DispatchError> {
-        let mut wire = serde_json::to_value(&command).expect("canonical commands serialize");
-        let params = wire["params"].take();
-        let canonical_sequence = canonical.sequence;
-        let output = self
-            .run_canonical(command, canonical)
-            .map_err(|error| error.attach_input_value(&params))?;
-        let sequence = match access {
-            CanonicalAccess::Read => canonical_sequence,
-            CanonicalAccess::Mutation { .. } => self.core.snapshot()?.sequence,
-        };
+        let sequence = canonical.sequence;
+        let mut core = AppCore::new(
+            canonical.project_id.clone(),
+            canonical.session.clone(),
+            sequence,
+        );
+        let storage = MemorySessionStorage;
+        let output = self.run_canonical(&mut core.application(&storage), command, canonical)?;
         Ok(DispatchResult { output, sequence })
     }
 
-    fn active_project_id(&self) -> Result<String, DispatchError> {
-        self.project_store
-            .as_ref()
-            .active_project_id()
-            .map_err(|error| DispatchError::CommandFailed(error.to_string()))
-    }
-
-    fn project_state(&self) -> Result<ProjectState, DispatchError> {
-        crate::projects::state(self.project_store.as_ref()).map_err(DispatchError::CommandFailed)
-    }
-
-    fn set_core_recovery(&self, recovered: bool) {
-        match &self.core {
-            CoreRef::Owned(core) => core.set_recovered_from_generation(recovered),
-            CoreRef::Borrowed(core) => core.set_recovered_from_generation(recovered),
-        }
-    }
-
-    fn activate_core_session(
+    pub(crate) fn execute_canonical(
         &self,
-        session: CreativeSession,
-    ) -> Result<riffra_core::CanonicalState, ApplicationError> {
-        match &self.core {
-            CoreRef::Owned(core) => core.activate_session(session),
-            CoreRef::Borrowed(core) => core.activate_session(session),
-        }
+        writer: &mut crate::host::open_project::ProjectWriter<'_>,
+        command: CanonicalCommand,
+        access: CanonicalAccess,
+        canonical: riffra_core::CanonicalState,
+    ) -> Result<(DispatchResult, crate::host::open_project::Committed<()>), DispatchError> {
+        let mut wire = serde_json::to_value(&command).expect("canonical commands serialize");
+        let params = wire["params"].take();
+        let read_sequence = canonical.sequence;
+        let mut failure = None;
+        let committed = writer
+            .commit(|mut application| {
+                self.run_canonical(&mut application, command, canonical)
+                    .map_err(|error| {
+                        let message = error.to_string();
+                        failure = Some(error.attach_input_value(&params));
+                        riffra_core::ApplicationError::InvalidCommand(message)
+                    })
+            })
+            .map_err(|error| failure.unwrap_or_else(|| error.into()))?;
+        let output = committed.value;
+        let sequence = match access {
+            CanonicalAccess::Read => read_sequence,
+            CanonicalAccess::Mutation { .. } => committed.snapshot.canonical.sequence,
+        };
+        Ok((
+            DispatchResult { output, sequence },
+            crate::host::open_project::Committed {
+                snapshot: committed.snapshot,
+                value: (),
+            },
+        ))
     }
 
-    /// Reports a committed edit that created no entities.
-    fn edited(&self, _session: CreativeSession) -> Result<ControlOutput, DispatchError> {
-        self.arrangement_mutation(BTreeMap::new())
+    fn project_state(&self, project_id: &str) -> Result<ProjectState, DispatchError> {
+        crate::projects::state(self.project_store.as_ref(), project_id)
+            .map_err(DispatchError::CommandFailed)
     }
 
-    /// Reports a committed edit and the entities it created.
-    fn created(&self, mutation: ApplicationMutation) -> Result<ControlOutput, DispatchError> {
-        self.arrangement_mutation(mutation.created_entity_ids)
+    fn publish_standalone<T>(
+        &self,
+        writer: &crate::host::open_project::ProjectWriter<'_>,
+        committed: crate::host::open_project::Committed<T>,
+    ) {
+        crate::library::index::refresh(
+            &self.data_root,
+            &writer.project().storage,
+            &committed.snapshot.canonical.session,
+        );
     }
 
-    fn arrangement_mutation(
+    fn edited<S: SessionStorage + ?Sized>(
+        &self,
+        _session: CreativeSession,
+        application: &riffra_core::application::Application<'_, S>,
+    ) -> Result<ControlOutput, DispatchError> {
+        self.arrangement_mutation(BTreeMap::new(), application)
+    }
+
+    fn created<S: SessionStorage + ?Sized>(
+        &self,
+        mutation: ApplicationMutation,
+        application: &riffra_core::application::Application<'_, S>,
+    ) -> Result<ControlOutput, DispatchError> {
+        self.arrangement_mutation(mutation.created_entity_ids, application)
+    }
+
+    fn arrangement_mutation<S: SessionStorage + ?Sized>(
         &self,
         created_entity_ids: BTreeMap<String, Vec<String>>,
+        application: &riffra_core::application::Application<'_, S>,
     ) -> Result<ControlOutput, DispatchError> {
         Ok(ControlOutput::ArrangementMutation(
             ArrangementMutationResult {
-                canonical: self.core.canonical_state()?,
+                canonical: application.canonical_state(),
                 projection: ArrangementProjectionOutcome::NotRequired,
                 created_entity_ids,
             },
@@ -691,14 +631,6 @@ mod tests {
             (
                 "plugin.state.set",
                 json!({"trackId": "track:1", "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
-            ),
-            (
-                "plugin.state.persist",
-                json!({"trackId": "track:1", "deviceId": "device:1", "parameterValues": [], "stateData": null, "bypassed": false}),
-            ),
-            (
-                "plugin.parameter.persist",
-                json!({"trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0, "value": 0.5}),
             ),
             ("missing.list", json!({})),
             ("record.start", json!({})),
@@ -878,15 +810,17 @@ mod tests {
             crate::instrument::BuiltInInstrumentCatalog::load(built_in_root).unwrap(),
         );
         let project_store = riffra_host::ProjectStore::new(&root);
-        let loaded = project_store.initialize().unwrap().loaded;
-        let storage = project_store.active_session_store().unwrap();
-        let core = riffra_core::AppCore::new(
-            root.clone(),
-            loaded.session,
-            (),
-            loaded.recovered_from_generation,
-            false,
-        );
+        let initialized = project_store.initialize().unwrap();
+        let project =
+            crate::host::open_project::ProjectCell::new(crate::host::open_project::OpenProject {
+                storage: initialized.storage,
+                core: riffra_core::AppCore::new(
+                    initialized.project_id,
+                    initialized.loaded.session,
+                    0,
+                ),
+                recovered_from_generation: initialized.loaded.recovered_from_generation,
+            });
         let sonalloy = std::path::PathBuf::new();
         let plugin_path = root.join("VST3/Synth.vst3");
         fs::create_dir_all(&plugin_path).unwrap();
@@ -913,8 +847,7 @@ mod tests {
         )
         .unwrap();
         let dispatcher = HostDispatcher::borrowed(
-            &core,
-            &storage,
+            &project,
             &project_store,
             &root,
             &sonalloy,
@@ -928,7 +861,11 @@ mod tests {
             let ControlCommand::Canonical(command) = command else {
                 unreachable!("{name} is a canonical command");
             };
-            dispatcher.execute_canonical(command, access, core.canonical_state().unwrap())
+            let mut writer = project.write();
+            let canonical = writer.project().core.canonical_state();
+            dispatcher
+                .execute_canonical(&mut writer, command, access, canonical)
+                .map(|(result, _)| result)
         };
         let track = execute("track.add", json!({"name":"Lead","kind":"instrument"})).unwrap();
         let track_id = mutated_session(&track).arrangement.tracks[0].id.clone();
