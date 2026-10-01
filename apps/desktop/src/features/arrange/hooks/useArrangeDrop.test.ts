@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { DragEvent } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CreativeSession } from '@/model/domain';
-import { getHostGeneration, setHostGeneration } from '@/native/invoke';
+import { HostConnectionChangedError, setHostGeneration } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
 import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
@@ -74,7 +74,6 @@ describe('useArrangeDrop', () => {
       useArrangeDrop({
         api,
         commit: commitStub(),
-        hostGeneration: getHostGeneration(),
         pixelsPerTick: 1,
         snapTick: (raw) => Math.round(raw),
         setMessage,
@@ -114,7 +113,6 @@ describe('useArrangeDrop', () => {
       useArrangeDrop({
         api,
         commit,
-        hostGeneration: getHostGeneration(),
         pixelsPerTick: 1,
         snapTick: (raw) => Math.round(raw),
         setMessage: vi.fn(),
@@ -142,12 +140,12 @@ describe('useArrangeDrop', () => {
   });
 
   it('does not place an imported MIDI file after the Host generation changes', async () => {
-    let resolveImport: ((assetId: ReturnType<typeof toAssetId>) => void) | undefined;
+    let rejectImport: ((error: Error) => void) | undefined;
     const api = {
       importMidiBytes: vi.fn(
         () =>
-          new Promise<ReturnType<typeof toAssetId>>((resolve) => {
-            resolveImport = resolve;
+          new Promise<ReturnType<typeof toAssetId>>((_resolve, reject) => {
+            rejectImport = reject;
           }),
       ),
       addAudioClipToArrangement: vi.fn(async () => null),
@@ -159,7 +157,6 @@ describe('useArrangeDrop', () => {
       useArrangeDrop({
         api,
         commit,
-        hostGeneration: getHostGeneration(),
         pixelsPerTick: 1,
         snapTick: (raw) => Math.round(raw),
         setMessage: vi.fn(),
@@ -171,8 +168,9 @@ describe('useArrangeDrop', () => {
     act(() => {
       result.current.handleDrop(event, 'track:instrument', 'instrument');
     });
+    await waitFor(() => expect(api.importMidiBytes).toHaveBeenCalled());
     setHostGeneration(1);
-    resolveImport?.(toAssetId('asset:stale'));
+    rejectImport?.(new HostConnectionChangedError());
 
     // Assert
     await waitFor(() => expect(api.importMidiBytes).toHaveBeenCalled());
@@ -193,7 +191,6 @@ describe('useArrangeDrop', () => {
       useArrangeDrop({
         api,
         commit,
-        hostGeneration: getHostGeneration(),
         pixelsPerTick: 1,
         snapTick: (raw) => Math.round(raw),
         setMessage,

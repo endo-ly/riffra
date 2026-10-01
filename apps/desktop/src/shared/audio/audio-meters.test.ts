@@ -34,7 +34,10 @@ describe('audio meter availability', () => {
   it('marks a real frame available and clears it when the runtime stops', async () => {
     const { result } = renderHook(() => useAudioMeters());
 
-    act(() => publishAudioMeters(frame));
+    act(() => publishAudioMeters({ ...frame, projectId: 'project:other' }, frame.projectId));
+    expect(result.current.available).toBe(false);
+
+    act(() => publishAudioMeters(frame, frame.projectId));
     await waitFor(() => expect(result.current.available).toBe(true));
     expect(result.current.hardClipSamples).toBe(4);
     expect(result.current.trackMeters).toHaveLength(1);

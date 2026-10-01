@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AudioDeviceProbe, AudioDriverConfig, AudioStatus } from '@/model/domain';
 import { reconcileAudioSettings } from '@/features/audio/audio-settings';
 import { audioCommandSucceeded, isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import type { AudioApi } from '@/native/native-api';
-import { HostConnectionChangedError } from '@/native/invoke';
-
 interface UseAudioOptions {
   hostGeneration?: number;
   audio: AudioStatus;
@@ -21,8 +19,6 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
     resetFeedbackProtection,
   } = api;
   const { audio, hostGeneration = 0, setAudio } = options;
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
   const [audioPreferenceMessage, setAudioPreferenceMessage] = useState<string | null>(null);
   const [deviceProbe, setDeviceProbe] = useState<AudioDeviceProbe>({
     drivers: [],
@@ -31,7 +27,6 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
   });
 
   useEffect(() => {
-    currentHostGeneration.current = hostGeneration;
     setAudioPreferenceMessage(null);
     setDeviceProbe({
       drivers: [],
@@ -39,49 +34,34 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
       message: 'Audio device list has not been refreshed.',
     });
   }, [hostGeneration]);
-
-  const assertCurrent = useCallback((generation: number) => {
-    if (currentHostGeneration.current !== generation) throw new HostConnectionChangedError();
-  }, []);
-
   const refreshAudioDevices = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     const nextProbe = await api.probeAudioDevices();
-    assertCurrent(requestGeneration);
     setDeviceProbe(nextProbe);
     return nextProbe;
-  }, [api, assertCurrent, hostGeneration]);
-
+  }, [api]);
   const probeAudioChannels = useCallback(
     async (driver: string, inputDevice: string, outputDevice: string) => {
-      const requestGeneration = hostGeneration;
       const channels = await api.probeDeviceChannels(driver, inputDevice, outputDevice);
-      assertCurrent(requestGeneration);
       return channels;
     },
-    [api, assertCurrent, hostGeneration],
+    [api],
   );
 
   const recoverAudio = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     setAudioPreferenceMessage(null);
     const nextAudio = await recoverAudioDevice();
-    assertCurrent(requestGeneration);
     setAudio(nextAudio);
     return nextAudio;
-  }, [assertCurrent, hostGeneration, recoverAudioDevice, setAudio]);
-
+  }, [recoverAudioDevice, setAudio]);
   const selectAudioDriver = useCallback(
     async (config: AudioDriverConfig) => {
-      const requestGeneration = hostGeneration;
       const nextAudio = await setAudioDriver(config);
-      assertCurrent(requestGeneration);
       setAudio(nextAudio);
       if (!audioCommandSucceeded(nextAudio)) return nextAudio;
       const effective = reconcileAudioSettings(
         {
           driver: config.driver,
-          sampleRate: config.sampleRate ?? nextAudio.sampleRate ?? 48_000,
+          sampleRate: config.sampleRate ?? nextAudio.sampleRate ?? 48000,
           bufferSize: config.bufferSize ?? nextAudio.bufferSize ?? 256,
         },
         nextAudio,
@@ -89,28 +69,22 @@ export function useAudioSettings(api: AudioApi, options: UseAudioOptions) {
       setAudioPreferenceMessage(effective.message);
       return nextAudio;
     },
-    [assertCurrent, hostGeneration, setAudio, setAudioDriver],
+    [setAudio, setAudioDriver],
   );
 
   const enableMidi = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     const nextAudio = await enableMidiListening();
-    if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
-  }, [enableMidiListening, hostGeneration, setAudio]);
-
+    setAudio(nextAudio);
+  }, [enableMidiListening, setAudio]);
   const toggleMute = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     const muted = !isEmergencyMuteActive(audio);
     const nextAudio = await setEmergencyMute(muted);
-    if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
-  }, [audio, hostGeneration, setAudio, setEmergencyMute]);
-
+    setAudio(nextAudio);
+  }, [audio, setAudio, setEmergencyMute]);
   const resetFeedback = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     const nextAudio = await resetFeedbackProtection();
-    if (currentHostGeneration.current === requestGeneration) setAudio(nextAudio);
-  }, [hostGeneration, resetFeedbackProtection, setAudio]);
-
+    setAudio(nextAudio);
+  }, [resetFeedbackProtection, setAudio]);
   return {
     audioPreferenceMessage,
     deviceProbe,

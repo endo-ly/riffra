@@ -29,6 +29,7 @@ function activation(projectId: string): ProjectActivationResult {
       projects: [{ projectId, name: 'Next', updatedAtMs: 1, error: null }],
     },
     canonical: {
+      projectId,
       session: { ...defaultSession(), projectName: 'Next' },
       sequence: 1,
       history: { canUndo: false, canRedo: false },
@@ -210,5 +211,25 @@ describe('useProject', () => {
     expect(saveProjectPackageMock).toHaveBeenCalledWith('My Song');
     expect(api.calls).toContain('exportProject');
     expect(result.current.exportMessage).toBe(`Project exported: ${output}`);
+  });
+  it('accepts only newer canonical state from the active project', () => {
+    const api = new FakeNativeApi();
+    const { result } = renderHook(() => {
+      const [boot, setBoot] = useState<BootstrapState | null>(api.bootstrapState);
+      return useProject(api, { boot, setBoot, hostGeneration: 0 });
+    });
+    const current = api.bootstrapState.canonical;
+
+    act(() => {
+      expect(result.current.applyCanonicalState(current)).toBe(true);
+      expect(
+        result.current.applyCanonicalState({ ...current, projectId: 'other', sequence: 99 }),
+      ).toBe(false);
+      expect(result.current.applyCanonicalState({ ...current, sequence: 1 })).toBe(true);
+      expect(result.current.applyCanonicalState(current)).toBe(false);
+      expect(result.current.applyCanonicalState({ ...current, sequence: 1 })).toBe(false);
+    });
+
+    expect(result.current.session).toEqual(current.session);
   });
 });

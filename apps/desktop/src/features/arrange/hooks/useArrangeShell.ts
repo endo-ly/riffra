@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CanonicalState, CreativeSession, PluginEntry } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
@@ -15,9 +15,6 @@ export function useArrangeShell(
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
     setSelection({ kind: 'none' });
     setFocusedTrackId(null);
@@ -42,35 +39,29 @@ export function useArrangeShell(
 
   const addPlugin = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
     if (!selectedTrack) return;
-    const requestGeneration = hostGeneration;
     try {
       const next =
         target === 'instrument'
           ? await api.setTrackVst3Instrument(selectedTrack.id, plugin.path)
           : await api.addTrackEffect(selectedTrack.id, plugin.path);
-      if (currentHostGeneration.current !== requestGeneration) return;
       applyArrangementMutation(next, applyCanonicalState, (message) =>
         toast(message, { kind: 'error' }),
       );
     } catch (error) {
       if (error instanceof HostConnectionChangedError) return;
-      if (currentHostGeneration.current !== requestGeneration) return;
       logNativeError('Add plugin to Track')(error);
     }
   };
 
   const applyInstrument = async (instrumentId: string) => {
     if (!selectedTrack || selectedTrack.kind !== 'instrument') return;
-    const requestGeneration = hostGeneration;
     try {
       const next = await api.applyInstrument(selectedTrack.id, instrumentId);
-      if (currentHostGeneration.current !== requestGeneration) return;
       applyArrangementMutation(next, applyCanonicalState, (message) =>
         toast(message, { kind: 'error' }),
       );
     } catch (error) {
       if (error instanceof HostConnectionChangedError) return;
-      if (currentHostGeneration.current !== requestGeneration) return;
       logNativeError('Apply instrument')(error);
     }
   };

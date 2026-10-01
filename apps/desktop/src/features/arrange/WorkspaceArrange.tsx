@@ -36,7 +36,7 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
 import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
-import { HostConnectionChangedError, getHostGeneration } from '@/native/invoke';
+import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
@@ -163,7 +163,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { handleDrop, isOsFileDrag } = useArrangeDrop({
     api: props.api,
     commit,
-    hostGeneration: props.hostGeneration ?? 0,
     pixelsPerTick,
     snapTick: editor.snapTick,
     setMessage,
@@ -372,15 +371,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const addTrack = (kind: TrackKind) =>
     editor.commit(
       api.addTrack(
-        `${kind === 'audio' ? 'Audio' : 'Instrument'} ${
-          arrangement.tracks.filter((track) => track.kind === kind).length + 1
-        }`,
+        `${kind === 'audio' ? 'Audio' : 'Instrument'} ${arrangement.tracks.filter((track) => track.kind === kind).length + 1}`,
         kind,
       ),
     );
 
   const performDeleteTrack = async (trackId: string) => {
-    const requestGeneration = getHostGeneration();
     const deletedTrack = arrangement.tracks.find((track) => track.id === trackId);
     if (
       props.focusedTrackId === trackId &&
@@ -389,14 +385,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     ) {
       try {
         const status = await props.api.panicMidiTrack(trackId);
-        if (getHostGeneration() !== requestGeneration) return;
         if (status) editor.setMessage(status.message);
       } catch (error) {
         if (error instanceof HostConnectionChangedError) return;
         editor.setMessage(String(error));
       }
     }
-    if (getHostGeneration() !== requestGeneration) return;
     const next = await editor.commit(props.api.removeTrack(trackId));
     if (next) {
       if (props.focusedTrackId === trackId) {
@@ -534,6 +528,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onRemoveMarker={ruler.removeMarker}
             onSelectMarker={ruler.selectMarker}
           />
+
           <div
             data-timeline-grid
             aria-hidden="true"

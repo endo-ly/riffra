@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
-import { getHostGeneration, getProjectEpoch } from '@/native/invoke';
 import type { AudioApi } from '@/native/native-api';
 
 export type MasterGainControlApi = Pick<AudioApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
@@ -62,26 +61,14 @@ export function useMasterGainControl({
   const preview = useCallback(
     (gainDb: number) => {
       if (disposed.current || disabled || !Number.isFinite(gainDb)) return;
-      const generationAtSchedule = getHostGeneration();
-      const projectEpochAtSchedule = getProjectEpoch();
       if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
       previewTimer.current = window.setTimeout(() => {
         previewTimer.current = null;
-        if (
-          disposed.current ||
-          getHostGeneration() !== generationAtSchedule ||
-          getProjectEpoch() !== projectEpochAtSchedule
-        )
-          return;
+        if (disposed.current) return;
         previewChain.current = previewChain.current
           .catch(() => undefined)
           .then(() => {
-            if (
-              disposed.current ||
-              getHostGeneration() !== generationAtSchedule ||
-              getProjectEpoch() !== projectEpochAtSchedule
-            )
-              return;
+            if (disposed.current) return;
             return api.previewMasterGainDb(gainDb);
           })
           .catch(() => undefined);
@@ -94,8 +81,6 @@ export function useMasterGainControl({
     async (gainDb: number) => {
       editing.current = false;
       if (disposed.current || disabled || !Number.isFinite(gainDb)) return;
-      const generationAtRequest = getHostGeneration();
-      const projectEpochAtRequest = getProjectEpoch();
       const currentInteractionId = interactionId.current;
       if (pendingCommit.current?.interactionId === currentInteractionId) return;
       pendingCommit.current = { interactionId: currentInteractionId, value: gainDb };
@@ -105,22 +90,13 @@ export function useMasterGainControl({
         previewChain.current = previewChain.current
           .catch(() => undefined)
           .then(() => {
-            if (
-              disposed.current ||
-              getHostGeneration() !== generationAtRequest ||
-              getProjectEpoch() !== projectEpochAtRequest
-            )
-              return;
+            if (disposed.current) return;
             return api.previewMasterGainDb(gainDb);
           })
           .catch(() => undefined);
       }
       await previewChain.current.catch(() => undefined);
-      if (
-        disposed.current ||
-        getHostGeneration() !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      ) {
+      if (disposed.current) {
         if (
           pendingCommit.current?.interactionId === currentInteractionId &&
           pendingCommit.current.value === gainDb
@@ -131,33 +107,18 @@ export function useMasterGainControl({
       try {
         if (gainDb === lastCommittedDb.current) return;
         const result: ArrangementMutationResult = await api.setMasterGainDb(gainDb);
-        if (
-          disposed.current ||
-          getHostGeneration() !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return;
+        if (disposed.current) return;
         if (!applyCanonicalState(result.canonical)) return;
         lastCommittedDb.current = result.canonical.session.settings.masterDb;
         canonicalDb.current = result.canonical.session.settings.masterDb;
         setDraftDb(result.canonical.session.settings.masterDb);
       } catch {
-        if (
-          disposed.current ||
-          getHostGeneration() !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return;
+        if (disposed.current) return;
         setDraftDb(canonicalDb.current);
         previewChain.current = previewChain.current
           .catch(() => undefined)
           .then(() => {
-            if (
-              disposed.current ||
-              getHostGeneration() !== generationAtRequest ||
-              getProjectEpoch() !== projectEpochAtRequest
-            )
-              return;
+            if (disposed.current) return;
             return api.previewMasterGainDb(canonicalDb.current);
           })
           .catch(() => undefined);

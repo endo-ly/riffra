@@ -9,18 +9,13 @@ export function useWaveformAnalyses(
 ) {
   const [analyses, setAnalyses] = useState<Record<string, AudioAnalysis | null>>({});
   const requestedRef = useRef<Set<string>>(new Set());
-  const currentHostGeneration = useRef(hostGeneration);
-  currentHostGeneration.current = hostGeneration;
-
   useEffect(() => {
-    currentHostGeneration.current = hostGeneration;
     requestedRef.current.clear();
     setAnalyses({});
   }, [hostGeneration]);
 
   useEffect(() => {
     let active = true;
-    const effectGeneration = hostGeneration;
     const present = new Set<string>(clips.map((clip) => clip.assetId));
 
     // Drop cache entries for assetIds that no longer have any clip referencing
@@ -46,12 +41,12 @@ export function useWaveformAnalyses(
       void api
         .analyzeAsset(assetId as AudioClip['assetId'])
         .then((analysis) => {
-          if (active && currentHostGeneration.current === effectGeneration) {
+          if (active) {
             setAnalyses((current) => ({ ...current, [assetId]: analysis }));
           }
         })
         .catch(() => {
-          if (active && currentHostGeneration.current === effectGeneration) {
+          if (active) {
             setAnalyses((current) => ({ ...current, [assetId]: null }));
           }
         });

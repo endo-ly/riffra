@@ -9,22 +9,13 @@ import type {
 } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
 import { openProjectPackage, saveProjectPackage } from '@/native/dialog';
-import {
-  advanceProjectEpoch,
-  getProjectEpoch,
-  getHostGeneration,
-  isNativeRuntime,
-  logNativeError,
-  NativeCommandError,
-} from '@/native/invoke';
+import { isNativeRuntime, logNativeError, NativeCommandError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
-
 interface UseProjectOptions {
   boot: BootstrapState | null;
   setBoot: Dispatch<SetStateAction<BootstrapState | null>>;
   hostGeneration: number;
 }
-
 export function useProject(api: ProjectApi & ProjectSettingsApi, options: UseProjectOptions) {
   const {
     undoSession,
@@ -49,19 +40,21 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
-  const sequenceRef = useRef(0);
+  const sequenceRef = useRef(-1);
   const canonicalStateRef = useRef<CanonicalState | null>(null);
-  const currentHostGeneration = useRef(hostGeneration);
-  const lastActivationRef = useRef<{ projectId: string; sequence: number } | null>(null);
-  const projectTransitionEpochRef = useRef<number | null>(null);
-  currentHostGeneration.current = hostGeneration;
+  const lastActivationRef = useRef<{
+    projectId: string;
+    sequence: number;
+  } | null>(null);
+  const activeProjectIdRef = useRef<string | null>(boot?.projectState.activeProjectId ?? null);
+  const switchingRef = useRef(false);
   sessionRef.current = session;
-
   useEffect(() => {
-    sequenceRef.current = 0;
+    sequenceRef.current = -1;
+    activeProjectIdRef.current = null;
+    switchingRef.current = false;
     canonicalStateRef.current = null;
     lastActivationRef.current = null;
-    projectTransitionEpochRef.current = null;
     sessionRef.current = null;
     setSession(null);
     setHistoryState({ canUndo: false, canRedo: false });
@@ -71,20 +64,19 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     setProjectError(null);
     setBoot(null);
   }, [hostGeneration, setBoot]);
-
   useEffect(() => {
     if (boot) {
+      activeProjectIdRef.current = boot.projectState.activeProjectId;
       lastActivationRef.current = {
         projectId: boot.projectState.activeProjectId,
         sequence: boot.canonical.sequence,
       };
     }
   }, [boot]);
-
   const applyCanonicalState = useCallback(
     (canonical: CanonicalState): boolean => {
-      if (getHostGeneration() !== hostGeneration) return false;
-      if (canonical.sequence < sequenceRef.current) return false;
+      if (canonical.projectId !== activeProjectIdRef.current) return false;
+      if (canonical.sequence <= sequenceRef.current) return false;
       sequenceRef.current = canonical.sequence;
       canonicalStateRef.current = canonical;
       sessionRef.current = canonical.session;
@@ -93,12 +85,10 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       setBoot((current) => (current ? { ...current, canonical } : current));
       return true;
     },
-    [hostGeneration, setBoot],
+    [setBoot],
   );
-
   const applyProjectActivation = useCallback(
     (activation: ProjectActivationResult): boolean => {
-      if (getHostGeneration() !== hostGeneration) return false;
       const identity = {
         projectId: activation.projectState.activeProjectId,
         sequence: activation.canonical.sequence,
@@ -110,7 +100,8 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       )
         return false;
       if (activation.canonical.sequence < sequenceRef.current) return false;
-      if (projectTransitionEpochRef.current !== getProjectEpoch()) advanceProjectEpoch();
+      if (activation.canonical.projectId !== identity.projectId) return false;
+      activeProjectIdRef.current = identity.projectId;
       lastActivationRef.current = identity;
       sequenceRef.current = activation.canonical.sequence;
       canonicalStateRef.current = activation.canonical;
@@ -129,47 +120,35 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       );
       return true;
     },
-    [hostGeneration, setBoot],
+    [setBoot],
   );
-
   const mergeBootstrapState = useCallback((next: BootstrapState): BootstrapState => {
     const current = canonicalStateRef.current;
-    if (!current || current.sequence <= next.canonical.sequence) return next;
+    activeProjectIdRef.current = next.projectState.activeProjectId;
+    if (
+      !current ||
+      current.projectId !== next.canonical.projectId ||
+      current.sequence <= next.canonical.sequence
+    )
+      return next;
     return { ...next, canonical: current };
   }, []);
-
   const refreshHistory = useCallback(async () => {
     const sequenceAtRequest = sequenceRef.current;
-    const projectEpochAtRequest = getProjectEpoch();
-    const generationAtRequest = hostGeneration;
     try {
       const nextHistory = await getHistoryState();
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        sequenceRef.current !== sequenceAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
+      if (sequenceRef.current !== sequenceAtRequest) return;
       setHistoryState(nextHistory);
     } catch (error) {
-      if (currentHostGeneration.current !== generationAtRequest) return;
       setAutosaveError(
         `History state could not be read: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [getHistoryState, hostGeneration]);
-
+  }, [getHistoryState]);
   const undo = useCallback(async () => {
-    if (!historyState.canUndo) return;
-    const generationAtRequest = hostGeneration;
-    const projectEpochAtRequest = getProjectEpoch();
+    if (switchingRef.current || !historyState.canUndo) return;
     try {
       const result = await undoSession();
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       const projectionFailed = applyArrangementMutation(
         result,
         applyCanonicalState,
@@ -178,26 +157,13 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       setAutosaveError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, historyState.canUndo, hostGeneration, refreshHistory, undoSession]);
-
+  }, [applyCanonicalState, historyState.canUndo, refreshHistory, undoSession]);
   const redo = useCallback(async () => {
-    if (!historyState.canRedo) return;
-    const generationAtRequest = hostGeneration;
-    const projectEpochAtRequest = getProjectEpoch();
+    if (switchingRef.current || !historyState.canRedo) return;
     try {
       const result = await redoSession();
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       const projectionFailed = applyArrangementMutation(
         result,
         applyCanonicalState,
@@ -206,36 +172,23 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       await refreshHistory();
       if (!projectionFailed) setAutosaveError(null);
     } catch (error) {
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       setAutosaveError(`Redo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [applyCanonicalState, historyState.canRedo, hostGeneration, redoSession, refreshHistory]);
-
+  }, [applyCanonicalState, historyState.canRedo, redoSession, refreshHistory]);
   useEffect(() => {
     if (session) void refreshHistory();
   }, [refreshHistory, session]);
-
   const performProjectOperation = useCallback(
     async (
       operation: () => Promise<ProjectActivationResult>,
       label: string,
     ): Promise<ProjectActivationResult | null> => {
-      const generationAtRequest = hostGeneration;
-      const projectEpochAtRequest = advanceProjectEpoch();
-      projectTransitionEpochRef.current = projectEpochAtRequest;
+      if (switchingRef.current) return null;
+      switchingRef.current = true;
       setProjectSwitching(true);
       setProjectError(null);
       try {
         const next = await operation();
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return null;
         if (!applyProjectActivation(next)) {
           const currentActivation = lastActivationRef.current;
           if (
@@ -246,11 +199,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         }
         return next;
       } catch (error) {
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return null;
         const message =
           error instanceof NativeCommandError && error.isProjectSwitchFailure
             ? error.message
@@ -258,22 +206,15 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         setProjectError(message);
         return null;
       } finally {
-        if (projectTransitionEpochRef.current === projectEpochAtRequest) {
-          projectTransitionEpochRef.current = null;
-          if (currentHostGeneration.current === generationAtRequest) {
-            setProjectSwitching(false);
-          }
-        }
+        switchingRef.current = false;
+        setProjectSwitching(false);
       }
     },
-    [applyProjectActivation, hostGeneration],
+    [applyProjectActivation],
   );
-
   const refreshProjects = useCallback(async () => {
-    const projectEpochAtRequest = getProjectEpoch();
     try {
       const next = await listProjects();
-      if (getProjectEpoch() !== projectEpochAtRequest) return null;
       setBoot((current) => (current ? { ...current, projectState: next } : current));
       return next;
     } catch (error) {
@@ -283,49 +224,31 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       return null;
     }
   }, [listProjects, setBoot]);
-
   const createProject = useCallback(
     (name?: string) => performProjectOperation(() => createProjectApi(name), 'Project creation'),
     [createProjectApi, performProjectOperation],
   );
-
   const openProject = useCallback(
     (projectId: string) =>
       performProjectOperation(() => openProjectApi(projectId), 'Project opening'),
     [openProjectApi, performProjectOperation],
   );
-
   const renameProject = useCallback(
     async (name: string) => {
-      const generationAtRequest = hostGeneration;
-      const projectEpochAtRequest = getProjectEpoch();
       try {
         const next = await renameProjectApi(name);
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return null;
         setBoot((current) => (current ? { ...current, projectState: next } : current));
         return next;
       } catch (error) {
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return null;
         setProjectError(
           `Project rename failed: ${error instanceof Error ? error.message : String(error)}`,
         );
         return null;
       }
     },
-    [hostGeneration, renameProjectApi, setBoot],
+    [renameProjectApi, setBoot],
   );
-
   const exportProject = useCallback(async () => {
-    const generationAtRequest = hostGeneration;
-    const projectEpochAtRequest = getProjectEpoch();
     const projectName = session?.projectName?.trim() || 'Untitled Project';
     let path: string | null;
     try {
@@ -335,41 +258,21 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       return;
     }
     if (!path) return;
-    if (
-      currentHostGeneration.current !== generationAtRequest ||
-      getProjectEpoch() !== projectEpochAtRequest
-    )
-      return;
     try {
       const result = await exportProjectApi(path);
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       setExportMessage(
         result
           ? `Project exported: ${result.path}`
           : 'Export failed; the current session remains safe.',
       );
     } catch (error) {
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       setExportMessage(
-        `Export failed; the current session remains safe: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Export failed; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [exportProjectApi, hostGeneration, session?.projectName]);
-
+  }, [exportProjectApi, session?.projectName]);
   const importProject = useCallback(async () => {
     if (!isNativeRuntime()) return;
-    const generationAtRequest = hostGeneration;
-    const projectEpochAtRequest = getProjectEpoch();
     let path: string | null;
     try {
       path = await openProjectPackage();
@@ -378,11 +281,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       return;
     }
     if (!path) return;
-    if (
-      currentHostGeneration.current !== generationAtRequest ||
-      getProjectEpoch() !== projectEpochAtRequest
-    )
-      return;
     try {
       const imported = await performProjectOperation(async () => {
         const state = await importProjectApi(path.trim());
@@ -397,30 +295,15 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
         `Imported Project: ${imported.projectState.projects.find((project) => project.projectId === imported.projectState.activeProjectId)?.name ?? imported.projectState.activeProjectId}`,
       );
     } catch (error) {
-      if (
-        currentHostGeneration.current !== generationAtRequest ||
-        getProjectEpoch() !== projectEpochAtRequest
-      )
-        return;
       setExportMessage(
-        `Import failed; the current session remains safe: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Import failed; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [hostGeneration, importProjectApi, performProjectOperation]);
-
+  }, [importProjectApi, performProjectOperation]);
   const restoreRecovery = useCallback(
     async (fileName: string) => {
-      const generationAtRequest = hostGeneration;
-      const projectEpochAtRequest = getProjectEpoch();
       try {
         const restored = await restoreRecoveryGeneration(fileName);
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return;
         if (!restored) {
           setExportMessage(
             'Recovery generation could not be restored; the current session remains safe.',
@@ -445,21 +328,13 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
           `Restored stable generation: ${restored.canonical.session.projectName ?? restored.canonical.session.sessionId}`,
         );
       } catch (error) {
-        if (
-          currentHostGeneration.current !== generationAtRequest ||
-          getProjectEpoch() !== projectEpochAtRequest
-        )
-          return;
         setExportMessage(
-          `Recovery generation could not be restored; the current session remains safe: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Recovery generation could not be restored; the current session remains safe: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     },
-    [applyCanonicalState, hostGeneration, restoreRecoveryGeneration, setBoot],
+    [applyCanonicalState, restoreRecoveryGeneration, setBoot],
   );
-
   const dismissRecovery = useCallback(() => {
     setBoot((current) =>
       current
@@ -468,7 +343,6 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     );
     setExportMessage('Recovered session kept as the active working copy.');
   }, [setBoot]);
-
   return {
     session,
     applyCanonicalState,

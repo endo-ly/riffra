@@ -7,6 +7,10 @@ import type { HistoryState } from "./HistoryState";
  */
 export type CanonicalState = { 
 /**
+ * Identity of the project owning this revision.
+ */
+projectId: string, 
+/**
  * Canonical production state at the revision boundary.
  */
 session: CreativeSession, 

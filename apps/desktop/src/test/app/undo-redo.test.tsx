@@ -15,9 +15,14 @@ function renderApp(fake: FakeNativeApi) {
   return render(<App api={fake} />);
 }
 
-function mutationResult(session: CreativeSession) {
+function mutationResult(session: CreativeSession, sequence: number) {
   return {
-    canonical: { session, sequence: 0, history: { canUndo: false, canRedo: false } },
+    canonical: {
+      projectId: '01900000-0000-7000-8000-000000000001',
+      session,
+      sequence,
+      history: { canUndo: false, canRedo: false },
+    },
     projection: { state: 'notRequired' as const },
   };
 }
@@ -44,6 +49,7 @@ describe('Undo/Redo (PRJ-003)', () => {
         renameProject: () => {
           fake.emitCanonicalStateChanged({
             ...canonicalState(renamed),
+            sequence: 1,
             history: { canUndo: true, canRedo: false },
           });
           fake.emitProjectStateChanged(projectState('My Project'));
@@ -52,18 +58,20 @@ describe('Undo/Redo (PRJ-003)', () => {
         undoSession: () => {
           fake.emitCanonicalStateChanged({
             ...canonicalState(original),
+            sequence: 2,
             history: { canUndo: false, canRedo: true },
           });
           fake.emitProjectStateChanged(projectState('Untitled Project'));
-          return mutationResult(original);
+          return mutationResult(original, 2);
         },
         redoSession: () => {
           fake.emitCanonicalStateChanged({
             ...canonicalState(renamed),
+            sequence: 3,
             history: { canUndo: true, canRedo: false },
           });
           fake.emitProjectStateChanged(projectState('My Project'));
-          return mutationResult(renamed);
+          return mutationResult(renamed, 3);
         },
         getHistoryState: () => {
           const lastOperation = [...fake.calls]

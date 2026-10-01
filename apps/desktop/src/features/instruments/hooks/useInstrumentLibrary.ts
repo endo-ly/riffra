@@ -52,14 +52,10 @@ export function useInstrumentLibrary(
   const [previewPendingId, setPreviewPendingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const currentHostGeneration = useRef(hostGeneration);
   const nativeInstrumentPreviewing = useRef(false);
   const previewPendingIdRef = useRef<string | null>(null);
   const previewRequestRef = useRef(0);
-  currentHostGeneration.current = hostGeneration;
-
   const reload = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     setLoading(true);
     setError(null);
     try {
@@ -67,32 +63,25 @@ export function useInstrumentLibrary(
         listInstruments(),
         listInstrumentCollections(),
       ]);
-      if (currentHostGeneration.current !== requestGeneration) return;
       setItems(nextItems);
       setCollections(nextCollections);
     } catch (cause) {
-      if (currentHostGeneration.current !== requestGeneration) return;
       setError(cause instanceof Error ? cause.message : String(cause));
       logNativeError('listInstrumentLibrary')(cause);
     } finally {
-      if (currentHostGeneration.current === requestGeneration) setLoading(false);
+      setLoading(false);
     }
-  }, [hostGeneration, listInstrumentCollections, listInstruments]);
-
+  }, [listInstrumentCollections, listInstruments]);
   const reloadCollections = useCallback(async () => {
-    const requestGeneration = hostGeneration;
     try {
       const next = await listInstrumentCollections();
-      if (currentHostGeneration.current === requestGeneration) setCollections(next);
+      setCollections(next);
     } catch (cause) {
-      if (currentHostGeneration.current !== requestGeneration) return;
       setError(cause instanceof Error ? cause.message : String(cause));
       logNativeError('listInstrumentCollections')(cause);
     }
-  }, [hostGeneration, listInstrumentCollections]);
-
+  }, [listInstrumentCollections]);
   useEffect(() => {
-    currentHostGeneration.current = hostGeneration;
     setItems([]);
     setCollections([]);
     setSelectedId(null);
@@ -106,9 +95,7 @@ export function useInstrumentLibrary(
 
   useEffect(() => {
     nativeInstrumentPreviewing.current = false;
-    const requestGeneration = hostGeneration;
     return api.onAudioStatus((status) => {
-      if (currentHostGeneration.current !== requestGeneration) return;
       if (status.instrumentPreviewing) {
         nativeInstrumentPreviewing.current = true;
         return;
@@ -126,18 +113,16 @@ export function useInstrumentLibrary(
 
   const runItemMutation = useCallback(
     async (operation: () => Promise<InstrumentLibraryItem>, label: string) => {
-      const requestGeneration = hostGeneration;
       setError(null);
       try {
         const next = await operation();
-        if (currentHostGeneration.current === requestGeneration) replaceItem(next);
+        replaceItem(next);
       } catch (cause) {
-        if (currentHostGeneration.current !== requestGeneration) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError(label)(cause);
       }
     },
-    [hostGeneration, replaceItem],
+    [replaceItem],
   );
 
   const toggleFavorite = useCallback(
@@ -166,40 +151,34 @@ export function useInstrumentLibrary(
 
   const createCollection = useCallback(
     async (name: string) => {
-      const requestGeneration = hostGeneration;
       try {
         await createInstrumentCollection(name);
-        if (currentHostGeneration.current === requestGeneration) await reloadCollections();
+        await reloadCollections();
       } catch (cause) {
-        if (currentHostGeneration.current !== requestGeneration) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError('createInstrumentCollection')(cause);
       }
     },
-    [createInstrumentCollection, hostGeneration, reloadCollections],
+    [createInstrumentCollection, reloadCollections],
   );
 
   const renameCollection = useCallback(
     async (id: number, name: string) => {
-      const requestGeneration = hostGeneration;
       try {
         await renameInstrumentCollection(id, name);
-        if (currentHostGeneration.current === requestGeneration) await reloadCollections();
+        await reloadCollections();
       } catch (cause) {
-        if (currentHostGeneration.current !== requestGeneration) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError('renameInstrumentCollection')(cause);
       }
     },
-    [hostGeneration, reloadCollections, renameInstrumentCollection],
+    [reloadCollections, renameInstrumentCollection],
   );
 
   const deleteCollection = useCallback(
     async (id: number) => {
-      const requestGeneration = hostGeneration;
       try {
         await deleteInstrumentCollection(id);
-        if (currentHostGeneration.current !== requestGeneration) return;
         setFilters((current) =>
           current.collectionId === id ? { ...current, collectionId: null } : current,
         );
@@ -215,12 +194,11 @@ export function useInstrumentLibrary(
         );
         await reloadCollections();
       } catch (cause) {
-        if (currentHostGeneration.current !== requestGeneration) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError('deleteInstrumentCollection')(cause);
       }
     },
-    [deleteInstrumentCollection, hostGeneration, reloadCollections],
+    [deleteInstrumentCollection, reloadCollections],
   );
 
   const setCollectionMembership = useCallback(
@@ -237,14 +215,10 @@ export function useInstrumentLibrary(
       if (safeMode) return;
       if (item.preview === null) return;
       if (previewPendingIdRef.current !== null) return;
-      const requestGeneration = hostGeneration;
       const requestId = ++previewRequestRef.current;
       previewPendingIdRef.current = item.id;
       setPreviewPendingId(item.id);
-      const isCurrentRequest = () =>
-        currentHostGeneration.current === requestGeneration &&
-        previewRequestRef.current === requestId;
-
+      const isCurrentRequest = () => previewRequestRef.current === requestId;
       if (previewingId === item.id) {
         try {
           const next = await stopInstrumentPreview();
@@ -290,7 +264,7 @@ export function useInstrumentLibrary(
         }
       }
     },
-    [hostGeneration, previewInstrument, previewingId, safeMode, setAudio, stopInstrumentPreview],
+    [previewInstrument, previewingId, safeMode, setAudio, stopInstrumentPreview],
   );
 
   const selected = items.find((item) => item.id === selectedId) ?? null;

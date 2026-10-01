@@ -15,7 +15,7 @@ import {
   publishAudioMeters,
   resetAudioMeters,
 } from '@/shared/audio/audio-meters';
-import { getHostGeneration, logNativeError } from '@/native/invoke';
+import { logNativeError } from '@/native/invoke';
 import type {
   AudioApi,
   BootstrapApi,
@@ -48,7 +48,6 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const runtimeStartupEventReceived = useRef(false);
   const bootstrapPromise = useRef<Promise<void> | null>(null);
-  const activeBootstrapGeneration = useRef<number | null>(null);
   const sessionRef = useRef<CreativeSession | null>(null);
   const sessionHook = useProject(api, { boot, setBoot, hostGeneration });
   const { applyCanonicalState, applyProjectActivation, mergeBootstrapState } = sessionHook;
@@ -56,64 +55,42 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
   const activeProjectIdRef = useRef<string | null>(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
   sessionRef.current = sessionHook.session;
+  const runBootstrap = useCallback((): Promise<void> => {
+    const pending = bootstrapPromise.current;
+    if (pending) return pending;
 
-  const runBootstrap = useCallback(
-    (requestGeneration: number): Promise<void> => {
-      const pending = bootstrapPromise.current;
-      if (pending) return pending;
-
-      setBootstrapError(null);
-      setBootstrapLoading(true);
-      const operation = Promise.resolve()
-        .then(() => api.bootstrap())
-        .then((state) => {
-          if (
-            activeBootstrapGeneration.current !== requestGeneration ||
-            getHostGeneration() !== requestGeneration
-          )
-            return;
-          const mergedState = mergeBootstrapState(state);
-          activeProjectIdRef.current = state.projectState.activeProjectId;
-          setBoot(mergedState);
-          applyCanonicalState(mergedState.canonical);
-          if (!runtimeStartupEventReceived.current) {
-            setRuntimeStarted(state.runtimeStarted);
-            setRuntimeStartupFinished(state.runtimeStartupFinished);
-          }
-        })
-        .catch((error: unknown) => {
-          logNativeError('bootstrap')(error);
-          if (
-            activeBootstrapGeneration.current === requestGeneration &&
-            getHostGeneration() === requestGeneration
-          ) {
-            setBootstrapError(error instanceof Error ? error.message : String(error));
-          }
-        })
-        .finally(() => {
-          if (
-            activeBootstrapGeneration.current === requestGeneration &&
-            getHostGeneration() === requestGeneration
-          ) {
-            setBootstrapLoading(false);
-          }
-          if (bootstrapPromise.current === operation) bootstrapPromise.current = null;
-        });
-      bootstrapPromise.current = operation;
-      return operation;
-    },
-    [api, applyCanonicalState, mergeBootstrapState],
-  );
-
+    setBootstrapError(null);
+    setBootstrapLoading(true);
+    const operation = Promise.resolve()
+      .then(() => api.bootstrap())
+      .then((state) => {
+        const mergedState = mergeBootstrapState(state);
+        activeProjectIdRef.current = state.projectState.activeProjectId;
+        setBoot(mergedState);
+        applyCanonicalState(mergedState.canonical);
+        if (!runtimeStartupEventReceived.current) {
+          setRuntimeStarted(state.runtimeStarted);
+          setRuntimeStartupFinished(state.runtimeStartupFinished);
+        }
+      })
+      .catch((error: unknown) => {
+        logNativeError('bootstrap')(error);
+        setBootstrapError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        setBootstrapLoading(false);
+        if (bootstrapPromise.current === operation) bootstrapPromise.current = null;
+      });
+    bootstrapPromise.current = operation;
+    return operation;
+  }, [api, applyCanonicalState, mergeBootstrapState]);
   useEffect(() => {
     resetAudioMeters();
   }, [activeProjectId, hostGeneration, sessionHook.session?.sessionId]);
 
   useEffect(() => {
     let disposed = false;
-    const effectGeneration = hostGeneration;
     bootstrapPromise.current = null;
-    activeBootstrapGeneration.current = effectGeneration;
     runtimeStartupEventReceived.current = false;
     setBoot(null);
     setAudio(startingAudioStatus());
@@ -124,26 +101,26 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     let unlistenRuntimeStartupFinished: (() => void) | null = null;
     const unlistenCanonicalStateChanged = api.onCanonicalStateChanged(
       (canonical: CanonicalState) => {
-        if (!disposed && getHostGeneration() === effectGeneration) {
+        if (!disposed) {
           applyCanonicalState(canonical);
         }
       },
     );
     const unlistenProjectStateChanged = api.onProjectStateChanged((projectState: ProjectState) => {
-      if (disposed || getHostGeneration() !== effectGeneration) return;
+      if (disposed) return;
       activeProjectIdRef.current = projectState.activeProjectId;
       setBoot((current) => (current ? { ...current, projectState } : current));
     });
     const unlistenProjectActivated = api.onProjectActivated(
       (activation: ProjectActivationResult) => {
-        if (disposed || getHostGeneration() !== effectGeneration) return;
+        if (disposed) return;
         if (!applyProjectActivation(activation)) return;
         activeProjectIdRef.current = activation.projectState.activeProjectId;
       },
     );
     const runtimeStartupListener = api
       .onRuntimeStartupFinished((event) => {
-        if (disposed || getHostGeneration() !== effectGeneration) return;
+        if (disposed) return;
         runtimeStartupEventReceived.current = true;
         setRuntimeStartupFinished(true);
         setRuntimeStarted(event.succeeded);
@@ -162,15 +139,15 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
     // listener only refines startup flags when a live startup attempt follows.
     // Generation 0 is the transient "Host is starting" state, so bootstrap only
     // runs for a settled generation; the browser preview reports generation 1.
-    if (effectGeneration > 0) {
-      void runBootstrap(effectGeneration);
+    if (hostGeneration > 0) {
+      void runBootstrap();
     }
 
     let audioStatusTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingAudioStatus: AudioStatus | null = null;
     let lastAppliedAudioStatus: AudioStatus | null = null;
     const unlistenAudio = api.onAudioStatus((status) => {
-      if (disposed || getHostGeneration() !== effectGeneration) return;
+      if (disposed) return;
       if (status.state === 'faulted' || status.state === 'offline' || status.state === 'starting') {
         markAudioMetersUnavailable();
       }
@@ -186,7 +163,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
         audioStatusTimer = null;
         const next = pendingAudioStatus;
         pendingAudioStatus = null;
-        if (disposed || getHostGeneration() !== effectGeneration || next == null) return;
+        if (disposed || next == null) return;
         if (
           lastAppliedAudioStatus != null &&
           audioStatusSignature(lastAppliedAudioStatus) === audioStatusSignature(next)
@@ -198,20 +175,11 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
       }, 100);
     });
     const unlistenMeters = api.onAudioMeters((meters: AudioMeterFrame) => {
-      if (
-        disposed ||
-        getHostGeneration() !== effectGeneration ||
-        activeProjectIdRef.current === null ||
-        meters.projectId !== activeProjectIdRef.current
-      )
-        return;
-      publishAudioMeters(meters);
+      if (disposed) return;
+      publishAudioMeters(meters, activeProjectIdRef.current);
     });
     return () => {
       disposed = true;
-      if (activeBootstrapGeneration.current === effectGeneration) {
-        activeBootstrapGeneration.current = null;
-      }
       if (audioStatusTimer != null) clearTimeout(audioStatusTimer);
       unlistenAudio();
       unlistenRuntimeStartupFinished?.();
@@ -224,7 +192,7 @@ export function useAppRuntime(api: AppRuntimeApi, hostGeneration: number) {
 
   const retryBootstrap = useCallback(() => {
     if (hostGeneration <= 0) return Promise.resolve();
-    return runBootstrap(hostGeneration);
+    return runBootstrap();
   }, [hostGeneration, runBootstrap]);
 
   return {

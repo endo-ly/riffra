@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isEditableTypingTarget } from '@/shared/input';
-import { getHostGeneration, logNativeError } from '@/native/invoke';
+import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
@@ -191,14 +191,13 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   useEffect(() => {
     if (!boot || !hostReady || initialDataLoadStarted.current) return;
     initialDataLoadStarted.current = true;
-    const requestGeneration = hostConnection.state.generation;
     const timer = setTimeout(() => {
       void reloadRecordings().catch(logNativeError('listRecordings'));
       void refreshAudioDevices().catch(logNativeError('probeAudioDevices'));
       void enableMidi().catch(logNativeError('enableMidi'));
       void getAudioStatus()
         .then((nextAudio) => {
-          if (getHostGeneration() === requestGeneration) setAudio(nextAudio);
+          setAudio(nextAudio);
         })
         .catch(logNativeError('getAudioStatus'));
     }, 150);
