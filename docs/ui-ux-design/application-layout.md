@@ -29,7 +29,7 @@ Global Control Bar は、現在のセッション、Host、履歴、Transport、
 
 Project / Host Selector はGlobal Control Barの左端に置き、現在のProjectとHost接続を常時表示する。1行目にProject名と自動保存状態、2行目にHost名と接続状態を示す。Project名はActive Projectの `CreativeSession.project_name` から取得し、未命名の場合は `Untitled Project` と表示する。Host名はHost bootstrapの情報、DataRootのbasename、PIDまたはinstance IDの補助情報から構成し、Registryに表示名を別管理しない。
 
-選択するとpopoverが開き、PROJECTとHOSTのセクションを提供する。PROJECTではProject一覧、新規作成、Active Projectの改名、Import ProjectとExport Projectを実行する。Project一覧の項目はDataRoot内のProjectを切り替えるため、ファイルダイアログを開かない。Import Projectだけがファイルダイアログで `.riffra` packageを選択し、その内容を新しいProjectとしてDataRootへ取り込んでActive Projectにする。Export ProjectはユーザーがSave dialogで指定した場所へportable `.riffra` packageを書き出し、成功後に保存先の絶対パスを通知する。
+選択するとpopoverが開き、ProjectとHostを一つの画面に表示する。上部にActive Projectの名前・最終更新・Export、中央にProject一覧、その下に新規作成とImportを置き、最下段にHost候補と`Connect...`・`Refresh`を置く。Active Projectの名前はその場で編集でき、Enterまたはフォーカスを外した時点で確定し、Escで破棄する。Project一覧は各Projectの最終更新を示し、Active Projectを選択状態として示す。一覧だけがスクロールし、件数が多い場合は名前で絞り込める。Host候補は1行ずつ表示し、現在のHostを選択状態として示す。Project一覧の項目はDataRoot内のProjectを切り替えるため、ファイルダイアログを開かない。Import Projectだけがファイルダイアログで `.riffra` packageを選択し、その内容を新しいProjectとしてDataRootへ取り込んでActive Projectにする。Export ProjectはユーザーがSave dialogで指定した場所へportable `.riffra` packageを書き出し、成功後に保存先の絶対パスを通知する。
 
 - Embeddedは `Local Desktop` と表示する
 - Attachedは接続先Hostのproject nameまたはDataRoot basenameと、PID・Runtime状態・DataRootを表示する
@@ -39,7 +39,7 @@ Project / Host Selector はGlobal Control Barの左端に置き、現在のProje
 - Host Selectorを開いたときとHost接続状態が変わったときは候補一覧を更新する。常時ポーリングは行わない
 - Host切替に失敗した場合はpopoverを開いたままエラーを表示し、成功した場合だけ閉じる
 - Host接続後のbootstrapに失敗した場合は起動画面に理由と`Retry`を表示し、同じHostへの再試行を提供する
-- `Connect to Local Host...`はDesktopのfolder dialogでDataRootを選択し、そのHostの`host.json`へ接続する
+- `Connect...`はDesktopのfolder dialogでDataRootを選択し、そのHostの`host.json`へ接続する
 
 Hostの切替後はCanonical state、履歴、Runtime、Audio、Transport、Plugin、Recording、Library、Missing、Jobの表示を新Hostのbootstrap基準へ置き換える。最後に表示していたSessionを参照表示として残す場合も、Hostへ接続していない間は編集・再生・録音・Audio設定を実行できる状態にしない。
 

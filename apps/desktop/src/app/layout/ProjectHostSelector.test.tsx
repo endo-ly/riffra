@@ -61,9 +61,8 @@ describe('ProjectHostSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
 
     expect(screen.getByRole('textbox', { name: 'Project name' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Import Project…' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Open Project…' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Export Project…' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Import…' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Export…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /project-a/i })).toBeInTheDocument();
     expect(screen.getByText(/PID 18420 · Ready/)).toBeInTheDocument();
     expect(onRefresh).toHaveBeenCalledOnce();
@@ -75,7 +74,7 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { onImportProject });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Import Project…' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Import…' }));
 
     expect(onImportProject).toHaveBeenCalledOnce();
   });
@@ -91,6 +90,22 @@ describe('ProjectHostSelector', () => {
     await user.type(nameInput, 'My Project');
     await user.keyboard('{Enter}');
 
+    expect(onRenameProject).toHaveBeenCalledOnce();
+    expect(onRenameProject).toHaveBeenCalledWith('My Project');
+  });
+
+  it('commits a pending Project rename when the selector closes from outside', async () => {
+    const onRenameProject = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderSelector(embedded, { onRenameProject });
+
+    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
+    const nameInput = screen.getByRole('textbox', { name: 'Project name' });
+    await user.clear(nameInput);
+    await user.type(nameInput, 'My Project');
+    await user.click(document.body);
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(onRenameProject).toHaveBeenCalledOnce();
     expect(onRenameProject).toHaveBeenCalledWith('My Project');
   });
@@ -132,7 +147,7 @@ describe('ProjectHostSelector', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Unreadable Project' }));
+    await user.click(screen.getByRole('menuitem', { name: /Unreadable Project/ }));
 
     await waitFor(() =>
       expect(onOpenProject).toHaveBeenCalledWith(projectState.projects[1].projectId),
@@ -152,7 +167,7 @@ describe('ProjectHostSelector', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: '+ New Project' }));
+    await user.click(screen.getByRole('menuitem', { name: 'New Project' }));
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledOnce());
     expect(screen.getByRole('menu')).toBeInTheDocument();
@@ -177,7 +192,7 @@ describe('ProjectHostSelector', () => {
     renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
 
     await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Connect to Local Host…' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Connect…' }));
 
     await waitFor(() =>
       expect(onSwitch).toHaveBeenCalledWith({

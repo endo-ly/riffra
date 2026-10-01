@@ -9,6 +9,7 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     redo: 'M15 7h3.2l-2.6-2.6L17 3l5 5-5 5-1.4-1.4 2.6-2.6H15a6 6 0 1 0 5.6 8h-2.1A4 4 0 1 1 15 7Z',
     plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6Z',
     chevron: 'm9 18 6-6-6-6',
+    check: 'm9.5 16.2-4.2-4.2-1.4 1.4 5.6 5.6 11-11-1.4-1.4-9.6 9.6Z',
     close:
       'M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z',
     command:
