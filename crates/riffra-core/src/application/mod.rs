@@ -160,6 +160,11 @@ impl<'a, S> Application<'a, S>
 where
     S: SessionStorage + ?Sized,
 {
+    /// Returns canonical state and history at the current application revision.
+    pub fn canonical_state(&self) -> crate::CanonicalState {
+        self.core.canonical_state()
+    }
+
     pub(crate) fn new(core: &'a mut AppCore, storage: &'a S) -> Self {
         Self { core, storage }
     }

@@ -3,18 +3,15 @@
 use super::*;
 
 pub fn set_audio_clip_take_variant(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     clip_id: &str,
     variant: AudioTakeVariant,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .set_audio_clip_take_variant(clip_id, variant)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.set_audio_clip_take_variant(clip_id, variant))?;
+    Ok(committed.0)
 }
 pub fn start_take_comparison(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     take_id: &str,
 ) -> Result<AudioStatus, AdapterError> {
     let session = current_session(context)?;
@@ -55,7 +52,7 @@ pub fn start_take_comparison(
 }
 
 pub fn switch_take_comparison_variant(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     variant: AudioTakeVariant,
 ) -> Result<AudioStatus, AdapterError> {
     context
@@ -64,7 +61,7 @@ pub fn switch_take_comparison_variant(
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
-pub fn stop_take_comparison(context: &SessionContext<'_>) -> Result<AudioStatus, AdapterError> {
+pub fn stop_take_comparison(context: &mut SessionContext<'_>) -> Result<AudioStatus, AdapterError> {
     context
         .audio
         .stop_take_comparison()
@@ -72,7 +69,7 @@ pub fn stop_take_comparison(context: &SessionContext<'_>) -> Result<AudioStatus,
 }
 
 pub fn activate_take(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     session_id: &str,
     take_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
@@ -96,15 +93,12 @@ pub fn activate_take(
             )
         })
         .transpose()?;
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .activate_take(session_id, take_id, midi_clip)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.activate_take(session_id, take_id, midi_clip))?;
+    Ok(committed.0)
 }
 
 pub fn place_take_as_separate_clip(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     take_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
@@ -127,12 +121,10 @@ pub fn place_take_as_separate_clip(
             )
         })
         .transpose()?;
-    let mutation = commit_core_application_with_created_ids(context, |core, store| {
-        core.application(store)
-            .place_take_as_separate_clip_with_created_ids(take_id, midi_clip)
-    })?;
-    let mut result = crate::session::adapter::arrangement_mutation_result(context)?;
-    result.created_entity_ids = mutation.created_entity_ids;
+    let committed = context
+        .commit(|mut app| app.place_take_as_separate_clip_with_created_ids(take_id, midi_clip))?;
+    let mut result = committed.0;
+    result.created_entity_ids = committed.1.created_entity_ids;
     Ok(result)
 }
 
@@ -224,8 +216,7 @@ mod tests {
                 Ok(())
             }
         }
-        let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(root.clone(), session, audio, false, true);
+        let mut core = riffra_core::AppCore::new("project:test".into(), session, 0);
         let store = MemoryStorage;
         let changed = core
             .application(&store)

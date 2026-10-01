@@ -13,18 +13,14 @@ const ARRANGEMENT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 pub fn sync_arrangement_runtime<D: RuntimeDriver>(
     context: &SessionContext<'_, D>,
 ) -> Result<crate::RuntimeProjectionStatus, String> {
-    let project_id = context
-        .storage
-        .project_id()
-        .map_err(|error| error.to_string())?;
-    let canonical = context.core.snapshot().map_err(|error| error.to_string())?;
+    let canonical = context.project.read().canonical.clone();
     context
         .runtime
         .apply_and_wait(
             Arc::new(project_session(
                 context.data_root,
                 context.built_in_instruments,
-                &project_id,
+                &canonical.project_id,
                 &canonical.session,
             )),
             riffra_core::ProjectionKey {
@@ -44,24 +40,26 @@ pub fn prepare_arrangement_candidate<D: RuntimeDriver>(
     candidate: &CreativeSession,
     expected_sequence: u64,
 ) -> Result<crate::RuntimeProjectionStatus, AdapterError> {
-    let current = context.core.snapshot()?;
+    let current = context.project.read().canonical.clone();
+    if current.project_id != context.snapshot.project_id {
+        return Err(AdapterError::ProjectConflict {
+            expected_project_id: context.snapshot.project_id.clone(),
+            current_project_id: current.project_id,
+        });
+    }
     if current.sequence != expected_sequence {
         return Err(AdapterError::Conflict {
             expected_sequence,
             current_sequence: current.sequence,
         });
     }
-    let project_id = context
-        .storage
-        .project_id()
-        .map_err(|error| AdapterError::command(error.to_string()))?;
     context
         .runtime
         .apply_candidate_and_wait(
             Arc::new(project_session(
                 context.data_root,
                 context.built_in_instruments,
-                &project_id,
+                &context.snapshot.project_id,
                 candidate,
             )),
             riffra_core::ProjectionKey {

@@ -4,7 +4,7 @@ use super::{DispatchError, HostDispatcher};
 use crate::api::params::TimebaseUpdateParams;
 use riffra_core::ProjectTimebase;
 
-impl<A> HostDispatcher<'_, A> {
+impl HostDispatcher<'_> {
     pub(super) fn timebase_update(
         &self,
         current: ProjectTimebase,

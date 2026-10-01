@@ -6,21 +6,19 @@ use crate::api::output::{PhrasePreview, PhrasePreviewNote};
 use crate::api::params::PhrasePreviewParams;
 use riffra_core::{MusicalPitch, ProjectTimebase};
 
-impl<A> HostDispatcher<'_, A> {
-    pub(super) fn phrase_preview(
+impl HostDispatcher<'_> {
+    pub(super) fn phrase_preview<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         timebase: ProjectTimebase,
         params: PhrasePreviewParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let resolved = self
-            .core
-            .application(&self.storage)
-            .resolve_phrase_pattern(
-                &params.clip_id,
-                params.pattern,
-                params.placements,
-                params.channel,
-            )?;
+        let resolved = application.resolve_phrase_pattern(
+            &params.clip_id,
+            params.pattern,
+            params.placements,
+            params.channel,
+        )?;
         let invalid =
             |error: riffra_core::DomainError| DispatchError::invalid_request(error.to_string());
         let notes = if params.include_notes {

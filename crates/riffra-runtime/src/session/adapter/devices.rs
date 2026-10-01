@@ -24,7 +24,7 @@ fn plugin_device_role(
 }
 
 fn repair_previous_arrangement<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
+    context: &mut SessionContext<'_, D>,
     original_error: String,
 ) -> String {
     match sync_arrangement_runtime(context) {
@@ -40,14 +40,14 @@ fn repair_previous_arrangement<D: RuntimeDriver>(
 /// before persisting it. A failed candidate never becomes part of the
 /// canonical Session, and a persistence failure repairs the previous graph.
 pub(super) fn commit_device_arrangement<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
+    context: &mut SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     commit_device_arrangement_with_created_ids(context, prepared, Default::default())
 }
 
 pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
+    context: &mut SessionContext<'_, D>,
     prepared: riffra_core::PreparedSession,
     created_entity_ids: std::collections::BTreeMap<String, Vec<String>>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
@@ -77,88 +77,61 @@ pub(super) fn commit_device_arrangement_with_created_ids<D: RuntimeDriver>(
             }
         });
     }
-    let _project_commit_guard = context
-        .project_commit
-        .as_ref()
-        .map(|project_commit| {
-            project_commit
-                .command_gate
-                .lock()
-                .map_err(|_| AdapterError::command("Host command gate was poisoned"))
-        })
-        .transpose()?;
-    if let Some(project_commit) = context.project_commit.as_ref() {
-        let current_project_id = project_commit
-            .project_store
-            .active_project_id()
-            .map_err(|error| AdapterError::command(error.to_string()))?;
-        if current_project_id != project_commit.expected_project_id {
-            return Err(AdapterError::ProjectConflict {
-                expected_project_id: project_commit.expected_project_id.clone(),
-                current_project_id,
-            });
-        }
-    }
-    if let Err(error) = commit_core_application(context, |core, store| {
-        core.application(store).commit_prepared(prepared)
-    }) {
-        return Err(match error {
-            AdapterError::Conflict {
-                expected_sequence,
-                current_sequence,
-            } => {
-                let _ = repair_previous_arrangement(context, error.to_string());
+    let committed = match context.commit(|mut app| app.commit_prepared(prepared)) {
+        Ok(committed) => committed,
+        Err(error) => {
+            return Err(match error {
                 AdapterError::Conflict {
                     expected_sequence,
                     current_sequence,
+                } => {
+                    let _ = repair_previous_arrangement(context, error.to_string());
+                    AdapterError::Conflict {
+                        expected_sequence,
+                        current_sequence,
+                    }
                 }
-            }
-            AdapterError::ProjectConflict {
-                expected_project_id,
-                current_project_id,
-            } => AdapterError::ProjectConflict {
-                expected_project_id,
-                current_project_id,
-            },
-            AdapterError::RuntimeUnavailable(message) => {
-                AdapterError::runtime(repair_previous_arrangement(context, message))
-            }
-            AdapterError::CommandFailed(message) => {
-                AdapterError::command(repair_previous_arrangement(context, message))
-            }
-        });
-    }
-    let mut mutation = crate::session::adapter::arrangement_mutation_result(context)?;
+                AdapterError::ProjectConflict {
+                    expected_project_id,
+                    current_project_id,
+                } => AdapterError::ProjectConflict {
+                    expected_project_id,
+                    current_project_id,
+                },
+                AdapterError::RuntimeUnavailable(message) => {
+                    AdapterError::runtime(repair_previous_arrangement(context, message))
+                }
+                AdapterError::CommandFailed(message) => {
+                    AdapterError::command(repair_previous_arrangement(context, message))
+                }
+            });
+        }
+    };
+    let mut mutation = committed.0;
     mutation.created_entity_ids = created_entity_ids;
     Ok(mutation)
 }
 
 pub fn set_track_audio_input(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     channel_index: Option<u32>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .set_track_audio_input(track_id, channel_index)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.set_track_audio_input(track_id, channel_index))?;
+    Ok(committed.0)
 }
 
 pub fn set_track_midi_input(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     route: MidiInputRoute,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .set_track_midi_input(track_id, route)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.set_track_midi_input(track_id, route))?;
+    Ok(committed.0)
 }
 
 pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>(
-    context: &SessionContext<'_, D>,
+    context: &mut SessionContext<'_, D>,
     track_id: &str,
     path: &str,
     expected_sequence: Option<u64>,
@@ -190,7 +163,7 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
     )
     .map_err(AdapterError::command)?;
     let prepared = context
-        .core
+        .prepare_core()
         .application(&context.storage)
         .prepare_track_instrument(track_id, instrument)
         .map_err(AdapterError::from)?;
@@ -207,17 +180,15 @@ pub(crate) fn set_track_vst3_instrument_with_expected_sequence<D: RuntimeDriver>
 }
 
 pub fn clear_track_instrument(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store).set_track_instrument(track_id, None)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.set_track_instrument(track_id, None))?;
+    Ok(committed.0)
 }
 
 pub(crate) fn add_track_effect_with_expected_sequence(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     path: &str,
     expected_sequence: Option<u64>,
@@ -233,7 +204,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
         crate::api::output::PluginRole::Effect,
     )?;
     let (prepared, device_id) = context
-        .core
+        .prepare_core()
         .application(&context.storage)
         .prepare_track_effect_with_created_id(
             track_id,
@@ -253,31 +224,26 @@ pub(crate) fn add_track_effect_with_expected_sequence(
 }
 
 pub fn remove_track_effect(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     device_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .remove_track_effect(track_id, device_id)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.remove_track_effect(track_id, device_id))?;
+    Ok(committed.0)
 }
 
 pub fn reorder_track_effects(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     ordered_device_ids: &[String],
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .reorder_track_effects(track_id, ordered_device_ids.to_owned())
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context
+        .commit(|mut app| app.reorder_track_effects(track_id, ordered_device_ids.to_owned()))?;
+    Ok(committed.0)
 }
 
 pub fn set_track_device_bypassed(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     device_id: &str,
     bypassed: bool,
@@ -307,12 +273,10 @@ pub fn set_track_device_bypassed(
     context
         .audio
         .set_track_device_bypassed(track_id, device_id, bypassed)?;
-    let result = commit_core_application(context, |core, store| {
-        core.application(store)
-            .set_track_device_bypassed(track_id, device_id, bypassed)
-    });
-    match result {
-        Ok(_) => crate::session::adapter::arrangement_mutation_result(context),
+    let committed =
+        context.commit(|mut app| app.set_track_device_bypassed(track_id, device_id, bypassed));
+    match committed {
+        Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
             let _ = context
                 .audio
@@ -323,7 +287,7 @@ pub fn set_track_device_bypassed(
 }
 
 pub fn set_track_device_parameter(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     device_id: &str,
     parameter_index: u32,
@@ -368,12 +332,10 @@ pub fn set_track_device_parameter(
     context
         .audio
         .set_track_device_parameter(track_id, device_id, parameter_index, value)?;
-    let result = commit_core_application(context, |core, store| {
-        core.application(store)
-            .set_track_device_parameter(track_id, device_id, index, value)
-    });
-    match result {
-        Ok(_) => crate::session::adapter::arrangement_mutation_result(context),
+    let committed =
+        context.commit(|mut app| app.set_track_device_parameter(track_id, device_id, index, value));
+    match committed {
+        Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
             let _ = context.audio.set_track_device_parameter(
                 track_id,
@@ -387,7 +349,7 @@ pub fn set_track_device_parameter(
 }
 
 pub fn open_track_plugin_editor(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     track_id: &str,
     device_id: &str,
 ) -> Result<(), AdapterError> {
@@ -426,61 +388,12 @@ pub fn open_track_plugin_editor(
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
-/// Persists state captured from the native Track Plugin Editor into the
-/// canonical Session. The editor already owns the playback instance and the
-/// Native Runtime mirrors the state into the live instance, so this operation
-/// deliberately does not rebuild or reapply the plugin graph.
-pub fn persist_track_plugin_state(
-    context: &SessionContext<'_>,
-    track_id: &str,
-    device_id: &str,
-    parameter_values: Vec<f32>,
-    state_data: Option<String>,
-    bypassed: bool,
-) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    if parameter_values.iter().any(|value| !value.is_finite()) {
-        return Err("Track Plugin Editor returned a non-finite parameter value.".into());
-    }
-    commit_core_application(context, |core, store| {
-        core.application(store).persist_track_plugin_state(
-            track_id,
-            device_id,
-            parameter_values,
-            state_data,
-            bypassed,
-        )
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
-}
-
-/// Persists one editor-originated parameter without routing it back through
-/// Native. The playback instance has already changed and the live instance
-/// receives the same value through its block-boundary queue.
-pub fn persist_track_plugin_parameter(
-    context: &SessionContext<'_>,
-    track_id: &str,
-    device_id: &str,
-    parameter_index: i32,
-    value: f32,
-) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    if parameter_index < 0 || !value.is_finite() {
-        return Err("Track Plugin Editor returned an invalid parameter change.".into());
-    }
-    let index = usize::try_from(parameter_index)
-        .map_err(|_| "Track Plugin Editor returned an invalid parameter index.".to_string())?;
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .persist_track_plugin_parameter(track_id, device_id, index, value)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
-}
-
 /// Rewrites every canonical Asset reference pointed to by `asset_id` to the
 /// user's new file and persists the updated session. The Asset's
 /// `content_location` is also updated so future operations resolve to the new
 /// path.
 pub fn relink_missing_dependency(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     asset_id: AssetId,
     new_path: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
@@ -509,30 +422,26 @@ pub fn relink_missing_dependency(
         &new_path.to_string_lossy(),
         Some(riffra_core::Provenance::imported()),
     )?;
-    commit_core_application(context, |core, store| {
-        core.application(store)
-            .replace_asset_references(&asset_id, new_asset_id)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed =
+        context.commit(|mut app| app.replace_asset_references(&asset_id, new_asset_id))?;
+    Ok(committed.0)
 }
 
 /// Marks a missing plugin device as a disabled placeholder so it no longer
 /// surfaces as a missing dependency. The session is persisted through the
 /// canonical commit.
 pub fn disable_missing_plugin(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     device_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    commit_core_application(context, |core, store| {
-        core.application(store).disable_missing_plugin(device_id)
-    })?;
-    crate::session::adapter::arrangement_mutation_result(context)
+    let committed = context.commit(|mut app| app.disable_missing_plugin(device_id))?;
+    Ok(committed.0)
 }
 
 /// Replaces an unresolved Track Device in place so its chain position and id
 /// remain stable while the plugin binary and plugin state are refreshed.
 pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
-    context: &SessionContext<'_>,
+    context: &mut SessionContext<'_>,
     device_id: &str,
     new_path: &str,
     expected_sequence: Option<u64>,
@@ -546,7 +455,7 @@ pub(crate) fn replace_missing_track_plugin_with_expected_sequence(
     })?;
     let (name, validated_path) = plugins::validated_plugin(context.data_root, path, role)?;
     let prepared = context
-        .core
+        .prepare_core()
         .application(&context.storage)
         .prepare_track_plugin_replacement(
             device_id,
@@ -654,23 +563,41 @@ mod tests {
         session
     }
 
+    fn project(root: &Path, session: CreativeSession) -> crate::host::open_project::ProjectCell {
+        crate::host::open_project::ProjectCell::new(crate::host::open_project::OpenProject {
+            storage: riffra_host::SessionStore::new(root, "01900000-0000-7000-8000-000000000001"),
+            core: riffra_core::AppCore::new(
+                "01900000-0000-7000-8000-000000000001".into(),
+                session,
+                0,
+            ),
+            recovered_from_generation: false,
+        })
+    }
+
     fn candidate_context<'a>(
         root: &'a Path,
         runtime: &'a crate::RuntimeReconciler<CandidateRuntimeDriver>,
         audio: &'a crate::AudioSupervisor,
-        core: &'a riffra_core::AppCore<crate::AudioSupervisor>,
+        project: &'a crate::host::open_project::ProjectCell,
     ) -> SessionContext<'a, CandidateRuntimeDriver> {
-        let storage = riffra_host::SessionStore::new(root, "01900000-0000-7000-8000-000000000001");
+        let snapshot = project.read().canonical.clone();
+        let storage = project.write().project().storage.clone();
         SessionContext {
-            core,
+            project,
+            snapshot,
+            writer: None,
             audio,
             runtime,
             storage,
             data_root: root,
             built_in_instruments: crate::test_support::empty_built_in_catalog(),
             safe_mode: false,
-            events: &crate::NoopHostEventSink,
-            project_commit: None,
+            publish: &|_writer, committed| crate::api::output::ArrangementMutationResult {
+                canonical: committed.snapshot.canonical.clone(),
+                projection: crate::api::output::ArrangementProjectionOutcome::NotRequired,
+                created_entity_ids: Default::default(),
+            },
         }
     }
 
@@ -678,7 +605,7 @@ mod tests {
         context: &SessionContext<'_, D>,
     ) -> riffra_core::PreparedSession {
         context
-            .core
+            .prepare_core()
             .application(&context.storage)
             .prepare_track_effect(
                 "track:plugin",
@@ -700,17 +627,17 @@ mod tests {
         let driver = Arc::new(CandidateRuntimeDriver::new(true));
         let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
-        let context = candidate_context(&root, &runtime, &audio, &core);
+        let core = project(&root, session);
+        let mut context = candidate_context(&root, &runtime, &audio, &core);
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&mut context, candidate);
 
         // Assert
         assert!(result.is_err());
         assert!(
-            core.snapshot().unwrap().session.arrangement.tracks[0]
+            core.read().canonical.clone().session.arrangement.tracks[0]
                 .effects
                 .is_empty()
         );
@@ -730,28 +657,22 @@ mod tests {
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
         let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
-        let core = Arc::new(riffra_core::AppCore::new(
-            root.clone(),
-            session,
-            audio.clone(),
-            false,
-            false,
-        ));
+        let core = Arc::new(project(&root, session));
         let hook_core = Arc::clone(&core);
-        let hook_root = root.clone();
         driver.set_commit_hook(Arc::new(move || {
-            let store =
-                riffra_host::SessionStore::new(&hook_root, "01900000-0000-7000-8000-000000000001");
-            hook_core
-                .application(&store)
-                .add_marker_with_created_ids(TimelineTick(7), "concurrent".into())
+            let committed = hook_core
+                .write()
+                .commit(|mut app| {
+                    app.add_marker_with_created_ids(TimelineTick(7), "concurrent".into())
+                })
                 .unwrap();
+            assert_eq!(committed.snapshot.canonical.sequence, 1);
         }));
-        let context = candidate_context(&root, &runtime, &audio, core.as_ref());
+        let mut context = candidate_context(&root, &runtime, &audio, core.as_ref());
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&mut context, candidate);
 
         // Assert
         assert!(matches!(
@@ -761,7 +682,7 @@ mod tests {
                 current_sequence: 1,
             })
         ));
-        let current = core.snapshot().unwrap().session;
+        let current = core.read().canonical.clone().session;
         assert_eq!(current.arrangement.revision, 1);
         assert!(current.arrangement.tracks[0].effects.is_empty());
         assert_eq!(driver.loaded.lock().unwrap().last(), Some(&1));
@@ -779,22 +700,17 @@ mod tests {
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
         let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(
-            root.clone(),
-            plugin_base_session(),
-            audio.clone(),
-            false,
-            false,
-        );
-        let context = candidate_context(&root, &runtime, &audio, &core);
+        let core = project(&root, plugin_base_session());
+        let mut context = candidate_context(&root, &runtime, &audio, &core);
         let candidate = prepared_plugin_candidate(&context);
-        let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
-        core.application(&store)
-            .add_marker_with_created_ids(TimelineTick(7), "concurrent".into())
+        let committed = core
+            .write()
+            .commit(|mut app| app.add_marker_with_created_ids(TimelineTick(7), "concurrent".into()))
             .unwrap();
+        assert_eq!(committed.snapshot.canonical.sequence, 1);
 
         // Act
-        let result = commit_device_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&mut context, candidate);
 
         // Assert
         assert!(matches!(
@@ -820,17 +736,17 @@ mod tests {
         let driver = Arc::new(CandidateRuntimeDriver::new(false));
         let runtime = crate::RuntimeReconciler::new(Arc::clone(&driver)).unwrap();
         let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(root.clone(), session, audio.clone(), false, false);
-        let context = candidate_context(&root, &runtime, &audio, &core);
+        let core = project(&root, session);
+        let mut context = candidate_context(&root, &runtime, &audio, &core);
 
         // Act
         let candidate = prepared_plugin_candidate(&context);
-        let result = commit_device_arrangement(&context, candidate);
+        let result = commit_device_arrangement(&mut context, candidate);
 
         // Assert
         assert!(result.is_err());
         assert!(
-            core.snapshot().unwrap().session.arrangement.tracks[0]
+            core.read().canonical.clone().session.arrangement.tracks[0]
                 .effects
                 .is_empty()
         );
@@ -855,20 +771,22 @@ mod tests {
             .unwrap(),
         );
         session.arrangement.tracks.push(track);
-        let audio = crate::AudioSupervisor::offline("test");
-        let core = riffra_core::AppCore::new(root.clone(), session, audio, false, true);
+        let core = project(&root, session);
         let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         store.ensure_layout().unwrap();
         let saved = core
-            .application(&store)
-            .persist_track_plugin_state(
-                "track:guitar",
-                "device:amp",
-                vec![0.25, 0.75],
-                Some("opaque-state".into()),
-                true,
-            )
-            .unwrap();
+            .write()
+            .commit(|mut app| {
+                app.persist_track_plugin_state(
+                    "track:guitar",
+                    "device:amp",
+                    vec![0.25, 0.75],
+                    Some("opaque-state".into()),
+                    true,
+                )
+            })
+            .unwrap()
+            .value;
         let restored = riffra_core::deserialize_session_document(
             &riffra_core::serialize_session_document(&saved).unwrap(),
         )

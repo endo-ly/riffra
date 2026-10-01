@@ -8,14 +8,15 @@ use crate::plugins;
 use riffra_core::AssetKind;
 use std::path::{Path, PathBuf};
 
-impl<A> HostDispatcher<'_, A> {
-    pub(super) fn set_vst3_instrument(
+impl HostDispatcher<'_> {
+    pub(super) fn set_vst3_instrument<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: PluginPathParams,
     ) -> Result<ControlOutput, DispatchError> {
         let (name, plugin_path) =
             self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Instrument)?;
-        let snapshot = self.core.snapshot()?;
+        let snapshot = application.canonical_state();
         let track = snapshot
             .session
             .arrangement
@@ -35,35 +36,37 @@ impl<A> HostDispatcher<'_, A> {
             plugin_path.to_string_lossy().into_owned(),
         )
         .map_err(DispatchError::CommandFailed)?;
-        self.core
-            .application(&self.storage)
-            .set_track_instrument(&track.id, Some(instrument))?;
-        self.arrangement_mutation(if creates_device {
-            [("devices".to_owned(), vec![id])].into()
-        } else {
-            Default::default()
-        })
+        application.set_track_instrument(&track.id, Some(instrument))?;
+        self.arrangement_mutation(
+            if creates_device {
+                [("devices".to_owned(), vec![id])].into()
+            } else {
+                Default::default()
+            },
+            application,
+        )
     }
 
-    pub(super) fn add_effect(
+    pub(super) fn add_effect<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: PluginPathParams,
     ) -> Result<ControlOutput, DispatchError> {
         let (name, plugin_path) =
             self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Effect)?;
         self.created(
-            self.core
-                .application(&self.storage)
-                .add_track_effect_with_created_ids(
-                    &params.track_id,
-                    name,
-                    plugin_path.to_string_lossy().into_owned(),
-                )?,
+            application.add_track_effect_with_created_ids(
+                &params.track_id,
+                name,
+                plugin_path.to_string_lossy().into_owned(),
+            )?,
+            application,
         )
     }
 
-    pub(super) fn relink_missing(
+    pub(super) fn relink_missing<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: MissingRelinkParams,
     ) -> Result<ControlOutput, DispatchError> {
         let old_id = parse_asset_id(&params.asset_id)?;
@@ -87,14 +90,14 @@ impl<A> HostDispatcher<'_, A> {
             Some(riffra_core::Provenance::imported()),
         )?;
         self.edited(
-            self.core
-                .application(&self.storage)
-                .replace_asset_references(&old_id, new_id)?,
+            application.replace_asset_references(&old_id, new_id)?,
+            application,
         )
     }
 
-    pub(super) fn replace_missing_plugin(
+    pub(super) fn replace_missing_plugin<S: riffra_core::SessionStorage + ?Sized>(
         &self,
+        application: &mut riffra_core::application::Application<'_, S>,
         params: MissingPluginReplaceParams,
     ) -> Result<ControlOutput, DispatchError> {
         let path = Path::new(&params.new_path);
@@ -105,8 +108,7 @@ impl<A> HostDispatcher<'_, A> {
             )));
         }
         let name = plugin_name(path);
-        let snapshot = self.core.snapshot()?;
-        let application = self.core.application(&self.storage);
+        let snapshot = application.canonical_state();
         let is_instrument = snapshot.session.arrangement.tracks.iter().any(|track| {
             track
                 .instrument
@@ -120,8 +122,10 @@ impl<A> HostDispatcher<'_, A> {
                 path.to_string_lossy().into_owned(),
             )
             .map_err(DispatchError::CommandFailed)?;
-            return self
-                .edited(application.replace_track_instrument(&params.device_id, replacement)?);
+            return self.edited(
+                application.replace_track_instrument(&params.device_id, replacement)?,
+                application,
+            );
         }
         let mut replacement = snapshot
             .session
@@ -135,7 +139,10 @@ impl<A> HostDispatcher<'_, A> {
         replacement.name = name;
         replacement.plugin.path = path.to_string_lossy().into_owned();
         replacement.plugin.disabled_placeholder = false;
-        self.edited(application.replace_track_plugin(&params.device_id, replacement)?)
+        self.edited(
+            application.replace_track_plugin(&params.device_id, replacement)?,
+            application,
+        )
     }
 
     fn plugin_for_slot(
@@ -205,7 +212,7 @@ mod tests {
             )
             .unwrap();
 
-        let session = dispatcher.core.canonical_state().unwrap().session;
+        let session = dispatcher.core.cell().read().canonical.clone().session;
         let track = &session.arrangement.tracks[0];
         let instrument = track.instrument.as_ref().unwrap();
         assert!(matches!(

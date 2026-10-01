@@ -6,123 +6,55 @@ use crate::api::output::{
     InstrumentPreviewDefinition, PluginPresetInfo, PluginStateSnapshot,
 };
 use crate::api::{
-    CanonicalAccess, CanonicalCommand, CommandExecutor, CommandScope, ControlCommand,
-    ControlOutput, RuntimeCommand,
+    CanonicalAccess, CanonicalCommand, CommandScope, ControlCommand, ControlOutput, RuntimeCommand,
 };
 use crate::execution::GraphPluginState;
 use crate::instrument::{BuiltInInstrumentCatalog, UserInstrumentStore};
-use std::sync::MutexGuard;
 
 impl HostState {
     fn failure(request_id: String, error: ProtocolError) -> ControlResponse {
         ControlResponse::failure(request_id, None, error)
     }
 
-    pub(super) fn session_context(&self) -> Result<SessionContext<'_>, ProtocolError> {
-        self.session_context_with_project_commit(None)
-    }
-
-    pub(super) fn flush_plugin_persistence(&self) -> Result<(), ProtocolError> {
-        let project_id = self
-            .project_store
-            .active_project_id()
-            .map_err(|error| command_error(error.to_string()))?;
-        let commands = self
-            .plugin_persistence_commands
-            .lock()
-            .map_err(|_| command_error("plugin persistence lock was poisoned"))?;
-        if let Some(commands) = commands.as_ref() {
-            let (result, receiver) = std::sync::mpsc::channel();
-            commands
-                .send(super::persistence::PluginPersistenceCommand::FlushProject {
-                    project_id,
-                    result,
-                })
-                .map_err(|_| command_error("plugin persistence worker is unavailable"))?;
-            let outcome = receiver
-                .recv()
-                .map_err(|_| command_error("plugin persistence worker stopped unexpectedly"))?;
-            outcome.map_err(command_error)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn keep_plugin_persistence_project(&self, project_id: &str) {
-        if let Ok(commands) = self.plugin_persistence_commands.lock()
-            && let Some(commands) = commands.as_ref()
-        {
-            let (result, receiver) = std::sync::mpsc::channel();
-            if commands
-                .send(super::persistence::PluginPersistenceCommand::KeepProject {
-                    project_id: project_id.to_owned(),
-                    result,
-                })
-                .is_ok()
-            {
-                let _ = receiver.recv();
-            }
-        }
-    }
-
-    fn session_context_with_project_commit(
-        &self,
-        expected_project_id: Option<String>,
-    ) -> Result<SessionContext<'_>, ProtocolError> {
-        let storage = self
-            .project_store
-            .active_session_store()
-            .map_err(|error| command_error(error.to_string()))?;
+    pub(super) fn session_context<'a>(
+        &'a self,
+        writer: Option<super::open_project::ProjectWriter<'a>>,
+        snapshot: CanonicalState,
+        publish: &'a dyn Fn(
+            &super::open_project::ProjectWriter<'_>,
+            super::open_project::Committed<()>,
+        ) -> ArrangementMutationResult,
+    ) -> Result<SessionContext<'a>, ProtocolError> {
+        let storage = match writer.as_ref() {
+            Some(writer) => writer.project().storage.clone(),
+            None => self
+                .project_store
+                .session_store(&snapshot.project_id)
+                .map_err(|error| command_error(error.to_string()))?,
+        };
         Ok(SessionContext {
-            core: self.core.as_ref(),
-            audio: self.core.audio(),
+            project: &self.project,
+            snapshot,
+            writer,
+            audio: &self.audio,
             runtime: self.runtime.as_ref(),
             storage,
             data_root: &self.data_root,
             built_in_instruments: self.built_in_instruments.as_ref(),
-            safe_mode: self.core.safe_mode(),
-            events: self.events.as_ref(),
-            project_commit: expected_project_id.map(|expected_project_id| {
-                crate::session::context::ProjectCommitContext {
-                    project_store: &self.project_store,
-                    command_gate: &self._command_gate,
-                    expected_project_id,
-                }
-            }),
+            safe_mode: self.safe_mode,
+            publish,
         })
     }
 
-    pub(crate) fn dispatch_request(&self, request: ControlRequest) -> ControlResponse {
-        self.dispatch_request_with_shutdown(request, false)
+    pub(crate) fn dispatch_request(self: &Arc<Self>, request: ControlRequest) -> ControlResponse {
+        let _lifecycle = match self.lifecycle.enter() {
+            Ok(guard) => guard,
+            Err(error) => return Self::failure(request.request_id, error),
+        };
+        self.dispatch_request_inner(request)
     }
 
-    pub(super) fn dispatch_persistence_request(&self, request: ControlRequest) -> ControlResponse {
-        self.dispatch_request_inner(request, true, true)
-    }
-
-    fn dispatch_request_with_shutdown(
-        &self,
-        request: ControlRequest,
-        allow_shutdown: bool,
-    ) -> ControlResponse {
-        let _lifecycle = self
-            .lifecycle_gate
-            .read()
-            .expect("Host lifecycle gate was poisoned");
-        self.dispatch_request_inner(request, allow_shutdown, false)
-    }
-
-    fn dispatch_request_inner(
-        &self,
-        request: ControlRequest,
-        allow_shutdown: bool,
-        bypass_command_gate: bool,
-    ) -> ControlResponse {
-        if !allow_shutdown && self.shutting_down.load(Ordering::Acquire) {
-            return Self::failure(
-                request.request_id,
-                ProtocolError::new(ErrorCode::HostUnavailable, "Riffra Host has shut down"),
-            );
-        }
+    fn dispatch_request_inner(self: &Arc<Self>, request: ControlRequest) -> ControlResponse {
         if let Err(error) = request.validate() {
             return Self::failure(request.request_id, error);
         }
@@ -138,20 +70,15 @@ impl HostState {
             Err(error) => return Self::failure(request_id, error.into()),
         };
         let scope = command.policy().scope;
-        let _command_gate = (!bypass_command_gate
-            && scope
-                == (CommandScope::Project {
-                    long_running: false,
-                }))
-        .then(|| {
-            self._command_gate
-                .lock()
-                .expect("Host command gate was poisoned")
-        });
-        let current = match self.canonical() {
-            Ok(current) => current,
-            Err(error) => return Self::failure(request_id, command_error(error.to_string())),
-        };
+        let writer = (scope
+            == CommandScope::Project {
+                long_running: false,
+            })
+        .then(|| self.project.write());
+        let current = writer.as_ref().map_or_else(
+            || self.project.read().canonical.clone(),
+            |writer| writer.project().core.canonical_state(),
+        );
         if let Some(expected_sequence) = expected_sequence
             && expected_sequence != current.sequence
         {
@@ -160,47 +87,24 @@ impl HostState {
                 ProtocolError::conflict(expected_sequence, current.sequence),
             );
         }
-        let active_project_id = match self.project_store.active_project_id() {
-            Ok(project_id) => project_id,
-            Err(error) => return Self::failure(request_id, command_error(error.to_string())),
-        };
         if let Err(error) = crate::dispatcher::validate_project_precondition(
             scope,
             expected_project_id.as_deref(),
-            &active_project_id,
+            &current.project_id,
         ) {
             return Self::failure(request_id, error);
         }
-        match self.dispatch(command, current, expected_project_id) {
+        let result = match command {
+            ControlCommand::Canonical(command) => {
+                let access = command.access();
+                self.dispatch_canonical(command, access, current, writer)
+            }
+            ControlCommand::Project(command) => project::dispatch(self, writer, command, current),
+            ControlCommand::Runtime(command) => self.dispatch_runtime(command, current, writer),
+        };
+        match result {
             Ok((output, sequence)) => ControlResponse::success(request_id, sequence, output.into()),
             Err(error) => Self::failure(request_id, error),
-        }
-    }
-
-    fn dispatch(
-        &self,
-        command: ControlCommand,
-        current: CanonicalState,
-        expected_project_id: Option<String>,
-    ) -> Result<(ControlOutput, u64), ProtocolError> {
-        let policy = command.policy();
-        match (command, policy.executor) {
-            (ControlCommand::Canonical(command), CommandExecutor::Canonical { access }) => {
-                let project_commit = (policy.scope == CommandScope::Project { long_running: true })
-                    .then_some(expected_project_id)
-                    .flatten();
-                self.dispatch_canonical(command, access, current, project_commit)
-            }
-            (ControlCommand::Project(command), CommandExecutor::Project) => {
-                project::dispatch(self, command, current)
-            }
-            (ControlCommand::Runtime(command), CommandExecutor::Runtime) => {
-                self.dispatch_runtime(command, current, expected_project_id)
-            }
-            (command, executor) => unreachable!(
-                "the command table assigns {} to {executor:?}",
-                command.name()
-            ),
         }
     }
 
@@ -211,21 +115,24 @@ impl HostState {
         command: CanonicalCommand,
         access: CanonicalAccess,
         current: CanonicalState,
-        project_commit: Option<String>,
+        writer: Option<super::open_project::ProjectWriter<'_>>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
-        let context = self.session_context_with_project_commit(project_commit)?;
+        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
+            self.publish_commit(writer, committed).0
+        };
+        let mut context = self.session_context(writer, current.clone(), &publish)?;
         let sequence = Some(current.sequence);
         let mutation = match command {
             CanonicalCommand::TrackAudioInputSet(params) => session_adapter::set_track_audio_input(
-                &context,
+                &mut context,
                 &params.track_id,
                 Some(params.channel_index),
             ),
             CanonicalCommand::TrackAudioInputClear(params) => {
-                session_adapter::set_track_audio_input(&context, &params.track_id, None)
+                session_adapter::set_track_audio_input(&mut context, &params.track_id, None)
             }
             CanonicalCommand::TrackMidiInputSet(params) => session_adapter::set_track_midi_input(
-                &context,
+                &mut context,
                 &params.track_id,
                 riffra_core::MidiInputRoute {
                     device_id: params.device_id,
@@ -233,46 +140,48 @@ impl HostState {
                 },
             ),
             CanonicalCommand::TrackMidiInputClear(params) => session_adapter::set_track_midi_input(
-                &context,
+                &mut context,
                 &params.track_id,
                 riffra_core::MidiInputRoute::default(),
             ),
             CanonicalCommand::InstrumentVst3Set(params) => {
                 session_adapter::set_track_vst3_instrument_with_expected_sequence(
-                    &context,
+                    &mut context,
                     &params.track_id,
                     &params.plugin_path,
                     sequence,
                 )
             }
             CanonicalCommand::InstrumentClear(params) => {
-                session_adapter::clear_track_instrument(&context, &params.track_id)
+                session_adapter::clear_track_instrument(&mut context, &params.track_id)
             }
             CanonicalCommand::EffectAdd(params) => {
                 session_adapter::add_track_effect_with_expected_sequence(
-                    &context,
+                    &mut context,
                     &params.track_id,
                     &params.plugin_path,
                     sequence,
                 )
             }
-            CanonicalCommand::EffectRemove(params) => {
-                session_adapter::remove_track_effect(&context, &params.track_id, &params.device_id)
-            }
+            CanonicalCommand::EffectRemove(params) => session_adapter::remove_track_effect(
+                &mut context,
+                &params.track_id,
+                &params.device_id,
+            ),
             CanonicalCommand::EffectReorder(params) => session_adapter::reorder_track_effects(
-                &context,
+                &mut context,
                 &params.track_id,
                 &params.device_ids,
             ),
             CanonicalCommand::DeviceBypass(params) => session_adapter::set_track_device_bypassed(
-                &context,
+                &mut context,
                 &params.track_id,
                 &params.device_id,
                 params.bypassed,
             ),
             CanonicalCommand::DeviceParameterSet(params) => {
                 session_adapter::set_track_device_parameter(
-                    &context,
+                    &mut context,
                     &params.track_id,
                     &params.device_id,
                     params.parameter_index,
@@ -284,21 +193,21 @@ impl HostState {
                     riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {
                         ProtocolError::new(ErrorCode::InvalidRequest, error.to_string())
                     })?;
-                session_adapter::relink_missing_dependency(&context, asset_id, &params.new_path)
+                session_adapter::relink_missing_dependency(&mut context, asset_id, &params.new_path)
             }
             CanonicalCommand::MissingDisablePlugin(params) => {
-                session_adapter::disable_missing_plugin(&context, &params.device_id)
+                session_adapter::disable_missing_plugin(&mut context, &params.device_id)
             }
             CanonicalCommand::MissingReplacePlugin(params) => {
                 session_adapter::replace_missing_track_plugin_with_expected_sequence(
-                    &context,
+                    &mut context,
                     &params.device_id,
                     &params.new_path,
                     sequence,
                 )
             }
-            CanonicalCommand::Undo(_) => session_adapter::undo(&context),
-            CanonicalCommand::Redo(_) => session_adapter::redo(&context),
+            CanonicalCommand::Undo(_) => session_adapter::undo(&mut context),
+            CanonicalCommand::Redo(_) => session_adapter::redo(&mut context),
             command @ (CanonicalCommand::SessionGet(_)
             | CanonicalCommand::SessionInspect(_)
             | CanonicalCommand::SessionApply(_)
@@ -372,7 +281,7 @@ impl HostState {
             | CanonicalCommand::InstrumentSave(_)
             | CanonicalCommand::InstrumentExport(_)
             | CanonicalCommand::InstrumentApply(_)) => {
-                return self.dispatch_shared_canonical(command, access, current);
+                return self.dispatch_shared_canonical(command, access, current, &mut context);
             }
         }
         .map_err(|error| error.protocol_error())?;
@@ -386,26 +295,33 @@ impl HostState {
         command: CanonicalCommand,
         access: CanonicalAccess,
         current: CanonicalState,
+        context: &mut SessionContext<'_>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
-        let current_sequence = current.sequence;
-        let storage = self
-            .project_store
-            .active_session_store()
-            .map_err(|error| command_error(error.to_string()))?;
-        let result = HostDispatcher::borrowed(
-            &self.core,
-            &storage,
+        let dispatcher = HostDispatcher::borrowed(
+            &self.project,
             &self.project_store,
             &self.data_root,
             &self.binaries.sonalloy,
             &self.built_in_instruments,
-        )
-        .execute_canonical(command, access, current)
-        .map_err(|error| error.protocol_error())?;
+        );
+        if access == CanonicalAccess::Read {
+            let result = dispatcher
+                .execute_read_canonical(command, current)
+                .map_err(|error| error.protocol_error())?;
+            return Ok((result.output, result.sequence));
+        }
+        let writer = context
+            .writer
+            .as_mut()
+            .expect("shared canonical mutations hold the project writer");
+        let current_sequence = current.sequence;
+        let (result, committed) = dispatcher
+            .execute_canonical(writer, command, access, current)
+            .map_err(|error| error.protocol_error())?;
         if result.sequence <= current_sequence {
             return Ok((result.output, result.sequence));
         }
-        let mut mutation = self.after_canonical_commit()?;
+        let (mut mutation, ()) = self.publish_commit(writer, committed);
         match result.output {
             ControlOutput::BatchMutation(mut batch) => {
                 batch.projection = Some(mutation.projection);
@@ -418,32 +334,35 @@ impl HostState {
                 mutation.created_entity_ids = committed.created_entity_ids;
                 Ok(mutation_output(mutation))
             }
-            output => unreachable!("canonical mutations report their commit: {output:?}"),
+            output => Ok((output, mutation.canonical.sequence)),
         }
     }
 
     fn dispatch_runtime(
-        &self,
+        self: &Arc<Self>,
         command: RuntimeCommand,
         current: CanonicalState,
-        expected_project_id: Option<String>,
+        mut writer: Option<super::open_project::ProjectWriter<'_>>,
     ) -> Result<(ControlOutput, u64), ProtocolError> {
         let sequence = current.sequence;
+        let publish = |writer: &super::open_project::ProjectWriter<'_>, committed| {
+            self.publish_commit(writer, committed).0
+        };
         let output = match command {
             RuntimeCommand::HostStatus(_) => ControlOutput::HostStatus(HostStatus {
                 instance_id: self.identity().instance_id.clone(),
                 pid: self.identity().pid,
-                safe_mode: self.core.safe_mode(),
+                safe_mode: self.safe_mode,
                 data_root: self.data_root.to_string_lossy().into_owned(),
-                runtime_generation: self.core.audio().runtime_generation(),
+                runtime_generation: self.audio.runtime_generation(),
             }),
             RuntimeCommand::HostInfo(_) => ControlOutput::HostInfo(HostInfo {
                 instance_id: self.identity().instance_id.clone(),
                 pid: self.identity().pid,
                 data_root: self.data_root.to_string_lossy().into_owned(),
                 project_name: current.session.project_name,
-                safe_mode: self.core.safe_mode(),
-                runtime_state: self.core.audio().status().map_err(audio_error)?.state,
+                safe_mode: self.safe_mode,
+                runtime_state: self.audio.status().map_err(audio_error)?.state,
             }),
             RuntimeCommand::HostBootstrap(_) => ControlOutput::HostBootstrap(Box::new(
                 self.bootstrap()
@@ -451,7 +370,7 @@ impl HostState {
             )),
             RuntimeCommand::HostShutdown(_) => {
                 self.shutdown_requested.store(true, Ordering::Release);
-                self.shutting_down.store(true, Ordering::Release);
+                self.lifecycle.request_shutdown();
                 ControlOutput::Ok(())
             }
 
@@ -462,11 +381,8 @@ impl HostState {
                 let target = self
                     .canonical()
                     .map_err(|error| command_error(error.to_string()))?;
-                let project_id = self
-                    .project_store
-                    .active_project_id()
-                    .map_err(|error| command_error(error.to_string()))?;
-                if self.core.safe_mode() {
+                let project_id = self.project.read().canonical.project_id.clone();
+                if self.safe_mode {
                     return Err(runtime_unavailable(
                         "Safe Mode keeps runtime projection offline",
                     ));
@@ -492,9 +408,13 @@ impl HostState {
                     // Nothing in flight can produce the requested key anymore;
                     // only a canonical resubmission returns the runtime to a
                     // playable graph.
-                    let context = self.session_context()?;
-                    session_adapter::arrangement_mutation_result(&context)
-                        .map_err(|error| error.protocol_error())?;
+                    commit::project_committed(
+                        current.clone(),
+                        self.runtime.as_ref(),
+                        &self.data_root,
+                        self.built_in_instruments.as_ref(),
+                        self.safe_mode,
+                    );
                 }
                 ControlOutput::Ok(())
             }
@@ -507,20 +427,14 @@ impl HostState {
                 self.ensure_transport_online()?;
                 self.runtime
                     .stop_and_seek_to_start(|| {
-                        self.core
-                            .audio()
-                            .seek_timeline(0)
-                            .map_err(RuntimeError::from)
+                        self.audio.seek_timeline(0).map_err(RuntimeError::from)
                     })
                     .map_err(runtime_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::TransportSeek(params) => {
                 self.ensure_transport_online()?;
-                self.core
-                    .audio()
-                    .seek_timeline(params.tick)
-                    .map_err(audio_error)?;
+                self.audio.seek_timeline(params.tick).map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::MasterGainPreview(params) => {
@@ -530,8 +444,7 @@ impl HostState {
                         "master gain must be finite",
                     ));
                 }
-                self.core
-                    .audio()
+                self.audio
                     .preview_master_gain_db(params.gain_db)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
@@ -557,39 +470,36 @@ impl HostState {
                         "track mix values must be finite",
                     ));
                 }
-                self.core
-                    .audio()
+                self.audio
                     .preview_track_mix(&params.track_id, params.gain_db, params.pan)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
 
-            RuntimeCommand::AudioStatus(_) => audio_status(self.core.audio().status())?,
+            RuntimeCommand::AudioStatus(_) => audio_status(self.audio.status())?,
             RuntimeCommand::AudioDiagnostics(params) => {
                 ControlOutput::AudioDiagnostics(self.audio_diagnostics(params.debug)?)
             }
             RuntimeCommand::AudioProbe(_) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable(
                         "Safe Mode keeps audio device probing offline",
                     ));
                 }
                 ControlOutput::AudioProbe(
-                    self.core
-                        .audio()
+                    self.audio
                         .probe_devices(std::time::Duration::from_secs(10))
                         .map_err(command_error)?,
                 )
             }
             RuntimeCommand::AudioChannelsProbe(params) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable(
                         "Safe Mode keeps audio channel probing offline",
                     ));
                 }
                 ControlOutput::DeviceChannels(
-                    self.core
-                        .audio()
+                    self.audio
                         .probe_device_channels(
                             &params.driver,
                             &params.input_device,
@@ -624,13 +534,13 @@ impl HostState {
                 ControlOutput::AudioStatus(Box::new(self.set_audio_driver(config)?))
             }
             RuntimeCommand::EmergencyMute(params) => {
-                audio_status(self.core.audio().set_emergency_mute_from_user(params.muted))?
+                audio_status(self.audio.set_emergency_mute_from_user(params.muted))?
             }
             RuntimeCommand::FeedbackProtectionReset(_) => {
-                audio_status(self.core.audio().reset_feedback_protection())?
+                audio_status(self.audio.reset_feedback_protection())?
             }
             RuntimeCommand::AssetPreview(params) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable("Safe Mode blocks live sample preview"));
                 }
                 let asset_id =
@@ -640,7 +550,7 @@ impl HostState {
                 ControlOutput::AudioStatus(Box::new(
                     crate::asset::application::preview_asset(
                         &AssetPreviewContext {
-                            audio: self.core.audio(),
+                            audio: &self.audio,
                             data_root: &self.data_root,
                             safe_mode: false,
                         },
@@ -655,9 +565,9 @@ impl HostState {
                     .map_err(command_error)?,
                 ))
             }
-            RuntimeCommand::AssetPreviewStop(_) => audio_status(self.core.audio().stop_preview())?,
+            RuntimeCommand::AssetPreviewStop(_) => audio_status(self.audio.stop_preview())?,
             RuntimeCommand::InstrumentPreview(params) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable("Safe Mode blocks instrument preview"));
                 }
                 let preview = resolve_instrument_preview(
@@ -666,46 +576,43 @@ impl HostState {
                     self.built_in_instruments.as_ref(),
                     &params.instrument_id,
                 )?;
-                audio_status(self.core.audio().preview_instrument(
+                audio_status(self.audio.preview_instrument(
                     &preview.definition_json,
                     &preview.definition_base_dir,
                     &preview.preview,
                 ))?
             }
             RuntimeCommand::InstrumentPreviewStop(_) => {
-                audio_status(self.core.audio().stop_instrument_preview())?
+                audio_status(self.audio.stop_instrument_preview())?
             }
 
             RuntimeCommand::MidiListeningEnable(_) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable(
                         "Safe Mode blocks MIDI input; offline MIDI remains available",
                     ));
                 }
-                audio_status(self.core.audio().enable_midi_listening())?
+                audio_status(self.audio.enable_midi_listening())?
             }
             RuntimeCommand::MidiListeningDisable(_) => {
-                audio_status(self.core.audio().disable_midi_listening())?
+                audio_status(self.audio.disable_midi_listening())?
             }
             RuntimeCommand::MidiSend(params) => {
                 self.ensure_midi_output_online()?;
-                self.core
-                    .audio()
+                self.audio
                     .send_track_midi(&params.track_id, &params.bytes)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::MidiTargetSet(params) => {
-                self.core
-                    .audio()
+                self.audio
                     .set_live_midi_target(params.track_id.as_deref())
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::MidiPanic(params) => {
                 self.ensure_midi_output_online()?;
-                self.core
-                    .audio()
+                self.audio
                     .panic_track_midi(&params.track_id)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
@@ -738,9 +645,9 @@ impl HostState {
                 })?))
             }
             RuntimeCommand::PluginEditorOpen(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 session_adapter::open_track_plugin_editor(
-                    &context,
+                    &mut context,
                     &params.track_id,
                     &params.device_id,
                 )
@@ -755,8 +662,7 @@ impl HostState {
                 )? {
                     Some(inspection) => ControlOutput::DeviceInspection(inspection),
                     None => ControlOutput::DeviceInspection(
-                        self.core
-                            .audio()
+                        self.audio
                             .inspect_track_device(&params.track_id, &params.device_id)
                             .map_err(audio_error)?,
                     ),
@@ -765,8 +671,7 @@ impl HostState {
             RuntimeCommand::DeviceParameterList(params) => {
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 ControlOutput::DeviceParameters(
-                    self.core
-                        .audio()
+                    self.audio
                         .list_track_device_parameters(&params.track_id, &params.device_id)
                         .map_err(audio_error)?,
                 )
@@ -774,8 +679,7 @@ impl HostState {
             RuntimeCommand::DeviceParameterGet(params) => {
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 ControlOutput::DeviceParameter(
-                    self.core
-                        .audio()
+                    self.audio
                         .list_track_device_parameters(&params.track_id, &params.device_id)
                         .map_err(audio_error)?
                         .into_iter()
@@ -791,8 +695,7 @@ impl HostState {
             RuntimeCommand::PluginPresetList(params) => {
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 let presets = self
-                    .core
-                    .audio()
+                    .audio
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
                     .map_err(audio_error)?
                     .presets;
@@ -806,8 +709,7 @@ impl HostState {
             RuntimeCommand::PluginPresetGet(params) => {
                 let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 let programs = self
-                    .core
-                    .audio()
+                    .audio
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
                 let current_index = programs.current_index.ok_or_else(|| {
@@ -831,8 +733,7 @@ impl HostState {
                 let (plugin_path, bypassed) =
                     canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 let programs = self
-                    .core
-                    .audio()
+                    .audio
                     .list_track_plugin_programs(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
                 let program_index = resolve_plugin_preset(
@@ -842,28 +743,26 @@ impl HostState {
                 )?;
                 let previous_program = programs.current_index;
                 let previous_state = self
-                    .core
-                    .audio()
+                    .audio
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
-                let context = self.session_context_with_project_commit(expected_project_id)?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 let rollback = || {
                     if let Some(previous_program) = previous_program {
-                        let _ = self.core.audio().set_track_plugin_program(
+                        let _ = self.audio.set_track_plugin_program(
                             &params.track_id,
                             &params.device_id,
                             previous_program,
                         );
                     }
-                    let _ = self.core.audio().set_track_plugin_state(
+                    let _ = self.audio.set_track_plugin_state(
                         &params.track_id,
                         &params.device_id,
                         previous_state.clone(),
                     );
                 };
                 let state = self
-                    .core
-                    .audio()
+                    .audio
                     .set_track_plugin_program(&params.track_id, &params.device_id, program_index)
                     .map_err(audio_error)?;
                 let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
@@ -873,8 +772,8 @@ impl HostState {
                         return Err(error);
                     }
                 };
-                let commit = session_adapter::commit_core_application(&context, |core, store| {
-                    core.application(store).persist_track_plugin_state(
+                let commit = context.commit(|mut app| {
+                    app.persist_track_plugin_state(
                         &params.track_id,
                         &params.device_id,
                         state_snapshot.parameter_values.clone(),
@@ -886,14 +785,13 @@ impl HostState {
                     rollback();
                     return Err(error.protocol_error());
                 }
-                return adapter_mutation(session_adapter::arrangement_mutation_result(&context));
+                return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
             RuntimeCommand::PluginStateGet(params) => {
                 let (plugin_path, _) =
                     canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 let state = self
-                    .core
-                    .audio()
+                    .audio
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
                 ControlOutput::PluginState(plugin_state_snapshot(&plugin_path, state)?)
@@ -903,18 +801,16 @@ impl HostState {
                     canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
                 validate_plugin_state(&params.state, &plugin_path)?;
                 let previous_state = self
-                    .core
-                    .audio()
+                    .audio
                     .get_track_plugin_state(&params.track_id, &params.device_id)
                     .map_err(audio_error)?;
                 let native_state = plugin_state_value(&params.state, bypassed);
-                let context = self.session_context_with_project_commit(expected_project_id)?;
-                self.core
-                    .audio()
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
+                self.audio
                     .set_track_plugin_state(&params.track_id, &params.device_id, native_state)
                     .map_err(audio_error)?;
-                let commit = session_adapter::commit_core_application(&context, |core, store| {
-                    core.application(store).persist_track_plugin_state(
+                let commit = context.commit(|mut app| {
+                    app.persist_track_plugin_state(
                         &params.track_id,
                         &params.device_id,
                         params.state.parameter_values.clone(),
@@ -923,47 +819,27 @@ impl HostState {
                     )
                 });
                 if let Err(error) = commit {
-                    let _ = self.core.audio().set_track_plugin_state(
+                    let _ = self.audio.set_track_plugin_state(
                         &params.track_id,
                         &params.device_id,
                         previous_state,
                     );
                     return Err(error.protocol_error());
                 }
-                return adapter_mutation(session_adapter::arrangement_mutation_result(&context));
+                return adapter_mutation(commit.map(|(mutation, _)| mutation));
             }
-            RuntimeCommand::PluginStatePersist(params) => {
-                let context = self.session_context()?;
-                return adapter_mutation(session_adapter::persist_track_plugin_state(
-                    &context,
-                    &params.track_id,
-                    &params.device_id,
-                    params.parameter_values,
-                    params.state_data,
-                    params.bypassed,
-                ));
-            }
-            RuntimeCommand::PluginParameterPersist(params) => {
-                let context = self.session_context()?;
-                return adapter_mutation(session_adapter::persist_track_plugin_parameter(
-                    &context,
-                    &params.track_id,
-                    &params.device_id,
-                    params.parameter_index,
-                    params.value,
-                ));
-            }
+
             RuntimeCommand::MissingList(_) => {
                 ControlOutput::Missing(missing::collect_missing(&self.data_root, &current.session))
             }
 
             RuntimeCommand::RecordStart(params) => {
-                if self.core.safe_mode() {
+                if self.safe_mode {
                     return Err(runtime_unavailable(
                         "Safe Mode keeps recording input offline",
                     ));
                 }
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::AudioStatus(Box::new(
                     match params.recording_session_id.as_deref() {
                         Some(id) => recording::record_another_take(&context, id),
@@ -973,20 +849,16 @@ impl HostState {
                 ))
             }
             RuntimeCommand::RecordStop(_) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 let result = recording::stop_recording(&context).map_err(command_error)?;
                 let stopped_sequence = result.canonical.sequence;
-                if stopped_sequence > sequence {
-                    self.events
-                        .emit(HostEvent::CanonicalStateChanged(result.canonical.clone()));
-                }
                 return Ok((
                     ControlOutput::RecordingStop(Box::new(result)),
                     stopped_sequence,
                 ));
             }
             RuntimeCommand::RecordStatus(_) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::AudioStatus(Box::new(
                     context
                         .audio
@@ -995,97 +867,97 @@ impl HostState {
                 ))
             }
             RuntimeCommand::RecordList(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::Recordings(
                     recording::list_recordings(&context, params.query.as_deref())
                         .map_err(command_error)?,
                 )
             }
             RuntimeCommand::RecordRename(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::RecordingId(
                     recording::rename_recording(&context, &params.id, &params.new_name)
                         .map_err(command_error)?,
                 )
             }
             RuntimeCommand::RecordArchive(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::RecordingId(
                     recording::archive_recording(&context, &params.id).map_err(command_error)?,
                 )
             }
             RuntimeCommand::RecordPromote(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::RecordingId(
                     recording::promote_recording(&context, &params.id).map_err(command_error)?,
                 )
             }
             RuntimeCommand::RecordTag(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::LibraryAsset(
                     recording::tag_recording(&context, &params.id, params.tag, params.note)
                         .map_err(command_error)?,
                 )
             }
             RuntimeCommand::RecordDelete(params) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 recording::delete_recording(&context, &params.id).map_err(command_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::RecordDuplicates(_) => {
-                let (_gate, context) = self.recording_context()?;
+                let context = self.recording_context()?;
                 ControlOutput::RecordingDuplicates(
                     recording::detect_duplicate_recordings(&context).map_err(command_error)?,
                 )
             }
             RuntimeCommand::TakeActivate(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 return adapter_mutation(session_adapter::activate_take(
-                    &context,
+                    &mut context,
                     &params.session_id,
                     &params.take_id,
                 ));
             }
             RuntimeCommand::TakePlaceSeparateClip(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 return adapter_mutation(session_adapter::place_take_as_separate_clip(
-                    &context,
+                    &mut context,
                     &params.take_id,
                 ));
             }
             RuntimeCommand::TakeVariantSet(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 return adapter_mutation(session_adapter::set_audio_clip_take_variant(
-                    &context,
+                    &mut context,
                     &params.clip_id,
                     params.variant,
                 ));
             }
             RuntimeCommand::TakeComparisonStart(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 ControlOutput::AudioStatus(Box::new(
-                    session_adapter::start_take_comparison(&context, &params.take_id)
+                    session_adapter::start_take_comparison(&mut context, &params.take_id)
                         .map_err(|error| error.protocol_error())?,
                 ))
             }
             RuntimeCommand::TakeComparisonSwitch(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 ControlOutput::AudioStatus(Box::new(
-                    session_adapter::switch_take_comparison_variant(&context, params.variant)
+                    session_adapter::switch_take_comparison_variant(&mut context, params.variant)
                         .map_err(|error| error.protocol_error())?,
                 ))
             }
             RuntimeCommand::TakeComparisonStop(_) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 ControlOutput::AudioStatus(Box::new(
-                    session_adapter::stop_take_comparison(&context)
+                    session_adapter::stop_take_comparison(&mut context)
                         .map_err(|error| error.protocol_error())?,
                 ))
             }
             RuntimeCommand::ProjectRestoreGeneration(params) => {
-                let context = self.session_context()?;
+                let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 return adapter_mutation(session_adapter::restore_generation(
-                    &context,
+                    &mut context,
                     &params.file_name,
                 ));
             }
@@ -1219,7 +1091,7 @@ impl HostState {
     }
 
     fn ensure_transport_online(&self) -> Result<(), ProtocolError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(runtime_unavailable(
                 "Safe Mode keeps transport playback offline",
             ));
@@ -1228,7 +1100,7 @@ impl HostState {
     }
 
     fn ensure_external_devices_online(&self) -> Result<(), ProtocolError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(runtime_unavailable(
                 "Safe Mode keeps external audio devices isolated",
             ));
@@ -1237,14 +1109,14 @@ impl HostState {
     }
 
     fn ensure_midi_output_online(&self) -> Result<(), ProtocolError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(runtime_unavailable("Safe Mode keeps MIDI output offline"));
         }
         Ok(())
     }
 
     fn ensure_plugin_discovery_online(&self) -> Result<(), ProtocolError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(runtime_unavailable(
                 "Safe Mode blocks VST3 discovery and load validation",
             ));
@@ -1252,27 +1124,22 @@ impl HostState {
         Ok(())
     }
 
-    /// Serializes recording operations and returns their shared context.
-    fn recording_context(&self) -> Result<(MutexGuard<'_, ()>, RecordingContext), ProtocolError> {
-        let gate = self
-            .recording_gate
-            .lock()
-            .map_err(|_| command_error("recording operation lock was poisoned"))?;
-        let context = RecordingContext {
-            core: Arc::clone(&self.core),
-            audio: self.core.audio().clone(),
+    fn recording_context(self: &Arc<Self>) -> Result<RecordingContext, ProtocolError> {
+        let snapshot = self.project.read();
+        Ok(RecordingContext {
+            host: Arc::clone(self),
+            audio: self.audio.clone(),
             runtime: Arc::clone(&self.runtime),
             storage: self
                 .project_store
-                .active_session_store()
+                .session_store(&snapshot.canonical.project_id)
                 .map_err(|error| command_error(error.to_string()))?,
             data_root: self.data_root.clone(),
             built_in_instruments: Arc::clone(&self.built_in_instruments),
             events: Arc::clone(&self.events),
             jobs: self.jobs.clone(),
-            safe_mode: self.core.safe_mode(),
-        };
-        Ok((gate, context))
+            safe_mode: self.safe_mode,
+        })
     }
 
     fn start_render(
@@ -1313,32 +1180,27 @@ impl HostState {
         jobs::to_background_status(status).map_err(command_error)
     }
 
-    pub(super) fn after_canonical_commit(
+    pub(crate) fn publish_commit<T>(
         &self,
-    ) -> Result<ArrangementMutationResult, ProtocolError> {
-        let canonical = self
-            .canonical()
-            .map_err(|error| command_error(error.to_string()))?;
-        let storage = self
-            .project_store
-            .active_session_store()
-            .map_err(|error| command_error(error.to_string()))?;
-        let project_id = storage
-            .project_id()
-            .map_err(|error| command_error(error.to_string()))?;
-        library::index::refresh(&self.data_root, &storage, &canonical.session);
+        writer: &super::open_project::ProjectWriter<'_>,
+        committed: super::open_project::Committed<T>,
+    ) -> (ArrangementMutationResult, T) {
+        let canonical = committed.snapshot.canonical.clone();
+        library::index::refresh(
+            &self.data_root,
+            &writer.project().storage,
+            &canonical.session,
+        );
         self.events
             .emit(HostEvent::CanonicalStateChanged(canonical.clone()));
-        let mutation = commit::finalize_arrangement_mutation(
+        let mutation = commit::project_committed(
             canonical,
             self.runtime.as_ref(),
             &self.data_root,
             self.built_in_instruments.as_ref(),
-            &project_id,
-            self.core.safe_mode(),
-        )
-        .map_err(command_error)?;
-        Ok(mutation)
+            self.safe_mode,
+        );
+        (mutation, committed.value)
     }
 }
 
@@ -2016,7 +1878,7 @@ mod tests {
         }
 
         assert_eq!(
-            host.runtime_status().unwrap().state,
+            host.bootstrap().unwrap().runtime_projection.state,
             crate::RuntimeProjectionState::Idle
         );
         host.shutdown();
