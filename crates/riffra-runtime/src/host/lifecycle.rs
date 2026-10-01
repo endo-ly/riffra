@@ -169,6 +169,9 @@ impl DawHost {
 
     /// Performs the explicit shutdown sequence for the Host.
     pub fn shutdown(&self) {
+        self.state.lifecycle.request_shutdown();
+        // Cancel native waits before draining operations that may be waiting on them.
+        self.state.audio.force_shutdown();
         self.state.lifecycle.close();
         self.state.event_hub.close();
         if let Ok(mut persistence) = self.plugin_persistence.lock()
@@ -181,9 +184,6 @@ impl DawHost {
         {
             control.shutdown();
         }
-        // Wake recording-finalization workers before joining them. A stopped
-        // sidecar is a terminal outcome for an in-flight native completion.
-        self.state.audio.force_shutdown();
         self.state.jobs.cancel_all_and_wait();
         if let Ok(mut startup) = self.startup.lock()
             && let Some(startup) = startup.take()
@@ -316,7 +316,7 @@ mod tests {
             built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
                 &data_root,
             ),
-            safe_mode: true,
+            safe_mode: false,
             binaries: RuntimeBinaries::new(
                 data_root.join("riffra-audio"),
                 data_root.join("riffra-plugin-scan"),
@@ -330,6 +330,17 @@ mod tests {
             .lifecycle
             .enter()
             .expect("Host lifecycle gate was not poisoned");
+        let waiting_host = Arc::clone(&host);
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+        let native_wait = std::thread::spawn(move || {
+            let _operation = waiting_host.state.lifecycle.enter().unwrap();
+            waiting_tx.send(()).unwrap();
+            waiting_host
+                .state
+                .audio
+                .wait_for_next_generation(u64::MAX, std::time::Duration::from_secs(45))
+        });
+        waiting_rx.recv().unwrap();
         let (finished_tx, finished_rx) = std::sync::mpsc::channel();
         let shutdown_host = Arc::clone(&host);
         let shutdown_thread = std::thread::spawn(move || {
@@ -349,6 +360,10 @@ mod tests {
                 .is_ok()
         );
         shutdown_thread.join().unwrap();
+        assert!(matches!(
+            native_wait.join().unwrap(),
+            Err(crate::NativeAudioError::ShuttingDown)
+        ));
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
