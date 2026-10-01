@@ -16,8 +16,8 @@ pub use state::HostBootstrap;
 
 pub(crate) use state::HostState;
 
-use crate::api::output::{AudioStatus, RuntimeProjectionStatus};
-use crate::api::output::{BackgroundJobStatus, JobKind, RenderResult};
+use crate::api::output::AudioStatus;
+use crate::api::output::{BackgroundJobStatus, JobKind};
 use crate::api::params::RenderOptions;
 use crate::asset::application::{AssetPreviewContext, AssetPreviewOptions};
 use crate::audio::AudioSupervisor;
@@ -113,66 +113,6 @@ impl DawHost {
         &self.identity
     }
 
-    /// Returns the canonical history state owned by this Host.
-    pub fn history_state(&self) -> Result<riffra_core::HistoryState, HostError> {
-        let storage = self
-            .state
-            .project_store
-            .active_session_store()
-            .map_err(|error| HostError::State(error.to_string()))?;
-        self.state
-            .core
-            .application(&storage)
-            .history_state()
-            .map_err(|error| HostError::State(error.to_string()))
-    }
-
-    /// Returns the current projection status.
-    pub fn runtime_status(&self) -> Result<RuntimeProjectionStatus, HostError> {
-        Ok(self.state.runtime.status())
-    }
-
-    /// Locks the Host-wide canonical operation gate.
-    pub fn lock_command_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
-        self.state
-            ._command_gate
-            .lock()
-            .map_err(|_| "Host command gate was poisoned".to_owned())
-    }
-
-    /// Runs a shell operation while the Host remains in its active lifecycle.
-    ///
-    /// The read barrier makes Desktop invocations obey the same shutdown rule
-    /// as attached control clients: shutdown waits for an accepted operation,
-    /// while new operations are rejected after shutdown has begun.
-    pub fn with_lifecycle<T, F>(&self, operation: F) -> Result<T, String>
-    where
-        F: FnOnce() -> Result<T, String>,
-    {
-        let _lifecycle = self
-            .state
-            .lifecycle_gate
-            .read()
-            .map_err(|_| "Host lifecycle gate was poisoned".to_owned())?;
-        if self.state.shutting_down.load(Ordering::Acquire) {
-            return Err("Riffra Host has shut down".to_owned());
-        }
-        operation()
-    }
-
-    /// Locks the Host-wide recording operation gate.
-    pub fn lock_recording_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
-        self.state
-            .recording_gate
-            .lock()
-            .map_err(|_| "Host recording operation gate was poisoned".to_owned())
-    }
-
-    /// Returns the event sink owned by this Host.
-    pub fn event_sink(&self) -> &dyn crate::HostEventSink {
-        self.state.events.as_ref()
-    }
-
     /// Returns whether a connected client requested graceful process shutdown.
     pub fn shutdown_requested(&self) -> bool {
         self.state.shutdown_requested.load(Ordering::Acquire)
@@ -181,139 +121,14 @@ impl DawHost {
     /// Reports whether the native audio engine is currently capturing input.
     pub fn recording_active(&self) -> bool {
         self.state
-            .core
-            .audio()
+            .audio
             .status()
             .map(|status| status.recording.active || status.recording.processing)
             .unwrap_or(false)
     }
 
-    /// Queries audio devices through the Host-owned native process adapter.
-    pub fn probe_devices(&self) -> Result<crate::AudioDeviceProbe, HostError> {
-        if self.state.core.safe_mode() {
-            return Ok(crate::AudioDeviceProbe {
-                drivers: Vec::new(),
-                refreshed_at_ms: now_ms(),
-                message: "Safe Mode skipped audio device discovery.".into(),
-            });
-        }
-        self.state
-            .core
-            .audio()
-            .probe_devices(std::time::Duration::from_secs(10))
-            .map_err(HostError::State)
-    }
-
-    /// Queries the selected device channel layout through the shared audio
-    /// process adapter.
-    pub fn probe_device_channels(
-        &self,
-        driver: &str,
-        input_device: &str,
-        output_device: &str,
-    ) -> Result<crate::DeviceChannels, HostError> {
-        if self.state.core.safe_mode() {
-            return Err(HostError::State(
-                "Safe Mode skipped audio channel discovery.".into(),
-            ));
-        }
-        self.state
-            .core
-            .audio()
-            .probe_device_channels(
-                driver,
-                input_device,
-                output_device,
-                std::time::Duration::from_secs(10),
-            )
-            .map_err(HostError::State)
-    }
-
-    /// Renders the canonical session using the Host-owned render worker.
-    pub fn render_timeline(&self, options: RenderOptions) -> Result<RenderResult, HostError> {
-        let snapshot = self
-            .state
-            .core
-            .snapshot()
-            .map_err(|error| HostError::State(error.to_string()))?;
-        render::render_timeline_with_options(
-            &self.state.render_worker,
-            &self.state.data_root,
-            &self.state.built_in_instruments,
-            &snapshot.session,
-            now_ms(),
-            options,
-        )
-        .map_err(HostError::State)
-    }
-
-    /// Returns one Host-owned background job status.
-    pub fn background_job(&self, id: &str) -> Result<Option<BackgroundJobStatus>, HostError> {
-        self.state
-            .jobs
-            .status(id)
-            .map(jobs::to_background_status)
-            .transpose()
-            .map_err(HostError::State)
-    }
-
-    /// Requests cancellation of one Host-owned background job.
-    pub fn cancel_background_job(
-        &self,
-        id: &str,
-    ) -> Result<Option<BackgroundJobStatus>, HostError> {
-        self.state
-            .jobs
-            .cancel(id)
-            .map(jobs::to_background_status)
-            .transpose()
-            .map_err(HostError::State)
-    }
-
-    /// Runs a synchronous plugin discovery/validation pass in the Host.
-    pub fn scan_plugins(
-        &self,
-        path: Option<PathBuf>,
-    ) -> Result<crate::api::output::ScanReport, HostError> {
-        self.state
-            .scan_plugins(path.unwrap_or_else(lifecycle::default_plugin_root))
-            .map_err(HostError::State)
-    }
-
-    /// Starts a cancellable Host-owned plugin scan job.
-    pub fn start_plugin_scan(
-        &self,
-        path: Option<PathBuf>,
-    ) -> Result<BackgroundJobStatus, HostError> {
-        self.state
-            .start_plugin_scan(path.unwrap_or_else(lifecycle::default_plugin_root))
-            .map_err(HostError::State)
-    }
-
-    /// Applies and persists a Host-wide audio-device selection.
-    pub fn set_audio_driver(&self, config: AudioDriverConfig) -> Result<AudioStatus, HostError> {
-        self.state
-            .set_audio_driver(config)
-            .map_err(|error| HostError::State(error.message))
-    }
-
-    /// Returns the canonical Core shared with the Host's control server.
-    pub fn core(&self) -> &AppCore<AudioSupervisor> {
-        &self.state.core
-    }
-
     /// Returns the Data Root owned by the Host.
     pub fn data_root(&self) -> &std::path::Path {
         &self.state.data_root
-    }
-
-    /// Reopens the configured audio device and restores the active graph.
-    pub fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
-        self.state.recover_audio_device()
-    }
-
-    /// Retries the initial native graph handshake synchronously.
-    pub fn retry_runtime_startup(&self) -> Result<AudioStatus, HostError> {
-        self.state.retry_runtime_startup()
     }
 }

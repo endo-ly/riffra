@@ -59,6 +59,14 @@ macro_rules! control_commands {
             $( #[serde(rename = $runtime_name)] $runtime($runtime_params), )*
         }
 
+        impl CanonicalCommand {
+            pub(crate) fn access(&self) -> CanonicalAccess {
+                match self {
+                    $( Self::$canonical(_) => control_commands!(@access $access $(($batch))?), )*
+                }
+            }
+        }
+
         impl ControlCommand {
             /// Decodes wire params for the command named `name`.
             ///
