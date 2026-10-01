@@ -2,6 +2,7 @@ mod audio;
 mod control;
 mod events;
 mod lifecycle;
+pub(crate) mod open_project;
 mod persistence;
 mod plugin_scan;
 mod project;

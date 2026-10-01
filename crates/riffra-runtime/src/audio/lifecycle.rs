@@ -419,7 +419,7 @@ impl AudioSupervisor {
             return Err(NativeAudioError::ShuttingDown);
         }
 
-        let _command_gate =
+        let _native_command =
             self.process
                 .command_gate
                 .lock()
@@ -510,7 +510,7 @@ impl AudioSupervisor {
             }
             *slot = Some(child);
             drop(slot);
-            drop(_command_gate);
+            drop(_native_command);
             if let Err(error) = self.restore_runtime_controls(deadline) {
                 set_faulted(
                     &self.status,
@@ -545,7 +545,7 @@ impl AudioSupervisor {
         self.process.readiness.1.notify_all();
         self.fail_recording_completion(NativeAudioError::ShuttingDown);
         fail_pending_requests(&self.command_bus.pending, NativeAudioError::ShuttingDown);
-        let _command_gate = self.process.command_gate.lock().ok();
+        let _native_command = self.process.command_gate.lock().ok();
         if let Ok(mut slot) = self.process.child.lock()
             && let Some(child) = slot.take()
         {

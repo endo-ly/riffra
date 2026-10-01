@@ -13,6 +13,7 @@ const PROJECT_RUNTIME_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) fn dispatch(
     state: &HostState,
+    mut writer: Option<super::open_project::ProjectWriter<'_>>,
     command: ProjectCommand,
     current: CanonicalState,
 ) -> Result<(ControlOutput, u64), ProtocolError> {
@@ -34,30 +35,32 @@ pub(super) fn dispatch(
             current.sequence,
         )),
         ProjectCommand::ProjectCreate(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
-            state.flush_plugin_persistence()?;
+            state.take_pending_plugin_changes(writer)?;
             let summary = state
                 .project_store
                 .create(params.name)
                 .map_err(|error| command_error(error.to_string()))?;
-            activate_project(state, &summary.project_id, ProjectOperation::Create)
+            activate_project(state, writer, &summary.project_id, ProjectOperation::Create)
         }
         ProjectCommand::ProjectOpen(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
-            state.flush_plugin_persistence()?;
-            activate_project(state, &params.project_id, ProjectOperation::Open)
+            state.take_pending_plugin_changes(writer)?;
+            activate_project(state, writer, &params.project_id, ProjectOperation::Open)
         }
         ProjectCommand::ProjectRename(params) => {
-            let context = state.session_context()?;
-            state
-                .core
-                .application(&context.storage)
-                .update_session_settings(riffra_core::application::SessionSettingsPatch {
-                    project_name: Some(Some(params.name)),
-                    ..Default::default()
+            let writer = writer.as_mut().expect("project mutation holds the writer");
+            let committed = writer
+                .commit(|mut app| {
+                    app.update_session_settings(riffra_core::application::SessionSettingsPatch {
+                        project_name: Some(Some(params.name)),
+                        ..Default::default()
+                    })
                 })
                 .map_err(|error| command_error(error.to_string()))?;
-            let mutation = state.after_canonical_commit()?;
+            let (mutation, _) = state.publish_commit(writer, committed);
             let project_state = project_state(state)?;
             state
                 .events
@@ -68,15 +71,16 @@ pub(super) fn dispatch(
             ))
         }
         ProjectCommand::ProjectImport(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
             ensure_switch_allowed(state)?;
-            state.flush_plugin_persistence()?;
+            state.take_pending_plugin_changes(writer)?;
             let session =
                 projects::import(&state.data_root, &params.path).map_err(command_error)?;
             let summary = state
                 .project_store
                 .create_from_session(&session)
                 .map_err(|error| command_error(error.to_string()))?;
-            activate_project(state, &summary.project_id, ProjectOperation::Import)
+            activate_project(state, writer, &summary.project_id, ProjectOperation::Import)
         }
     }
 }
@@ -107,11 +111,15 @@ impl ProjectOperation {
 }
 
 fn project_state(state: &HostState) -> Result<ProjectState, ProtocolError> {
-    projects::state(&state.project_store).map_err(command_error)
+    projects::state(
+        &state.project_store,
+        &state.project.read().canonical.project_id,
+    )
+    .map_err(command_error)
 }
 
 fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
-    let status = state.core.audio().status().map_err(audio_error)?;
+    let status = state.audio.status().map_err(audio_error)?;
     if status.recording.active || status.recording.processing {
         return Err(command_error("Stop recording before switching Projects."));
     }
@@ -120,30 +128,27 @@ fn ensure_switch_allowed(state: &HostState) -> Result<(), ProtocolError> {
 
 fn activate_project(
     state: &HostState,
+    writer: &mut super::open_project::ProjectWriter<'_>,
     project_id: &str,
     operation: ProjectOperation,
 ) -> Result<(ControlOutput, u64), ProtocolError> {
-    if state.core.safe_mode() {
-        return activate_project_inner(state, project_id, operation);
+    if state.safe_mode {
+        return activate_project_inner(state, writer, project_id, operation);
     }
-    state.run_audio_transition(|state| activate_project_inner(state, project_id, operation))
+    state.run_audio_transition(|state| activate_project_inner(state, writer, project_id, operation))
 }
 
 fn activate_project_inner(
     state: &HostState,
+    writer: &mut super::open_project::ProjectWriter<'_>,
     project_id: &str,
     operation: ProjectOperation,
 ) -> Result<(ControlOutput, u64), ProtocolError> {
-    let previous_project_id = state
-        .project_store
-        .active_project_id()
-        .map_err(|error| command_error(error.to_string()))?;
-    let previous_canonical = state
-        .canonical()
-        .map_err(|error| command_error(error.to_string()))?;
+    let previous_canonical = writer.project().core.canonical_state();
+    let previous_project_id = previous_canonical.project_id.clone();
     let prepared = projects::prepare(&state.project_store, project_id).map_err(command_error)?;
 
-    let candidate_key = if state.core.safe_mode() {
+    let candidate_key = if state.safe_mode {
         None
     } else {
         let candidate_key =
@@ -166,42 +171,46 @@ fn activate_project_inner(
         Some(candidate_key)
     };
 
-    let activated = match projects::activate(&state.project_store, prepared, |session| {
-        state.core.activate_session(session)
-    }) {
-        Ok(activated) => activated,
-        Err(error) => {
-            return Err(project_switch_failure(
-                state,
-                &previous_project_id,
-                &previous_canonical,
-                project_id,
-                command_error(error),
-                operation,
-            ));
-        }
+    let next = super::open_project::OpenProject {
+        storage: prepared.storage,
+        core: riffra_core::AppCore::new(
+            project_id.to_owned(),
+            prepared.loaded.session,
+            previous_canonical.sequence + 1,
+        ),
+        recovered_from_generation: prepared.loaded.recovered_from_generation,
     };
+    if let Err(error) = state.project_store.write_workspace(project_id) {
+        return Err(project_switch_failure(
+            state,
+            &previous_project_id,
+            &previous_canonical,
+            project_id,
+            command_error(error.to_string()),
+            operation,
+        ));
+    }
+    writer.replace(next);
+    let snapshot = state.project.read();
     let activation = ProjectActivationResult {
-        project_state: activated.project_state.clone(),
-        canonical: activated.canonical.clone(),
-        recovery: activated.recovery.clone(),
+        project_state: prepared.project_state,
+        canonical: snapshot.canonical.clone(),
+        recovery: prepared.recovery,
     };
-    state
-        .core
-        .set_recovered_from_generation(activated.loaded.recovered_from_generation);
-    state.keep_plugin_persistence_project(project_id);
-    crate::library::index::refresh(
-        &state.data_root,
-        &activated.storage,
-        &activated.loaded.session,
+    state.publish_commit(
+        writer,
+        super::open_project::Committed {
+            snapshot,
+            value: (),
+        },
     );
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
     if let Some(candidate_key) = candidate_key {
-        debug_assert_eq!(activated.canonical.sequence, candidate_key.sequence);
+        debug_assert_eq!(activation.canonical.sequence, candidate_key.sequence);
         debug_assert_eq!(
-            activated.canonical.session.arrangement.revision,
+            activation.canonical.session.arrangement.revision,
             candidate_key.session_revision
         );
         if let Err(error) = state
@@ -213,7 +222,7 @@ fn activate_project_inner(
                 ))
             })
             && let Err(restore_error) =
-                apply_project_runtime_transition(state, &activated.canonical, project_id)
+                apply_project_runtime_transition(state, &activation.canonical, project_id)
         {
             let message = format!(
                 "{} failed: {}; active Project audio could not be restored: {}",
@@ -282,7 +291,6 @@ fn project_switch_failure(
     failure: ProtocolError,
     operation: ProjectOperation,
 ) -> ProtocolError {
-    state.keep_plugin_persistence_project(previous_project_id);
     let cause = serde_json::to_value(&failure).unwrap_or(Value::Null);
     match apply_project_runtime_transition(state, previous_canonical, previous_project_id) {
         Ok(()) => {
@@ -328,7 +336,7 @@ pub(super) fn apply_project_runtime_transition(
     canonical: &CanonicalState,
     project_id: &str,
 ) -> Result<(), ProtocolError> {
-    if state.core.safe_mode() {
+    if state.safe_mode {
         return Ok(());
     }
 

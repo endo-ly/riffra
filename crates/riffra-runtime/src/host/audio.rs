@@ -28,11 +28,7 @@ impl HostState {
             .clone();
 
         let effective = self.run_audio_transition(|host| {
-            let outcome = match host
-                .core
-                .audio()
-                .set_audio_driver(&requested.as_driver_config())
-            {
+            let outcome = match host.audio.set_audio_driver(&requested.as_driver_config()) {
                 Ok(outcome) => outcome,
                 Err(error) if native_restored_previous_device(&error) => {
                     host.reproject_after_audio_device_change()
@@ -69,16 +65,14 @@ impl HostState {
                 .map_err(|error| command_error(error.to_string()))?;
             host.reproject_after_audio_device_change()
                 .map_err(graph_failed)?;
-            host.core
-                .audio()
+            host.audio
                 .set_restart_preferences(effective.clone())
                 .map_err(|error| command_error(error.to_string()))?;
             Ok(effective)
         })?;
 
-        let mut status = self.core.audio().refresh_status().map_err(command_error)?;
-        status.diagnostics.audio_environment_revision =
-            self.core.audio().audio_environment_revision();
+        let mut status = self.audio.refresh_status().map_err(command_error)?;
+        status.diagnostics.audio_environment_revision = self.audio.audio_environment_revision();
         AudioPreferencesStore::new(&self.data_root)
             .save(&effective)
             .map_err(|error| {
@@ -132,8 +126,7 @@ impl HostState {
     }
 
     pub(super) fn begin_audio_transition(&self) -> Result<(), String> {
-        self.core
-            .audio()
+        self.audio
             .set_engine_transition_mute(true)
             .map_err(|error| format!("audio transition could not be muted: {error}"))?;
         if let Err(error) = self.runtime.stop_for_audio_environment() {
@@ -151,21 +144,17 @@ impl HostState {
     }
 
     pub(super) fn end_audio_transition(&self) -> Result<(), String> {
-        self.core
-            .audio()
+        self.audio
             .set_engine_transition_mute(false)
             .map(|_| ())
             .map_err(|error| format!("audio transition could not be completed: {error}"))
     }
 
     pub(super) fn reproject_after_audio_device_change(&self) -> Result<(), String> {
-        self.core.audio().advance_audio_environment();
+        self.audio.advance_audio_environment();
         self.runtime.advance_audio_environment();
         let snapshot = self.canonical().map_err(|error| error.to_string())?;
-        let project_id = self
-            .project_store
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
+        let project_id = snapshot.project_id.clone();
         self.runtime
             .apply_and_wait(
                 Arc::new(crate::execution::project_session(
@@ -188,7 +177,7 @@ impl HostState {
         &self,
         include_debug: bool,
     ) -> Result<crate::api::output::AudioDiagnosticsReport, ProtocolError> {
-        let status = self.core.audio().refresh_status().map_err(audio_error)?;
+        let status = self.audio.refresh_status().map_err(audio_error)?;
         let mut report = audio_diagnostics_report(&status);
         if include_debug {
             let projection = self.runtime.status();
@@ -219,13 +208,13 @@ impl HostState {
     }
 
     pub(super) fn recover_audio_device(&self) -> Result<AudioStatus, HostError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(HostError::State(
                 "Safe Mode keeps external audio devices isolated".into(),
             ));
         }
         self.run_audio_transition(|host| {
-            let outcome = match host.core.audio().recover_audio_device() {
+            let outcome = match host.audio.recover_audio_device() {
                 Ok(outcome) => outcome,
                 Err(error) if native_restored_previous_device(&error) => {
                     host.reproject_after_audio_device_change()
@@ -246,14 +235,13 @@ impl HostState {
             }
         })
         .map_err(|error| HostError::State(error.message))?;
-        self.core
-            .audio()
+        self.audio
             .refresh_status()
             .map_err(|error| HostError::State(error.to_string()))
     }
 
     pub(super) fn retry_runtime_startup(&self) -> Result<AudioStatus, HostError> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err(HostError::State(
                 "Safe Mode keeps external audio devices isolated".into(),
             ));
@@ -262,22 +250,20 @@ impl HostState {
             .startup_gate
             .lock()
             .map_err(|_| HostError::State("Host startup gate was poisoned".into()))?;
-        if self.core.audio().startup_completed() {
+        if self.audio.startup_completed() {
             return self
-                .core
-                .audio()
+                .audio
                 .refresh_status()
                 .map_err(|error| HostError::State(error.to_string()));
         }
-        self.core.audio().mark_startup_pending();
+        self.audio.mark_startup_pending();
         let initialized = startup::initialize_runtime(
-            &self.core,
+            &self.audio,
             &self.runtime,
             &self.data_root,
             self.built_in_instruments.as_ref(),
-            &self._command_gate,
-            || self.capture_startup_target_under_command_gate(),
-            &self.shutting_down,
+            || self.capture_startup_target(),
+            &self.lifecycle.shutting_down,
         );
         let succeeded = initialized
             .as_ref()

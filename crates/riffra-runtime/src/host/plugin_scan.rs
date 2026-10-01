@@ -5,7 +5,7 @@ impl HostState {
         &self,
         root: PathBuf,
     ) -> Result<crate::api::output::ScanReport, String> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err("Safe Mode blocks VST3 discovery and load validation".into());
         }
         let mut report = plugins::discover(&root);
@@ -19,7 +19,7 @@ impl HostState {
     }
 
     pub(super) fn start_plugin_scan(&self, root: PathBuf) -> Result<BackgroundJobStatus, String> {
-        if self.core.safe_mode() {
+        if self.safe_mode {
             return Err("Safe Mode blocks VST3 discovery and load validation".into());
         }
         let (id, status) = self.jobs.start(JobKind::Scan);
