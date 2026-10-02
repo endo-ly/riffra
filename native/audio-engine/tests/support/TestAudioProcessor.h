@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -20,6 +21,7 @@ struct ProcessorTrace final {
     bool failProgramChange = false;
     int processBlockCount = 0;
     int currentProgram = 0;
+    std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
 };
@@ -43,6 +45,7 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
+        if (trace.onProcess) trace.onProcess();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
         buffer.applyGain(2.0f);

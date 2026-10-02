@@ -80,7 +80,12 @@ TEST(TrackProcessingPoolTest, OfflineOutputIsBitIdenticalAcrossWorkerCounts) {
     auto audio = makeRawAndProcessedClipSnapshot(audioFile, audioFile, 48'000).graph.tracks.front();
     audio.volumeAutomation = {{0, -12.0}, {480, -3.0}, {960, -9.0}};
     audio.panAutomation = {{0, -0.5}, {960, 0.5}};
-    snapshot.graph.tracks.push_back(std::move(audio));
+    for (int index = 0; index < 16; ++index) {
+        auto copy = audio;
+        copy.id = "track:audio-" + juce::String(index);
+        for (auto& clip : copy.audioClips) clip.id += "-" + juce::String(index);
+        snapshot.graph.tracks.push_back(std::move(copy));
+    }
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     std::array<juce::MemoryBlock, 2> rendered;
@@ -92,12 +97,46 @@ TEST(TrackProcessingPoolTest, OfflineOutputIsBitIdenticalAcrossWorkerCounts) {
             directory.get().getChildFile("render-" + juce::String(index) + ".wav");
         const OfflineRenderRequestSpec request{
             snapshot.graph, destination.getFullPathName(), 0, 1920, 48'000, 128, false};
+        const auto caller = std::this_thread::get_id();
+        std::atomic<bool> workerProcessed{false};
+        std::atomic<bool> callerProcessed{false};
+        std::array<ProcessorTrace, 16> traces;
         auto renderer = OfflineRenderer::prepare(request, formats, error);
         ASSERT_NE(renderer, nullptr) << error;
         TimelineEngineTestPeer::setOfflineWorkerCount(*renderer, index == 0 ? 0 : 7);
-        ASSERT_TRUE(TimelineEngineTestPeer::setOfflineCompensation(*renderer, "track:audio", 17));
+        ASSERT_TRUE(TimelineEngineTestPeer::setOfflineCompensation(*renderer, "track:audio-0", 17));
+        const auto denormalsWereDisabled = juce::FloatVectorOperations::areDenormalsDisabled();
+        juce::ScopedNoDenormals restoreFloatingPointState;
+        juce::FloatVectorOperations::disableDenormalisedNumberSupport(false);
+        for (int track = 0; track < 16; ++track) {
+            traces[track].onProcess = [&] {
+                if (std::this_thread::get_id() == caller) {
+                    callerProcessed.store(true);
+                    if (index == 1) {
+                        const auto deadline =
+                            std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                        while (!workerProcessed.load() &&
+                               std::chrono::steady_clock::now() < deadline)
+                            std::this_thread::yield();
+                    }
+                } else {
+                    workerProcessed.store(true);
+                }
+                EXPECT_TRUE(juce::FloatVectorOperations::areDenormalsDisabled());
+                volatile float subnormal = std::numeric_limits<float>::denorm_min();
+                EXPECT_EQ(subnormal * 1.0e30f, 0.0f);
+            };
+            ASSERT_TRUE(TimelineEngineTestPeer::installOfflineEffect(
+                *renderer, "track:audio-" + juce::String(track),
+                std::make_unique<TestProcessor>(traces[track]), error))
+                << error;
+        }
         OfflineRenderer::Result result;
-        ASSERT_TRUE(renderer->render(formats, result, error)) << error;
+        const auto succeeded = renderer->render(formats, result, error);
+        juce::FloatVectorOperations::disableDenormalisedNumberSupport(denormalsWereDisabled);
+        ASSERT_TRUE(succeeded) << error;
+        if (index == 1) EXPECT_TRUE(workerProcessed.load());
+        if (index == 0) EXPECT_TRUE(callerProcessed.load());
         ASSERT_TRUE(destination.loadFileAsData(rendered[index]));
     }
 

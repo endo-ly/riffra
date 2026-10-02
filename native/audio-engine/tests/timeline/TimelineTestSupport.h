@@ -385,6 +385,13 @@ public:
         return setPlaybackCompensationForTest(*renderer.engine, trackId, samples);
     }
 
+    static bool installOfflineEffect(OfflineRenderer& renderer, const juce::String& trackId,
+                                     std::unique_ptr<juce::AudioProcessor> processor,
+                                     juce::String& error) {
+        return installTrackChainDevice(*renderer.engine, trackId, "effect:test",
+                                       std::move(processor), 48'000.0, 128, error);
+    }
+
     static void setOfflineWorkerCount(OfflineRenderer& renderer, const int workerCount) {
         renderer.engine->pool = std::make_unique<TrackProcessingPool>(workerCount);
     }

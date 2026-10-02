@@ -78,7 +78,10 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
     pendingWorkers.store(static_cast<int>(workers.size()), std::memory_order_relaxed);
     generation.fetch_add(1, std::memory_order_release);
     wake.release(static_cast<int>(workers.size()));
-    processAvailableTracks();
+    {
+        juce::ScopedNoDenormals noDenormals;
+        processAvailableTracks();
+    }
     std::size_t spins = 0;
     while (completedTracks.load(std::memory_order_acquire) != currentTracks.size() ||
            pendingWorkers.load(std::memory_order_acquire) != 0) {
