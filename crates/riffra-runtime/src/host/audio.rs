@@ -304,12 +304,8 @@ fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDi
             device_fault: status.mute_reasons & 4 != 0,
             feedback_protection: status.mute_reasons & 8 != 0,
         },
-        realtime: crate::api::output::AudioDiagnosticsRealtime {
-            callback_count: status.diagnostics.callback_count,
-            average_callback_duration_us: status.diagnostics.average_callback_duration_us,
-            maximum_callback_duration_us: status.diagnostics.maximum_callback_duration_us,
-            callback_overruns: status.diagnostics.callback_overruns,
-        },
+        realtime: status.diagnostics.realtime.clone(),
+        track_loads: status.diagnostics.track_loads.clone(),
         output: crate::api::output::AudioDiagnosticsOutput {
             pre_limiter_peak: status.diagnostics.pre_limiter_peak,
             limiter_gain_reduction_db: status.diagnostics.limiter_gain_reduction_db,
@@ -389,7 +385,7 @@ mod tests {
             mute_reasons: 1 | 4,
             ..AudioStatus::default()
         };
-        status.diagnostics.callback_overruns = 3;
+        status.diagnostics.realtime.callback_overruns = 3;
         status
             .diagnostics
             .instrument_faults

@@ -95,10 +95,18 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
     instrumentPreviewing: false,
     muteReasons: 0,
     diagnostics: {
-      callbackCount: 0,
-      averageCallbackDurationUs: 0,
-      maximumCallbackDurationUs: 0,
-      callbackOverruns: 0,
+      realtime: {
+        callbackCount: 0,
+        callbackOverruns: 0,
+        window: {
+          durationMs: 1000,
+          callbackCount: 0,
+          overruns: 0,
+          averageCallbackDurationUs: 0,
+          maximumCallbackDurationUs: 0,
+        },
+      },
+      trackLoads: [],
       preLimiterPeak: 0,
       limiterGainReductionDb: 0,
       hardClipSamples: 0,

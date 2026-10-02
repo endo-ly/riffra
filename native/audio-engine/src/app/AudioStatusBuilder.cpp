@@ -89,10 +89,12 @@ AudioStatusSpec AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& mana
     status.recording = pipeline.recordingStatus();
 
     auto& diagnostics = status.diagnostics;
-    diagnostics.callbackCount = pipeline.getCallbackCount();
-    diagnostics.averageCallbackDurationUs = pipeline.getAverageCallbackDurationUs();
-    diagnostics.maximumCallbackDurationUs = pipeline.getMaximumCallbackDurationUs();
-    diagnostics.callbackOverruns = pipeline.getCallbackOverruns();
+    diagnostics.realtime.callbackCount = pipeline.getCallbackCount();
+    diagnostics.realtime.callbackOverruns = pipeline.getCallbackOverruns();
+    const auto window = pipeline.getCallbackWindow();
+    diagnostics.realtime.window = {1000, window.callbackCount, window.overruns,
+                                   window.averageCallbackDurationUs,
+                                   window.maximumCallbackDurationUs};
     diagnostics.preLimiterPeak = transientMeters.preLimiterPeak;
     diagnostics.limiterGainReductionDb = transientMeters.limiterGainReductionDb;
     diagnostics.hardClipSamples = pipeline.getHardClipSamples();
@@ -107,6 +109,7 @@ AudioStatusSpec AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& mana
         diagnostics.maximumLatencySamples = graph->maximumLatencySamples;
         diagnostics.graphRevision = graph->revision;
         diagnostics.instrumentFaults = graph->instrumentFaults;
+        diagnostics.trackLoads = graph->trackLoads;
     }
     const auto projectIdentityAfter = timeline.activeProjectMeterIdentity();
     if (projectIdentity.meterEpoch != projectIdentityAfter.meterEpoch ||

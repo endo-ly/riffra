@@ -38,6 +38,39 @@ TEST(TrackProcessingPoolTest, ProcessesEveryTrackOnceForEachWorkerCount) {
     }
 }
 
+TEST(TrackProcessingPoolTest, ReportsClosedWindowLoadsInGraphOrder) {
+    // Arrange
+    auto snapshot = makeTestSnapshot();
+    snapshot.graph.tracks.push_back(makeInstrumentTrack("track:z"));
+    snapshot.graph.tracks.push_back(makeInstrumentTrack("track:a"));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error)) << error;
+    auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    for (std::size_t index = 0; index < graph->tracks.size(); ++index) {
+        auto& runtime = *graph->tracks[index]->runtime;
+        runtime.windowProcessingTotalUs = (index + 1) * 40;
+        runtime.windowProcessingCount = 2;
+        runtime.windowProcessingMaximumUs = (index + 1) * 30;
+    }
+
+    // Act
+    engine.closeTrackLoadWindow();
+    const auto status = engine.status();
+
+    // Assert
+    ASSERT_TRUE(status.graph.has_value());
+    ASSERT_EQ(status.graph->trackLoads.size(), 2u);
+    EXPECT_EQ(status.graph->trackLoads[0].trackId, "track:z");
+    EXPECT_EQ(status.graph->trackLoads[1].trackId, "track:a");
+    EXPECT_EQ(status.graph->trackLoads[0].averageProcessingUs, 20u);
+    EXPECT_EQ(status.graph->trackLoads[1].maximumProcessingUs, 60u);
+    EXPECT_EQ(graph->tracks[0]->runtime->windowProcessingCount, 0u);
+}
+
 TEST(TrackProcessingPoolTest, OfflineOutputIsBitIdenticalAcrossWorkerCounts) {
     // Arrange
     test::TemporaryDirectory directory;

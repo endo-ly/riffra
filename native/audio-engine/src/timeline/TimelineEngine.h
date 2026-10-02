@@ -51,6 +51,7 @@ struct TimelineGraphStatus final {
     std::uint64_t liveMidiDrops = 0;
     std::vector<juce::String> armedTrackIds;
     std::vector<InstrumentFaultSpec> instrumentFaults;
+    std::vector<TrackLoadSpec> trackLoads;
 };
 
 /// Transport and graph state reported by the timeline.
@@ -96,6 +97,9 @@ public:
 
     TimelineEngine(const TimelineEngine&) = delete;
     TimelineEngine& operator=(const TimelineEngine&) = delete;
+
+    /// Audio owner, after all track workers complete the callback.
+    void closeTrackLoadWindow() noexcept;
 
     // Graph preparation. Message thread.
     bool loadSnapshot(const TimelineSnapshotSpec& snapshot, juce::AudioFormatManager& formats,

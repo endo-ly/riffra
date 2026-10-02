@@ -100,7 +100,7 @@ TEST(AudioDeviceServiceTest, KeepsProjectMeterEpochAndCumulativeDiagnosticsConsi
 }
 
 TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
-    const auto probe = AudioDeviceService::discover();
+    const auto probe = encodeAudioDeviceProbe(AudioDeviceService::discover());
 
     ASSERT_TRUE(probe.isObject());
     EXPECT_EQ(probe.getProperty("type", {}).toString(), "audioDeviceProbe");

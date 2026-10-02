@@ -58,10 +58,13 @@ AudioStatusSpec audioStatus() {
     status.previewing = true;
     status.instrumentPreviewing = false;
     status.muteReasons = 1;
-    status.diagnostics.callbackCount = 1'000;
-    status.diagnostics.averageCallbackDurationUs = 120;
-    status.diagnostics.maximumCallbackDurationUs = 800;
-    status.diagnostics.callbackOverruns = 2;
+    status.diagnostics.realtime.callbackCount = 1'000;
+    status.diagnostics.realtime.window.callbackCount = 100;
+    status.diagnostics.realtime.window.overruns = 2;
+    status.diagnostics.trackLoads = {{"audio-track", 40, 250}, {"instrument-track", 60, 450}};
+    status.diagnostics.realtime.window.averageCallbackDurationUs = 120;
+    status.diagnostics.realtime.window.maximumCallbackDurationUs = 800;
+    status.diagnostics.realtime.callbackOverruns = 2;
     status.diagnostics.preLimiterPeak = 0.75;
     status.diagnostics.limiterGainReductionDb = 1.5;
     status.diagnostics.hardClipSamples = 4;

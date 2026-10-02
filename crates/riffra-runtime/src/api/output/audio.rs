@@ -53,7 +53,7 @@ pub struct RecordingStatus {
 
 /// A channel exposed by an audio device probe.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioChannelInfo {
     pub index: u32,
     pub name: String,
@@ -61,7 +61,7 @@ pub struct AudioChannelInfo {
 
 /// An audio device and the channels exposed by its probe.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioDeviceInfo {
     pub name: String,
     pub channels: Vec<AudioChannelInfo>,
@@ -77,7 +77,7 @@ pub struct MidiDeviceInfo {
 
 /// A native audio driver and its available devices.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioDriverInfo {
     pub name: String,
     pub access_mode: AudioAccessMode,
@@ -107,7 +107,7 @@ pub enum AudioAccessMode {
 
 /// Result of an audio-device probe.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioDeviceProbe {
     pub drivers: Vec<AudioDriverInfo>,
     pub refreshed_at_ms: u64,
@@ -116,7 +116,7 @@ pub struct AudioDeviceProbe {
 
 /// Channel names resolved for a selected device.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceChannels {
     pub driver: String,
     pub input_device: String,
@@ -170,10 +170,8 @@ pub struct AudioStatus {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDiagnostics {
-    pub callback_count: u64,
-    pub average_callback_duration_us: u64,
-    pub maximum_callback_duration_us: u64,
-    pub callback_overruns: u64,
+    pub realtime: AudioDiagnosticsRealtime,
+    pub track_loads: Vec<AudioTrackLoad>,
     pub pre_limiter_peak: f64,
     pub limiter_gain_reduction_db: f64,
     pub hard_clip_samples: u64,
@@ -210,6 +208,7 @@ pub struct AudioDiagnosticsReport {
     pub device: AudioDiagnosticsDevice,
     pub mute: AudioDiagnosticsMute,
     pub realtime: AudioDiagnosticsRealtime,
+    pub track_loads: Vec<AudioTrackLoad>,
     pub output: AudioDiagnosticsOutput,
     pub instrument_faults: Vec<AudioInstrumentFault>,
     /// Projection and timeline details outside the stable contract, present
@@ -262,12 +261,31 @@ pub(crate) struct AudioDiagnosticsProjection {
 
 /// Realtime callback values included in a stable audio diagnostic snapshot.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioDiagnosticsRealtime {
     pub callback_count: u64,
-    pub average_callback_duration_us: u64,
-    pub maximum_callback_duration_us: u64,
     pub callback_overruns: u64,
+    pub window: AudioCallbackWindow,
+}
+
+/// Callback timings from the most recently completed audio-clock window.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AudioCallbackWindow {
+    pub duration_ms: u32,
+    pub callback_count: u32,
+    pub overruns: u32,
+    pub average_callback_duration_us: u32,
+    pub maximum_callback_duration_us: u32,
+}
+
+/// Processing timings of one track in the most recently completed window.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AudioTrackLoad {
+    pub track_id: String,
+    pub average_processing_us: u32,
+    pub maximum_processing_us: u32,
 }
 
 /// Output safety values included in a stable audio diagnostic snapshot.

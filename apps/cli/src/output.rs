@@ -50,11 +50,34 @@ fn print_audio_diagnostics(value: &Value) -> Result<(), String> {
     println!("Realtime");
     field(value, &["realtime", "callbackCount"]).print_line("  Callbacks");
     field(value, &["realtime", "callbackOverruns"]).print_line("  Overruns");
-    field(value, &["realtime", "averageCallbackDurationUs"])
+    field(value, &["realtime", "window", "durationMs"]).print_line_with("  Window", " ms");
+    field(value, &["realtime", "window", "callbackCount"]).print_line("  Window Callbacks");
+    field(value, &["realtime", "window", "overruns"]).print_line("  Window Overruns");
+    field(value, &["realtime", "window", "averageCallbackDurationUs"])
         .print_line_with("  Avg Callback", " us");
-    field(value, &["realtime", "maximumCallbackDurationUs"])
+    field(value, &["realtime", "window", "maximumCallbackDurationUs"])
         .print_line_with("  Max Callback", " us");
 
+    println!();
+    println!("Track Loads (maximum processing time)");
+    if let Some(loads) = value.get("trackLoads").and_then(Value::as_array) {
+        let mut ranked: Vec<_> = loads.iter().collect();
+        ranked.sort_by_key(|load| {
+            std::cmp::Reverse(
+                load.get("maximumProcessingUs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            )
+        });
+        for load in ranked.into_iter().take(5) {
+            println!(
+                "  {}  avg={} us  max={} us",
+                display(load.get("trackId")),
+                display(load.get("averageProcessingUs")),
+                display(load.get("maximumProcessingUs"))
+            );
+        }
+    }
     println!();
     println!("Output");
     field(value, &["output", "preLimiterPeak"]).print_line("  Pre-Limiter Peak");

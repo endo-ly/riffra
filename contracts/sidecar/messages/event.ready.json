@@ -78,10 +78,29 @@
       "instrumentPreviewing": false,
       "muteReasons": 1,
       "diagnostics": {
-        "callbackCount": 1000,
-        "averageCallbackDurationUs": 120,
-        "maximumCallbackDurationUs": 800,
-        "callbackOverruns": 2,
+        "realtime": {
+          "callbackCount": 1000,
+          "callbackOverruns": 2,
+          "window": {
+            "durationMs": 1000,
+            "callbackCount": 100,
+            "overruns": 2,
+            "averageCallbackDurationUs": 120,
+            "maximumCallbackDurationUs": 800
+          }
+        },
+        "trackLoads": [
+          {
+            "trackId": "audio-track",
+            "averageProcessingUs": 40,
+            "maximumProcessingUs": 250
+          },
+          {
+            "trackId": "instrument-track",
+            "averageProcessingUs": 60,
+            "maximumProcessingUs": 450
+          }
+        ],
         "preLimiterPeak": 0.75,
         "limiterGainReductionDb": 1.5,
         "hardClipSamples": 4,

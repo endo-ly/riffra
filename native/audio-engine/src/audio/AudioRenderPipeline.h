@@ -67,11 +67,8 @@ public:
     [[nodiscard]] std::uint64_t getCallbackCount() const noexcept {
         return audioMetrics.callbackCount();
     }
-    [[nodiscard]] std::uint64_t getAverageCallbackDurationUs() const noexcept {
-        return audioMetrics.averageCallbackDurationUs();
-    }
-    [[nodiscard]] std::uint64_t getMaximumCallbackDurationUs() const noexcept {
-        return audioMetrics.maximumCallbackDurationUs();
+    [[nodiscard]] CallbackWindow getCallbackWindow() const noexcept {
+        return audioMetrics.callbackWindow();
     }
     [[nodiscard]] std::uint64_t getCallbackOverruns() const noexcept {
         return audioMetrics.callbackOverruns();

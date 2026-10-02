@@ -62,11 +62,29 @@ struct InstrumentFaultSpec final {
     std::uint64_t droppedMidiEvents = 0;
 };
 
-struct AudioDiagnosticsSpec final {
+struct CallbackWindowSpec final {
+    std::uint32_t durationMs = 1000;
+    std::uint32_t callbackCount = 0;
+    std::uint32_t overruns = 0;
+    std::uint32_t averageCallbackDurationUs = 0;
+    std::uint32_t maximumCallbackDurationUs = 0;
+};
+
+struct RealtimeDiagnosticsSpec final {
     std::uint64_t callbackCount = 0;
-    std::uint64_t averageCallbackDurationUs = 0;
-    std::uint64_t maximumCallbackDurationUs = 0;
     std::uint64_t callbackOverruns = 0;
+    CallbackWindowSpec window;
+};
+
+struct TrackLoadSpec final {
+    juce::String trackId;
+    std::uint32_t averageProcessingUs = 0;
+    std::uint32_t maximumProcessingUs = 0;
+};
+
+struct AudioDiagnosticsSpec final {
+    RealtimeDiagnosticsSpec realtime;
+    std::vector<TrackLoadSpec> trackLoads;
     double preLimiterPeak = 0.0;
     double limiterGainReductionDb = 0.0;
     std::uint64_t hardClipSamples = 0;

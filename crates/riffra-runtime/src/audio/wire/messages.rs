@@ -224,10 +224,8 @@ pub(crate) struct WireRecordingStatus {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireAudioDiagnostics {
-    pub(crate) callback_count: u64,
-    pub(crate) average_callback_duration_us: u64,
-    pub(crate) maximum_callback_duration_us: u64,
-    pub(crate) callback_overruns: u64,
+    pub(crate) realtime: crate::api::output::AudioDiagnosticsRealtime,
+    pub(crate) track_loads: Vec<crate::api::output::AudioTrackLoad>,
     pub(crate) pre_limiter_peak: f64,
     pub(crate) limiter_gain_reduction_db: f64,
     pub(crate) hard_clip_samples: u64,
@@ -427,3 +425,4 @@ pub(crate) enum RenderMessage {
     OfflineRenderComplete { frames: u64, sample_rate: u32 },
     Error(SidecarError),
 }
+

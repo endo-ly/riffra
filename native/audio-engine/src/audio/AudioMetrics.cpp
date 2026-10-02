@@ -42,15 +42,6 @@ std::uint64_t AudioMetrics::callbackCount() const noexcept {
     return callbackCountValue.load(std::memory_order_acquire);
 }
 
-std::uint64_t AudioMetrics::averageCallbackDurationUs() const noexcept {
-    const auto count = callbackCount();
-    return count == 0 ? 0 : callbackDurationUs.load(std::memory_order_acquire) / count;
-}
-
-std::uint64_t AudioMetrics::maximumCallbackDurationUs() const noexcept {
-    return maximumCallbackDurationUsValue.load(std::memory_order_acquire);
-}
-
 std::uint64_t AudioMetrics::callbackOverruns() const noexcept {
     return callbackOverrunsValue.load(std::memory_order_acquire);
 }
@@ -110,23 +101,37 @@ void AudioMetrics::recordBlock(const std::uint64_t projectEpoch, const float blo
         holdPeak(limiterGainReductionDbValue, blockLimiterGainReductionDb);
 }
 
-void AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_point started,
+bool AudioMetrics::recordCallbackDuration(const std::chrono::steady_clock::time_point started,
                                           const int numSamples, const double sampleRate) noexcept {
     const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
                               std::chrono::steady_clock::now() - started)
                               .count();
     const auto durationUs = static_cast<std::uint64_t>(std::max<std::int64_t>(0, duration));
+    return recordCallbackDurationUs(durationUs, numSamples, sampleRate);
+}
+
+bool AudioMetrics::recordCallbackDurationUs(const std::uint64_t durationUs, const int numSamples,
+                                            const double sampleRate) noexcept {
     callbackCountValue.fetch_add(1, std::memory_order_relaxed);
-    callbackDurationUs.fetch_add(durationUs, std::memory_order_relaxed);
-    auto maximum = maximumCallbackDurationUsValue.load(std::memory_order_relaxed);
-    while (durationUs > maximum &&
-           !maximumCallbackDurationUsValue.compare_exchange_weak(
-               maximum, durationUs, std::memory_order_release, std::memory_order_relaxed)) {
-    }
-    if (sampleRate > 0.0 && numSamples > 0 &&
-        static_cast<double>(durationUs) >
-            1'000'000.0 * static_cast<double>(numSamples) / sampleRate)
-        callbackOverrunsValue.fetch_add(1, std::memory_order_relaxed);
+    if (sampleRate <= 0.0 || numSamples <= 0) return false;
+    const auto overrun = static_cast<double>(durationUs) > 1'000'000.0 * numSamples / sampleRate;
+    if (overrun) callbackOverrunsValue.fetch_add(1, std::memory_order_relaxed);
+    audioSample += static_cast<std::uint64_t>(numSamples);
+    windowSamples += static_cast<std::uint64_t>(numSamples);
+    ++currentWindow.callbackCount;
+    currentWindow.overruns += overrun ? 1 : 0;
+    windowTotalDurationUs += durationUs;
+    currentWindow.maximumCallbackDurationUs =
+        std::max(currentWindow.maximumCallbackDurationUs, static_cast<std::uint32_t>(durationUs));
+    if (static_cast<double>(windowSamples) < sampleRate) return false;
+    currentWindow.windowEndAudioSample = audioSample;
+    currentWindow.averageCallbackDurationUs =
+        static_cast<std::uint32_t>(windowTotalDurationUs / currentWindow.callbackCount);
+    closedWindow.write(currentWindow);
+    currentWindow = {};
+    windowTotalDurationUs = 0;
+    windowSamples -= static_cast<std::uint64_t>(sampleRate);
+    return true;
 }
 
 void AudioMetrics::resetTransientMeters() noexcept {
@@ -140,6 +145,11 @@ void AudioMetrics::resetTransientMeters() noexcept {
 
 void AudioMetrics::resetForDevice() noexcept {
     resetTransientMeters();
+    currentWindow = {};
+    closedWindow.write({});
+    audioSample = 0;
+    windowSamples = 0;
+    windowTotalDurationUs = 0;
     hardClipSamplesValue.store(0, std::memory_order_release);
 }
 

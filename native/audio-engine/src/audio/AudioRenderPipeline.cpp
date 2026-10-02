@@ -124,8 +124,9 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
     audioMetrics.beginProjectBlock(projectEpoch);
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
-        audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
-                                            activeSampleRate.load(std::memory_order_relaxed));
+        if (audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
+                                                activeSampleRate.load(std::memory_order_relaxed)))
+            timelineEngine.closeTrackLoadWindow();
     };
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
     const auto* selectedInput = inputChannelData != nullptr && selectedChannel < numInputChannels

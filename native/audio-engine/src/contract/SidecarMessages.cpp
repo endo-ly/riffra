@@ -136,12 +136,36 @@ juce::var encodeInstrumentFault(const InstrumentFaultSpec& fault) {
         .build();
 }
 
+juce::var encodeWindow(const CallbackWindowSpec& window) {
+    return ObjectBuilder{}
+        .set("durationMs", integer(window.durationMs))
+        .set("callbackCount", integer(window.callbackCount))
+        .set("overruns", integer(window.overruns))
+        .set("averageCallbackDurationUs", integer(window.averageCallbackDurationUs))
+        .set("maximumCallbackDurationUs", integer(window.maximumCallbackDurationUs))
+        .build();
+}
+
+juce::var encodeRealtime(const RealtimeDiagnosticsSpec& realtime) {
+    return ObjectBuilder{}
+        .set("callbackCount", integer(realtime.callbackCount))
+        .set("callbackOverruns", integer(realtime.callbackOverruns))
+        .set("window", encodeWindow(realtime.window))
+        .build();
+}
+
+juce::var encodeTrackLoad(const TrackLoadSpec& load) {
+    return ObjectBuilder{}
+        .set("trackId", load.trackId)
+        .set("averageProcessingUs", integer(load.averageProcessingUs))
+        .set("maximumProcessingUs", integer(load.maximumProcessingUs))
+        .build();
+}
+
 juce::var encodeDiagnostics(const AudioDiagnosticsSpec& diagnostics) {
     return ObjectBuilder{}
-        .set("callbackCount", integer(diagnostics.callbackCount))
-        .set("averageCallbackDurationUs", integer(diagnostics.averageCallbackDurationUs))
-        .set("maximumCallbackDurationUs", integer(diagnostics.maximumCallbackDurationUs))
-        .set("callbackOverruns", integer(diagnostics.callbackOverruns))
+        .set("realtime", encodeRealtime(diagnostics.realtime))
+        .set("trackLoads", array(diagnostics.trackLoads, encodeTrackLoad))
         .set("preLimiterPeak", diagnostics.preLimiterPeak)
         .set("limiterGainReductionDb", diagnostics.limiterGainReductionDb)
         .set("hardClipSamples", integer(diagnostics.hardClipSamples))
