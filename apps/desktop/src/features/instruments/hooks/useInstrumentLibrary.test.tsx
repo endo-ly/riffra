@@ -6,9 +6,8 @@ import type { AudioStatus } from '@/model/domain';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { useInstrumentLibrary } from './useInstrumentLibrary';
 
-function useLibraryHarness(api: FakeNativeApi, query = '', hostGeneration = 1) {
+function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1) {
   return useInstrumentLibrary(api, {
-    query,
     hostGeneration,
     safeMode: false,
     setAudio: vi.fn(),
@@ -16,12 +15,9 @@ function useLibraryHarness(api: FakeNativeApi, query = '', hostGeneration = 1) {
 }
 
 describe('useInstrumentLibrary', () => {
-  it('loads the catalog, persists favorite changes, and applies filters', async () => {
+  it('loads the catalog and persists favorite changes', async () => {
     const api = new FakeNativeApi();
-    const { result, rerender } = renderHook(
-      ({ query, hostGeneration }) => useLibraryHarness(api, query, hostGeneration),
-      { initialProps: { query: '', hostGeneration: 1 } },
-    );
+    const { result } = renderHook(() => useLibraryHarness(api));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.items).toHaveLength(5);
@@ -30,22 +26,6 @@ describe('useInstrumentLibrary', () => {
       await result.current.toggleFavorite(result.current.items[0]);
     });
     expect(result.current.items[0].favorite).toBe(true);
-
-    act(() => {
-      result.current.setFilters({
-        category: 'Keys',
-        tag: null,
-        collectionId: null,
-        favoritesOnly: false,
-      });
-    });
-    expect(result.current.visibleItems.map((item) => item.name)).toEqual([
-      'Warm Poly Pad',
-      'Glass Current',
-    ]);
-
-    rerender({ query: 'drums', hostGeneration: 1 });
-    expect(result.current.visibleItems.map((item) => item.name)).toEqual([]);
   });
 
   it('does not start preview in Safe Mode and reloads on host generation changes', async () => {
@@ -54,7 +34,6 @@ describe('useInstrumentLibrary', () => {
     const { result, rerender } = renderHook(
       ({ hostGeneration, safeMode }) =>
         useInstrumentLibrary(api, {
-          query: '',
           hostGeneration,
           safeMode,
           setAudio,
@@ -69,14 +48,9 @@ describe('useInstrumentLibrary', () => {
     expect(api.calls).not.toContain('previewInstrument');
 
     rerender({ hostGeneration: 2, safeMode: false });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.selectedId).toBeNull();
-    expect(result.current.filters).toEqual({
-      category: null,
-      tag: null,
-      collectionId: null,
-      favoritesOnly: false,
-    });
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'listInstruments')).toHaveLength(2),
+    );
   });
 
   it('previews a user instrument only when its definition includes a preview', async () => {

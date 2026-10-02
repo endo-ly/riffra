@@ -5,6 +5,7 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     search:
       'M11 4a7 7 0 1 0 4.9 12l4.55 4.55 1.4-1.4-4.55-4.55A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
     stop: 'M7 7h10v10H7Z',
+    play: 'M8 5.5v13l10.5-6.5Z',
     undo: 'M9 7H5.8l2.6-2.6L7 3 2 8l5 5 1.4-1.4L5.8 9H9a6 6 0 1 1-5.6 8h2.1A4 4 0 1 0 9 7Z',
     redo: 'M15 7h3.2l-2.6-2.6L17 3l5 5-5 5-1.4-1.4 2.6-2.6H15a6 6 0 1 0 5.6 8h-2.1A4 4 0 1 1 15 7Z',
     plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6Z',

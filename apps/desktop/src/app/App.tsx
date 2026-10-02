@@ -99,7 +99,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     audio,
     importMidi,
     plugins,
-    recordings,
     transportPlaying,
     transportStarting,
     arrangementTransport,
@@ -474,28 +473,26 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             <BrowserPanel
               projectSwitching={projectSwitching}
               safeMode={boot?.safeMode ?? false}
+              query={browser.query}
+              onQueryChange={browser.setQuery}
               library={{
                 ...browser.library,
-                query: browser.query,
-                setQuery: browser.setQuery,
-                searchQuery: browser.library.query,
                 onSelectAsset: (asset) => void selectLibraryAsset(asset),
                 onPreviewAsset: () => void previewSelectedLibraryAsset(),
                 onUpdateAsset: (tag, note) => void updateSelectedLibraryAsset(tag, note),
                 onImportMidi: () => void importMidi(),
               }}
-              plugins={{
-                ...browser.plugins,
-                selectedTrack: arrange.selectedTrack,
-                onAddPlugin: (plugin, target) => void arrange.addPlugin(plugin, target),
-              }}
               instruments={browser.instruments}
-              onApplyInstrument={(instrumentId) => void arrange.applyInstrument(instrumentId)}
-              recordings={{
-                ...browser.recordings,
-                count: recordings.length,
-              }}
+              plugins={browser.plugins}
+              recordings={browser.recordings}
               inbox={browser.inbox}
+              selectedTrack={arrange.selectedTrack}
+              onApply={(placement) =>
+                void arrange.applyBrowserItem(
+                  placement,
+                  arrangementTransport.displayTickRef.current,
+                )
+              }
             />
           }
           properties={

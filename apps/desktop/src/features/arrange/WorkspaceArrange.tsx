@@ -33,8 +33,6 @@ import {
   type SnapGrid,
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
-import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
-import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
 import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
@@ -47,7 +45,7 @@ import {
   useArrangeContextMenus,
   type ArrangePluginPickerRequest,
 } from '@/features/arrange/hooks/useArrangeContextMenus';
-import { useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
+import { isBrowserItemDrag, useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
@@ -91,6 +89,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
+  const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const [pluginPicker, setPluginPicker] = useState<ArrangePluginPickerRequest | null>(null);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
@@ -584,12 +583,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             <div
               className={`${styles.empty} ${emptyDragOver ? styles.emptyDragOver : ''}`}
               onDragOver={(event) => {
-                if (
-                  !event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) &&
-                  !event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME) &&
-                  !isOsFileDrag(event)
-                )
-                  return;
+                if (!isBrowserItemDrag(event) && !isOsFileDrag(event)) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'copy';
               }}
@@ -737,6 +731,27 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 )}
               </Fragment>
             ))
+          )}
+          {arrangement.tracks.length > 0 && (
+            <div
+              className={`${styles.newTrackDrop} ${newTrackDragOver ? styles.newTrackDropActive : ''}`}
+              onDragOver={(event) => {
+                if (!isBrowserItemDrag(event) && !isOsFileDrag(event)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+              }}
+              onDragEnter={() => setNewTrackDragOver(true)}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node))
+                  setNewTrackDragOver(false);
+              }}
+              onDrop={(event) => {
+                setNewTrackDragOver(false);
+                handleDrop(event);
+              }}
+            >
+              {newTrackDragOver && <span>Drop to add to the Arrangement</span>}
+            </div>
           )}
         </div>
       </div>

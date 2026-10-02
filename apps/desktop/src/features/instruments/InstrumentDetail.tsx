@@ -1,27 +1,22 @@
 import { useEffect, useState } from 'react';
-import type { InstrumentCollection, InstrumentLibraryItem, Track } from '@/model/domain';
+import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import surface from '@/shared/ui/Surface.module.css';
 import { formatMidiNote } from './model/instrument-library';
-import styles from './InstrumentBrowserSection.module.css';
+import styles from './InstrumentDetail.module.css';
 
 interface InstrumentDetailProps {
   item: InstrumentLibraryItem;
   collections: InstrumentCollection[];
-  selectedTrack: Track | null;
-  projectSwitching: boolean;
-  safeMode: boolean;
-  previewing: boolean;
-  onFavorite: () => void;
   onCategory: (category: string | null) => void;
   onTags: (tags: string[]) => void;
   onMembership: (collectionId: number, included: boolean) => void;
   onCreateCollection: (name: string) => void;
   onRenameCollection: (id: number, name: string) => void;
   onDeleteCollection: (id: number) => void;
-  onPreview: () => void;
-  onApply: () => void;
 }
+
+/** Metadata and library organization for one Instrument. */
 
 export function InstrumentDetail(props: InstrumentDetailProps) {
   const [category, setCategory] = useState(props.item.category);
@@ -38,8 +33,6 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
     setNewTag('');
   }, [props.item.id, props.item.category, props.item.userTags]);
 
-  const isInstrumentTrack = props.selectedTrack?.kind === 'instrument';
-  const applyDisabled = props.projectSwitching || !isInstrumentTrack;
   const saveCategory = () => props.onCategory(category?.trim() || null);
   const resetCategory = () => {
     setCategory(props.item.defaultCategory);
@@ -53,23 +46,7 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
   };
 
   return (
-    <section className={styles.detail} aria-labelledby="instrument-detail-title">
-      <header className={styles.detailHeader}>
-        <div>
-          <span className={surface.eyebrow}>INSTRUMENT DETAIL</span>
-          <h3 id="instrument-detail-title">{props.item.name}</h3>
-          <small>{props.item.origin === 'builtIn' ? 'Built-in' : 'User Instrument'}</small>
-        </div>
-        <button
-          type="button"
-          className={props.item.favorite ? styles.favoriteActive : styles.iconButton}
-          aria-label={props.item.favorite ? 'Remove from favorites' : 'Add to favorites'}
-          aria-pressed={props.item.favorite}
-          onClick={props.onFavorite}
-        >
-          ★
-        </button>
-      </header>
+    <section className={styles.detail} aria-label={`Details for ${props.item.name}`}>
       {props.item.description && <p className={styles.description}>{props.item.description}</p>}
       <div className={styles.metadataGrid}>
         <span>Origin</span>
@@ -242,41 +219,6 @@ export function InstrumentDetail(props: InstrumentDetailProps) {
           </button>
         </form>
       </div>
-      <div className={styles.detailActions}>
-        <button
-          type="button"
-          aria-label={`${props.previewing ? 'Stop previewing' : 'Preview'} ${props.item.name}`}
-          onClick={props.onPreview}
-          disabled={props.safeMode || props.item.preview === null}
-        >
-          {props.previewing ? 'Stop preview' : 'Preview'}
-        </button>
-        <button
-          type="button"
-          aria-label={
-            isInstrumentTrack
-              ? `Apply ${props.item.name} to ${props.selectedTrack?.name}`
-              : `Select an Instrument Track to apply ${props.item.name}`
-          }
-          onClick={props.onApply}
-          disabled={applyDisabled}
-        >
-          {isInstrumentTrack
-            ? `Apply ${props.item.name} to ${props.selectedTrack?.name}`
-            : 'Select an Instrument Track'}
-        </button>
-      </div>
-      {!props.selectedTrack && (
-        <small className={styles.detailHint}>Select an Instrument Track to apply this sound.</small>
-      )}
-      {props.selectedTrack && !isInstrumentTrack && (
-        <small className={styles.detailHint}>
-          Instruments can only be assigned to an Instrument Track.
-        </small>
-      )}
-      {props.safeMode && (
-        <small className={styles.detailHint}>Preview is unavailable in Safe Mode.</small>
-      )}
       {pendingDelete && (
         <ConfirmDialog
           title="Delete instrument collection"

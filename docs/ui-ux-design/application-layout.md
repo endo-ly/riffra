@@ -47,7 +47,7 @@ Projectの切替後はHostを維持したまま、Canonical state、履歴、Run
 
 ## Left Column
 
-Left Column は Browser と Properties を上下に並べる。Browser は素材の検索・試聴・投入を担当し、共通の検索と Plugins / Recordings の折りたたみ可能なセクションで構成する。セクションは互いに独立して開閉でき、同時に表示される。検索はセクションを横断する絞り込みとして共有する。Properties は Arrange の選択状態に応じて Track、Clip、Take の内容を表示する。両方を同時に表示するため、選択対象が変わっても Browser の検索や表示文脈は維持される。
+Left Column は Browser と Properties を上下に並べる。Browser は素材の検索・試聴・投入を担当し、検索欄と一本のツリーで構成する。ツリーは Favorites、Collections、Instruments（カテゴリ別のフォルダと音源プラグイン）、Effects、Recordings をフォルダとして持ち、検索中はフォルダを無視して一致した項目を所在付きで平らに並べる。選択中の項目は Browser 下端に表示し、試聴と投入をそこから行う。Properties は Arrange の選択状態に応じて Track、Clip、Take の内容を表示する。両方を同時に表示するため、選択対象が変わっても Browser の検索や表示文脈は維持される。
 
 Left Column の幅は Main Canvas との境界で変更できる。Browser と Properties の境界は上下に変更でき、Browser の最低表示領域を保つ。
 

@@ -1106,3 +1106,20 @@
 .selectionChip button:hover {
   background: color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
 }
+
+/* Drop target below the last Track; dropping here places the item without a target Track. */
+.newTrackDrop {
+  min-height: calc(var(--size-control-normal) * 3);
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--header-width) + var(--space-4));
+  color: var(--color-text-muted);
+  font-size: var(--font-size-control);
+  border: 1px dashed transparent;
+}
+
+.newTrackDropActive {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+}

@@ -5,7 +5,6 @@ import styles from './InboxOperations.module.css';
 
 interface InboxOperationsProps {
   recording: RecordingAsset;
-  onPreview: () => void;
   onRename: (name: string) => void;
   onTag: (tag: string | null, note: string | null) => void;
   onPromote: () => void;
@@ -15,7 +14,6 @@ interface InboxOperationsProps {
 
 export function InboxOperations({
   recording,
-  onPreview,
   onRename,
   onTag,
   onPromote,
@@ -40,10 +38,6 @@ export function InboxOperations({
 
   return (
     <div className={styles.inboxOperations} aria-label={`Inbox operations for ${recording.name}`}>
-      <header>
-        <strong>{recording.name}</strong>
-        <small>{recording.state}</small>
-      </header>
       <label className={styles.field}>
         <span>Name</span>
         <input
@@ -83,9 +77,6 @@ export function InboxOperations({
         </label>
       </div>
       <div className={styles.inboxActions}>
-        <button className={surface.textButton} aria-label="Preview" onClick={onPreview}>
-          Preview
-        </button>
         <button className={surface.textButton} aria-label="Promote" onClick={onPromote}>
           Promote
         </button>

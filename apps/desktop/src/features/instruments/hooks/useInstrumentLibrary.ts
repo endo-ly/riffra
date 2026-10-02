@@ -1,17 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AudioStatus, InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
 import type { AudioApi, InstrumentLibraryApi, NativeEventApi } from '@/native/native-api';
 import { logNativeError } from '@/native/invoke';
 import { audioCommandSucceeded } from '@/shared/audio/audio-safety';
-import {
-  filterInstruments,
-  getInstrumentCategories,
-  getInstrumentTags,
-  type InstrumentFilters,
-} from '../model/instrument-library';
 
 interface UseInstrumentLibraryOptions {
-  query: string;
   hostGeneration?: number;
   safeMode?: boolean;
   setAudio: (audio: AudioStatus) => void;
@@ -24,7 +17,7 @@ type InstrumentLibraryFeatureApi = InstrumentLibraryApi &
 /** Owns the shared instrument Browser state and its persisted preferences. */
 export function useInstrumentLibrary(
   api: InstrumentLibraryFeatureApi,
-  { query, hostGeneration = 0, safeMode = false, setAudio }: UseInstrumentLibraryOptions,
+  { hostGeneration = 0, safeMode = false, setAudio }: UseInstrumentLibraryOptions,
 ) {
   const {
     listInstruments,
@@ -41,13 +34,6 @@ export function useInstrumentLibrary(
   } = api;
   const [items, setItems] = useState<InstrumentLibraryItem[]>([]);
   const [collections, setCollections] = useState<InstrumentCollection[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filters, setFilters] = useState<InstrumentFilters>({
-    category: null,
-    tag: null,
-    collectionId: null,
-    favoritesOnly: false,
-  });
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewPendingId, setPreviewPendingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,8 +70,6 @@ export function useInstrumentLibrary(
   useEffect(() => {
     setItems([]);
     setCollections([]);
-    setSelectedId(null);
-    setFilters({ category: null, tag: null, collectionId: null, favoritesOnly: false });
     setPreviewingId(null);
     previewPendingIdRef.current = null;
     setPreviewPendingId(null);
@@ -179,9 +163,6 @@ export function useInstrumentLibrary(
     async (id: number) => {
       try {
         await deleteInstrumentCollection(id);
-        setFilters((current) =>
-          current.collectionId === id ? { ...current, collectionId: null } : current,
-        );
         setItems((current) =>
           current.map((item) =>
             item.collectionIds.includes(id)
@@ -267,25 +248,9 @@ export function useInstrumentLibrary(
     [previewInstrument, previewingId, safeMode, setAudio, stopInstrumentPreview],
   );
 
-  const selected = items.find((item) => item.id === selectedId) ?? null;
-  const visibleItems = useMemo(
-    () => filterInstruments(items, query, filters, collections),
-    [collections, filters, items, query],
-  );
-  const categories = useMemo(() => getInstrumentCategories(items), [items]);
-  const tags = useMemo(() => getInstrumentTags(items), [items]);
-
   return {
     items,
-    visibleItems,
     collections,
-    selectedId,
-    selected,
-    setSelectedId,
-    filters,
-    setFilters,
-    categories,
-    tags,
     previewingId,
     previewPendingId,
     loading,

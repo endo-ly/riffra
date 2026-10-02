@@ -1,8 +1,14 @@
 import { useCallback, type DragEvent } from 'react';
 import type { ArrangementMutationResult, CreativeSession, TrackKind } from '@/model/domain';
-import { readAssetDrag } from '@/shared/asset-drag';
+import { RIFFRA_ASSET_MIME, readAssetDrag } from '@/shared/asset-drag';
 import { RIFFRA_INSTRUMENT_MIME, readInstrumentDrag } from '@/shared/instrument-drag';
+import { RIFFRA_PLUGIN_MIME, readPluginDrag } from '@/shared/plugin-drag';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
+import {
+  placeBrowserItem,
+  resolvePlacementTarget,
+  type BrowserPlacement,
+} from '@/features/arrange/model/browser-placement';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 
 type ArrangeCommit = (
@@ -13,9 +19,14 @@ type ArrangeSnapTick = (raw: number, temporaryOff?: boolean) => number;
 interface UseArrangeDropOptions {
   api: Pick<
     ArrangeWorkspaceApi,
-    'importMidiBytes' | 'addAudioClipToArrangement' | 'addMidiClipToArrangement'
-  > &
-    Pick<ArrangeWorkspaceApi, 'applyInstrument'>;
+    | 'importMidiBytes'
+    | 'addAudioClipToArrangement'
+    | 'addMidiClipToArrangement'
+    | 'addTrack'
+    | 'applyInstrument'
+    | 'setTrackVst3Instrument'
+    | 'addTrackEffect'
+  >;
   commit: ArrangeCommit;
   pixelsPerTick: number;
   snapTick: ArrangeSnapTick;
@@ -24,7 +35,41 @@ interface UseArrangeDropOptions {
 
 const isOsFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
 
-/** Coordinates instrument, Library asset, and OS MIDI-file drops in the Arrange workspace. */
+/** Whether a drag carries something the Browser can place in the Arrangement. */
+export function isBrowserItemDrag(event: DragEvent): boolean {
+  const { types } = event.dataTransfer;
+  return [RIFFRA_ASSET_MIME, RIFFRA_INSTRUMENT_MIME, RIFFRA_PLUGIN_MIME].some((mime) =>
+    types.includes(mime),
+  );
+}
+
+/** Reads the Browser item carried by a drag, or explains why it cannot be placed. */
+function readBrowserDrag(dataTransfer: DataTransfer): BrowserPlacement | string {
+  if (dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
+    const instrument = readInstrumentDrag(dataTransfer);
+    return instrument
+      ? { kind: 'instrument', instrumentId: instrument.instrumentId, name: instrument.name }
+      : 'The dragged Instrument is not valid.';
+  }
+  if (dataTransfer.types.includes(RIFFRA_PLUGIN_MIME)) {
+    const plugin = readPluginDrag(dataTransfer);
+    if (!plugin) return 'The dragged Plugin is not valid.';
+    return {
+      kind: plugin.role === 'instrument' ? 'instrumentPlugin' : 'effectPlugin',
+      pluginPath: plugin.pluginPath,
+      name: plugin.name,
+    };
+  }
+  const asset = readAssetDrag(dataTransfer);
+  if (!asset) return 'The dragged Library item is not a valid Audio or MIDI Asset.';
+  return {
+    kind: asset.kind === 'audio' ? 'audioAsset' : 'midiAsset',
+    assetId: asset.assetId,
+    name: asset.name,
+  };
+}
+
+/** Coordinates Browser item and OS MIDI-file drops in the Arrange workspace. */
 export function useArrangeDrop({
   api,
   commit,
@@ -32,20 +77,20 @@ export function useArrangeDrop({
   snapTick,
   setMessage,
 }: UseArrangeDropOptions) {
-  const handleAssetDrop = useCallback(
+  const handleBrowserDrop = useCallback(
     async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
-      const asset = readAssetDrag(event.dataTransfer);
-      if (!asset) {
-        setMessage('The dragged Library item is not a valid Audio or MIDI Asset.');
+      const placement = readBrowserDrag(event.dataTransfer);
+      if (typeof placement === 'string') {
+        setMessage(placement);
         return;
       }
-      const expectedTrackKind = asset.kind === 'audio' ? 'audio' : 'instrument';
-      if (trackKind && trackKind !== expectedTrackKind) {
-        setMessage(
-          asset.kind === 'audio'
-            ? 'Audio Assets can only be placed on an Audio Track.'
-            : 'MIDI Assets can only be placed on an Instrument Track.',
-        );
+      const target = resolvePlacementTarget(
+        placement,
+        trackId && trackKind ? { id: trackId, kind: trackKind } : null,
+        true,
+      );
+      if (target.kind === 'invalid') {
+        setMessage(target.reason);
         return;
       }
       const timeline = event.currentTarget.closest('[data-arrange-timeline]');
@@ -55,39 +100,25 @@ export function useArrangeDrop({
         (event.clientX - bounds.left - TRACK_HEADER_WIDTH) / pixelsPerTick,
         event.altKey,
       );
-      await commit(
-        asset.kind === 'audio'
-          ? api.addAudioClipToArrangement(asset.assetId, asset.name, tick, trackId)
-          : api.addMidiClipToArrangement(asset.assetId, asset.name, tick, trackId),
+      await placeBrowserItem(
+        api,
+        async (operation) => {
+          const result = await operation;
+          await commit(Promise.resolve(result));
+          return result;
+        },
+        placement,
+        target,
+        tick,
       );
     },
     [api, commit, pixelsPerTick, setMessage, snapTick],
   );
 
-  const handleInstrumentDrop = useCallback(
-    async (event: DragEvent, trackId?: string, trackKind?: TrackKind): Promise<void> => {
-      const instrument = readInstrumentDrag(event.dataTransfer);
-      if (!instrument) {
-        setMessage('The dragged Instrument is not valid.');
-        return;
-      }
-      if (!trackId || trackKind !== 'instrument') {
-        setMessage(
-          !trackId
-            ? 'Drop an Instrument on an Instrument Track.'
-            : 'Instruments can only be assigned to an Instrument Track.',
-        );
-        return;
-      }
-      await commit(api.applyInstrument(trackId, instrument.instrumentId));
-    },
-    [api, commit, setMessage],
-  );
-
   const handleOsMidiDrop = useCallback(
     async (files: FileList, trackId?: string, trackKind?: TrackKind): Promise<void> => {
       if (trackKind === 'audio') {
-        setMessage('MIDI Assets can only be placed on an Instrument Track.');
+        setMessage('MIDI can only be placed on an Instrument Track.');
         return;
       }
       for (const file of Array.from(files)) {
@@ -115,13 +146,9 @@ export function useArrangeDrop({
         void handleOsMidiDrop(event.dataTransfer.files, trackId, trackKind);
         return;
       }
-      if (event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)) {
-        void handleInstrumentDrop(event, trackId, trackKind);
-        return;
-      }
-      void handleAssetDrop(event, trackId, trackKind);
+      void handleBrowserDrop(event, trackId, trackKind);
     },
-    [handleAssetDrop, handleInstrumentDrop, handleOsMidiDrop],
+    [handleBrowserDrop, handleOsMidiDrop],
   );
 
   return { handleDrop, isOsFileDrag };

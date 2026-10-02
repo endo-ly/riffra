@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CanonicalState, CreativeSession, PluginEntry } from '@/model/domain';
+import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
 import type { ArrangeSelection } from './useArrangeEditor';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 import { toast } from '@/shared/toasts';
+import {
+  placeBrowserItem,
+  resolvePlacementTarget,
+  type BrowserPlacement,
+} from '@/features/arrange/model/browser-placement';
 
 export function useArrangeShell(
-  api: Pick<ArrangeApi, 'applyInstrument' | 'setTrackVst3Instrument' | 'addTrackEffect'>,
+  api: Pick<
+    ArrangeApi,
+    | 'addTrack'
+    | 'applyInstrument'
+    | 'setTrackVst3Instrument'
+    | 'addTrackEffect'
+    | 'addAudioClipToArrangement'
+    | 'addMidiClipToArrangement'
+  >,
   session: CreativeSession | null,
   applyCanonicalState: (canonical: CanonicalState) => boolean,
   hostGeneration = 0,
@@ -37,32 +50,31 @@ export function useArrangeShell(
     }
   }, [focusedTrackId, session?.arrangement.tracks]);
 
-  const addPlugin = async (plugin: PluginEntry, target: 'instrument' | 'effect') => {
-    if (!selectedTrack) return;
-    try {
-      const next =
-        target === 'instrument'
-          ? await api.setTrackVst3Instrument(selectedTrack.id, plugin.path)
-          : await api.addTrackEffect(selectedTrack.id, plugin.path);
-      applyArrangementMutation(next, applyCanonicalState, (message) =>
-        toast(message, { kind: 'error' }),
-      );
-    } catch (error) {
-      if (error instanceof HostConnectionChangedError) return;
-      logNativeError('Add plugin to Track')(error);
+  /** Places a Browser item, using the selected Track as a hint for where it belongs. */
+  const applyBrowserItem = async (placement: BrowserPlacement, startTick?: number) => {
+    const target = resolvePlacementTarget(placement, selectedTrack, false);
+    if (target.kind === 'invalid') {
+      toast(target.reason, { kind: 'error' });
+      return;
     }
-  };
-
-  const applyInstrument = async (instrumentId: string) => {
-    if (!selectedTrack || selectedTrack.kind !== 'instrument') return;
     try {
-      const next = await api.applyInstrument(selectedTrack.id, instrumentId);
-      applyArrangementMutation(next, applyCanonicalState, (message) =>
-        toast(message, { kind: 'error' }),
+      await placeBrowserItem(
+        api,
+        async (operation) => {
+          const result = await operation;
+          if (result)
+            applyArrangementMutation(result, applyCanonicalState, (message) =>
+              toast(message, { kind: 'error' }),
+            );
+          return result;
+        },
+        placement,
+        target,
+        startTick,
       );
     } catch (error) {
       if (error instanceof HostConnectionChangedError) return;
-      logNativeError('Apply instrument')(error);
+      logNativeError('Place Browser item')(error);
     }
   };
 
@@ -72,7 +84,6 @@ export function useArrangeShell(
     focusedTrackId,
     setFocusedTrackId,
     selectedTrack,
-    addPlugin,
-    applyInstrument,
+    applyBrowserItem,
   };
 }

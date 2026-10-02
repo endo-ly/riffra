@@ -176,7 +176,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     importMidi,
   } = library;
   const instruments = useInstrumentLibrary(api, {
-    query: normalizedQuery,
     hostGeneration: hostConnection.state.generation,
     safeMode: boot?.safeMode ?? false,
     setAudio,
@@ -257,20 +256,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     return () => window.removeEventListener('keydown', onKey);
   }, [hostReady, redo, toggleMute, undo]);
 
-  const visiblePlugins = normalizedQuery
-    ? plugins.filter((plugin) =>
-        `${plugin.name} ${plugin.vendor ?? ''} ${plugin.path}`
-          .toLocaleLowerCase()
-          .includes(normalizedQuery),
-      )
-    : plugins;
-  const visibleRecordings = normalizedQuery
-    ? recordings.filter((recording) =>
-        `${recording.name} ${recording.state} ${recording.path}`
-          .toLocaleLowerCase()
-          .includes(normalizedQuery),
-      )
-    : recordings;
   return {
     hostConnectionState: hostConnection.state,
     localHosts: hostConnection.hosts,
@@ -297,7 +282,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     replaceMissingPluginDevice,
     rescanMissingPlugins,
     ignoreMissing,
-    recordings,
     transportPlaying,
     transportStarting,
     arrangementTransport,
@@ -338,8 +322,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     toggleMute,
     resetFeedback,
     toggleRecording,
-    visiblePlugins,
-    visibleRecordings,
     inbox,
     api,
     startRecordingNow,
@@ -351,7 +333,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       query,
       setQuery,
       library: {
-        query: normalizedQuery,
         results: libraryResults,
         selectedAsset: selectedLibraryAsset,
         relatedAssets,
@@ -361,8 +342,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
         onImportMidi: importMidi,
       },
       instruments,
-      plugins: { plugins, visiblePlugins },
-      recordings: { visibleRecordings, count: recordings.length },
+      plugins,
+      recordings,
       inbox,
     },
   };

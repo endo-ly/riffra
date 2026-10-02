@@ -1,4 +1,4 @@
-import type { InstrumentCollection, InstrumentLibraryItem } from '@/model/domain';
+import type { InstrumentCollection } from '@/model/domain';
 
 interface InstrumentSearchable {
   id?: string;
@@ -10,13 +10,6 @@ interface InstrumentSearchable {
   userTags?: string[];
   tags?: string[];
   collectionIds?: number[];
-}
-
-export interface InstrumentFilters {
-  category: string | null;
-  tag: string | null;
-  collectionId: number | null;
-  favoritesOnly: boolean;
 }
 
 type CollectionLookup = InstrumentCollection[] | ReadonlyMap<number, string>;
@@ -56,63 +49,6 @@ export function matchesInstrumentQuery(
   return searchableValues(item, collections).some((value) =>
     value.toLocaleLowerCase().includes(normalized),
   );
-}
-
-/** Returns sorted unique effective categories for the supplied instruments. */
-export function getInstrumentCategories(items: InstrumentSearchable[]): string[] {
-  return Array.from(
-    new Map(
-      items
-        .map((item) => item.category ?? item.defaultCategory ?? '')
-        .filter(Boolean)
-        .map((category) => [category.toLocaleLowerCase(), category]),
-    ).values(),
-  ).sort((left, right) => left.localeCompare(right));
-}
-
-/** Returns sorted unique effective tags for the supplied instruments. */
-export function getInstrumentTags(items: InstrumentSearchable[]): string[] {
-  return Array.from(
-    new Map(
-      items
-        .flatMap((item) => [
-          ...(item.defaultTags ?? []),
-          ...(item.userTags ?? []),
-          ...(item.tags ?? []),
-        ])
-        .filter(Boolean)
-        .map((tag) => [tag.toLocaleLowerCase(), tag]),
-    ).values(),
-  ).sort((left, right) => left.localeCompare(right));
-}
-
-/** Applies Browser query and instrument-library filters without changing input order. */
-export function filterInstruments(
-  items: InstrumentLibraryItem[],
-  query: string,
-  filters: InstrumentFilters = {
-    category: null,
-    tag: null,
-    collectionId: null,
-    favoritesOnly: false,
-  },
-  collections: CollectionLookup = [],
-): InstrumentLibraryItem[] {
-  const normalizedCategory = filters.category?.trim().toLocaleLowerCase();
-  const normalizedTag = filters.tag?.trim().toLocaleLowerCase();
-  return items.filter((item) => {
-    if (!matchesInstrumentQuery(item, query, collections)) return false;
-    if (normalizedCategory && (item.category ?? '').toLocaleLowerCase() !== normalizedCategory)
-      return false;
-    if (normalizedTag && !item.tags.some((tag) => tag.toLocaleLowerCase() === normalizedTag)) {
-      return false;
-    }
-    if (filters.collectionId !== null && !item.collectionIds.includes(filters.collectionId)) {
-      return false;
-    }
-    if (filters.favoritesOnly && !item.favorite) return false;
-    return true;
-  });
 }
 
 /** Formats a MIDI note number using the conventional C4 = 60 octave name. */

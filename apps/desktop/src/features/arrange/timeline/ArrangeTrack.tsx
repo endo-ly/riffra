@@ -19,8 +19,7 @@ import {
   type TrackTimeline,
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
-import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
-import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
+import { isBrowserItemDrag } from '@/features/arrange/hooks/useArrangeDrop';
 import { resolveTrackColor } from '../inspector/track-colors';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
@@ -457,11 +456,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         data-midi-empty-lane={props.track.kind === 'instrument' ? true : undefined}
         style={{ width: props.timelineWidth }}
         onDragOver={(event) => {
-          if (
-            !event.dataTransfer.types.includes(RIFFRA_ASSET_MIME) &&
-            !event.dataTransfer.types.includes(RIFFRA_INSTRUMENT_MIME)
-          )
-            return;
+          if (!isBrowserItemDrag(event)) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = 'copy';
         }}

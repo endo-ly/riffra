@@ -8,11 +8,29 @@ import { HostConnectionChangedError, setHostGeneration } from '@/native/invoke';
 import { toAssetId } from '@/native/contracts';
 import { RIFFRA_ASSET_MIME } from '@/shared/asset-drag';
 import { RIFFRA_INSTRUMENT_MIME } from '@/shared/instrument-drag';
+import { RIFFRA_PLUGIN_MIME } from '@/shared/plugin-drag';
 import { useArrangeDrop } from './useArrangeDrop';
 
 afterEach(() => {
   setHostGeneration(0);
 });
+
+function mutation(createdEntityIds: Record<string, string[]> = {}): ArrangementMutationResult {
+  return { createdEntityIds } as ArrangementMutationResult;
+}
+
+function dropApi(overrides: Partial<Parameters<typeof useArrangeDrop>[0]['api']> = {}) {
+  return {
+    importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
+    addAudioClipToArrangement: vi.fn(async () => null),
+    addMidiClipToArrangement: vi.fn(async () => null),
+    addTrack: vi.fn(async () => mutation({ tracks: ['track:new'] })),
+    applyInstrument: vi.fn(async () => mutation()),
+    setTrackVst3Instrument: vi.fn(async () => mutation()),
+    addTrackEffect: vi.fn(async () => mutation()),
+    ...overrides,
+  };
+}
 
 function commitStub() {
   return vi.fn(
@@ -50,12 +68,15 @@ function osMidiDropEvent(files: File[]): DragEvent {
   } as unknown as DragEvent;
 }
 
-function instrumentDropEvent(payload: unknown): DragEvent {
+function browserDropEvent(mime: string, payload: unknown): DragEvent {
   return {
+    altKey: false,
+    clientX: 200,
+    currentTarget: document.createElement('div'),
     dataTransfer: {
       files: [],
-      getData: (type: string) => (type === RIFFRA_INSTRUMENT_MIME ? JSON.stringify(payload) : ''),
-      types: [RIFFRA_INSTRUMENT_MIME],
+      getData: (type: string) => (type === mime ? JSON.stringify(payload) : ''),
+      types: [mime],
     },
     preventDefault: vi.fn(),
   } as unknown as DragEvent;
@@ -63,12 +84,7 @@ function instrumentDropEvent(payload: unknown): DragEvent {
 
 describe('useArrangeDrop', () => {
   it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {
-    const api = {
-      importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
-      addAudioClipToArrangement: vi.fn(async () => null),
-      addMidiClipToArrangement: vi.fn(async () => null),
-      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
-    };
+    const api = dropApi();
     const setMessage = vi.fn();
     const { result } = renderHook(() =>
       useArrangeDrop({
@@ -93,21 +109,14 @@ describe('useArrangeDrop', () => {
 
     // Assert
     await waitFor(() =>
-      expect(setMessage).toHaveBeenCalledWith(
-        'MIDI Assets can only be placed on an Instrument Track.',
-      ),
+      expect(setMessage).toHaveBeenCalledWith('MIDI can only be placed on an Instrument Track.'),
     );
     expect(event.preventDefault).toHaveBeenCalled();
     expect(api.addMidiClipToArrangement).not.toHaveBeenCalled();
   });
 
   it('imports an OS MIDI file and places it on the selected Instrument Track', async () => {
-    const api = {
-      importMidiBytes: vi.fn(async () => toAssetId('asset:lead')),
-      addAudioClipToArrangement: vi.fn(async () => null),
-      addMidiClipToArrangement: vi.fn(async () => null),
-      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
-    };
+    const api = dropApi({ importMidiBytes: vi.fn(async () => toAssetId('asset:lead')) });
     const commit = commitStub();
     const { result } = renderHook(() =>
       useArrangeDrop({
@@ -141,17 +150,14 @@ describe('useArrangeDrop', () => {
 
   it('does not place an imported MIDI file after the Host generation changes', async () => {
     let rejectImport: ((error: Error) => void) | undefined;
-    const api = {
+    const api = dropApi({
       importMidiBytes: vi.fn(
         () =>
           new Promise<ReturnType<typeof toAssetId>>((_resolve, reject) => {
             rejectImport = reject;
           }),
       ),
-      addAudioClipToArrangement: vi.fn(async () => null),
-      addMidiClipToArrangement: vi.fn(async () => null),
-      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
-    };
+    });
     const commit = commitStub();
     const { result } = renderHook(() =>
       useArrangeDrop({
@@ -179,12 +185,7 @@ describe('useArrangeDrop', () => {
   });
 
   it('assigns a dragged built-in instrument only to an Instrument Track', async () => {
-    const api = {
-      importMidiBytes: vi.fn(async () => toAssetId('asset:midi')),
-      addAudioClipToArrangement: vi.fn(async () => null),
-      addMidiClipToArrangement: vi.fn(async () => null),
-      applyInstrument: vi.fn(async () => ({}) as ArrangementMutationResult),
-    };
+    const api = dropApi();
     const commit = commitStub();
     const setMessage = vi.fn();
     const { result } = renderHook(() =>
@@ -204,7 +205,11 @@ describe('useArrangeDrop', () => {
     };
 
     act(() => {
-      result.current.handleDrop(instrumentDropEvent(payload), 'track:instrument', 'instrument');
+      result.current.handleDrop(
+        browserDropEvent(RIFFRA_INSTRUMENT_MIME, payload),
+        'track:instrument',
+        'instrument',
+      );
     });
     await waitFor(() =>
       expect(api.applyInstrument).toHaveBeenCalledWith(
@@ -215,13 +220,78 @@ describe('useArrangeDrop', () => {
     expect(commit).toHaveBeenCalledTimes(1);
 
     act(() => {
-      result.current.handleDrop(instrumentDropEvent(payload), 'track:audio', 'audio');
+      result.current.handleDrop(
+        browserDropEvent(RIFFRA_INSTRUMENT_MIME, payload),
+        'track:audio',
+        'audio',
+      );
     });
     await waitFor(() =>
-      expect(setMessage).toHaveBeenCalledWith(
-        'Instruments can only be assigned to an Instrument Track.',
-      ),
+      expect(setMessage).toHaveBeenCalledWith('Instruments load on an Instrument Track.'),
     );
     expect(api.applyInstrument).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates an Instrument Track for an instrument dropped below the Tracks', async () => {
+    const api = dropApi();
+    const commit = commitStub();
+    const { result } = renderHook(() =>
+      useArrangeDrop({
+        api,
+        commit,
+        pixelsPerTick: 1,
+        snapTick: (raw) => Math.round(raw),
+        setMessage: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.handleDrop(
+        browserDropEvent(RIFFRA_INSTRUMENT_MIME, {
+          version: 1,
+          instrumentId: 'builtin:01-clean-sub-bass',
+          name: 'Clean Sub Bass',
+          origin: 'builtIn',
+        }),
+      );
+    });
+
+    await waitFor(() =>
+      expect(api.applyInstrument).toHaveBeenCalledWith('track:new', 'builtin:01-clean-sub-bass'),
+    );
+    expect(api.addTrack).toHaveBeenCalledWith('Clean Sub Bass', 'instrument');
+    expect(commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds a dropped effect plug-in to any Track but not to empty space', async () => {
+    const api = dropApi();
+    const setMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useArrangeDrop({
+        api,
+        commit: commitStub(),
+        pixelsPerTick: 1,
+        snapTick: (raw) => Math.round(raw),
+        setMessage,
+      }),
+    );
+    const payload = { version: 1, pluginPath: 'C:/VST3/Verb.vst3', name: 'Verb', role: 'effect' };
+
+    act(() => {
+      result.current.handleDrop(
+        browserDropEvent(RIFFRA_PLUGIN_MIME, payload),
+        'track:keys',
+        'instrument',
+      );
+    });
+    await waitFor(() =>
+      expect(api.addTrackEffect).toHaveBeenCalledWith('track:keys', 'C:/VST3/Verb.vst3'),
+    );
+
+    act(() => {
+      result.current.handleDrop(browserDropEvent(RIFFRA_PLUGIN_MIME, payload));
+    });
+    await waitFor(() => expect(setMessage).toHaveBeenCalledWith('Drop an effect on a Track.'));
+    expect(api.addTrackEffect).toHaveBeenCalledTimes(1);
   });
 });

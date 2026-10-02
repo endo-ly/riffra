@@ -336,7 +336,15 @@ Browser
 └─ Effects ─────────────────→ 将来のDevices編集面
 ```
 
-Asset は Search、Preview、選択、Drag & Drop を通じて Timeline へつながる。Plugin は Track Context と追加位置を組み合わせ、将来のDevices編集面でInstrumentまたはEffectとしてTrackへ追加できる構造とする。
+Browser の項目は種類によらず同じ操作で扱う。選択すると下端に表示し、Space で試聴、ダブルクリックまたは Enter で投入、Drag & Drop で投入先を指定する。投入先は次のとおり決まる。
+
+| 項目                          | Track へ投入                        | Track 以外へ投入               |
+| ----------------------------- | ----------------------------------- | ------------------------------ |
+| Instrument / 音源プラグイン   | Instrument Track の音源を置き換える | 新しい Instrument Track を作る |
+| Effect プラグイン             | Track の Effect Chain の末尾に追加  | 投入しない                     |
+| Recording / Audio・MIDI Asset | 同種の Track へ Clip として配置     | 同種の Track へ自動で配置      |
+
+ダブルクリックと Enter では選択中の Track を投入先の候補とし、種類が合わない場合は Track 以外へ投入したときと同じ扱いにする。Drag & Drop では落とした Track を投入先とし、種類が合わない場合は投入しない。
 
 Instrument や Effect の追加ボタンから開く Add Browser は、現在の追加先を引き継いで候補を絞る。
 
