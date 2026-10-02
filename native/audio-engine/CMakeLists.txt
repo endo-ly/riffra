@@ -477,6 +477,7 @@ if(BUILD_TESTING)
     tests/plugins/PluginRackTest.cpp
     tests/plugins/PluginChainTest.cpp
     tests/plugins/RuntimeLifecycleExecutorTest.cpp
+    tests/recording/RecordingCaptureRuntimeTest.cpp
     tests/recording/RecordingSessionTest.cpp
     tests/recording/ArrangeRecordingSessionTest.cpp
     tests/timeline/MidiSchedulerTest.cpp

@@ -139,12 +139,11 @@ public:
     /// Finalizes raw capture metadata without performing offline DSP.
     bool finalizeRecording(juce::String& error);
     /// Generates processed recording variants after the realtime graph is stopped.
-    bool processFinalizedRecording(juce::String& error) noexcept;
     bool processFinalizedRecording(ArrangementCaptureSink* sink, juce::String& error,
                                    const ProcessingProgressCallback& progress = {}) noexcept;
     [[nodiscard]] juce::var recordingConfiguration() const;
-    void setRecordingSink(ArrangementCaptureSink* sink) noexcept;
-    void clearRecordingSink() noexcept;
+    bool setRecordingSink(ArrangementCaptureSink* sink) noexcept;
+    bool clearRecordingSink() noexcept;
 
     /// Control side. Returns the index live MIDI events of a device carry.
     [[nodiscard]] std::uint16_t midiSourceIndex(const juce::String& deviceId);
@@ -381,6 +380,7 @@ private:
     // thread never constructs a string.
     const juce::String playSurfaceSourceId{"riffra:play-surface"};
     std::unique_ptr<RecordingCaptureRuntime> recordingCapture;
+    ArrangementCaptureSink* controlRecordingSink = nullptr;
     std::mutex finalizedRecordingMutex;
     std::vector<OfflineRecordingTrack> finalizedRecordingTracks;
     double finalizedRecordingSampleRate = 0.0;

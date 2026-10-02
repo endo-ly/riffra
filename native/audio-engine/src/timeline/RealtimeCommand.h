@@ -6,6 +6,7 @@
 namespace riffra {
 
 struct PreparedTimeline;
+class ArrangementCaptureSink;
 
 /// One request from a control thread to the owner of the realtime timeline state.
 struct RealtimeCommand final {
@@ -23,6 +24,8 @@ struct RealtimeCommand final {
         targetedMidi,
         publishGraph,
         deviceStarted,
+        setRecordingSink,
+        clearRecordingSink,
     };
 
     Kind kind = Kind::play;
@@ -39,6 +42,7 @@ struct RealtimeCommand final {
     std::uint8_t midiSize = 0;
     /// `publishGraph`.
     PreparedTimeline* graph = nullptr;
+    ArrangementCaptureSink* recordingSink = nullptr;
 };
 
 static_assert(std::is_trivially_copyable_v<RealtimeCommand>);

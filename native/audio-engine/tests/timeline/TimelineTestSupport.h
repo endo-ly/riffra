@@ -311,11 +311,7 @@ private:
 
 namespace {
 
-bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
-    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
-    if (!engine.stop()) return false;
-    return engine.processFinalizedRecording(error);
-}
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error);
 
 TimelineSnapshotSpec makeInstrumentSnapshot(const juce::String& trackId) {
     auto snapshot = makeTestSnapshot();
@@ -381,6 +377,9 @@ TimelineSnapshotSpec makeRawAndProcessedClipSnapshot(const juce::File& rawFile,
 
 class TimelineEngineTestPeer final {
 public:
+    static ArrangementCaptureSink* recordingSink(TimelineEngine& engine) {
+        return engine.controlRecordingSink;
+    }
     static bool addChainDevice(PluginChain& chain, const juce::String& id,
                                std::unique_ptr<juce::AudioProcessor> processor,
                                const double sampleRate, const int blockSize, juce::String& error) {
@@ -467,7 +466,7 @@ public:
     }
 
     static bool hasRecordingSink(TimelineEngine& engine) {
-        return static_cast<bool>(engine.recordingCapture->acquireSink());
+        return engine.controlRecordingSink != nullptr;
     }
 
     static std::uint64_t nextCommandSequence(TimelineEngine& engine) {
@@ -1787,4 +1786,11 @@ public:
         return juce::var(result);
     }
 };
+namespace {
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
+    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
+    if (!engine.stop()) return false;
+    return engine.processFinalizedRecording(TimelineEngineTestPeer::recordingSink(engine), error);
+}
+}  // namespace
 }  // namespace riffra

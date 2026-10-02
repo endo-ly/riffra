@@ -291,6 +291,12 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
         case RealtimeCommand::Kind::publishGraph:
             publishGraph(state, command.graph);
             break;
+        case RealtimeCommand::Kind::setRecordingSink:
+            recordingCapture->setSink(command.recordingSink);
+            break;
+        case RealtimeCommand::Kind::clearRecordingSink:
+            recordingCapture->clearSink();
+            break;
         case RealtimeCommand::Kind::deviceStarted:
             state.audioClockSample = 0;
             state.resetPlaybackPending = true;
