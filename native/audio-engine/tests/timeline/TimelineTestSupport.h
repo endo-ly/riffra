@@ -387,7 +387,7 @@ public:
         auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error);
         if (rack == nullptr) return false;
         chain.devices.push_back(PluginChain::Device{id, std::move(rack)});
-        chain.prepare(sampleRate, blockSize);
+        chain.prepareBuffers(blockSize);
         return true;
     }
 

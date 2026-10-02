@@ -103,24 +103,6 @@ bool PluginEditorHost::close() {
     return true;
 }
 
-bool PluginEditorHost::clear(juce::String& error) {
-    const auto self = shared_from_this();
-    const auto closed = std::make_shared<std::atomic<bool>>(false);
-    if (!runOnMessageThread(
-            [self, closed] {
-                if (!self->closeOnMessageThread()) return;
-                closed->store(true, std::memory_order_release);
-                self->rack.clear();
-            },
-            error))
-        return false;
-    if (!closed->load(std::memory_order_acquire)) {
-        error = "The VST3 editor could not be closed safely.";
-        std::_Exit(125);
-    }
-    return true;
-}
-
 bool PluginEditorHost::runOnMessageThread(std::function<void()> operation, juce::String& error) {
     auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
     if (messageManager == nullptr) {

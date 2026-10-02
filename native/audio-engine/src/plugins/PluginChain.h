@@ -16,7 +16,6 @@ class PluginChain final {
 public:
     bool load(const std::vector<PluginDeviceSpec>& devices, double sampleRate, int blockSize,
               PluginProcessingMode mode, juce::String& error, const juce::String& runtimeRole);
-    void prepare(double sampleRate, int blockSize) noexcept;
     void reset() noexcept;
     void release() noexcept;
     void clear() noexcept;

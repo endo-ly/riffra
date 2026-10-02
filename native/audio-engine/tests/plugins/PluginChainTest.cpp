@@ -16,6 +16,7 @@ public:
                           int blockSize, juce::String& error) {
         auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error);
         if (rack == nullptr) return false;
+        chain.prepareBuffers(blockSize);
         chain.devices.push_back(PluginChain::Device{id, std::move(rack)});
         return true;
     }
@@ -41,7 +42,6 @@ std::unique_ptr<PluginChain> makeChain(std::vector<int>& order, juce::String& er
                 kSampleRate, kBlockSize, error))
             return {};
     }
-    chain->prepare(kSampleRate, kBlockSize);
     return chain;
 }
 
@@ -135,8 +135,6 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     ASSERT_EQ(liveValues.size(), 700u);
     EXPECT_NEAR(liveValues[0], 0.75f, 0.0001f);
 
-    liveState.prepare(kSampleRate, kBlockSize);
-    recordingState.prepare(kSampleRate, kBlockSize);
     const std::array<std::pair<int, float>, 4> queuedParameters{
         std::pair{0, 0.10f},
         std::pair{511, 0.20f},

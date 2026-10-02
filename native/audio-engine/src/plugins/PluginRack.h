@@ -73,9 +73,7 @@ public:
 
     [[nodiscard]] std::optional<PluginLoadError> load(const juce::String& path, double sampleRate,
                                                       int blockSize, PluginProcessingMode mode);
-    void clear() noexcept;
     void release() noexcept;
-    void prepare(double sampleRate, int blockSize) noexcept;
     /// Reserves callback MIDI storage for prepared timeline events.
     [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
                                                    juce::String& error) noexcept;
@@ -131,7 +129,6 @@ private:
     void applyQueuedParameterChanges(juce::AudioProcessor* processor,
                                      ParameterQueue* queue) noexcept;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
-    void reclaimRetiredPlugins() noexcept;
 
     class PendingMidi final {
     public:
@@ -158,15 +155,9 @@ private:
 
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
-    // The audio thread only observes this immutable processing pointer. Plugin
-    // lifecycle work is performed on a candidate and published by swapping
-    // this pointer; old instances are reclaimed after the reader count drops.
-    std::atomic<juce::AudioProcessor*> activePlugin{nullptr};
-    std::vector<std::unique_ptr<juce::AudioProcessor>> retiredPlugins;
-    std::atomic<std::uint32_t> activeReaders{0};
-    std::atomic<ParameterQueue*> activeParameterQueue{nullptr};
     std::unique_ptr<ParameterQueue> parameterQueue;
-    std::vector<std::unique_ptr<ParameterQueue>> retiredParameterQueues;
+    int preparedLatencySamples = 0;
+    int preparedTailSamples = 0;
     PendingMidi pendingMidi;
     juce::MidiBuffer processMidi;
     mutable juce::SpinLock pluginLock;
