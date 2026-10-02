@@ -297,7 +297,7 @@ control_commands! {
         InstrumentList = "instrument.list" (EmptyParams) -> InstrumentLibrary, read, host;
         InstrumentSave = "instrument.save" (InstrumentSaveParams) -> InstrumentLibraryItem, read, host;
         InstrumentExport = "instrument.export" (InstrumentExportParams) -> InstrumentExport, read, host;
-        InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project(long);
+        InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentVst3Set = "instrument.vst3.set" (PluginPathParams) -> ArrangementMutation, mutation, project(long);
         InstrumentClear = "instrument.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
         EffectAdd = "effect.add" (PluginPathParams) -> ArrangementMutation, mutation(batch), project(long);

@@ -2308,4 +2308,91 @@ mod tests {
         drop(host);
         let _ = std::fs::remove_dir_all(data_root);
     }
+
+    #[test]
+    fn instrument_apply_assigns_a_user_instrument_through_the_host() {
+        // Arrange
+        let data_root = std::env::temp_dir().join(format!(
+            "riffra-runtime-instrument-apply-{}-{}",
+            std::process::id(),
+            new_instance_id()
+        ));
+        let user_uuid = new_instance_id();
+        let user_id = format!("user:{user_uuid}");
+        let user_package = data_root.join("instruments/user").join(&user_uuid);
+        std::fs::create_dir_all(&user_package).unwrap();
+        std::fs::write(
+            user_package.join("definition.json"),
+            r#"{"metadata":{"name":"Radio Voice Lead"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            user_package.join(".riffra-instrument.json"),
+            serde_json::json!({
+                "formatVersion": 1,
+                "instrumentId": user_id.clone(),
+                "definitionPath": "definition.json",
+                "createdAtMs": 1,
+                "updatedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let config = HostConfig {
+            data_root: data_root.clone(),
+            built_in_instruments_root: crate::test_support::prepare_built_in_resource_root(
+                &data_root,
+            ),
+            safe_mode: true,
+            binaries: RuntimeBinaries::new(
+                data_root.join("riffra-audio"),
+                data_root.join("riffra-plugin-scan"),
+                data_root.join("riffra-render"),
+                data_root.join("sonalloy"),
+            ),
+        };
+        let host = DawHost::open(config, Arc::new(crate::NoopHostEventSink)).unwrap();
+        let expected_project_id = host.bootstrap().unwrap().project_state.active_project_id;
+        let track_added = host.dispatch_control(
+            ControlRequest::new(
+                "track-add",
+                "track.add",
+                serde_json::json!({"name": "Lead", "kind": "instrument"}),
+                Some(0),
+            )
+            .with_expected_project_id(expected_project_id.clone()),
+        );
+        let track_id = serde_json::from_value::<crate::api::output::ArrangementMutationResult>(
+            track_added.result.unwrap().value,
+        )
+        .unwrap()
+        .created_entity_ids["tracks"][0]
+            .clone();
+
+        // Act
+        let response = host.dispatch_control(
+            ControlRequest::new(
+                "instrument-apply",
+                "instrument.apply",
+                serde_json::json!({"trackId": track_id, "instrumentId": user_id}),
+                Some(1),
+            )
+            .with_expected_project_id(expected_project_id),
+        );
+
+        // Assert
+        assert!(response.ok, "{:?}", response.error);
+        let mutation: crate::api::output::ArrangementMutationResult =
+            serde_json::from_value(response.result.unwrap().value).unwrap();
+        assert_eq!(mutation.canonical.sequence, 2);
+        let instrument = mutation.canonical.session.arrangement.tracks[0]
+            .instrument
+            .as_ref()
+            .unwrap();
+        assert_eq!(instrument.name, "Radio Voice Lead");
+
+        host.shutdown();
+        drop(host);
+        let _ = std::fs::remove_dir_all(data_root);
+    }
 }
