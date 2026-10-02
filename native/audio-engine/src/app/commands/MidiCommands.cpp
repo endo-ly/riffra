@@ -12,8 +12,14 @@ void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
         context.midiInputs.monitor().setActive(true);
     } else {
         context.midiInputs.monitor().setActive(false);
-        context.pipeline.stopPreview();
-        context.pipeline.allNotesOff();
+        juce::String error;
+        if (!context.pipeline.stopPreview(&error) || !context.pipeline.allNotesOff()) {
+            responder.fail(
+                "preview",
+                error.isNotEmpty() ? error : "The realtime preview command queue is full.",
+                "midi.listening");
+            return;
+        }
         context.midiInputs.reopenAll();
     }
     responder.respond(currentStatus());

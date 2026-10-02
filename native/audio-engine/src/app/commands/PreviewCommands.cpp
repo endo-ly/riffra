@@ -102,7 +102,11 @@ void AudioCommandDispatcher::handle(const SwitchTakeComparisonVariantCommand& co
 }
 
 void AudioCommandDispatcher::handle(const StopTakeComparisonCommand&, CommandResponder responder) {
-    context.pipeline.stopPreviewForKey(1);
+    juce::String error;
+    if (!context.pipeline.stopPreviewForKey(1, &error)) {
+        responder.fail("takeComparison", error, "preview.takeComparison.stop");
+        return;
+    }
     context.comparisonRaw.setSize(0, 0);
     context.comparisonProcessed.setSize(0, 0);
     responder.respond(currentStatus());
@@ -196,14 +200,23 @@ void AudioCommandDispatcher::handle(const PreviewInstrumentCommand& command,
 }
 
 void AudioCommandDispatcher::handle(const StopPreviewCommand&, CommandResponder responder) {
-    context.pipeline.stopPreview();
-    context.pipeline.allNotesOff();
+    juce::String error;
+    if (!context.pipeline.stopPreview(&error) || !context.pipeline.allNotesOff()) {
+        responder.fail("preview",
+                       error.isNotEmpty() ? error : "The realtime preview command queue is full.",
+                       "preview.stop");
+        return;
+    }
     responder.respond(currentStatus());
 }
 
 void AudioCommandDispatcher::handle(const StopInstrumentPreviewCommand&,
                                     CommandResponder responder) {
-    context.pipeline.stopInstrumentPreview();
+    juce::String error;
+    if (!context.pipeline.stopInstrumentPreview(&error)) {
+        responder.fail("preview", error, "preview.instrument.stop");
+        return;
+    }
     responder.respond(currentStatus());
 }
 

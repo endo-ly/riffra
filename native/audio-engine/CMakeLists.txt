@@ -470,6 +470,7 @@ if(BUILD_TESTING)
     tests/protocol/CommandResponderTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
+    tests/audio/PreviewEngineTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
     tests/audio/AudioSafetyDspTest.cpp
     tests/audio/InstrumentPreviewSessionTest.cpp
