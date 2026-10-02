@@ -4,9 +4,10 @@ import type { AudioDiagnosticsMute } from "./AudioDiagnosticsMute";
 import type { AudioDiagnosticsOutput } from "./AudioDiagnosticsOutput";
 import type { AudioDiagnosticsRealtime } from "./AudioDiagnosticsRealtime";
 import type { AudioInstrumentFault } from "./AudioInstrumentFault";
+import type { AudioTrackLoad } from "./AudioTrackLoad";
 
 /**
  * Read-only diagnostic snapshot assembled from the live Host and Native
  * audio status without changing runtime state or resetting counters.
  */
-export type AudioDiagnosticsReport = { device: AudioDiagnosticsDevice, mute: AudioDiagnosticsMute, realtime: AudioDiagnosticsRealtime, output: AudioDiagnosticsOutput, instrumentFaults: Array<AudioInstrumentFault>, };
+export type AudioDiagnosticsReport = { device: AudioDiagnosticsDevice, mute: AudioDiagnosticsMute, realtime: AudioDiagnosticsRealtime, trackLoads: Array<AudioTrackLoad>, output: AudioDiagnosticsOutput, instrumentFaults: Array<AudioInstrumentFault>, };

@@ -106,13 +106,13 @@ std::optional<std::uint64_t> TimelineEngine::enqueueArrangeRecordingStop() noexc
 }
 
 bool TimelineEngine::finalizeRecording(juce::String& error) {
-    auto sinkLease = recordingCapture->acquireSink();
-    if (sinkLease) sinkLease->setMidiSourceIds(midiSources.snapshot());
+    if (controlRecordingSink != nullptr)
+        controlRecordingSink->setMidiSourceIds(midiSources.snapshot());
     const std::lock_guard lock(finalizedRecordingMutex);
     finalizedRecordingTracks.clear();
     finalizedRecordingSampleRate = 0.0;
     finalizedRecordingBlockSize = 0;
-    if (sinkLease.get() == nullptr) return true;
+    if (controlRecordingSink == nullptr) return true;
     visitActiveGraph(false, [this](const PreparedTimeline& graph, const RealtimeFrame&) {
         finalizedRecordingSampleRate = graph.outputSampleRate;
         finalizedRecordingBlockSize = graph.preparedBlockSize;
@@ -131,10 +131,6 @@ bool TimelineEngine::finalizeRecording(juce::String& error) {
     return false;
 }
 
-bool TimelineEngine::processFinalizedRecording(juce::String& error) noexcept {
-    return processFinalizedRecording(nullptr, error);
-}
-
 bool TimelineEngine::processFinalizedRecording(
     ArrangementCaptureSink* sink, juce::String& error,
     const ProcessingProgressCallback& progress) noexcept {
@@ -149,14 +145,6 @@ bool TimelineEngine::processFinalizedRecording(
         tracks = std::move(finalizedRecordingTracks);
         finalizedRecordingSampleRate = 0.0;
         finalizedRecordingBlockSize = 0;
-    }
-    if (sink == nullptr) {
-        auto sinkLease = recordingCapture->acquireSink();
-        sink = sinkLease.get();
-        if (sink == nullptr) return true;
-        const auto generated =
-            generateProcessedVariants(sampleRate, blockSize, tracks, sink, error, progress);
-        return generated && recordingCapture->captureErrors() == 0;
     }
     const auto generated =
         generateProcessedVariants(sampleRate, blockSize, tracks, sink, error, progress);
@@ -299,11 +287,25 @@ juce::var TimelineEngine::recordingConfiguration() const {
     });
 }
 
-void TimelineEngine::setRecordingSink(ArrangementCaptureSink* const sink) noexcept {
-    recordingCapture->setSink(sink);
+bool TimelineEngine::setRecordingSink(ArrangementCaptureSink* const sink) noexcept {
+    if (controlRecordingSink != nullptr || sink == nullptr) return false;
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::setRecordingSink;
+    command.recordingSink = sink;
+    if (!submit(command).has_value()) return false;
+    controlRecordingSink = sink;
+    return true;
 }
 
-void TimelineEngine::clearRecordingSink() noexcept { recordingCapture->clearSink(); }
+bool TimelineEngine::clearRecordingSink() noexcept {
+    if (controlRecordingSink == nullptr) return true;
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::clearRecordingSink;
+    if (!submit(command).has_value()) return false;
+    if (!recordingCapture->waitForRetiredSink(controlRecordingSink)) return false;
+    controlRecordingSink = nullptr;
+    return true;
+}
 
 void TimelineEngine::advanceCountIn(RealtimeState& state, const int sampleCount) noexcept {
     state.captureBlockOffset = 0;

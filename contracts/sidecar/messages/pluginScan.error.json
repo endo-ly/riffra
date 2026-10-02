@@ -1,0 +1,10 @@
+{
+  "type": "pluginScanError",
+  "kind": "pluginScanRejected",
+  "path": "plugins/missing.vst3",
+  "message": "VST3 bundle or file does not exist.",
+  "operation": "plugin.scan",
+  "details": {
+    "path": "plugins/missing.vst3"
+  }
+}

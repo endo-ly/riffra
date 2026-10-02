@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -20,6 +21,7 @@ struct ProcessorTrace final {
     bool failProgramChange = false;
     int processBlockCount = 0;
     int currentProgram = 0;
+    std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
 };
@@ -43,6 +45,7 @@ public:
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
+        if (trace.onProcess) trace.onProcess();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
         buffer.applyGain(2.0f);
@@ -271,7 +274,12 @@ public:
                                        std::memory_order_release);
         rack->cachedHasEditor.store(processor->hasEditor(), std::memory_order_release);
         rack->plugin = std::move(processor);
-        rack->activePlugin.store(rack->plugin.get(), std::memory_order_release);
+        rack->preparedLatencySamples = std::max(0, rack->plugin->getLatencySamples());
+        const auto tail = rack->plugin->getTailLengthSeconds();
+        rack->preparedTailSamples =
+            std::isfinite(tail) && tail > 0.0
+                ? static_cast<int>(std::min(sampleRate * 30.0, std::ceil(tail * sampleRate)))
+                : 0;
         rack->loaded.store(true, std::memory_order_release);
         rack->loadCount.store(1, std::memory_order_release);
         return rack;

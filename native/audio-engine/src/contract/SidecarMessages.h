@@ -31,6 +31,60 @@ struct MidiDeviceSpec final {
     juce::String name;
 };
 
+struct AudioDeviceProbeSpec final {
+    struct Device final {
+        juce::String name;
+        std::vector<AudioChannelSpec> channels;
+    };
+    struct Driver final {
+        juce::String name;
+        juce::String accessMode;
+        juce::String devicePairing;
+        std::vector<Device> inputs;
+        std::vector<Device> outputs;
+    };
+    std::vector<Driver> drivers;
+    std::uint64_t refreshedAtMs = 0;
+    juce::String message;
+    std::uint32_t muteReasons = 0;
+    double limiterCeiling = 0.98;
+};
+
+struct DeviceChannelsSpec final {
+    juce::String driver;
+    juce::String inputDevice;
+    std::vector<AudioChannelSpec> inputChannels;
+    juce::String outputDevice;
+    std::vector<AudioChannelSpec> outputChannels;
+};
+
+struct PluginScanResultSpec final {
+    juce::String path;
+    std::vector<juce::PluginDescription> plugins;
+    bool loadTested = false;
+    juce::String loadTestMessage;
+    double loadTestDurationMs = 0.0;
+    double scanDurationMs = 0.0;
+};
+
+struct PluginScanErrorSpec final {
+    juce::String path;
+    juce::String message;
+};
+
+struct PluginLoadTestResultSpec final {
+    juce::String path;
+    bool success = false;
+    juce::String message;
+    double durationMs = 0.0;
+};
+
+[[nodiscard]] juce::var encodeAudioDeviceProbe(const AudioDeviceProbeSpec& probe);
+[[nodiscard]] juce::var encodeDeviceChannels(const DeviceChannelsSpec& channels);
+[[nodiscard]] juce::var encodePluginScanResult(const PluginScanResultSpec& result);
+[[nodiscard]] juce::var encodePluginScanError(const PluginScanErrorSpec& error);
+[[nodiscard]] juce::var encodePluginLoadTestResult(const PluginLoadTestResultSpec& result);
+
 struct RecordingStatusSpec final {
     bool active = false;
     bool processing = false;
@@ -62,11 +116,29 @@ struct InstrumentFaultSpec final {
     std::uint64_t droppedMidiEvents = 0;
 };
 
-struct AudioDiagnosticsSpec final {
+struct CallbackWindowSpec final {
+    std::uint32_t durationMs = 1000;
+    std::uint32_t callbackCount = 0;
+    std::uint32_t overruns = 0;
+    std::uint32_t averageCallbackDurationUs = 0;
+    std::uint32_t maximumCallbackDurationUs = 0;
+};
+
+struct RealtimeDiagnosticsSpec final {
     std::uint64_t callbackCount = 0;
-    std::uint64_t averageCallbackDurationUs = 0;
-    std::uint64_t maximumCallbackDurationUs = 0;
     std::uint64_t callbackOverruns = 0;
+    CallbackWindowSpec window;
+};
+
+struct TrackLoadSpec final {
+    juce::String trackId;
+    std::uint32_t averageProcessingUs = 0;
+    std::uint32_t maximumProcessingUs = 0;
+};
+
+struct AudioDiagnosticsSpec final {
+    RealtimeDiagnosticsSpec realtime;
+    std::vector<TrackLoadSpec> trackLoads;
     double preLimiterPeak = 0.0;
     double limiterGainReductionDb = 0.0;
     std::uint64_t hardClipSamples = 0;

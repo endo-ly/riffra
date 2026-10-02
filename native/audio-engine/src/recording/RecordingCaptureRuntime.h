@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "ArrangementCaptureSink.h"
+#include "concurrency/RetireQueue.h"
 namespace riffra {
 
 enum class RecordingCaptureState { idle, capturing };
@@ -22,28 +23,6 @@ struct RecordingCaptureTrackState final {
 
 class RecordingCaptureRuntime final {
 public:
-    class SinkLease final {
-    public:
-        SinkLease() noexcept = default;
-        SinkLease(const SinkLease&) = delete;
-        SinkLease& operator=(const SinkLease&) = delete;
-        SinkLease(SinkLease&& other) noexcept;
-        SinkLease& operator=(SinkLease&& other) noexcept;
-        ~SinkLease();
-
-        [[nodiscard]] ArrangementCaptureSink* get() const noexcept { return sink; }
-        [[nodiscard]] ArrangementCaptureSink* operator->() const noexcept { return sink; }
-        [[nodiscard]] explicit operator bool() const noexcept { return sink != nullptr; }
-
-    private:
-        friend class RecordingCaptureRuntime;
-        SinkLease(RecordingCaptureRuntime& owner, ArrangementCaptureSink* sink) noexcept;
-        void release() noexcept;
-
-        RecordingCaptureRuntime* owner = nullptr;
-        ArrangementCaptureSink* sink = nullptr;
-    };
-
     RecordingCaptureRuntime() = default;
     ~RecordingCaptureRuntime() = default;
 
@@ -52,7 +31,8 @@ public:
 
     void setSink(ArrangementCaptureSink* sink) noexcept;
     void clearSink() noexcept;
-    [[nodiscard]] SinkLease acquireSink() noexcept;
+    /// Control side only, after a clear command has been submitted.
+    bool waitForRetiredSink(ArrangementCaptureSink* sink) noexcept;
 
     void resetTrack(RecordingCaptureTrackState& track) noexcept;
     [[nodiscard]] bool hasCaptureWork(const RecordingCaptureTrackState& track) const noexcept;
@@ -81,8 +61,8 @@ public:
 private:
     void incrementError() noexcept { captureErrorCount.fetch_add(1, std::memory_order_relaxed); }
 
-    std::atomic<ArrangementCaptureSink*> recordingSink{nullptr};
-    std::atomic<unsigned int> recordingSinkReaders{0};
+    ArrangementCaptureSink* sink = nullptr;
+    RetireQueue<ArrangementCaptureSink, 256> retiredSinks;
     std::atomic<std::uint64_t> captureErrorCount{0};
 };
 

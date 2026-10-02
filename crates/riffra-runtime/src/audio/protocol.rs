@@ -119,10 +119,8 @@ fn audio_status_from_wire(status: WireAudioStatus) -> AudioStatus {
         instrument_previewing: status.instrument_previewing,
         mute_reasons: status.mute_reasons,
         diagnostics: AudioDiagnostics {
-            callback_count: diagnostics.callback_count,
-            average_callback_duration_us: diagnostics.average_callback_duration_us,
-            maximum_callback_duration_us: diagnostics.maximum_callback_duration_us,
-            callback_overruns: diagnostics.callback_overruns,
+            realtime: diagnostics.realtime,
+            track_loads: diagnostics.track_loads,
             pre_limiter_peak: diagnostics.pre_limiter_peak,
             limiter_gain_reduction_db: diagnostics.limiter_gain_reduction_db,
             hard_clip_samples: diagnostics.hard_clip_samples,

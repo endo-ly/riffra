@@ -118,14 +118,17 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                        const int numOutputChannels, const int numSamples,
                                        const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
+    if (audioMetrics.beginCallback(numSamples, activeSampleRate.load(std::memory_order_acquire)))
+        timelineEngine.closeTrackLoadWindow();
     if (const auto published = timelineEngine.beginBlock(numSamples).publishedMasterGainDb)
         setMasterGainDb(*published);
     const auto projectEpoch = timelineEngine.activeMeterEpoch();
     audioMetrics.beginProjectBlock(projectEpoch);
     const auto callbackStarted = std::chrono::steady_clock::now();
     const auto recordDuration = [this, callbackStarted, numSamples] {
-        audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
-                                            activeSampleRate.load(std::memory_order_relaxed));
+        if (audioMetrics.recordCallbackDuration(callbackStarted, numSamples,
+                                                activeSampleRate.load(std::memory_order_relaxed)))
+            timelineEngine.closeTrackLoadWindow();
     };
     const auto selectedChannel = inputChannel.load(std::memory_order_acquire);
     const auto* selectedInput = inputChannelData != nullptr && selectedChannel < numInputChannels
@@ -165,6 +168,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire), true);
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
@@ -181,7 +185,15 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
 
     feedbackDetector.observe(monitoredInputPeak, numSamples, monitoringActive);
     if (feedbackDetector.consumeSuspected()) {
-        setFeedbackProtection(true);
+        muteReasons.fetch_or(muteReasonBit(MuteReason::FeedbackProtection),
+                             std::memory_order_acq_rel);
+        resetGainOnNextCallback.store(true, std::memory_order_release);
+        feedbackSuspected.store(true, std::memory_order_release);
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire));
+        PreviewEngine::PreviewCommand panic;
+        panic.kind = PreviewEngine::PreviewCommand::Kind::synthPanic;
+        previewEngine.applyCommand(panic, activeSampleRate.load(std::memory_order_acquire));
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire), true);
         timelineEngine.panicActiveGraph();
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
@@ -313,15 +325,17 @@ void AudioRenderPipeline::prepare(juce::AudioIODevice* const device) {
 
 void AudioRenderPipeline::deviceStopped() {
     timelineEngine.setRealtimeOwner(RealtimeOwner::control);
-    activeSampleRate.store(0.0, std::memory_order_release);
+    const auto stoppedSampleRate = activeSampleRate.exchange(0.0, std::memory_order_acq_rel);
     activeBlockSize.store(0, std::memory_order_release);
     limiterPrepared = false;
     currentGainLinear = 0.0f;
     audioMetrics.resetForDevice();
     dcBlocker.reset();
     feedbackDetector.reset();
+    // The callback has stopped; the control side applies the same commands.
+    previewEngine.applyPendingCommands(stoppedSampleRate, true);
     previewEngine.stopPreview();
-    previewEngine.allNotesOff();
+    previewEngine.applyPendingCommands(stoppedSampleRate, true);
 }
 
 }  // namespace riffra

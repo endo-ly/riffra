@@ -1,5 +1,5 @@
 use crate::api::output::{PluginRole, PluginScanState, ScanIssue, ScanReport};
-use serde::Deserialize;
+use crate::audio::wire::{PluginScanMessage, PluginScanMetadata};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -12,29 +12,9 @@ const SCANNER_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 enum ValidationOutcome {
-    Validated(PluginMetadata),
+    Validated(Box<PluginScanMetadata>),
     Failed(String),
     Quarantined(String),
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScanEnvelope {
-    #[serde(rename = "type")]
-    message_type: String,
-    plugins: Option<Vec<PluginMetadata>>,
-    message: Option<String>,
-    load_tested: Option<bool>,
-    load_test_message: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginMetadata {
-    name: String,
-    vendor: Option<String>,
-    version: Option<String>,
-    is_instrument: bool,
 }
 
 /// Validates every discovered plugin through the isolated scanner process.
@@ -71,8 +51,8 @@ pub fn validate_report_with_cancel(
         match outcome {
             ValidationOutcome::Validated(metadata) => {
                 plugin.name = metadata.name;
-                plugin.vendor = metadata.vendor.filter(|value| !value.trim().is_empty());
-                plugin.version = metadata.version.filter(|value| !value.trim().is_empty());
+                plugin.vendor = (!metadata.vendor.trim().is_empty()).then_some(metadata.vendor);
+                plugin.version = (!metadata.version.trim().is_empty()).then_some(metadata.version);
                 plugin.role = Some(if metadata.is_instrument {
                     PluginRole::Instrument
                 } else {
@@ -158,7 +138,7 @@ fn read_to_end<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
 }
 
 fn interpret_result(stdout: &[u8], stderr: &[u8], succeeded: bool) -> ValidationOutcome {
-    let envelope = match serde_json::from_slice::<ScanEnvelope>(stdout) {
+    let envelope = match serde_json::from_slice::<PluginScanMessage>(stdout) {
         Ok(envelope) => envelope,
         Err(error) => {
             return ValidationOutcome::Quarantined(scanner_failure(
@@ -168,26 +148,26 @@ fn interpret_result(stdout: &[u8], stderr: &[u8], succeeded: bool) -> Validation
             ));
         }
     };
-    if envelope.message_type == "pluginScanResult"
-        && succeeded
-        && let Some(plugin) = envelope
-            .plugins
-            .and_then(|plugins| plugins.into_iter().next())
-    {
-        if envelope.load_tested == Some(false) {
-            return ValidationOutcome::Quarantined(format!(
-                "VST3 load validation failed: {} The plugin is quarantined to prevent the audio engine from freezing.",
-                envelope
-                    .load_test_message
-                    .unwrap_or_else(|| "the plugin could not be safely instantiated.".into())
-            ));
+    match envelope {
+        PluginScanMessage::Result {
+            plugins,
+            load_tested,
+            load_test_message,
+            ..
+        } if succeeded => {
+            if let Some(plugin) = plugins.into_iter().next() {
+                if !load_tested {
+                    return ValidationOutcome::Quarantined(format!(
+                        "VST3 load validation failed: {load_test_message} The plugin is quarantined to prevent the audio engine from freezing."
+                    ));
+                }
+                return ValidationOutcome::Validated(Box::new(plugin));
+            }
         }
-        return ValidationOutcome::Validated(plugin);
-    }
-    if envelope.message_type == "pluginScanError" {
-        return ValidationOutcome::Failed(envelope.message.unwrap_or_else(|| {
-            "The isolated scanner found no usable VST3 component. Other plugins and session data are unaffected.".into()
-        }));
+        PluginScanMessage::Error { message, .. } => {
+            return ValidationOutcome::Failed(message);
+        }
+        _ => {}
     }
     ValidationOutcome::Quarantined(scanner_failure(
         "the scanner did not return a usable scan result",
@@ -237,7 +217,8 @@ mod tests {
 
     #[test]
     fn interprets_successful_scanner_output() {
-        let output = br#"{"type":"pluginScanResult","plugins":[{"name":"Amp","vendor":"Vendor","version":"1.2","isInstrument":true}],"loadTested":true}"#;
+        let output =
+            include_bytes!("../../../../contracts/sidecar/messages/pluginScan.result.json");
         assert!(matches!(
             interpret_result(output, b"", true),
             ValidationOutcome::Validated(_)
@@ -246,10 +227,13 @@ mod tests {
 
     #[test]
     fn quarantines_a_plugin_that_cannot_be_loaded() {
-        let output =
-            br#"{"type":"pluginScanResult","plugins":[{"name":"Heavy","isInstrument":false}],"loadTested":false}"#;
+        let output = std::str::from_utf8(include_bytes!(
+            "../../../../contracts/sidecar/messages/pluginScan.result.json"
+        ))
+        .unwrap()
+        .replace("\"loadTested\": true", "\"loadTested\": false");
         assert!(matches!(
-            interpret_result(output, b"", true),
+            interpret_result(output.as_bytes(), b"", true),
             ValidationOutcome::Quarantined(_)
         ));
     }
@@ -257,10 +241,15 @@ mod tests {
     #[test]
     fn quarantines_scanner_output_contaminated_by_plugin_stdout() {
         // Arrange
-        let output = b"riffra-test-plugin-stdout-crt\n{\"type\":\"pluginScanResult\",\"plugins\":[{\"name\":\"Amp\",\"isInstrument\":false}],\"loadTested\":true}\n";
+        let output = format!(
+            "{}\nriffra-test-plugin-stdout-crt",
+            include_str!("../../../../contracts/sidecar/messages/pluginScan.result.json")
+        );
 
         // Act
-        let ValidationOutcome::Quarantined(message) = interpret_result(output, b"", true) else {
+        let ValidationOutcome::Quarantined(message) =
+            interpret_result(output.as_bytes(), b"", true)
+        else {
             panic!("contaminated scanner output must be quarantined");
         };
 

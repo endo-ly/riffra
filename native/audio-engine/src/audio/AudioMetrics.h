@@ -4,7 +4,17 @@
 #include <chrono>
 #include <cstdint>
 
+#include "concurrency/SeqLockFrame.h"
+
 namespace riffra {
+
+struct CallbackWindow final {
+    std::uint64_t windowEndAudioSample = 0;
+    std::uint32_t callbackCount = 0;
+    std::uint32_t overruns = 0;
+    std::uint32_t averageCallbackDurationUs = 0;
+    std::uint32_t maximumCallbackDurationUs = 0;
+};
 
 /// Thread-safe counters and peak meters produced by the realtime pipeline.
 ///
@@ -30,8 +40,7 @@ public:
     [[nodiscard]] std::uint64_t requestedProjectEpoch() const noexcept;
     [[nodiscard]] std::uint64_t invalidSampleCount() const noexcept;
     [[nodiscard]] std::uint64_t callbackCount() const noexcept;
-    [[nodiscard]] std::uint64_t averageCallbackDurationUs() const noexcept;
-    [[nodiscard]] std::uint64_t maximumCallbackDurationUs() const noexcept;
+    [[nodiscard]] CallbackWindow callbackWindow() const noexcept { return closedWindow.read(); }
     [[nodiscard]] std::uint64_t callbackOverruns() const noexcept;
     [[nodiscard]] std::uint64_t hardClipSamples() const noexcept;
 
@@ -45,7 +54,7 @@ public:
                      float outputPeak, float outputPeakLeft, float outputPeakRight,
                      float limiterGainReductionDb, std::uint64_t hardClipSamples,
                      std::uint64_t invalidSamples) noexcept;
-    void recordCallbackDuration(std::chrono::steady_clock::time_point started, int numSamples,
+    bool recordCallbackDuration(std::chrono::steady_clock::time_point started, int numSamples,
                                 double sampleRate) noexcept;
     // Clears only values belonging to the current transient meter window.
     // Cumulative diagnostics remain available across graph boundaries.
@@ -53,6 +62,14 @@ public:
     void resetForDevice() noexcept;
 
 private:
+    friend class AudioMetricsTestPeer;
+    friend class AudioRenderPipeline;
+    /// Closes elapsed windows before DSP; callbacks belong to the window of their end sample.
+    bool beginCallback(int numSamples, double sampleRate) noexcept;
+
+    bool recordCallbackDurationUs(std::uint64_t durationUs, int numSamples,
+                                  double sampleRate) noexcept;
+    void closeWindow() noexcept;
     [[nodiscard]] bool projectEpochIsCurrent(std::uint64_t projectEpoch) const noexcept;
     static void holdPeak(std::atomic<float>& peak, float value) noexcept;
 
@@ -64,8 +81,11 @@ private:
     std::atomic<std::uint64_t> activeProjectEpochValue{0};
     std::atomic<std::uint64_t> invalidSamples{0};
     std::atomic<std::uint64_t> callbackCountValue{0};
-    std::atomic<std::uint64_t> callbackDurationUs{0};
-    std::atomic<std::uint64_t> maximumCallbackDurationUsValue{0};
+    SeqLockFrame<CallbackWindow> closedWindow;
+    CallbackWindow currentWindow{};
+    std::uint64_t windowTotalDurationUs = 0;
+    std::uint64_t audioSample = 0;
+    std::uint64_t nextWindowEndAudioSample = 0;
     std::atomic<std::uint64_t> callbackOverrunsValue{0};
     mutable std::atomic<float> preLimiterPeakValue{0.0f};
     mutable std::atomic<float> limiterGainReductionDbValue{0.0f};

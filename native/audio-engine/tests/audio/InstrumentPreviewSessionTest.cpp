@@ -147,28 +147,29 @@ TEST(PreviewEngineTest, StopsInstrumentPreviewWithoutStoppingTakeComparison) {
     ASSERT_TRUE(engine.startInstrumentPreview(
         definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
         << error.toStdString();
-    EXPECT_TRUE(engine.isInstrumentPreviewing());
-    EXPECT_TRUE(engine.isPreviewing());
-
     juce::AudioBuffer<float> output(2, 256);
     output.clear();
     ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
                               output.getNumSamples(), 48'000.0));
     EXPECT_GT(maximumMagnitude(output), 0.0f);
+    EXPECT_TRUE(engine.isInstrumentPreviewing());
+    EXPECT_TRUE(engine.isPreviewing());
 
     engine.stopInstrumentPreview();
 
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
+                              output.getNumSamples(), 48'000.0));
+    EXPECT_GT(maximumMagnitude(output), 0.0f);
     EXPECT_FALSE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
     output.clear();
     ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
                               output.getNumSamples(), 48'000.0));
-    EXPECT_GT(maximumMagnitude(output), 0.0f);
-    output.clear();
-    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
-                              output.getNumSamples(), 48'000.0));
     EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
     engine.stopPreview();
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
     EXPECT_FALSE(engine.isPreviewing());
 }
 
@@ -188,6 +189,7 @@ TEST(PreviewEngineTest, NaturalInstrumentPreviewFinishLeavesTakeComparisonActive
         << error.toStdString();
 
     juce::AudioBuffer<float> output(2, 256);
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
     for (int block = 0; block < 4096 && engine.isInstrumentPreviewing(); ++block) {
         output.clear();
         ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), output.getNumChannels(),
@@ -213,13 +215,20 @@ TEST(PreviewEngineTest, InstrumentPreviewLeavesTakeComparisonVoiceIndependent) {
     ASSERT_TRUE(engine.startInstrumentPreview(
         definition.loadFileAsString(), preset.getFullPathName(), makeSpec(), 48'000.0, 256, error))
         << error.toStdString();
+    juce::AudioBuffer<float> output(2, 256);
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
     EXPECT_TRUE(engine.isInstrumentPreviewing());
 
     engine.stopPreviewForKey(1);
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
     EXPECT_TRUE(engine.isInstrumentPreviewing());
     EXPECT_TRUE(engine.isPreviewing());
 
     engine.stopPreview();
+    output.clear();
+    ASSERT_TRUE(engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0));
     EXPECT_FALSE(engine.isPreviewing());
 }
 

@@ -19,10 +19,8 @@ void PluginRack::removeProcessorListener(juce::AudioProcessorListener& listener)
 }
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
-    activeReaders.fetch_add(1, std::memory_order_acq_rel);
-    auto* queue = activeParameterQueue.load(std::memory_order_acquire);
+    auto* queue = parameterQueue.get();
     if (queue == nullptr || index < 0 || static_cast<std::size_t>(index) >= queue->capacity) {
-        activeReaders.fetch_sub(1, std::memory_order_release);
         return;
     }
     const auto offset = static_cast<std::size_t>(index);
@@ -34,7 +32,6 @@ void PluginRack::enqueueParameterChange(const int index, const float value) noex
         std::find_if(cachedParameters.begin(), cachedParameters.end(),
                      [index](const auto& parameter) { return parameter.index == index; });
     if (cached != cachedParameters.end()) cached->value = normalized;
-    activeReaders.fetch_sub(1, std::memory_order_release);
 }
 
 std::size_t PluginRack::parameterCount() const noexcept {
@@ -66,9 +63,7 @@ bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& e
             candidate->dirty[index].store(false, std::memory_order_relaxed);
         }
     }
-    if (parameterQueue != nullptr) retiredParameterQueues.push_back(std::move(parameterQueue));
     parameterQueue = std::move(candidate);
-    activeParameterQueue.store(parameterQueue.get(), std::memory_order_release);
     return true;
 }
 

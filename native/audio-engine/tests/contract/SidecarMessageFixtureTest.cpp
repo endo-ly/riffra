@@ -58,10 +58,13 @@ AudioStatusSpec audioStatus() {
     status.previewing = true;
     status.instrumentPreviewing = false;
     status.muteReasons = 1;
-    status.diagnostics.callbackCount = 1'000;
-    status.diagnostics.averageCallbackDurationUs = 120;
-    status.diagnostics.maximumCallbackDurationUs = 800;
-    status.diagnostics.callbackOverruns = 2;
+    status.diagnostics.realtime.callbackCount = 1'000;
+    status.diagnostics.realtime.window.callbackCount = 100;
+    status.diagnostics.realtime.window.overruns = 2;
+    status.diagnostics.trackLoads = {{"audio-track", 40, 250}, {"instrument-track", 60, 450}};
+    status.diagnostics.realtime.window.averageCallbackDurationUs = 120;
+    status.diagnostics.realtime.window.maximumCallbackDurationUs = 800;
+    status.diagnostics.realtime.callbackOverruns = 2;
     status.diagnostics.preLimiterPeak = 0.75;
     status.diagnostics.limiterGainReductionDb = 1.5;
     status.diagnostics.hardClipSamples = 4;
@@ -168,6 +171,51 @@ std::vector<std::pair<juce::String, juce::var>> messageFixtures() {
         "render.error.json",
         encodeOfflineRenderError(
             {"renderRejected", "Offline Render request is invalid.", "renderTimelineOffline", {}}));
+    fixtures.emplace_back(
+        "probe.audioDeviceProbe.json",
+        encodeAudioDeviceProbe({{{"ASIO",
+                                  "driverManaged",
+                                  "sameDevice",
+                                  {{"Interface", {{0, "Input 1"}}}},
+                                  {{"Interface", {{0, "Output 1"}}}}},
+                                 {"Windows Audio", "shared", "independent", {}, {}}},
+                                1234,
+                                "Audio device list refreshed.",
+                                0,
+                                0.98}));
+    fixtures.emplace_back(
+        "probe.deviceChannels.json",
+        encodeDeviceChannels(
+            {"ASIO", "Interface", {{0, "Input 1"}}, "Interface", {{0, "Output 1"}}}));
+    juce::PluginDescription plugin;
+    plugin.name = "Test Effect";
+    plugin.descriptiveName = "Riffra Test Effect";
+    plugin.manufacturerName = "Riffra";
+    plugin.version = "1.0";
+    plugin.category = "Fx";
+    plugin.pluginFormatName = "VST3";
+    plugin.fileOrIdentifier = "plugins/test.vst3";
+    plugin.uniqueId = 123;
+    plugin.deprecatedUid = 456;
+    plugin.numInputChannels = 2;
+    plugin.numOutputChannels = 2;
+    plugin.lastFileModTime = juce::Time(1000);
+    plugin.lastInfoUpdateTime = juce::Time(2000);
+    fixtures.emplace_back(
+        "pluginScan.result.json",
+        encodePluginScanResult({"plugins/test.vst3",
+                                {plugin},
+                                true,
+                                "VST3 instance created and initialized successfully.",
+                                5.0,
+                                8.0}));
+    fixtures.emplace_back(
+        "pluginScan.error.json",
+        encodePluginScanError({"plugins/missing.vst3", "VST3 bundle or file does not exist."}));
+    fixtures.emplace_back(
+        "pluginScan.loadTestResult.json",
+        encodePluginLoadTestResult({"plugins/test.vst3", true,
+                                    "VST3 instance created and initialized successfully.", 5.0}));
     return fixtures;
 }
 

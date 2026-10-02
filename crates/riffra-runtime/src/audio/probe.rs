@@ -1,4 +1,5 @@
 use super::AudioSupervisor;
+use super::wire::ProbeMessage;
 use crate::api::output::{AudioDeviceProbe, DeviceChannels};
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
@@ -68,7 +69,19 @@ impl AudioSupervisor {
         if !output.status.success() {
             return Err(format_probe_failure(&output));
         }
-        parse_probe(&output.stdout, "audioDeviceProbe")
+        match parse_probe(&output.stdout, "audioDeviceProbe")? {
+            ProbeMessage::AudioDeviceProbe {
+                drivers,
+                refreshed_at_ms,
+                message,
+                ..
+            } => Ok(AudioDeviceProbe {
+                drivers,
+                refreshed_at_ms,
+                message,
+            }),
+            ProbeMessage::DeviceChannels(_) => unreachable!("probe response type is checked"),
+        }
     }
 
     /// Probes channel layouts through the live native executable.
@@ -97,7 +110,10 @@ impl AudioSupervisor {
         if !output.status.success() {
             return Err(format_probe_failure(&output));
         }
-        parse_probe(&output.stdout, "deviceChannels")
+        match parse_probe(&output.stdout, "deviceChannels")? {
+            ProbeMessage::DeviceChannels(channels) => Ok(channels),
+            ProbeMessage::AudioDeviceProbe { .. } => unreachable!("probe response type is checked"),
+        }
     }
 }
 
@@ -179,27 +195,29 @@ fn join_probe_output(
     })
 }
 
-fn parse_probe<T: serde::de::DeserializeOwned>(bytes: &[u8], expected: &str) -> Result<T, String> {
+fn parse_probe(bytes: &[u8], expected: &str) -> Result<ProbeMessage, String> {
     let mut invalid_response = None;
     for line in bytes
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
     {
-        let value = match serde_json::from_slice::<serde_json::Value>(line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if value.get("type").and_then(serde_json::Value::as_str) != Some(expected) {
-            continue;
-        }
-        match serde_json::from_slice(line) {
-            Ok(response) => return Ok(response),
+        match serde_json::from_slice::<ProbeMessage>(line) {
+            Ok(response) => {
+                let matches = matches!(
+                    (&response, expected),
+                    (ProbeMessage::AudioDeviceProbe { .. }, "audioDeviceProbe")
+                        | (ProbeMessage::DeviceChannels(_), "deviceChannels")
+                );
+                if matches {
+                    return Ok(response);
+                }
+            }
             Err(error) => invalid_response = Some(error),
         }
     }
     if let Some(error) = invalid_response {
         Err(format!(
-            "audio probe {expected} response was invalid: {error}"
+            "audio probe returned no {expected} response: {error}"
         ))
     } else {
         Err(format!("audio probe returned no {expected} response"))
@@ -217,38 +235,35 @@ fn format_probe_failure(output: &std::process::Output) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProbeCoordinator, parse_probe};
-    use crate::{AudioDevicePairing, AudioDeviceProbe, DeviceChannels};
+    use super::{ProbeCoordinator, ProbeMessage, parse_probe};
+    use crate::AudioDevicePairing;
     use std::time::Duration;
 
     #[test]
     fn parses_audio_probe_with_unicode_device_names() {
-        let probe: AudioDeviceProbe = parse_probe(
-            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}],"refreshedAtMs":1,"message":""}"#,
+        let ProbeMessage::AudioDeviceProbe { drivers, .. } = parse_probe(
+            br#"{"type":"audioDeviceProbe","drivers":[{"name":"ASIO","accessMode":"driverManaged","devicePairing":"sameDevice","inputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Input 1"}]}],"outputs":[{"name":"Focusrite","channels":[{"index":0,"name":"Output 1"}]}]},{"name":"WASAPI","accessMode":"shared","devicePairing":"independent","inputs":[],"outputs":[]}],"refreshedAtMs":1,"message":"","muteReasons":0,"limiterCeiling":0.98}"#,
             "audioDeviceProbe",
         )
-        .unwrap();
+        .unwrap() else { panic!("device probe expected") };
 
-        assert_eq!(probe.drivers[0].name, "ASIO");
-        assert_eq!(probe.drivers[0].inputs[0].name, "Focusrite");
-        assert_eq!(probe.drivers[0].inputs[0].channels[0].name, "Input 1");
-        assert_eq!(probe.drivers[0].outputs[0].channels[0].index, 0);
-        assert_eq!(probe.drivers[0].outputs[0].channels[0].name, "Output 1");
-        assert_eq!(
-            probe.drivers[1].device_pairing,
-            AudioDevicePairing::Independent
-        );
-        assert!(probe.drivers[1].inputs.is_empty());
-        assert!(probe.drivers[1].outputs.is_empty());
+        assert_eq!(drivers[0].name, "ASIO");
+        assert_eq!(drivers[0].inputs[0].name, "Focusrite");
+        assert_eq!(drivers[0].inputs[0].channels[0].name, "Input 1");
+        assert_eq!(drivers[0].outputs[0].channels[0].index, 0);
+        assert_eq!(drivers[0].outputs[0].channels[0].name, "Output 1");
+        assert_eq!(drivers[1].device_pairing, AudioDevicePairing::Independent);
+        assert!(drivers[1].inputs.is_empty());
+        assert!(drivers[1].outputs.is_empty());
     }
 
     #[test]
     fn parses_device_channels_detail() {
-        let detail: DeviceChannels = parse_probe(
+        let ProbeMessage::DeviceChannels(detail) = parse_probe(
             br#"{"type":"deviceChannels","driver":"ASIO","inputDevice":"Focusrite","inputChannels":[{"index":0,"name":"Analogue 1"}],"outputDevice":"Focusrite","outputChannels":[{"index":0,"name":"Output 1"}]}"#,
             "deviceChannels",
         )
-        .unwrap();
+        .unwrap() else { panic!("channel probe expected") };
 
         assert_eq!(detail.driver, "ASIO");
         assert_eq!(detail.input_channels[0].name, "Analogue 1");
@@ -257,8 +272,7 @@ mod tests {
 
     #[test]
     fn rejects_non_probe_messages() {
-        let error = parse_probe::<DeviceChannels>(br#"{"type":"audioStatus"}"#, "deviceChannels")
-            .unwrap_err();
+        let error = parse_probe(br#"{"type":"audioStatus"}"#, "deviceChannels").unwrap_err();
 
         assert!(error.contains("no deviceChannels response"));
     }

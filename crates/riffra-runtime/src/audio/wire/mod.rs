@@ -13,11 +13,11 @@ pub(crate) use commands::{
     ExpectedResponse, OfflineRenderEnvelope, SidecarCommand, TakeComparisonVariant,
 };
 pub(crate) use messages::{
-    RenderMessage, SidecarError, SidecarEvent, SidecarMessage, SidecarResponse, WireAudioChannel,
-    WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault, WireMidiDevice,
-    WirePluginState, WireRecordingComplete, WireRecordingPhase, WireRecoveryStatus,
-    WireTrackPluginParameterChanged, WireTrackPluginStateChanged, WireTransportState,
-    WireTransportStatus,
+    PluginScanMessage, PluginScanMetadata, ProbeMessage, RenderMessage, SidecarError, SidecarEvent,
+    SidecarMessage, SidecarResponse, WireAudioChannel, WireAudioMeters, WireAudioState,
+    WireAudioStatus, WireInstrumentFault, WireMidiDevice, WirePluginState, WireRecordingComplete,
+    WireRecordingPhase, WireRecoveryStatus, WireTrackPluginParameterChanged,
+    WireTrackPluginStateChanged, WireTransportState, WireTransportStatus,
 };
 
 use serde::{Deserialize, Deserializer, Serialize};

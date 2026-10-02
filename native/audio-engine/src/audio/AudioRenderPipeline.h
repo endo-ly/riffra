@@ -37,8 +37,7 @@ public:
     // request TimelineEngine::panicAllInstrumentTracks().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
-    // Thread-safe; processBlock() also calls this when the realtime detector
-    // engages protection.
+    // Control side; the realtime detector applies protection on the audio owner.
     void setFeedbackProtection(bool active) noexcept;
     [[nodiscard]] std::uint32_t getMuteReasons() const noexcept;
     [[nodiscard]] bool isMuted() const noexcept;
@@ -67,11 +66,8 @@ public:
     [[nodiscard]] std::uint64_t getCallbackCount() const noexcept {
         return audioMetrics.callbackCount();
     }
-    [[nodiscard]] std::uint64_t getAverageCallbackDurationUs() const noexcept {
-        return audioMetrics.averageCallbackDurationUs();
-    }
-    [[nodiscard]] std::uint64_t getMaximumCallbackDurationUs() const noexcept {
-        return audioMetrics.maximumCallbackDurationUs();
+    [[nodiscard]] CallbackWindow getCallbackWindow() const noexcept {
+        return audioMetrics.callbackWindow();
     }
     [[nodiscard]] std::uint64_t getCallbackOverruns() const noexcept {
         return audioMetrics.callbackOverruns();
@@ -128,18 +124,22 @@ public:
     bool startInstrumentPreview(const juce::String& definitionJson,
                                 const juce::String& definitionBaseDir, InstrumentPreviewSpec spec,
                                 juce::String& error);
-    void stopInstrumentPreview() noexcept { previewEngine.stopInstrumentPreview(); }
-    void stopPreview() noexcept { previewEngine.stopPreview(); }
-    void stopPreviewForKey(int voiceKey) noexcept { previewEngine.stopPreviewForKey(voiceKey); }
+    bool stopInstrumentPreview(juce::String* error = nullptr) {
+        return previewEngine.stopInstrumentPreview(error);
+    }
+    bool stopPreview(juce::String* error = nullptr) { return previewEngine.stopPreview(error); }
+    bool stopPreviewForKey(int voiceKey, juce::String* error = nullptr) {
+        return previewEngine.stopPreviewForKey(voiceKey, error);
+    }
     bool switchPreviewBuffer(int voiceKey, const juce::AudioBuffer<float>& buffer,
                              juce::String& error) {
         return previewEngine.switchPreviewBuffer(voiceKey, buffer, error);
     }
-    void startSynthNote(int note, float velocity) noexcept {
-        previewEngine.startSynthNote(note, velocity);
+    bool startSynthNote(int note, float velocity) noexcept {
+        return previewEngine.startSynthNote(note, velocity);
     }
-    void stopSynthNote(int note) noexcept { previewEngine.stopSynthNote(note); }
-    void allNotesOff() noexcept { previewEngine.allNotesOff(); }
+    bool stopSynthNote(int note) noexcept { return previewEngine.stopSynthNote(note); }
+    bool allNotesOff() noexcept { return previewEngine.allNotesOff(); }
     [[nodiscard]] bool isInstrumentPreviewing() const noexcept {
         return previewEngine.isInstrumentPreviewing();
     }

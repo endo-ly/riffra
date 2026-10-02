@@ -41,7 +41,7 @@ int runMain(const juce::StringArray& arguments) {
     }
     const auto command = arguments[1];
     if (command == "--probe") {
-        writeProbeResult(AudioDeviceService::discover());
+        writeProbeResult(riffra::encodeAudioDeviceProbe(AudioDeviceService::discover()));
         return 0;
     }
     if (command == "--probe-channels") {
@@ -67,7 +67,7 @@ int runMain(const juce::StringArray& arguments) {
         if (!channels.has_value()) {
             return rejectArguments(probeError);
         }
-        writeProbeResult(*channels);
+        writeProbeResult(riffra::encodeDeviceChannels(*channels));
         return 0;
     }
     if (command == "--serve") {

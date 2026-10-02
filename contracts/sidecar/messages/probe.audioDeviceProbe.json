@@ -1,0 +1,43 @@
+{
+  "type": "audioDeviceProbe",
+  "drivers": [
+    {
+      "name": "ASIO",
+      "accessMode": "driverManaged",
+      "devicePairing": "sameDevice",
+      "inputs": [
+        {
+          "name": "Interface",
+          "channels": [
+            {
+              "index": 0,
+              "name": "Input 1"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Interface",
+          "channels": [
+            {
+              "index": 0,
+              "name": "Output 1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Windows Audio",
+      "accessMode": "shared",
+      "devicePairing": "independent",
+      "inputs": [],
+      "outputs": []
+    }
+  ],
+  "refreshedAtMs": 1234,
+  "message": "Audio device list refreshed.",
+  "muteReasons": 0,
+  "limiterCeiling": 0.98
+}

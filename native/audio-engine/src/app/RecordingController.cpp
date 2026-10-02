@@ -54,10 +54,20 @@ RealtimeRequest RecordingController::start(const juce::File& directory, const in
         ArrangeRecordingSession::create(directory, timeline.recordingConfiguration(), error);
     if (candidate == nullptr) return RealtimeRequest::rejected;
 
-    timeline.setRecordingSink(candidate.get());
+    if (!timeline.setRecordingSink(candidate.get())) {
+        error = "The realtime recording sink could not be queued.";
+        juce::String cleanupError;
+        (void)candidate->cancel(cleanupError);
+        if (cleanupError.isNotEmpty()) error << " " << cleanupError;
+        return RealtimeRequest::queueFull;
+    }
     const auto started = timeline.startRecording(countInBeats, error);
     if (started != RealtimeRequest::accepted) {
-        timeline.clearRecordingSink();
+        if (!timeline.clearRecordingSink()) {
+            arrangeRecording = std::move(candidate);
+            error = "The recording sink was not retired within one second.";
+            return RealtimeRequest::rejected;
+        }
         juce::String cleanupError;
         (void)candidate->cancel(cleanupError);
         if (cleanupError.isNotEmpty()) error << " " << cleanupError;
@@ -117,7 +127,11 @@ RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pe
     {
         const juce::ScopedLock guard(lock);
         if (pending.cancelCountIn) {
-            timeline.clearRecordingSink();
+            if (!timeline.clearRecordingSink()) {
+                error = "The recording sink was not retired within one second.";
+                stopInProgress = false;
+                return RealtimeRequest::rejected;
+            }
             if (arrangeRecording == nullptr) {
                 cancelled.store(true, std::memory_order_release);
                 stopInProgress = false;
@@ -132,7 +146,11 @@ RealtimeRequest RecordingController::completeStop(const PendingRecordingStop& pe
 
         finalized = timeline.finalizeRecording(finalizationError);
         if (!finalized) error = finalizationError;
-        timeline.clearRecordingSink();
+        if (!timeline.clearRecordingSink()) {
+            error = "The recording sink was not retired within one second.";
+            stopInProgress = false;
+            return RealtimeRequest::rejected;
+        }
         if (arrangeRecording == nullptr) {
             stopInProgress = false;
             return finalized ? RealtimeRequest::accepted : RealtimeRequest::rejected;

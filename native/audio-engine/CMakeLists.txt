@@ -82,6 +82,7 @@ add_library(riffra-render-core STATIC)
 add_library(riffra-audio-core STATIC)
 
 target_sources(riffra-render-core PRIVATE
+  src/timeline/TrackProcessingPool.cpp
   src/timeline/TimelineEngine.cpp
   src/timeline/TimelineEngineRecording.cpp
   src/timeline/TimelineEngineDevices.cpp
@@ -189,6 +190,7 @@ target_sources(riffra-audio PRIVATE
 )
 
 target_sources(riffra-plugin-scan PRIVATE
+  src/contract/SidecarMessages.cpp
   tools/plugin-scanner/PluginScannerMain.cpp
   src/plugins/PluginRack.cpp
   src/plugins/PluginRackState.cpp
@@ -470,6 +472,8 @@ if(BUILD_TESTING)
     tests/protocol/CommandResponderTest.cpp
     tests/timeline/ArrangementGraphTest.cpp
     tests/timeline/AutomationRuntimeTest.cpp
+    tests/audio/PreviewEngineTest.cpp
+    tests/audio/AudioMetricsTest.cpp
     tests/audio/AudioRenderPipelineTest.cpp
     tests/audio/AudioSafetyDspTest.cpp
     tests/audio/InstrumentPreviewSessionTest.cpp
@@ -477,6 +481,7 @@ if(BUILD_TESTING)
     tests/plugins/PluginRackTest.cpp
     tests/plugins/PluginChainTest.cpp
     tests/plugins/RuntimeLifecycleExecutorTest.cpp
+    tests/recording/RecordingCaptureRuntimeTest.cpp
     tests/recording/RecordingSessionTest.cpp
     tests/recording/ArrangeRecordingSessionTest.cpp
     tests/timeline/MidiSchedulerTest.cpp
@@ -486,6 +491,7 @@ if(BUILD_TESTING)
     tests/timeline/TimelineSnapshotTest.cpp
     tests/timeline/TimelineTransportTest.cpp
     tests/timeline/TimelineRealtimeTest.cpp
+    tests/timeline/TrackProcessingPoolTest.cpp
     tests/timeline/TimelineRenderTest.cpp
     tests/timeline/TimelineRecordingTest.cpp
     tests/timeline/TimelineDeviceTest.cpp

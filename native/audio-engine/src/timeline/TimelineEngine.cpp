@@ -9,8 +9,6 @@
 
 namespace riffra {
 
-namespace {}  // namespace
-
 float fadeEnvelope(const float progress, const int fadeShape) noexcept {
     switch (fadeShape) {
         case 0:
@@ -23,7 +21,10 @@ float fadeEnvelope(const float progress, const int fadeShape) noexcept {
 }
 
 TimelineEngine::TimelineEngine(const bool offline)
-    : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
+    : offlineMode(offline),
+      pool(std::make_unique<TrackProcessingPool>(
+          std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 2, 0, 7))),
+      recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
     publishFrame(realtime);
 }
@@ -37,6 +38,23 @@ TimelineEngine::~TimelineEngine() {
         graphs.committed.clear();
     });
     if (readAheadThread.isThreadRunning()) readAheadThread.stopThread(3000);
+}
+
+void TimelineEngine::closeTrackLoadWindow() noexcept {
+    if (realtime.graph == nullptr) return;
+    for (const auto& track : realtime.graph->tracks) {
+        auto& runtime = *track->runtime;
+        const auto average = runtime.windowProcessingCount == 0
+                                 ? 0
+                                 : runtime.windowProcessingTotalUs / runtime.windowProcessingCount;
+        runtime.windowAverageUs.store(static_cast<std::uint32_t>(average),
+                                      std::memory_order_release);
+        runtime.windowMaximumUs.store(static_cast<std::uint32_t>(runtime.windowProcessingMaximumUs),
+                                      std::memory_order_release);
+        runtime.windowProcessingTotalUs = 0;
+        runtime.windowProcessingMaximumUs = 0;
+        runtime.windowProcessingCount = 0;
+    }
 }
 
 void TimelineEngine::setProjectBoundaryCallback(std::function<void(std::uint64_t)> callback) {
@@ -291,12 +309,25 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
         case RealtimeCommand::Kind::publishGraph:
             publishGraph(state, command.graph);
             break;
+        case RealtimeCommand::Kind::setRecordingSink:
+            recordingCapture->setSink(command.recordingSink);
+            break;
+        case RealtimeCommand::Kind::clearRecordingSink:
+            recordingCapture->clearSink();
+            break;
         case RealtimeCommand::Kind::deviceStarted:
             state.audioClockSample = 0;
             state.resetPlaybackPending = true;
             if (state.graph != nullptr)
-                for (auto& track : state.graph->tracks)
-                    track->runtime->requestTransportDiscontinuity();
+                for (auto& track : state.graph->tracks) {
+                    auto& runtime = *track->runtime;
+                    runtime.requestTransportDiscontinuity();
+                    runtime.windowProcessingTotalUs = 0;
+                    runtime.windowProcessingMaximumUs = 0;
+                    runtime.windowProcessingCount = 0;
+                    runtime.windowAverageUs.store(0, std::memory_order_release);
+                    runtime.windowMaximumUs.store(0, std::memory_order_release);
+                }
             ++state.clockGeneration;
             ++state.discontinuity;
             break;
@@ -399,6 +430,9 @@ TimelineStatus TimelineEngine::status() const {
             result.armedTrackIds = graph.summary.armedTrackIds;
             result.liveMidiDrops = liveMidiQueueDrops.load(std::memory_order_relaxed);
             for (const auto& track : graph.tracks) {
+                result.trackLoads.push_back(
+                    {track->id, track->runtime->windowAverageUs.load(std::memory_order_acquire),
+                     track->runtime->windowMaximumUs.load(std::memory_order_acquire)});
                 const auto* instrument = track->runtime->instrument();
                 if (instrument == nullptr) continue;
                 result.liveMidiDrops += instrument->droppedMidiEvents();

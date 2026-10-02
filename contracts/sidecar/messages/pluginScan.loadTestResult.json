@@ -1,0 +1,7 @@
+{
+  "type": "pluginLoadTestResult",
+  "path": "plugins/test.vst3",
+  "success": true,
+  "message": "VST3 instance created and initialized successfully.",
+  "durationMs": 5.0
+}

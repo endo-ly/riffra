@@ -311,11 +311,7 @@ private:
 
 namespace {
 
-bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
-    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
-    if (!engine.stop()) return false;
-    return engine.processFinalizedRecording(error);
-}
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error);
 
 TimelineSnapshotSpec makeInstrumentSnapshot(const juce::String& trackId) {
     auto snapshot = makeTestSnapshot();
@@ -381,13 +377,32 @@ TimelineSnapshotSpec makeRawAndProcessedClipSnapshot(const juce::File& rawFile,
 
 class TimelineEngineTestPeer final {
 public:
+    static ArrangementCaptureSink* recordingSink(TimelineEngine& engine) {
+        return engine.controlRecordingSink;
+    }
+    static bool setOfflineCompensation(OfflineRenderer& renderer, const juce::String& trackId,
+                                       const std::int64_t samples) {
+        return setPlaybackCompensationForTest(*renderer.engine, trackId, samples);
+    }
+
+    static bool installOfflineEffect(OfflineRenderer& renderer, const juce::String& trackId,
+                                     std::unique_ptr<juce::AudioProcessor> processor,
+                                     juce::String& error) {
+        return installTrackChainDevice(*renderer.engine, trackId, "effect:test",
+                                       std::move(processor), 48'000.0, 128, error);
+    }
+
+    static void setOfflineWorkerCount(OfflineRenderer& renderer, const int workerCount) {
+        renderer.engine->pool = std::make_unique<TrackProcessingPool>(workerCount);
+    }
+
     static bool addChainDevice(PluginChain& chain, const juce::String& id,
                                std::unique_ptr<juce::AudioProcessor> processor,
                                const double sampleRate, const int blockSize, juce::String& error) {
         auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error);
         if (rack == nullptr) return false;
         chain.devices.push_back(PluginChain::Device{id, std::move(rack)});
-        chain.prepare(sampleRate, blockSize);
+        chain.prepareBuffers(blockSize);
         return true;
     }
 
@@ -467,7 +482,7 @@ public:
     }
 
     static bool hasRecordingSink(TimelineEngine& engine) {
-        return static_cast<bool>(engine.recordingCapture->acquireSink());
+        return engine.controlRecordingSink != nullptr;
     }
 
     static std::uint64_t nextCommandSequence(TimelineEngine& engine) {
@@ -1787,4 +1802,11 @@ public:
         return juce::var(result);
     }
 };
+namespace {
+bool finalizeCapturedRecording(TimelineEngine& engine, juce::String& error) {
+    if (!engine.stopRecording(error) || !engine.finalizeRecording(error)) return false;
+    if (!engine.stop()) return false;
+    return engine.processFinalizedRecording(TimelineEngineTestPeer::recordingSink(engine), error);
+}
+}  // namespace
 }  // namespace riffra

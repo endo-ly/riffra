@@ -8,24 +8,14 @@
 namespace riffra {
 namespace {
 
-juce::Array<juce::var> channelNames(const juce::StringArray& names, const bool input) {
-    juce::Array<juce::var> channels;
-    for (int index = 0; index < names.size(); ++index) {
-        auto* channel = new juce::DynamicObject();
-        channel->setProperty("index", index);
-        channel->setProperty("name", names[index].isNotEmpty() ? names[index]
-                                                               : (input ? "Input " : "Output ") +
-                                                                     juce::String(index + 1));
-        channels.add(juce::var(channel));
-    }
+std::vector<AudioChannelSpec> channelNames(const juce::StringArray& names, const bool input) {
+    std::vector<AudioChannelSpec> channels;
+    for (int index = 0; index < names.size(); ++index)
+        channels.push_back({static_cast<std::uint32_t>(index),
+                            names[index].isNotEmpty()
+                                ? names[index]
+                                : (input ? "Input " : "Output ") + juce::String(index + 1)});
     return channels;
-}
-
-juce::var listedAudioDevice(const juce::String& name) {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("name", name);
-    result->setProperty("channels", juce::Array<juce::var>{});
-    return juce::var(result);
 }
 
 std::unique_ptr<juce::XmlElement> configuredAudioXml(const AudioConfiguration& configuration) {
@@ -65,44 +55,29 @@ juce::String AudioDeviceService::defaultDriver() {
 #endif
 }
 
-juce::var AudioDeviceService::discover() {
+AudioDeviceProbeSpec AudioDeviceService::discover() {
     juce::AudioDeviceManager manager;
     juce::OwnedArray<juce::AudioIODeviceType> types;
     manager.createAudioDeviceTypes(types);
-
-    juce::Array<juce::var> driverTypes;
+    AudioDeviceProbeSpec result;
     for (auto* type : types) {
         type->scanForDevices();
-        auto* driver = new juce::DynamicObject();
-        driver->setProperty("name", type->getTypeName());
-        driver->setProperty("accessMode", accessModeForDriver(type->getTypeName()));
-        const auto sameDevice = driverRequiresSameDevice(type->getTypeName());
-        driver->setProperty("devicePairing", sameDevice ? "sameDevice" : "independent");
-
-        juce::Array<juce::var> inputs;
-        for (const auto& name : type->getDeviceNames(true)) inputs.add(listedAudioDevice(name));
-        driver->setProperty("inputs", inputs);
-
-        juce::Array<juce::var> outputs;
-        for (const auto& name : type->getDeviceNames(false)) outputs.add(listedAudioDevice(name));
-        driver->setProperty("outputs", outputs);
-        driverTypes.add(juce::var(driver));
+        AudioDeviceProbeSpec::Driver driver;
+        driver.name = type->getTypeName();
+        driver.accessMode = accessModeForDriver(driver.name);
+        driver.devicePairing = driverRequiresSameDevice(driver.name) ? "sameDevice" : "independent";
+        for (const auto& name : type->getDeviceNames(true)) driver.inputs.push_back({name, {}});
+        for (const auto& name : type->getDeviceNames(false)) driver.outputs.push_back({name, {}});
+        result.drivers.push_back(std::move(driver));
     }
-
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "audioDeviceProbe");
-    result->setProperty("drivers", driverTypes);
-    result->setProperty("refreshedAtMs", juce::Time::currentTimeMillis());
-    result->setProperty("message", "Audio device list refreshed.");
-    result->setProperty("muteReasons", 0);
-    result->setProperty("limiterCeiling", 0.98);
-    return juce::var(result);
+    result.refreshedAtMs = static_cast<std::uint64_t>(juce::Time::currentTimeMillis());
+    result.message = "Audio device list refreshed.";
+    return result;
 }
 
-std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::String& driver,
-                                                                 const juce::String& inputDevice,
-                                                                 const juce::String& outputDevice,
-                                                                 juce::String& error) {
+std::optional<DeviceChannelsSpec> AudioDeviceService::probeDeviceChannels(
+    const juce::String& driver, const juce::String& inputDevice, const juce::String& outputDevice,
+    juce::String& error) {
     juce::AudioDeviceManager manager;
     juce::OwnedArray<juce::AudioIODeviceType> types;
     manager.createAudioDeviceTypes(types);
@@ -112,8 +87,8 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
         return std::nullopt;
     }
 
-    juce::Array<juce::var> inputChannels;
-    juce::Array<juce::var> outputChannels;
+    std::vector<AudioChannelSpec> inputChannels;
+    std::vector<AudioChannelSpec> outputChannels;
     bool driverFound = false;
     for (auto* type : types) {
         if (type->getTypeName() != driver) continue;
@@ -129,7 +104,7 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
             }
             inputChannels = channelNames(device->getInputChannelNames(), true);
             outputChannels = channelNames(device->getOutputChannelNames(), false);
-            if (inputChannels.isEmpty() || outputChannels.isEmpty()) {
+            if (inputChannels.empty() || outputChannels.empty()) {
                 error = "The selected audio device returned no channel details.";
                 return std::nullopt;
             }
@@ -142,7 +117,7 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
                     return std::nullopt;
                 }
                 inputChannels = channelNames(input->getInputChannelNames(), true);
-                if (inputChannels.isEmpty()) {
+                if (inputChannels.empty()) {
                     error = "The selected input device returned no channel details.";
                     return std::nullopt;
                 }
@@ -155,7 +130,7 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
                     return std::nullopt;
                 }
                 outputChannels = channelNames(output->getOutputChannelNames(), false);
-                if (outputChannels.isEmpty()) {
+                if (outputChannels.empty()) {
                     error = "The selected output device returned no channel details.";
                     return std::nullopt;
                 }
@@ -169,14 +144,8 @@ std::optional<juce::var> AudioDeviceService::probeDeviceChannels(const juce::Str
         return std::nullopt;
     }
 
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "deviceChannels");
-    result->setProperty("driver", driver);
-    result->setProperty("inputDevice", inputDevice);
-    result->setProperty("inputChannels", inputChannels);
-    result->setProperty("outputDevice", outputDevice);
-    result->setProperty("outputChannels", outputChannels);
-    return juce::var(result);
+    return DeviceChannelsSpec{driver, inputDevice, std::move(inputChannels), outputDevice,
+                              std::move(outputChannels)};
 }
 
 juce::String AudioDeviceService::initialise(juce::AudioDeviceManager& manager,

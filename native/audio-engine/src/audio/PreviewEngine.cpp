@@ -19,157 +19,88 @@ int fadeFrames(const double sampleRate) noexcept {
 }  // namespace
 
 PreviewEngine::PreviewEngine() {
-    for (auto& count : audioReaderCounts) count.store(0, std::memory_order_relaxed);
-    auto initial = std::make_unique<PreviewState>();
-    auto* initialState = initial.get();
-    previewStates.push_back(std::move(initial));
-    pendingPreviewState.store(initialState, std::memory_order_release);
-    for (auto& state : audioVoiceStates) state.store(nullptr, std::memory_order_relaxed);
-    for (auto& state : audioVoicePendingStates) state.store(nullptr, std::memory_order_relaxed);
     for (auto& cursor : audioVoiceCursors) cursor.store(0, std::memory_order_relaxed);
 }
 
 PreviewEngine::~PreviewEngine() = default;
 
-PreviewEngine::PreviewControlGuard::PreviewControlGuard(PreviewEngine& ownerIn) noexcept
-    : owner(ownerIn) {
-    while (owner.previewBusy.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
-    owner.retireFinishedInstrumentState();
-    owner.cleanupDeferredState();
+bool PreviewEngine::publishState(std::unique_ptr<PreviewState> next,
+                                 const PreviewCommand::Kind kind, juce::String& error,
+                                 const std::size_t index, const int key) {
+    if (previewStates.size() == audioStates.size()) {
+        error = "The realtime preview retirement queue is full.";
+        reclaimRetiredState();
+        return false;
+    }
+    PreviewCommand command;
+    command.kind = kind;
+    command.state = next.get();
+    command.index = index;
+    command.key = key;
+    command.session = next->instrumentSession;
+    command.buffer = next->instrumentBuffer;
+    previewStates.push_back(std::move(next));
+    if (!commands.tryPush(command)) {
+        previewStates.pop_back();
+        error = "The realtime preview command queue is full.";
+        reclaimRetiredState();
+        return false;
+    }
+    controlState = *command.state;
+    return true;
 }
 
-PreviewEngine::PreviewControlGuard::~PreviewControlGuard() {
-    owner.cleanupDeferredState();
-    owner.previewBusy.clear(std::memory_order_release);
+void PreviewEngine::reclaimRetiredState() {
+    retiredStates.reclaim([this](PreviewState* retired) {
+        std::erase_if(previewStates,
+                      [retired](const auto& state) { return state.get() == retired; });
+    });
+    const auto stateUsesBuffer = [](const PreviewState& state, const auto* buffer) {
+        return std::any_of(state.voices.begin(), state.voices.end(),
+                           [buffer](const auto& voice) { return voice.buffer == buffer; });
+    };
+    std::erase_if(previewBuffers, [&](const auto& buffer) {
+        if (stateUsesBuffer(controlState, buffer.get())) return false;
+        return std::none_of(previewStates.begin(), previewStates.end(), [&](const auto& state) {
+            return stateUsesBuffer(*state, buffer.get());
+        });
+    });
+    std::erase_if(instrumentSessions, [&](const auto& session) {
+        if (controlState.instrumentSession == session.get()) return false;
+        return std::none_of(previewStates.begin(), previewStates.end(), [&](const auto& state) {
+            return state->instrumentSession == session.get();
+        });
+    });
+    std::erase_if(instrumentBuffers, [&](const auto& buffer) {
+        if (controlState.instrumentBuffer == buffer.get()) return false;
+        return std::none_of(previewStates.begin(), previewStates.end(), [&](const auto& state) {
+            return state->instrumentBuffer == buffer.get();
+        });
+    });
 }
 
-PreviewEngine::PreviewAudioGuard::PreviewAudioGuard(PreviewEngine& ownerIn) noexcept
-    : owner(ownerIn) {
-    for (;;) {
-        generation = owner.audioReaderGeneration.load(std::memory_order_acquire);
-        owner.audioReaderCounts[generation].fetch_add(1, std::memory_order_acq_rel);
-        if (owner.audioReaderGeneration.load(std::memory_order_acquire) == generation) {
-            entered = true;
+void PreviewEngine::retireUnusedStates() noexcept {
+    for (std::size_t index = 0; index < audioStateCount;) {
+        auto* state = audioStates[index];
+        const auto needed =
+            state == audioPreviewState ||
+            std::any_of(previewVoices.begin(), previewVoices.end(),
+                        [state](const auto& voice) {
+                            return voice.sourceState == state || voice.pendingState == state;
+                        }) ||
+            (state->instrumentSession != nullptr &&
+             (state->instrumentSession == audioInstrumentSession ||
+              state->instrumentSession == audioInstrumentPendingSession));
+        if (needed) {
+            ++index;
+            continue;
+        }
+        if (!retiredStates.retire(state)) {
+            jassertfalse;
             return;
         }
-        owner.audioReaderCounts[generation].fetch_sub(1, std::memory_order_release);
+        audioStates[index] = audioStates[--audioStateCount];
     }
-}
-
-PreviewEngine::PreviewAudioGuard::~PreviewAudioGuard() {
-    if (entered) owner.audioReaderCounts[generation].fetch_sub(1, std::memory_order_release);
-}
-
-void PreviewEngine::publishState(std::unique_ptr<PreviewState> next) {
-    auto* state = next.get();
-    previewStates.push_back(std::move(next));
-    pendingPreviewState.store(state, std::memory_order_release);
-}
-
-void PreviewEngine::retireFinishedInstrumentState() {
-    auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    if (state == nullptr || state->instrumentSession == nullptr ||
-        !state->instrumentSession->isFinished())
-        return;
-    const auto* session = state->instrumentSession;
-    if (audioInstrumentSession.load(std::memory_order_acquire) == session ||
-        audioInstrumentPendingSession.load(std::memory_order_acquire) == session)
-        return;
-    auto next = std::make_unique<PreviewState>(*state);
-    next->instrumentSession = nullptr;
-    next->instrumentBuffer = nullptr;
-    publishState(std::move(next));
-}
-
-void PreviewEngine::cleanupDeferredState() noexcept {
-    if (!deferredCleanupPending) {
-        deferredCleanupGeneration = audioReaderGeneration.load(std::memory_order_acquire);
-        audioReaderGeneration.store(1U - deferredCleanupGeneration, std::memory_order_release);
-        deferredCleanupPending = true;
-    }
-    if (audioReaderCounts[deferredCleanupGeneration].load(std::memory_order_acquire) != 0) return;
-    deferredCleanupPending = false;
-    const auto activeGeneration = 1U - deferredCleanupGeneration;
-    const auto shouldReclaim = [activeGeneration, this](auto& retired, const auto* candidate,
-                                                        const bool needed) {
-        if (needed) {
-            retired.erase(candidate);
-            return false;
-        }
-        const auto [it, inserted] = retired.emplace(candidate, activeGeneration);
-        if (inserted || it->second != deferredCleanupGeneration) return false;
-        retired.erase(it);
-        return true;
-    };
-    const auto* pending = pendingPreviewState.load(std::memory_order_acquire);
-    const auto* audio = audioPreviewState.load(std::memory_order_acquire);
-    const auto* instrument = audioInstrumentSession.load(std::memory_order_acquire);
-    const auto* pendingInstrument = audioInstrumentPendingSession.load(std::memory_order_acquire);
-    const auto* instrumentBuffer = audioInstrumentBuffer.load(std::memory_order_acquire);
-    const auto* pendingInstrumentBuffer =
-        audioInstrumentPendingBuffer.load(std::memory_order_acquire);
-    const auto stateIsNeeded = [this, pending, audio](const PreviewState* candidate) {
-        if (candidate == pending || candidate == audio) return true;
-        for (const auto& state : audioVoiceStates)
-            if (state.load(std::memory_order_acquire) == candidate) return true;
-        for (const auto& state : audioVoicePendingStates)
-            if (state.load(std::memory_order_acquire) == candidate) return true;
-        return false;
-    };
-    previewStates.erase(
-        std::remove_if(
-            previewStates.begin(), previewStates.end(),
-            [this, &stateIsNeeded, &shouldReclaim](const std::unique_ptr<PreviewState>& state) {
-                return shouldReclaim(retiredPreviewStates, state.get(), stateIsNeeded(state.get()));
-            }),
-        previewStates.end());
-
-    const auto bufferIsNeeded = [this](const juce::AudioBuffer<float>* candidate) {
-        for (const auto& state : previewStates)
-            for (const auto& voice : state->voices)
-                if (voice.buffer == candidate) return true;
-        return false;
-    };
-    previewBuffers.erase(
-        std::remove_if(previewBuffers.begin(), previewBuffers.end(),
-                       [this, &bufferIsNeeded,
-                        &shouldReclaim](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
-                           return shouldReclaim(retiredPreviewBuffers, buffer.get(),
-                                                bufferIsNeeded(buffer.get()));
-                       }),
-        previewBuffers.end());
-
-    const auto sessionIsNeeded = [this, instrument,
-                                  pendingInstrument](const InstrumentPreviewSession* candidate) {
-        if (candidate == instrument || candidate == pendingInstrument) return true;
-        for (const auto& state : previewStates)
-            if (state->instrumentSession == candidate) return true;
-        return false;
-    };
-    instrumentSessions.erase(
-        std::remove_if(instrumentSessions.begin(), instrumentSessions.end(),
-                       [this, &sessionIsNeeded,
-                        &shouldReclaim](const std::unique_ptr<InstrumentPreviewSession>& session) {
-                           return shouldReclaim(retiredInstrumentSessions, session.get(),
-                                                sessionIsNeeded(session.get()));
-                       }),
-        instrumentSessions.end());
-
-    const auto instrumentBufferIsNeeded = [this, instrumentBuffer, pendingInstrumentBuffer](
-                                              const juce::AudioBuffer<float>* candidate) {
-        if (candidate == instrumentBuffer || candidate == pendingInstrumentBuffer) return true;
-        for (const auto& state : previewStates)
-            if (state->instrumentBuffer == candidate) return true;
-        return false;
-    };
-    instrumentBuffers.erase(
-        std::remove_if(instrumentBuffers.begin(), instrumentBuffers.end(),
-                       [this, &instrumentBufferIsNeeded,
-                        &shouldReclaim](const std::unique_ptr<juce::AudioBuffer<float>>& buffer) {
-                           return shouldReclaim(retiredInstrumentBuffers, buffer.get(),
-                                                instrumentBufferIsNeeded(buffer.get()));
-                       }),
-        instrumentBuffers.end());
 }
 
 bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int startSample,
@@ -186,13 +117,12 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
         return false;
     }
 
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     if (voiceKey < 0) {
         next->instrumentSession = nullptr;
         next->instrumentBuffer = nullptr;
-        instrumentStopRequested.store(true, std::memory_order_release);
     }
 
     std::size_t targetIndex = kPreviewVoiceCount;
@@ -234,8 +164,10 @@ bool PreviewEngine::startPreview(juce::AudioBuffer<float>& buffer, const int sta
     target.loop = loop;
     target.active = true;
     target.revision = ++previewSequence;
-    publishState(std::move(next));
-    return true;
+    return publishState(std::move(next),
+                        voiceKey < 0 ? PreviewCommand::Kind::publishPreviewState
+                                     : PreviewCommand::Kind::publishVoice,
+                        error, targetIndex);
 }
 
 bool PreviewEngine::startInstrumentPreview(const juce::String& definitionJson,
@@ -246,12 +178,13 @@ bool PreviewEngine::startInstrumentPreview(const juce::String& definitionJson,
                                                     std::move(spec), sampleRate, blockSize, error);
     if (session == nullptr) return false;
 
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     for (auto& voice : next->voices) {
         if (!voice.active || voice.key == 1) continue;
         voice.active = false;
+        voice.buffer = nullptr;
         voice.key = -1;
         voice.cursor = voice.start;
         voice.loop = false;
@@ -264,51 +197,60 @@ bool PreviewEngine::startInstrumentPreview(const juce::String& definitionJson,
     instrumentBuffers.push_back(std::move(instrumentBuffer));
     next->instrumentSession = instrumentSessions.back().get();
     next->instrumentBuffer = instrumentBufferPtr;
-    instrumentStopRequested.store(false, std::memory_order_release);
-    publishState(std::move(next));
-    return true;
+    return publishState(std::move(next), PreviewCommand::Kind::startInstrumentPreview, error);
 }
 
-void PreviewEngine::stopInstrumentPreview() noexcept {
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+bool PreviewEngine::stopInstrumentPreview(juce::String* error) {
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     next->instrumentSession = nullptr;
     next->instrumentBuffer = nullptr;
-    instrumentStopRequested.store(true, std::memory_order_release);
-    publishState(std::move(next));
+    juce::String failure;
+    const auto accepted =
+        publishState(std::move(next), PreviewCommand::Kind::stopInstrumentPreview, failure);
+    if (error != nullptr) *error = failure;
+    return accepted;
 }
 
-void PreviewEngine::stopPreview() noexcept {
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+bool PreviewEngine::stopPreview(juce::String* error) {
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     next->instrumentSession = nullptr;
     next->instrumentBuffer = nullptr;
     for (auto& voice : next->voices) {
         voice.active = false;
+        voice.buffer = nullptr;
         voice.key = -1;
         voice.cursor = voice.start;
         voice.loop = false;
         voice.revision = ++previewSequence;
     }
-    instrumentStopRequested.store(true, std::memory_order_release);
-    publishState(std::move(next));
+    juce::String failure;
+    const auto accepted = publishState(std::move(next), PreviewCommand::Kind::stopAll, failure);
+    if (error != nullptr) *error = failure;
+    return accepted;
 }
 
-void PreviewEngine::stopPreviewForKey(const int voiceKey) noexcept {
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+bool PreviewEngine::stopPreviewForKey(const int voiceKey, juce::String* error) {
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     for (auto& voice : next->voices) {
         if (!voice.active || voice.key != voiceKey) continue;
         voice.active = false;
+        voice.buffer = nullptr;
         voice.key = -1;
         voice.cursor = voice.start;
         voice.loop = false;
         voice.revision = ++previewSequence;
     }
-    publishState(std::move(next));
+    juce::String failure;
+    const auto accepted =
+        publishState(std::move(next), PreviewCommand::Kind::stopVoice, failure, 0, voiceKey);
+    if (error != nullptr) *error = failure;
+    return accepted;
 }
 
 bool PreviewEngine::switchPreviewBuffer(const int voiceKey, const juce::AudioBuffer<float>& buffer,
@@ -317,9 +259,9 @@ bool PreviewEngine::switchPreviewBuffer(const int voiceKey, const juce::AudioBuf
         error = "Take comparison source contains no audio.";
         return false;
     }
-    const PreviewControlGuard lock(*this);
-    auto next =
-        std::make_unique<PreviewState>(*pendingPreviewState.load(std::memory_order_acquire));
+    const std::lock_guard lock(controlMutex);
+    reclaimRetiredState();
+    auto next = std::make_unique<PreviewState>(controlState);
     for (std::size_t index = 0; index < kPreviewVoiceCount; ++index) {
         auto& voice = next->voices[index];
         if (!voice.active || voice.key != voiceKey) continue;
@@ -334,88 +276,74 @@ bool PreviewEngine::switchPreviewBuffer(const int voiceKey, const juce::AudioBuf
         voice.end = buffer.getNumSamples();
         voice.cursor = std::min(relativeCursor, voice.end - 1);
         voice.revision = ++previewSequence;
-        publishState(std::move(next));
-        return true;
+        return publishState(std::move(next), PreviewCommand::Kind::publishVoice, error, index);
     }
     error = "Take comparison is not active.";
     return false;
 }
 
-void PreviewEngine::startSynthNote(const int note, const float velocity) noexcept {
-    if (note < 0 || note > 127) return;
-    const PreviewControlGuard lock(*this);
-    std::size_t targetIndex = kSynthVoiceCount;
-    for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
-        if (synthControl[index].active.load(std::memory_order_acquire) &&
-            synthControl[index].note.load(std::memory_order_acquire) == note) {
-            targetIndex = index;
-            break;
-        }
-    }
-    if (targetIndex == kSynthVoiceCount) {
-        for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
-            const auto active = synthControl[index].active.load(std::memory_order_acquire);
-            const auto finished =
-                synthControl[index].audioFinishedRevision.load(std::memory_order_acquire) ==
-                synthControl[index].revision.load(std::memory_order_acquire);
-            if (!active || finished) {
-                targetIndex = index;
-                break;
-            }
-        }
-    }
-    if (targetIndex == kSynthVoiceCount) targetIndex = 0;
-    auto& control = synthControl[targetIndex];
-    control.active.store(false, std::memory_order_release);
-    control.note.store(note, std::memory_order_relaxed);
-    control.frequency.store(440.0f * std::pow(2.0f, (static_cast<float>(note) - 69.0f) / 12.0f),
-                            std::memory_order_relaxed);
-    control.targetLevel.store(juce::jlimit(0.02f, 0.18f, velocity) * 0.8f,
-                              std::memory_order_relaxed);
-    control.releasing.store(false, std::memory_order_relaxed);
-    control.revision.fetch_add(1, std::memory_order_release);
-    control.active.store(true, std::memory_order_release);
+bool PreviewEngine::startSynthNote(const int note, const float velocity) noexcept {
+    if (note < 0 || note > 127) return false;
+    PreviewCommand command;
+    command.kind = PreviewCommand::Kind::synthNoteOn;
+    command.note = note;
+    command.velocity = velocity;
+    return commands.tryPush(command);
 }
 
-void PreviewEngine::stopSynthNote(const int note) noexcept {
-    const PreviewControlGuard lock(*this);
-    for (auto& control : synthControl)
-        if (control.active.load(std::memory_order_acquire) &&
-            control.note.load(std::memory_order_acquire) == note)
-            control.releasing.store(true, std::memory_order_release);
+bool PreviewEngine::stopSynthNote(const int note) noexcept {
+    PreviewCommand command;
+    command.kind = PreviewCommand::Kind::synthNoteOff;
+    command.note = note;
+    return commands.tryPush(command);
 }
 
-void PreviewEngine::allNotesOff() noexcept {
-    const PreviewControlGuard lock(*this);
-    if (pendingPreviewState.load(std::memory_order_acquire)->instrumentSession != nullptr)
-        instrumentStopRequested.store(true, std::memory_order_release);
-    for (auto& control : synthControl) control.releasing.store(true, std::memory_order_release);
-}
+bool PreviewEngine::allNotesOff() noexcept { return requestSynthPanic(); }
 
 bool PreviewEngine::isPreviewing() const noexcept {
-    const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
-    const auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    if (state != nullptr && state->instrumentSession != nullptr &&
-        !state->instrumentSession->isFinished() &&
-        !instrumentStopRequested.load(std::memory_order_acquire))
-        return true;
-    if (state != nullptr)
-        for (const auto& voice : state->voices)
-            if (voice.active) return true;
-    for (const auto& control : synthControl)
-        if (control.active.load(std::memory_order_acquire) &&
-            control.audioFinishedRevision.load(std::memory_order_acquire) !=
-                control.revision.load(std::memory_order_acquire))
-            return true;
-    return false;
+    return previewing.load(std::memory_order_acquire);
 }
 
 bool PreviewEngine::isInstrumentPreviewing() const noexcept {
-    const PreviewControlGuard lock(const_cast<PreviewEngine&>(*this));
-    const auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    return state != nullptr && state->instrumentSession != nullptr &&
-           !state->instrumentSession->isFinished() &&
-           !instrumentStopRequested.load(std::memory_order_acquire);
+    return instrumentPreviewing.load(std::memory_order_acquire);
+}
+
+void PreviewEngine::applyCommand(const PreviewCommand& command, const double sampleRate) noexcept {
+    if (command.state != nullptr) {
+        jassert(audioStateCount < audioStates.size());
+        audioStates[audioStateCount++] = command.state;
+        applyPreviewState(*command.state, sampleRate, &command);
+        if (command.kind == PreviewCommand::Kind::stopAll)
+            for (auto& voice : synthVoices) voice.releasing = true;
+        retireUnusedStates();
+        return;
+    }
+    if (command.kind == PreviewCommand::Kind::synthNoteOn) {
+        auto* voice = &synthVoices[0];
+        const auto same =
+            std::find_if(synthVoices.begin(), synthVoices.end(), [&](const auto& candidate) {
+                return candidate.active && candidate.note == command.note;
+            });
+        const auto idle = std::find_if(synthVoices.begin(), synthVoices.end(),
+                                       [](const auto& candidate) { return !candidate.active; });
+        if (same != synthVoices.end())
+            voice = &*same;
+        else if (idle != synthVoices.end())
+            voice = &*idle;
+        *voice = {};
+        voice->note = command.note;
+        voice->frequency =
+            440.0f * std::pow(2.0f, (static_cast<float>(command.note) - 69.0f) / 12.0f);
+        voice->targetLevel = juce::jlimit(0.02f, 0.18f, command.velocity) * 0.8f;
+        voice->active = true;
+    } else if (command.kind == PreviewCommand::Kind::synthNoteOff) {
+        for (auto& voice : synthVoices)
+            if (voice.active && voice.note == command.note) voice.releasing = true;
+    } else if (command.kind == PreviewCommand::Kind::synthPanic) {
+        for (auto& voice : synthVoices) voice.releasing = true;
+        instrumentStopRequested = true;
+        if (audioPreviewState != nullptr) applyPreviewState(*audioPreviewState, sampleRate);
+    }
 }
 
 void PreviewEngine::prepare() noexcept { (void)lookupSine(0.0f); }
@@ -453,31 +381,36 @@ void PreviewEngine::finishVoiceFade(PreviewVoiceRuntime& voice, const std::size_
         auto* nextState = voice.pendingState;
         const auto& next = nextState->voices[index];
         voice.pendingState = nullptr;
-        audioVoicePendingStates[index].store(nullptr, std::memory_order_release);
         if (next.active) {
             configureVoice(voice, nextState, next, sampleRate);
-            audioVoiceStates[index].store(nextState, std::memory_order_release);
             return;
         }
     }
     voice.state = VoiceState::inactive;
     voice.sourceState = nullptr;
     voice.buffer = nullptr;
-    audioVoiceStates[index].store(nullptr, std::memory_order_release);
-    audioVoicePendingStates[index].store(nullptr, std::memory_order_release);
 }
 
-void PreviewEngine::applyPreviewState(PreviewState& state, const double sampleRate) noexcept {
-    auto* applied = audioPreviewState.load(std::memory_order_relaxed);
+void PreviewEngine::applyPreviewState(PreviewState& state, const double sampleRate,
+                                      const PreviewCommand* command) noexcept {
+    auto* applied = audioPreviewState;
     if (applied != &state) {
-        audioPreviewState.store(&state, std::memory_order_release);
+        audioPreviewState = &state;
         for (std::size_t index = 0; index < kPreviewVoiceCount; ++index) {
             auto& voice = previewVoices[index];
+            if (command != nullptr && command->kind == PreviewCommand::Kind::publishVoice &&
+                index != command->index)
+                continue;
+            if (command != nullptr && command->kind == PreviewCommand::Kind::stopVoice &&
+                voice.key != command->key &&
+                (voice.pendingState == nullptr ||
+                 voice.pendingState->voices[index].key != command->key))
+                continue;
             const auto& config = state.voices[index];
             if (!config.active) {
                 voice.pendingState = nullptr;
-                audioVoicePendingStates[index].store(nullptr, std::memory_order_release);
                 beginVoiceFadeOut(voice, sampleRate);
+                if (voice.state == VoiceState::inactive) finishVoiceFade(voice, index, sampleRate);
                 continue;
             }
             const auto sameVoice = voice.state != VoiceState::inactive &&
@@ -487,42 +420,38 @@ void PreviewEngine::applyPreviewState(PreviewState& state, const double sampleRa
                 configureVoice(voice, &state, config, sampleRate);
             else if (!sameVoice) {
                 voice.pendingState = &state;
-                audioVoicePendingStates[index].store(&state, std::memory_order_release);
                 beginVoiceFadeOut(voice, sampleRate);
             }
             if (voice.state == VoiceState::inactive) finishVoiceFade(voice, index, sampleRate);
-            if (voice.state != VoiceState::inactive)
-                audioVoiceStates[index].store(voice.sourceState, std::memory_order_release);
         }
-        const auto desired = state.instrumentSession;
-        const auto desiredBuffer = state.instrumentBuffer;
-        const auto current = audioInstrumentSession.load(std::memory_order_acquire);
+        const auto startingInstrument =
+            command != nullptr && command->kind == PreviewCommand::Kind::startInstrumentPreview;
+        const auto desired = startingInstrument ? command->session : state.instrumentSession;
+        const auto desiredBuffer = startingInstrument ? command->buffer : state.instrumentBuffer;
+        const auto current = audioInstrumentSession;
         if (desired != current) {
             if (current != nullptr) {
                 current->allNotesOff();
-                pendingInstrumentSession = desired;
-                audioInstrumentPendingSession.store(desired, std::memory_order_release);
-                audioInstrumentPendingBuffer.store(desiredBuffer, std::memory_order_release);
+                audioInstrumentPendingSession = desired;
+                audioInstrumentPendingBuffer = desiredBuffer;
                 instrumentFadeAnchor[0] = instrumentLastOutput[0];
                 instrumentFadeAnchor[1] = instrumentLastOutput[1];
                 instrumentState = InstrumentState::fadingOut;
                 instrumentFadeStep = instrumentGain / static_cast<float>(fadeFrames(sampleRate));
             } else if (desired != nullptr) {
-                audioInstrumentSession.store(desired, std::memory_order_release);
-                audioInstrumentPendingSession.store(nullptr, std::memory_order_release);
-                audioInstrumentBuffer.store(desiredBuffer, std::memory_order_release);
-                audioInstrumentPendingBuffer.store(nullptr, std::memory_order_release);
+                audioInstrumentSession = desired;
+                audioInstrumentPendingSession = nullptr;
+                audioInstrumentBuffer = desiredBuffer;
+                audioInstrumentPendingBuffer = nullptr;
                 instrumentGain = 0.0f;
                 instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
                 instrumentState = InstrumentState::fadingIn;
             }
         }
     }
-    if (instrumentStopRequested.exchange(false, std::memory_order_acq_rel)) {
-        if (auto* session = audioInstrumentSession.load(std::memory_order_acquire);
-            session != nullptr)
-            session->allNotesOff();
-        if (audioInstrumentSession.load(std::memory_order_acquire) != nullptr) {
+    if (std::exchange(instrumentStopRequested, false)) {
+        if (auto* session = audioInstrumentSession; session != nullptr) session->allNotesOff();
+        if (audioInstrumentSession != nullptr) {
             instrumentFadeAnchor[0] = instrumentLastOutput[0];
             instrumentFadeAnchor[1] = instrumentLastOutput[1];
             instrumentState = InstrumentState::fadingOut;
@@ -571,8 +500,8 @@ void PreviewEngine::mixPreview(float* const* outputChannelData, const int numOut
 void PreviewEngine::mixInstrumentPreview(float* const* outputChannelData,
                                          const int numOutputChannels, const int numSamples,
                                          const double sampleRate) noexcept {
-    auto* session = audioInstrumentSession.load(std::memory_order_acquire);
-    auto* buffer = audioInstrumentBuffer.load(std::memory_order_acquire);
+    auto* session = audioInstrumentSession;
+    auto* buffer = audioInstrumentBuffer;
     if (session == nullptr || buffer == nullptr || numSamples <= 0 ||
         numSamples > buffer->getNumSamples())
         return;
@@ -612,59 +541,34 @@ void PreviewEngine::mixInstrumentPreview(float* const* outputChannelData,
     instrumentGain = juce::jlimit(0.0f, 1.0f, instrumentGain + direction * numSamples);
     if (naturalFinish ||
         (instrumentState == InstrumentState::fadingOut && instrumentGain <= 0.0f)) {
-        audioInstrumentSession.store(nullptr, std::memory_order_release);
-        audioInstrumentBuffer.store(nullptr, std::memory_order_release);
-        instrumentState = InstrumentState::inactive;
-        instrumentGain = 0.0f;
-        const auto* next =
-            audioInstrumentPendingSession.exchange(nullptr, std::memory_order_acq_rel);
-        auto* nextBuffer =
-            audioInstrumentPendingBuffer.exchange(nullptr, std::memory_order_acq_rel);
-        pendingInstrumentSession = nullptr;
-        if (next != nullptr) {
-            audioInstrumentSession.store(const_cast<InstrumentPreviewSession*>(next),
-                                         std::memory_order_release);
-            audioInstrumentBuffer.store(nextBuffer, std::memory_order_release);
-            instrumentState = InstrumentState::fadingIn;
-            instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
-        }
+        finishInstrumentFade(sampleRate);
     } else if (instrumentState == InstrumentState::fadingIn && instrumentGain >= 1.0f) {
         instrumentGain = 1.0f;
         instrumentState = InstrumentState::playing;
     }
 }
 
-void PreviewEngine::syncSynthVoices() noexcept {
-    if (synthPanicRequested.exchange(false, std::memory_order_acq_rel))
-        for (auto& control : synthControl) control.releasing.store(true, std::memory_order_release);
-    for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
-        auto& voice = synthVoices[index];
-        auto& control = synthControl[index];
-        const auto active = control.active.load(std::memory_order_acquire);
-        const auto revision = control.revision.load(std::memory_order_acquire);
-        if (active && revision != voice.controlRevision) {
-            voice.note = control.note.load(std::memory_order_relaxed);
-            voice.frequency = control.frequency.load(std::memory_order_relaxed);
-            voice.targetLevel = control.targetLevel.load(std::memory_order_relaxed);
-            voice.phase = 0.0f;
-            voice.level = 0.0f;
-            voice.releasing = false;
-            voice.active = true;
-            voice.controlRevision = revision;
-        }
-        if (voice.active && (!active || control.releasing.load(std::memory_order_acquire)))
-            voice.releasing = true;
+void PreviewEngine::finishInstrumentFade(const double sampleRate) noexcept {
+    audioInstrumentSession = nullptr;
+    audioInstrumentBuffer = nullptr;
+    instrumentState = InstrumentState::inactive;
+    instrumentGain = 0.0f;
+    auto* next = std::exchange(audioInstrumentPendingSession, nullptr);
+    auto* nextBuffer = std::exchange(audioInstrumentPendingBuffer, nullptr);
+    if (next != nullptr) {
+        audioInstrumentSession = next;
+        audioInstrumentBuffer = nextBuffer;
+        instrumentState = InstrumentState::fadingIn;
+        instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
     }
 }
 
 void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutputChannels,
                              const int numSamples, const double sampleRate) noexcept {
-    syncSynthVoices();
     if (sampleRate <= 0.0 || numOutputChannels <= 0) return;
     constexpr float twoPi = static_cast<float>(kTwoPi);
     for (std::size_t index = 0; index < kSynthVoiceCount; ++index) {
         auto& voice = synthVoices[index];
-        auto& control = synthControl[index];
         if (!voice.active) continue;
         const auto phaseStep = static_cast<float>(twoPi * voice.frequency / sampleRate);
         for (int sample = 0; sample < numSamples && voice.active; ++sample) {
@@ -672,10 +576,6 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
                 voice.level *= 0.995f;
                 if (voice.level < 0.0001f) {
                     voice.active = false;
-                    const auto releaseRevision = voice.controlRevision;
-                    if (control.revision.load(std::memory_order_acquire) == releaseRevision)
-                        control.audioFinishedRevision.store(releaseRevision,
-                                                            std::memory_order_release);
                     break;
                 }
             } else {
@@ -693,17 +593,51 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
 
 bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputChannels,
                            const int numSamples, const double sampleRate) noexcept {
-    const PreviewAudioGuard previewRead(*this);
-    auto* state = pendingPreviewState.load(std::memory_order_acquire);
-    if (state != nullptr) applyPreviewState(*state, sampleRate);
+    applyPendingCommands(sampleRate);
     mixInstrumentPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixSynth(outputChannelData, numOutputChannels, numSamples, sampleRate);
+    retireUnusedStates();
+    publishPreviewStatus();
     return true;
 }
 
-void PreviewEngine::requestSynthPanic() noexcept {
-    synthPanicRequested.store(true, std::memory_order_release);
+void PreviewEngine::publishPreviewStatus() noexcept {
+    instrumentPreviewing.store(
+        audioInstrumentSession != nullptr && instrumentState != InstrumentState::fadingOut,
+        std::memory_order_release);
+    const auto hasVoice =
+        std::any_of(previewVoices.begin(), previewVoices.end(),
+                    [](const auto& voice) { return voice.state != VoiceState::inactive; });
+    const auto hasSynth = std::any_of(synthVoices.begin(), synthVoices.end(),
+                                      [](const auto& voice) { return voice.active; });
+    previewing.store(hasVoice || hasSynth || audioInstrumentSession != nullptr,
+                     std::memory_order_release);
+}
+
+void PreviewEngine::applyPendingCommands(const double sampleRate,
+                                         const bool outputSilenced) noexcept {
+    commands.drain(
+        [this, sampleRate](const PreviewCommand& command) { applyCommand(command, sampleRate); });
+    if (outputSilenced) {
+        for (std::size_t index = 0; index < previewVoices.size(); ++index) {
+            auto& voice = previewVoices[index];
+            if (voice.state != VoiceState::fadingOut) continue;
+            finishVoiceFade(voice, index, sampleRate);
+            audioVoiceCursors[index].store(voice.cursor, std::memory_order_release);
+        }
+        if (instrumentState == InstrumentState::fadingOut) finishInstrumentFade(sampleRate);
+        for (auto& voice : synthVoices)
+            if (voice.releasing) voice = {};
+        publishPreviewStatus();
+    }
+    retireUnusedStates();
+}
+
+bool PreviewEngine::requestSynthPanic() noexcept {
+    PreviewCommand command;
+    command.kind = PreviewCommand::Kind::synthPanic;
+    return commands.tryPush(command);
 }
 
 float PreviewEngine::lookupSine(float phase) noexcept {

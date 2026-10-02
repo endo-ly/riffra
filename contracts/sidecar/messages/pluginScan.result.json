@@ -1,0 +1,28 @@
+{
+  "type": "pluginScanResult",
+  "path": "plugins/test.vst3",
+  "plugins": [
+    {
+      "name": "Test Effect",
+      "descriptiveName": "Riffra Test Effect",
+      "vendor": "Riffra",
+      "version": "1.0",
+      "category": "Fx",
+      "format": "VST3",
+      "path": "plugins/test.vst3",
+      "identifier": "VST3-Test Effect-faa095e9-7b",
+      "uniqueId": 123,
+      "deprecatedUid": 456,
+      "numInputs": 2,
+      "numOutputs": 2,
+      "isInstrument": false,
+      "hasSharedContainer": false,
+      "lastFileModifiedMs": 1000,
+      "lastInfoUpdatedMs": 2000
+    }
+  ],
+  "loadTested": true,
+  "loadTestMessage": "VST3 instance created and initialized successfully.",
+  "loadTestDurationMs": 5.0,
+  "scanDurationMs": 8.0
+}

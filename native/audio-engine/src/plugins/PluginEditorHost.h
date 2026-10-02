@@ -21,7 +21,6 @@ public:
 
     bool open(juce::String& error);
     bool close();
-    bool clear(juce::String& error);
 
 private:
     class EditorWindow;

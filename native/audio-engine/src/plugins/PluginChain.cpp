@@ -33,11 +33,6 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double
     return true;
 }
 
-void PluginChain::prepare(const double sampleRate, const int blockSize) noexcept {
-    prepareBuffers(blockSize);
-    for (auto& device : devices) device.rack->prepare(sampleRate, blockSize);
-}
-
 void PluginChain::prepareBuffers(const int blockSize) noexcept {
     const auto channels = 2;
     firstBuffer.setSize(channels, std::max(1, blockSize), false, true, false);

@@ -6,16 +6,16 @@ namespace riffra {
 
 void AudioCommandDispatcher::handle(const SetMidiListeningCommand& command,
                                     CommandResponder responder) {
-    context.midiInputs.setListening(command.listening);
-    if (command.listening) {
-        context.midiInputs.reopenAll();
-        context.midiInputs.monitor().setActive(true);
-    } else {
-        context.midiInputs.monitor().setActive(false);
-        context.pipeline.stopPreview();
-        context.pipeline.allNotesOff();
-        context.midiInputs.reopenAll();
+    if (!command.listening) {
+        juce::String error;
+        if (!context.pipeline.stopPreview(&error)) {
+            responder.fail("preview", error, "midi.listening");
+            return;
+        }
     }
+    context.midiInputs.setListening(command.listening);
+    context.midiInputs.monitor().setActive(command.listening);
+    context.midiInputs.reopenAll();
     responder.respond(currentStatus());
 }
 

@@ -5,7 +5,7 @@
 
 use super::commands::ExpectedResponse;
 use super::nullable;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// One line written by the realtime sidecar.
@@ -224,10 +224,8 @@ pub(crate) struct WireRecordingStatus {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireAudioDiagnostics {
-    pub(crate) callback_count: u64,
-    pub(crate) average_callback_duration_us: u64,
-    pub(crate) maximum_callback_duration_us: u64,
-    pub(crate) callback_overruns: u64,
+    pub(crate) realtime: crate::api::output::AudioDiagnosticsRealtime,
+    pub(crate) track_loads: Vec<crate::api::output::AudioTrackLoad>,
     pub(crate) pre_limiter_peak: f64,
     pub(crate) limiter_gain_reduction_db: f64,
     pub(crate) hard_clip_samples: u64,
@@ -426,4 +424,86 @@ pub(crate) struct WireTrackPluginParameterChanged {
 pub(crate) enum RenderMessage {
     OfflineRenderComplete { frames: u64, sample_rate: u32 },
     Error(SidecarError),
+}
+
+/// Standalone audio device discovery responses.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum ProbeMessage {
+    AudioDeviceProbe {
+        drivers: Vec<crate::api::output::AudioDriverInfo>,
+        refreshed_at_ms: u64,
+        message: String,
+        mute_reasons: u32,
+        limiter_ceiling: f64,
+    },
+    DeviceChannels(crate::api::output::DeviceChannels),
+}
+
+/// Standalone scanner responses, decoded independently of plugin output.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum PluginScanMessage {
+    #[serde(rename = "pluginScanResult")]
+    Result {
+        path: String,
+        plugins: Vec<PluginScanMetadata>,
+        load_tested: bool,
+        load_test_message: String,
+        load_test_duration_ms: f64,
+        scan_duration_ms: f64,
+    },
+    #[serde(rename = "pluginScanError")]
+    Error {
+        kind: String,
+        path: String,
+        message: String,
+        operation: String,
+        details: PluginScanErrorDetails,
+    },
+    #[serde(rename = "pluginLoadTestResult")]
+    LoadTestResult {
+        path: String,
+        success: bool,
+        message: String,
+        duration_ms: f64,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PluginScanMetadata {
+    pub(crate) name: String,
+    pub(crate) descriptive_name: String,
+    pub(crate) vendor: String,
+    pub(crate) version: String,
+    pub(crate) category: String,
+    pub(crate) format: String,
+    pub(crate) path: String,
+    pub(crate) identifier: String,
+    pub(crate) unique_id: i64,
+    pub(crate) deprecated_uid: i64,
+    pub(crate) num_inputs: u32,
+    pub(crate) num_outputs: u32,
+    pub(crate) is_instrument: bool,
+    pub(crate) has_shared_container: bool,
+    pub(crate) last_file_modified_ms: i64,
+    pub(crate) last_info_updated_ms: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PluginScanErrorDetails {
+    #[serde(deserialize_with = "nullable")]
+    pub(crate) path: Option<String>,
 }

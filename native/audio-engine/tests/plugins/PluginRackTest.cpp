@@ -45,23 +45,6 @@ TEST(PluginRackTest, PreparesProcessorBeforeProcessing) {
     EXPECT_TRUE(trace.processed);
 }
 
-TEST(PluginRackTest, RepreparesProcessorForTheCurrentAudioDeviceFormat) {
-    // Arrange
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-
-    // Act
-    rack->prepare(44'100.0, 1024);
-
-    // Assert
-    EXPECT_DOUBLE_EQ(trace.sampleRate, 44'100.0);
-    EXPECT_EQ(trace.blockSize, 1024);
-    EXPECT_DOUBLE_EQ(rack->status().sampleRate, 44'100.0);
-    EXPECT_EQ(rack->status().blockSize, 1024);
-}
-
 TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     ProcessorTrace trace;
     juce::String error;
@@ -155,15 +138,14 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     EXPECT_NEAR(restored->parameterValues[0], 0.75f, 0.0001f);
 }
 
-TEST(PluginRackTest, ReleasesProcessorWhenCleared) {
+TEST(PluginRackTest, ReleasesProcessorWhenDestroyed) {
     ProcessorTrace trace;
     juce::String error;
     auto rack = makeRack(trace, error);
     ASSERT_NE(rack, nullptr) << error;
-    rack->clear();
+    rack.reset();
 
     EXPECT_TRUE(trace.released);
-    EXPECT_FALSE(rack->isLoaded());
 }
 
 TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {

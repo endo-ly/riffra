@@ -97,6 +97,7 @@ struct PreparedTimeline final {
     std::uint16_t timeSignatureDenominator = 4;
     GraphSummary summary;
     std::vector<std::unique_ptr<Track>> tracks;
+    std::vector<Track*> processingTracks;
 
     [[nodiscard]] Track* findTrack(const juce::String& trackId) const noexcept {
         for (const auto& track : tracks)
