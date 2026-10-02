@@ -171,27 +171,13 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                                    const std::int64_t rangeStart, const int destinationStart,
                                    const int sampleCount, const float transportGainStart,
                                    const float transportGainStep) noexcept {
-    const auto hasSolo = prepared.hasSolo;
     processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount,
                            outputChannels, channelCount, rangeStart, destinationStart, sampleCount,
                            false);
-    for (auto& trackPtr : prepared.tracks) {
-        auto& track = *trackPtr;
-        auto& runtime = *track.runtime;
-        const auto audible = !runtime.muted && (!hasSolo || runtime.solo);
-        runtime.processedBuffer.clear(0, sampleCount);
-        if (!runtime.instrumentTrack) mergeTimelineAndLiveInput(track, sampleCount);
-        const float* inputChannels[2] = {runtime.mixBuffer.getWritePointer(0),
-                                         runtime.mixBuffer.getWritePointer(1)};
-        float* processedChannels[2] = {runtime.processedBuffer.getWritePointer(0),
-                                       runtime.processedBuffer.getWritePointer(1)};
-        if (runtime.instrumentTrack)
-            processInstrumentTrack(prepared, track, sampleCount, &runtime.midiBuffer, rangeStart);
-        else
-            runtime.effects().process(inputChannels, 2, processedChannels, 2, sampleCount);
-        mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart, destinationStart,
-                       sampleCount, transportGainStart, transportGainStep);
-    }
+    pool->run(prepared.processingTracks,
+              {TrackStageKind::playback, &prepared, rangeStart, destinationStart, sampleCount,
+               transportGainStart, transportGainStep, true});
+    addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
 }
 
 void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
@@ -201,11 +187,9 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                                             const std::int64_t rangeStart,
                                             const int destinationStart, const int sampleCount,
                                             const bool renderOutput) noexcept {
-    const auto hasSolo = prepared.hasSolo;
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
         auto& runtime = *track.runtime;
-        const auto audible = !runtime.muted && (!hasSolo || runtime.solo);
         if (runtime.instrumentTrack) continue;
         runtime.liveInputBuffer.clear(0, sampleCount);
         if ((runtime.monitorInput || runtime.armed) && runtime.audioInputChannel >= 0) {
@@ -218,14 +202,6 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                                                       sampleCount);
                 else
                     juce::FloatVectorOperations::clear(destination, sampleCount);
-            }
-            if (renderOutput && runtime.monitorInput) {
-                runtime.processedBuffer.clear(0, sampleCount);
-                runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
-                                          runtime.processedBuffer.getArrayOfWritePointers(), 2,
-                                          sampleCount);
-                mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart,
-                               destinationStart, sampleCount);
             }
             const auto captureStart = realtime.captureBlockOffset;
             const auto captureEnd = captureStart + realtime.captureBlockSamples;
@@ -270,6 +246,12 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
             }
         }
     }
+    if (renderOutput) {
+        pool->run(prepared.processingTracks,
+                  {TrackStageKind::liveAudioMonitor, &prepared, rangeStart, destinationStart,
+                   sampleCount, 1.0f, 0.0f, false});
+        addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    }
 }
 
 void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCount) noexcept {
@@ -285,19 +267,12 @@ void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCou
 void TimelineEngine::processLiveInstrumentTracks(
     PreparedTimeline& prepared, float* const* outputChannels, const int channelCount,
     const std::int64_t rangeStart, const int destinationStart, const int sampleCount) noexcept {
-    const auto hasSolo = prepared.hasSolo;
-    for (auto& trackPtr : prepared.tracks) {
-        auto& track = *trackPtr;
-        auto& runtime = *track.runtime;
-        if (!runtime.instrumentTrack) continue;
-        const auto audible = !runtime.muted && (!hasSolo || runtime.solo);
-        processLiveInstrumentTrack(prepared, track, sampleCount, rangeStart, false);
-        mixTrackOutput(track, audible, outputChannels, channelCount, rangeStart, destinationStart,
-                       sampleCount);
-    }
+    juce::ignoreUnused(outputChannels, channelCount);
+    pool->run(prepared.processingTracks, {TrackStageKind::liveInstrument, &prepared, rangeStart,
+                                          destinationStart, sampleCount, 1.0f, 0.0f, false});
 }
 
-void TimelineEngine::processInstrumentTrack(PreparedTimeline& prepared, Track& track,
+void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Track& track,
                                             const int sampleCount,
                                             const juce::MidiBuffer* const timelineMidi,
                                             const std::int64_t rangeStart) noexcept {
@@ -313,7 +288,7 @@ void TimelineEngine::processInstrumentTrack(PreparedTimeline& prepared, Track& t
                               runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
 }
 
-void TimelineEngine::processLiveInstrumentTrack(PreparedTimeline& prepared, Track& track,
+void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
                                                 const int sampleCount,
                                                 const std::int64_t rangeStart,
                                                 const bool playing) noexcept {
@@ -346,10 +321,8 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     }
 }
 
-void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* const* outputChannels,
-                                    const int channelCount, const std::int64_t rangeStart,
-                                    const int destinationStart, const int sampleCount,
-                                    const float transportGainStart,
+void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std::int64_t rangeStart,
+                                    const int sampleCount, const float transportGainStart,
                                     const float transportGainStep) noexcept {
     auto& runtime = *track.runtime;
     const auto lowLatency = runtime.lowLatencyMonitoring();
@@ -458,16 +431,10 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
             right += postEffectRight;
             const auto sampleGain =
                 juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
-            auto contributionLeft = audible && channelCount > 0 && outputChannels[0] != nullptr
-                                        ? left * leftGain * sampleGain
-                                        : 0.0f;
-            auto contributionRight = audible && channelCount > 1 && outputChannels[1] != nullptr
-                                         ? right * rightGain * sampleGain
-                                         : 0.0f;
-            if (channelCount > 0 && outputChannels[0] != nullptr)
-                outputChannels[0][destinationStart + processed] += contributionLeft;
-            if (channelCount > 1 && outputChannels[1] != nullptr)
-                outputChannels[1][destinationStart + processed] += contributionRight;
+            auto contributionLeft = audible ? left * leftGain * sampleGain : 0.0f;
+            auto contributionRight = audible ? right * rightGain * sampleGain : 0.0f;
+            runtime.trackOutputBuffer.setSample(0, processed, contributionLeft);
+            runtime.trackOutputBuffer.setSample(1, processed, contributionRight);
             peakLeft = std::max(peakLeft, std::abs(contributionLeft));
             peakRight = std::max(peakRight, std::abs(contributionRight));
             sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;
@@ -485,6 +452,19 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, float* con
             peakLeft, peakRight,
             static_cast<float>(std::sqrt(sumSquaresLeft / static_cast<double>(sampleCount))),
             static_cast<float>(std::sqrt(sumSquaresRight / static_cast<double>(sampleCount))));
+    }
+}
+
+void TimelineEngine::addTrackOutputs(const PreparedTimeline& prepared, float* const* outputChannels,
+                                     const int channelCount, const int destinationStart,
+                                     const int sampleCount) noexcept {
+    for (const auto& track : prepared.tracks) {
+        for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
+            if (outputChannels[channel] == nullptr) continue;
+            juce::FloatVectorOperations::add(
+                outputChannels[channel] + destinationStart,
+                track->runtime->trackOutputBuffer.getReadPointer(channel), sampleCount);
+        }
     }
 }
 
@@ -689,8 +669,6 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
             trackPtr->runtime->mixBuffer.clear(0, chunk);
             trackPtr->runtime->postEffectClipBuffer.clear(0, chunk);
         }
-        for (auto& trackPtr : active->tracks) mixRange(*trackPtr, position, 0, chunk);
-        for (auto& trackPtr : active->tracks) scheduleMidi(*active, *trackPtr, position, chunk);
         const auto [captureWriteStart, captureWriteEnd] = ArrangementGraph::captureIntersection(
             consumed, chunk, captureWindowStart, captureWindowSamples);
         if (captureWriteEnd > captureWriteStart &&

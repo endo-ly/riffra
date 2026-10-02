@@ -21,6 +21,7 @@
 #include "RealtimeCommand.h"
 #include "RealtimeFrame.h"
 #include "TimelineTimebase.h"
+#include "TrackProcessingPool.h"
 #include "TrackRuntime.h"
 #include "concurrency/BoundedMpmcQueue.h"
 #include "concurrency/RealtimeCommandQueue.h"
@@ -316,12 +317,14 @@ private:
     template <typename Result, typename Visit>
     Result visitActiveGraph(Result fallback, Visit&& visit) const;
 
+    friend void processTrackStage(riffra::Track& track, const TrackStageJob& job) noexcept;
+
     // Rendering. Audio thread (or the offline render owner).
     void mixActiveGraph(const float* const* inputChannels, int inputChannelCount,
                         float* const* outputChannels, int outputChannelCount,
                         int sampleCount) noexcept;
-    void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
-                  int sampleCount) noexcept;
+    static void mixRange(Track& track, std::int64_t rangeStart, int destinationStart,
+                         int sampleCount) noexcept;
     void processTracks(PreparedTimeline& timeline, const float* const* inputChannels,
                        int inputChannelCount, float* const* outputChannels, int channelCount,
                        std::int64_t rangeStart, int destinationStart, int sampleCount,
@@ -333,17 +336,20 @@ private:
                                 int inputChannelCount, float* const* outputChannels,
                                 int channelCount, std::int64_t rangeStart, int destinationStart,
                                 int sampleCount, bool renderOutput = false) noexcept;
-    void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
-    void processInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
-                                const juce::MidiBuffer* timelineMidi,
-                                std::int64_t rangeStart) noexcept;
-    void processLiveInstrumentTrack(PreparedTimeline& timeline, Track& track, int sampleCount,
-                                    std::int64_t rangeStart, bool playing) noexcept;
-    void mixTrackOutput(Track& track, bool audible, float* const* outputChannels, int channelCount,
-                        std::int64_t rangeStart, int destinationStart, int sampleCount,
-                        float transportGainStart = 1.0f, float transportGainStep = 0.0f) noexcept;
-    void scheduleMidi(const PreparedTimeline& prepared, Track& track, std::int64_t rangeStart,
-                      int sampleCount) noexcept;
+    static void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
+    static void processInstrumentTrack(const PreparedTimeline& timeline, Track& track,
+                                       int sampleCount, const juce::MidiBuffer* timelineMidi,
+                                       std::int64_t rangeStart) noexcept;
+    static void processLiveInstrumentTrack(const PreparedTimeline& timeline, Track& track,
+                                           int sampleCount, std::int64_t rangeStart,
+                                           bool playing) noexcept;
+    static void mixTrackOutput(Track& track, bool audible, std::int64_t rangeStart, int sampleCount,
+                               float transportGainStart = 1.0f,
+                               float transportGainStep = 0.0f) noexcept;
+    static void addTrackOutputs(const PreparedTimeline& timeline, float* const* outputChannels,
+                                int channelCount, int destinationStart, int sampleCount) noexcept;
+    static void scheduleMidi(const PreparedTimeline& prepared, Track& track,
+                             std::int64_t rangeStart, int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void clearPlaybackTrackState(PreparedTimeline& timeline) noexcept;
     void resetRecordingTrackState(PreparedTimeline& timeline) noexcept;
@@ -363,6 +369,7 @@ private:
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
+    std::unique_ptr<TrackProcessingPool> pool;
     ControlGraphRegistry graphRegistry;
     ControlGraphRegistry::Retired retiredGraphs;
     RealtimeCommandQueue<RealtimeCommand, kRealtimeCommandCapacity> realtimeCommands;

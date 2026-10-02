@@ -380,6 +380,15 @@ public:
     static ArrangementCaptureSink* recordingSink(TimelineEngine& engine) {
         return engine.controlRecordingSink;
     }
+    static bool setOfflineCompensation(OfflineRenderer& renderer, const juce::String& trackId,
+                                       const std::int64_t samples) {
+        return setPlaybackCompensationForTest(*renderer.engine, trackId, samples);
+    }
+
+    static void setOfflineWorkerCount(OfflineRenderer& renderer, const int workerCount) {
+        renderer.engine->pool = std::make_unique<TrackProcessingPool>(workerCount);
+    }
+
     static bool addChainDevice(PluginChain& chain, const juce::String& id,
                                std::unique_ptr<juce::AudioProcessor> processor,
                                const double sampleRate, const int blockSize, juce::String& error) {

@@ -40,6 +40,8 @@ public:
                               juce::String& error);
 
 private:
+    friend class TimelineEngineTestPeer;
+
     struct Plan final {
         juce::File destination;
         double sampleRate = 0.0;

@@ -204,6 +204,12 @@ public:
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> processedBuffer;
+    juce::AudioBuffer<float> trackOutputBuffer;
+    std::uint64_t windowProcessingTotalUs = 0;
+    std::uint64_t windowProcessingMaximumUs = 0;
+    std::uint32_t windowProcessingCount = 0;
+    std::atomic<std::uint32_t> windowAverageUs{0};
+    std::atomic<std::uint32_t> windowMaximumUs{0};
     juce::AudioBuffer<float> postEffectClipBuffer;
     juce::AudioBuffer<float> liveInputBuffer;
     RecordingCaptureTrackState recordingCapture;

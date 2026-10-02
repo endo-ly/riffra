@@ -9,8 +9,6 @@
 
 namespace riffra {
 
-namespace {}  // namespace
-
 float fadeEnvelope(const float progress, const int fadeShape) noexcept {
     switch (fadeShape) {
         case 0:
@@ -23,7 +21,10 @@ float fadeEnvelope(const float progress, const int fadeShape) noexcept {
 }
 
 TimelineEngine::TimelineEngine(const bool offline)
-    : offlineMode(offline), recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
+    : offlineMode(offline),
+      pool(std::make_unique<TrackProcessingPool>(
+          std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 2, 0, 7))),
+      recordingCapture(std::make_unique<RecordingCaptureRuntime>()) {
     if (!offlineMode) readAheadThread.startThread();
     publishFrame(realtime);
 }

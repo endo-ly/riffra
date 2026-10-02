@@ -82,6 +82,7 @@ add_library(riffra-render-core STATIC)
 add_library(riffra-audio-core STATIC)
 
 target_sources(riffra-render-core PRIVATE
+  src/timeline/TrackProcessingPool.cpp
   src/timeline/TimelineEngine.cpp
   src/timeline/TimelineEngineRecording.cpp
   src/timeline/TimelineEngineDevices.cpp
@@ -488,6 +489,7 @@ if(BUILD_TESTING)
     tests/timeline/TimelineSnapshotTest.cpp
     tests/timeline/TimelineTransportTest.cpp
     tests/timeline/TimelineRealtimeTest.cpp
+    tests/timeline/TrackProcessingPoolTest.cpp
     tests/timeline/TimelineRenderTest.cpp
     tests/timeline/TimelineRecordingTest.cpp
     tests/timeline/TimelineDeviceTest.cpp

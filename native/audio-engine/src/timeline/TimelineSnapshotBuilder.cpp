@@ -272,8 +272,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
         track->runtime->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->trackOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        prepared->processingTracks.push_back(track.get());
         prepared->tracks.push_back(std::move(track));
     }
 
