@@ -541,21 +541,25 @@ void PreviewEngine::mixInstrumentPreview(float* const* outputChannelData,
     instrumentGain = juce::jlimit(0.0f, 1.0f, instrumentGain + direction * numSamples);
     if (naturalFinish ||
         (instrumentState == InstrumentState::fadingOut && instrumentGain <= 0.0f)) {
-        audioInstrumentSession = nullptr;
-        audioInstrumentBuffer = nullptr;
-        instrumentState = InstrumentState::inactive;
-        instrumentGain = 0.0f;
-        const auto* next = std::exchange(audioInstrumentPendingSession, nullptr);
-        auto* nextBuffer = std::exchange(audioInstrumentPendingBuffer, nullptr);
-        if (next != nullptr) {
-            audioInstrumentSession = const_cast<InstrumentPreviewSession*>(next);
-            audioInstrumentBuffer = nextBuffer;
-            instrumentState = InstrumentState::fadingIn;
-            instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
-        }
+        finishInstrumentFade(sampleRate);
     } else if (instrumentState == InstrumentState::fadingIn && instrumentGain >= 1.0f) {
         instrumentGain = 1.0f;
         instrumentState = InstrumentState::playing;
+    }
+}
+
+void PreviewEngine::finishInstrumentFade(const double sampleRate) noexcept {
+    audioInstrumentSession = nullptr;
+    audioInstrumentBuffer = nullptr;
+    instrumentState = InstrumentState::inactive;
+    instrumentGain = 0.0f;
+    auto* next = std::exchange(audioInstrumentPendingSession, nullptr);
+    auto* nextBuffer = std::exchange(audioInstrumentPendingBuffer, nullptr);
+    if (next != nullptr) {
+        audioInstrumentSession = next;
+        audioInstrumentBuffer = nextBuffer;
+        instrumentState = InstrumentState::fadingIn;
+        instrumentFadeStep = 1.0f / static_cast<float>(fadeFrames(sampleRate));
     }
 }
 
@@ -594,6 +598,11 @@ bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputC
     mixPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixSynth(outputChannelData, numOutputChannels, numSamples, sampleRate);
     retireUnusedStates();
+    publishPreviewStatus();
+    return true;
+}
+
+void PreviewEngine::publishPreviewStatus() noexcept {
     instrumentPreviewing.store(
         audioInstrumentSession != nullptr && instrumentState != InstrumentState::fadingOut,
         std::memory_order_release);
@@ -604,12 +613,24 @@ bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputC
                                       [](const auto& voice) { return voice.active; });
     previewing.store(hasVoice || hasSynth || audioInstrumentSession != nullptr,
                      std::memory_order_release);
-    return true;
 }
 
-void PreviewEngine::applyPendingCommands(const double sampleRate) noexcept {
+void PreviewEngine::applyPendingCommands(const double sampleRate,
+                                         const bool outputSilenced) noexcept {
     commands.drain(
         [this, sampleRate](const PreviewCommand& command) { applyCommand(command, sampleRate); });
+    if (outputSilenced) {
+        for (std::size_t index = 0; index < previewVoices.size(); ++index) {
+            auto& voice = previewVoices[index];
+            if (voice.state != VoiceState::fadingOut) continue;
+            finishVoiceFade(voice, index, sampleRate);
+            audioVoiceCursors[index].store(voice.cursor, std::memory_order_release);
+        }
+        if (instrumentState == InstrumentState::fadingOut) finishInstrumentFade(sampleRate);
+        for (auto& voice : synthVoices)
+            if (voice.releasing) voice = {};
+        publishPreviewStatus();
+    }
     retireUnusedStates();
 }
 

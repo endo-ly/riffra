@@ -168,7 +168,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
-        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire));
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire), true);
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
@@ -193,6 +193,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         PreviewEngine::PreviewCommand panic;
         panic.kind = PreviewEngine::PreviewCommand::Kind::synthPanic;
         previewEngine.applyCommand(panic, activeSampleRate.load(std::memory_order_acquire));
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire), true);
         timelineEngine.panicActiveGraph();
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
@@ -332,13 +333,9 @@ void AudioRenderPipeline::deviceStopped() {
     dcBlocker.reset();
     feedbackDetector.reset();
     // The callback has stopped; the control side applies the same commands.
-    const auto apply = [this, stoppedSampleRate](const PreviewEngine::PreviewCommand& command) {
-        previewEngine.applyCommand(command, stoppedSampleRate);
-    };
-    previewEngine.commands.drain(apply);
+    previewEngine.applyPendingCommands(stoppedSampleRate, true);
     previewEngine.stopPreview();
-    previewEngine.commands.drain(apply);
-    previewEngine.retireUnusedStates();
+    previewEngine.applyPendingCommands(stoppedSampleRate, true);
 }
 
 }  // namespace riffra

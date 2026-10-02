@@ -131,7 +131,9 @@ private:
                       juce::String& error, std::size_t index = 0, int key = -1);
     void reclaimRetiredState();
     void retireUnusedStates() noexcept;
-    void applyPendingCommands(double sampleRate) noexcept;
+    void applyPendingCommands(double sampleRate, bool outputSilenced = false) noexcept;
+    void publishPreviewStatus() noexcept;
+    void finishInstrumentFade(double sampleRate) noexcept;
     void applyCommand(const PreviewCommand& command, double sampleRate) noexcept;
     void applyPreviewState(PreviewState& state, double sampleRate,
                            const PreviewCommand* command = nullptr) noexcept;
