@@ -543,4 +543,34 @@ TEST(AudioRenderPipelineTest, DeviceFaultEngagesDeviceFault) {
     EXPECT_TRUE(callback.isDeviceFaulted());
 }
 
+TEST(AudioRenderPipelineTest, ConsumesPreviewCommandsUnderEverySafetyMute) {
+    const std::array setters{
+        &AudioRenderPipeline::setUserEmergencyMute, &AudioRenderPipeline::setEngineTransitionMute,
+        &AudioRenderPipeline::setDeviceFaulted, &AudioRenderPipeline::setFeedbackProtection};
+    for (const auto setter : setters) {
+        // Arrange
+        TimelineEngine timeline;
+        AudioRenderPipeline pipeline(timeline);
+        (pipeline.*setter)(true);
+        juce::AudioBuffer<float> source(1, 512);
+        source.clear();
+        std::array<float, 32> output{};
+        std::array<float*, 1> channels{output.data()};
+        juce::String error;
+
+        // Act
+        for (int block = 0; block < 300; ++block) {
+            ASSERT_TRUE(pipeline.startPreview(source, 0, 512, 1.0f, true, error)) << error;
+            ASSERT_TRUE(pipeline.startSynthNote(60, 0.1f));
+            ASSERT_TRUE(pipeline.stopSynthNote(60));
+            ASSERT_TRUE(pipeline.stopPreview(&error)) << error;
+            pipeline.processBlock(nullptr, 0, channels.data(), 1, 32, {});
+
+            // Assert
+            for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
+        }
+        ASSERT_TRUE(pipeline.startSynthNote(60, 0.1f));
+    }
+}
+
 }  // namespace riffra

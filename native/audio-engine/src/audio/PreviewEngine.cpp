@@ -313,6 +313,8 @@ void PreviewEngine::applyCommand(const PreviewCommand& command, const double sam
         jassert(audioStateCount < audioStates.size());
         audioStates[audioStateCount++] = command.state;
         applyPreviewState(*command.state, sampleRate, &command);
+        if (command.kind == PreviewCommand::Kind::stopAll)
+            for (auto& voice : synthVoices) voice.releasing = true;
         retireUnusedStates();
         return;
     }
@@ -587,8 +589,7 @@ void PreviewEngine::mixSynth(float* const* outputChannelData, const int numOutpu
 
 bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputChannels,
                            const int numSamples, const double sampleRate) noexcept {
-    commands.drain(
-        [this, sampleRate](const PreviewCommand& command) { applyCommand(command, sampleRate); });
+    applyPendingCommands(sampleRate);
     mixInstrumentPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixPreview(outputChannelData, numOutputChannels, numSamples, sampleRate);
     mixSynth(outputChannelData, numOutputChannels, numSamples, sampleRate);
@@ -604,6 +605,12 @@ bool PreviewEngine::tryMix(float* const* outputChannelData, const int numOutputC
     previewing.store(hasVoice || hasSynth || audioInstrumentSession != nullptr,
                      std::memory_order_release);
     return true;
+}
+
+void PreviewEngine::applyPendingCommands(const double sampleRate) noexcept {
+    commands.drain(
+        [this, sampleRate](const PreviewCommand& command) { applyCommand(command, sampleRate); });
+    retireUnusedStates();
 }
 
 bool PreviewEngine::requestSynthPanic() noexcept {

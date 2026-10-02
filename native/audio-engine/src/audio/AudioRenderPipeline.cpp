@@ -166,6 +166,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
 
     const auto activeMuteReasons = getMuteReasons();
     if (activeMuteReasons != 0u) {
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire));
         for (int channel = 0; channel < numOutputChannels; ++channel)
             if (outputChannelData[channel] != nullptr)
                 juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
@@ -186,6 +187,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                              std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
         feedbackSuspected.store(true, std::memory_order_release);
+        previewEngine.applyPendingCommands(activeSampleRate.load(std::memory_order_acquire));
         PreviewEngine::PreviewCommand panic;
         panic.kind = PreviewEngine::PreviewCommand::Kind::synthPanic;
         previewEngine.applyCommand(panic, activeSampleRate.load(std::memory_order_acquire));
@@ -333,7 +335,6 @@ void AudioRenderPipeline::deviceStopped() {
     };
     previewEngine.commands.drain(apply);
     previewEngine.stopPreview();
-    previewEngine.allNotesOff();
     previewEngine.commands.drain(apply);
     previewEngine.retireUnusedStates();
 }

@@ -201,7 +201,7 @@ void AudioCommandDispatcher::handle(const PreviewInstrumentCommand& command,
 
 void AudioCommandDispatcher::handle(const StopPreviewCommand&, CommandResponder responder) {
     juce::String error;
-    if (!context.pipeline.stopPreview(&error) || !context.pipeline.allNotesOff()) {
+    if (!context.pipeline.stopPreview(&error)) {
         responder.fail("preview",
                        error.isNotEmpty() ? error : "The realtime preview command queue is full.",
                        "preview.stop");

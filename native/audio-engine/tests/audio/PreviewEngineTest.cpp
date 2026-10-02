@@ -47,4 +47,29 @@ TEST(PreviewEngineTest, RejectsAFullCommandQueueAndReclaimsOnlyFinishedVoices) {
     EXPECT_FALSE(engine.isPreviewing());
 }
 
+TEST(PreviewEngineTest, StopsSampleAndSynthWithOneRemainingCommandSlot) {
+    // Arrange
+    PreviewEngine engine;
+    juce::AudioBuffer<float> source(2, 512);
+    source.clear();
+    juce::String error;
+    ASSERT_TRUE(engine.startPreview(source, 0, 512, 1.0f, true, error));
+    ASSERT_TRUE(engine.startSynthNote(60, 0.1f));
+    juce::AudioBuffer<float> output(2, 256);
+    output.clear();
+    engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0);
+    ASSERT_TRUE(engine.isPreviewing());
+    for (int command = 0; command < 255; ++command) ASSERT_TRUE(engine.startSynthNote(60, 0.1f));
+
+    // Act
+    ASSERT_TRUE(engine.stopPreview(&error)) << error;
+    EXPECT_FALSE(engine.stopPreview(&error));
+    output.clear();
+    engine.tryMix(output.getArrayOfWritePointers(), 2, 256, 48'000.0);
+
+    // Assert
+    EXPECT_FALSE(engine.isPreviewing());
+    EXPECT_EQ(PreviewEngineTestPeer::bufferCount(engine), 0u);
+}
+
 }  // namespace riffra

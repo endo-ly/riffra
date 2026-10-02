@@ -37,8 +37,7 @@ public:
     // request TimelineEngine::panicAllInstrumentTracks().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
-    // Thread-safe; processBlock() also calls this when the realtime detector
-    // engages protection.
+    // Control side; the realtime detector applies protection on the audio owner.
     void setFeedbackProtection(bool active) noexcept;
     [[nodiscard]] std::uint32_t getMuteReasons() const noexcept;
     [[nodiscard]] bool isMuted() const noexcept;
