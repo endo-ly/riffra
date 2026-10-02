@@ -118,6 +118,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                        const int numOutputChannels, const int numSamples,
                                        const juce::AudioIODeviceCallbackContext&) noexcept {
     juce::ScopedNoDenormals noDenormals;
+    if (audioMetrics.beginCallback(numSamples, activeSampleRate.load(std::memory_order_acquire)))
+        timelineEngine.closeTrackLoadWindow();
     if (const auto published = timelineEngine.beginBlock(numSamples).publishedMasterGainDb)
         setMasterGainDb(*published);
     const auto projectEpoch = timelineEngine.activeMeterEpoch();

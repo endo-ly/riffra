@@ -292,7 +292,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 `audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native の Meter thread が約 50 ms ごとに発行し、Rust は Runtime 投影の `projectId` を付けて `audio-meters` Host event（`AudioMeterFrame`）へ写像する。
 
-`AudioStatus.diagnostics.realtime` は累計の `callbackCount` と `callbackOverruns`、直近1秒の `window` を持つ。窓はオーディオクロックで閉じ、`durationMs`、窓内の `callbackCount`、`overruns`、`averageCallbackDurationUs`、`maximumCallbackDurationUs` を公開する。`trackLoads` は同じ窓のトラック別 `trackId`、`averageProcessingUs`、`maximumProcessingUs` をグラフのトラック順に返す。CLI の人向け診断は最大処理時間の降順で上位5トラックを表示する。
+`AudioStatus.diagnostics.realtime` は累計の `callbackCount` と `callbackOverruns`、直近1秒の `window` を持つ。窓はオーディオクロックの固定1秒区間で閉じる。コールバックの終了サンプルが前の境界より後、次の境界以前にあるものを同じ窓に計上し、回数・処理時間・オーバーランを同じコールバック集合から求める。処理時間は各コールバックの実測値を丸ごと使う。窓は `durationMs`、窓内の `callbackCount`、`overruns`、`averageCallbackDurationUs`、`maximumCallbackDurationUs` を公開する。`trackLoads` は同じ窓のトラック別 `trackId`、`averageProcessingUs`、`maximumProcessingUs` をグラフのトラック順に返す。CLI の人向け診断は最大処理時間の降順で上位5トラックを表示する。
 
 `feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
 

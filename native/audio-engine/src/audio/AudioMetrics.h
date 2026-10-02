@@ -63,8 +63,13 @@ public:
 
 private:
     friend class AudioMetricsTestPeer;
+    friend class AudioRenderPipeline;
+    /// Closes elapsed windows before DSP; callbacks belong to the window of their end sample.
+    bool beginCallback(int numSamples, double sampleRate) noexcept;
+
     bool recordCallbackDurationUs(std::uint64_t durationUs, int numSamples,
                                   double sampleRate) noexcept;
+    void closeWindow() noexcept;
     [[nodiscard]] bool projectEpochIsCurrent(std::uint64_t projectEpoch) const noexcept;
     static void holdPeak(std::atomic<float>& peak, float value) noexcept;
 
@@ -80,7 +85,7 @@ private:
     CallbackWindow currentWindow{};
     std::uint64_t windowTotalDurationUs = 0;
     std::uint64_t audioSample = 0;
-    std::uint64_t windowSamples = 0;
+    std::uint64_t nextWindowEndAudioSample = 0;
     std::atomic<std::uint64_t> callbackOverrunsValue{0};
     mutable std::atomic<float> preLimiterPeakValue{0.0f};
     mutable std::atomic<float> limiterGainReductionDbValue{0.0f};

@@ -117,21 +117,39 @@ bool AudioMetrics::recordCallbackDurationUs(const std::uint64_t durationUs, cons
     const auto overrun = static_cast<double>(durationUs) > 1'000'000.0 * numSamples / sampleRate;
     if (overrun) callbackOverrunsValue.fetch_add(1, std::memory_order_relaxed);
     audioSample += static_cast<std::uint64_t>(numSamples);
-    windowSamples += static_cast<std::uint64_t>(numSamples);
     ++currentWindow.callbackCount;
     currentWindow.overruns += overrun ? 1 : 0;
     windowTotalDurationUs += durationUs;
     currentWindow.maximumCallbackDurationUs =
         std::max(currentWindow.maximumCallbackDurationUs, static_cast<std::uint32_t>(durationUs));
-    if (static_cast<double>(windowSamples) < sampleRate) return false;
-    currentWindow.windowEndAudioSample = audioSample;
+    if (audioSample < nextWindowEndAudioSample) return false;
+    closeWindow();
+    nextWindowEndAudioSample += static_cast<std::uint64_t>(sampleRate);
+    return true;
+}
+
+bool AudioMetrics::beginCallback(const int numSamples, const double sampleRate) noexcept {
+    if (sampleRate <= 0.0 || numSamples <= 0) return false;
+    const auto samplesPerWindow = static_cast<std::uint64_t>(sampleRate);
+    if (nextWindowEndAudioSample == 0) nextWindowEndAudioSample = samplesPerWindow;
+    bool closed = false;
+    while (audioSample + static_cast<std::uint64_t>(numSamples) > nextWindowEndAudioSample) {
+        closeWindow();
+        nextWindowEndAudioSample += samplesPerWindow;
+        closed = true;
+    }
+    return closed;
+}
+
+void AudioMetrics::closeWindow() noexcept {
+    currentWindow.windowEndAudioSample = nextWindowEndAudioSample;
     currentWindow.averageCallbackDurationUs =
-        static_cast<std::uint32_t>(windowTotalDurationUs / currentWindow.callbackCount);
+        currentWindow.callbackCount == 0
+            ? 0
+            : static_cast<std::uint32_t>(windowTotalDurationUs / currentWindow.callbackCount);
     closedWindow.write(currentWindow);
     currentWindow = {};
     windowTotalDurationUs = 0;
-    windowSamples -= static_cast<std::uint64_t>(sampleRate);
-    return true;
 }
 
 void AudioMetrics::resetTransientMeters() noexcept {
@@ -148,7 +166,7 @@ void AudioMetrics::resetForDevice() noexcept {
     currentWindow = {};
     closedWindow.write({});
     audioSample = 0;
-    windowSamples = 0;
+    nextWindowEndAudioSample = 0;
     windowTotalDurationUs = 0;
     hardClipSamplesValue.store(0, std::memory_order_release);
 }
