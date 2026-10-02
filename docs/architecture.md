@@ -273,7 +273,7 @@ setAudioDriver → 要求された設定（ドライバ・デバイス・サン�
 
 未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は `timelineSample`（保留中の Seek 先を含む）、`audioClockSample`、録音状態、`appliedCommandSequence`、現役グラフの `instrumentFaults` を表し、投影診断は持たない。`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`sampleRate` と `instrumentFaults` は `GraphSummary` から読み、`AudioStatus.diagnostics.instrumentFaults` と同じグラフ診断を使う。
 
-Audio Status の診断値は、コールバック計測（回数・平均/最大処理時間・オーバーラン）、出力診断（準備前ピーク・リミッターのゲインリダクション・最終ハードクリップ数）、ライブ MIDI のドロップ数、規模（Track / Runtime / Plugin 数・最大レイテンシ）、投影時間、音声環境 revision を含む。これらは障害の推測材料ではなく、同じ世代の音声処理状態を確認するための値である。
+Audio Status の診断値は、コールバック計測（累計回数・累計オーバーラン、直近1秒の窓の回数・平均/最大処理時間・オーバーラン）、同じ窓のトラック別処理時間、出力診断（準備前ピーク・リミッターのゲインリダクション・最終ハードクリップ数）、ライブ MIDI のドロップ数、規模（Track / Runtime / Plugin 数・最大レイテンシ）、投影時間、音声環境 revision を含む。これらは障害の推測材料ではなく、同じ世代の音声処理状態を確認するための値である。
 
 フィードバック保護の検知中は `FeedbackProtection` ミュートを保持する。解除は安全確認後の明示リセット操作で行い、他の所有者のミュートは維持する。
 
@@ -298,6 +298,16 @@ Native TrackRuntime atomics ── Audio block ── Track出力
    ▼
 audioMeters（約50 ms、Project ID付き） ── HostEventHub ── Desktop meter store
 ```
+
+Mute と Solo は、トラック出力をマスターへ加算するかどうかだけを決める。インストゥルメント、エフェクト、遅延補正の処理は続くため、ミュート解除時も残響やシンセの状態を維持したまま鳴る。
+
+各ブロックの処理は次の3段階で行う。
+
+1. 音声スレッドがライブ MIDI を振り分け、物理入力をコピーし、録音キャプチャを書き込む
+2. 呼び出し元とワーカーがトラックを分担し、クリップ、インストゥルメント、エフェクト、出力補償とミックスを各トラックのステレオバッファへ描く
+3. 全トラックの完了後、音声スレッドがグラフのトラック順にマスターへ加算し、メトロノームとプレビューを混ぜる
+
+ワーカー数は論理 CPU 数から2を引いた値を0〜7に収める。リアルタイム優先度のワーカーは Engine の寿命にわたって保持し、デバイスの開始・停止では作り直さない。オフラインレンダーも同じ処理経路を通り、マスターへの加算順が固定されるため、ワーカー数や処理順によらず出力はビット単位で一致する。
 
 Track Meter は Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に測る。Audio callback は固定された atomics の peak hold とブロック内のRMS集計だけを行い、ロック、ヒープ確保、IPCを行わない。Master の左右Peakは Safety limiter と最終ハードクリップ後の出力から測り、Limiter gain reduction、Hard clip、Feedback protection は同じ `audioMeters` frame の診断値として転送する。
 
@@ -340,6 +350,8 @@ Meter frame は最新値で十分な通知として既存の coalescing event �
 3. 制御側は返ってきたグラフだけを破棄する。破棄は Engine を構築したスレッド（メッセージスレッド）が、ライフサイクル処理の後と 100 ms ごとのタイマーで行う
 
 プラグインを含むグラフが音声スレッドや命令スレッドで破棄されることはない。
+
+プレビューの状態、音声バッファとインストゥルメントセッションも、専用の命令キューで公開し、音声側の参照が外れた状態を退役キューで制御側へ返して回収する。プレビュー状態の読み取りは、各ブロック末尾に公開する atomic の状態値を使う。録音 sink はタイムラインの命令キューで設定・解除する。制御側は退役キューで sink の返却を確認してから破棄し、1秒以内に返却されなければ録音エラーとして保持する。
 
 **デバイスの共有**
 

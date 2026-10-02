@@ -73,6 +73,8 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 - ネイティブ音声エンジンをビルドできるCMakeと対応するC++ toolchain（`native/audio-engine/` 参照）
 - CLIまたはHeadless Hostを起動するには、同梱Built-in instrument resourceが必要。`./native/audio-engine/build.sh Debug` またはWindowsの `./native/audio-engine/build.ps1 -Configuration Debug` がサイドカーとresourceを配置する。別の場所へstagingしたresourceを使う場合は `RIFFRA_BUILTIN_INSTRUMENTS_ROOT` に `instruments/builtin` のパスを指定する
 
+Linux ではトラックワーカーをリアルタイム優先度で起動できる `RLIMIT_RTPRIO`（99）の設定が必要である。音声サイドカーとオフラインレンダラーはこの権限を持つプロセスから起動する。
+
 ### コマンド
 
 ```powershell
@@ -101,7 +103,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 
 `serve` はフォアグラウンドでHostを保持し、起動診断を標準エラーへ出力する。
 `--attach` は既存Hostへ接続し、DataRootを直接開かない。
-ヘッドレス操作のコマンドカタログと運用手順は `.agent/skills/riffra-headless/` を参照。
+ヘッドレス操作のコマンドカタログと運用手順は `agents/skills/riffra-headless/` を参照。
 
 ## ドキュメント
 

@@ -292,6 +292,8 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 `audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native の Meter thread が約 50 ms ごとに発行し、Rust は Runtime 投影の `projectId` を付けて `audio-meters` Host event（`AudioMeterFrame`）へ写像する。
 
+`AudioStatus.diagnostics.realtime` は累計の `callbackCount` と `callbackOverruns`、直近1秒の `window` を持つ。窓はオーディオクロックで閉じ、`durationMs`、窓内の `callbackCount`、`overruns`、`averageCallbackDurationUs`、`maximumCallbackDurationUs` を公開する。`trackLoads` は同じ窓のトラック別 `trackId`、`averageProcessingUs`、`maximumProcessingUs` をグラフのトラック順に返す。CLI の人向け診断は最大処理時間の降順で上位5トラックを表示する。
+
 `feedbackSuspected` は `FeedbackProtection` のミュート理由と連動する
 
 - ミュート理由は Native の bitmask を正本とし、所有者（ユーザー・遷移・障害・保護）ごとに解除する。Rust が保持するのはユーザー緊急ミュートの意図のみとする
@@ -321,7 +323,8 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 - 直列化: 共有 Runtime の Probe Coordinator 経由。待機と実行の双方にタイムアウトを適用する
 - 失敗時: 「デバイス状態は変更されていない」ことを明示して失敗する。プローブ専用起動であり、実行中の `--serve` セッションとは独立する
-- 失敗は終了コードと stderr のメッセージで返し、stdout には成功時の結果だけを書く
+- デバイスプローブの失敗は終了コードと stderr のメッセージで返す。スキャナは結果 `pluginScanResult`、ロード検証 `pluginLoadTestResult`、失敗 `pluginScanError` を型付き JSON で返す。エラーの `details.path` はパスまたは `null` を必ず持つ
+- 出力は C++ の契約エンコーダから生成し、`contracts/sidecar/messages/probe.*.json` と `pluginScan.*.json` で固定する。Rust は未知・欠落キーを拒否する型でデコードし、nullable のキーも省略を許さない
 - 厳格性: スキャン結果は stdout 全体を 1 件の JSON としてパースし、単一に収まらない出力は候補を隔離して失敗とする。失敗メッセージには stdout / stderr の抜粋を含める
 
 ---
