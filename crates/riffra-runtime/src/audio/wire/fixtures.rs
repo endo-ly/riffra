@@ -310,6 +310,23 @@ const RENDER_MESSAGES: [&str; 2] = ["offlineRenderComplete", "error"];
 
 /// Decodes a fixture file and returns the fixture name implied by the value.
 fn decode_fixture(file: &str, bytes: &[u8]) -> Result<String, String> {
+    if file.starts_with("probe.") {
+        return serde_json::from_slice::<ProbeMessage>(bytes)
+            .map(|message| match message {
+                ProbeMessage::AudioDeviceProbe { .. } => "probe.audioDeviceProbe.json".into(),
+                ProbeMessage::DeviceChannels(_) => "probe.deviceChannels.json".into(),
+            })
+            .map_err(|error| error.to_string());
+    }
+    if file.starts_with("pluginScan.") {
+        return serde_json::from_slice::<PluginScanMessage>(bytes)
+            .map(|message| match message {
+                PluginScanMessage::Result { .. } => "pluginScan.result.json".into(),
+                PluginScanMessage::Error { .. } => "pluginScan.error.json".into(),
+                PluginScanMessage::LoadTestResult { .. } => "pluginScan.loadTestResult.json".into(),
+            })
+            .map_err(|error| error.to_string());
+    }
     if file.starts_with("render.") {
         return serde_json::from_slice::<RenderMessage>(bytes)
             .map(|message| format!("render.{}.json", render_name(&message)))
@@ -362,20 +379,35 @@ fn sidecar_message_fixtures_decode() {
                 .iter()
                 .map(|name| format!("render.{name}.json")),
         )
-        .chain(["error.json".to_owned()])
+        .chain(
+            [
+                "error.json",
+                "probe.audioDeviceProbe.json",
+                "probe.deviceChannels.json",
+                "pluginScan.result.json",
+                "pluginScan.error.json",
+                "pluginScan.loadTestResult.json",
+            ]
+            .map(str::to_owned),
+        )
         .collect::<BTreeSet<_>>();
     assert_eq!(decoded, expected, "a message variant has no fixture");
 }
 
 /// Object key paths below `value`, excluding free-form error details.
-fn key_paths(value: &Value, path: &mut Vec<String>, output: &mut Vec<Vec<String>>) {
+fn key_paths(
+    value: &Value,
+    path: &mut Vec<String>,
+    output: &mut Vec<Vec<String>>,
+    freeform_details: bool,
+) {
     match value {
         Value::Object(object) => {
             for (key, child) in object {
                 path.push(key.clone());
                 output.push(path.clone());
-                if key != "details" {
-                    key_paths(child, path, output);
+                if key != "details" || !freeform_details {
+                    key_paths(child, path, output, freeform_details);
                 }
                 path.pop();
             }
@@ -383,7 +415,7 @@ fn key_paths(value: &Value, path: &mut Vec<String>, output: &mut Vec<Vec<String>
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
                 path.push(index.to_string());
-                key_paths(item, path, output);
+                key_paths(item, path, output, freeform_details);
                 path.pop();
             }
         }
@@ -391,23 +423,28 @@ fn key_paths(value: &Value, path: &mut Vec<String>, output: &mut Vec<Vec<String>
     }
 }
 
-fn object_paths(value: &Value, path: &mut Vec<String>, output: &mut Vec<Vec<String>>) {
+fn object_paths(
+    value: &Value,
+    path: &mut Vec<String>,
+    output: &mut Vec<Vec<String>>,
+    freeform_details: bool,
+) {
     match value {
         Value::Object(object) => {
             output.push(path.clone());
             for (key, child) in object {
-                if key == "details" {
+                if key == "details" && freeform_details {
                     continue;
                 }
                 path.push(key.clone());
-                object_paths(child, path, output);
+                object_paths(child, path, output, freeform_details);
                 path.pop();
             }
         }
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
                 path.push(index.to_string());
-                object_paths(item, path, output);
+                object_paths(item, path, output, freeform_details);
                 path.pop();
             }
         }
@@ -426,7 +463,12 @@ fn at_path<'a>(value: &'a mut Value, path: &[String]) -> &'a mut Value {
 fn sidecar_message_fixtures_reject_missing_and_unknown_keys() {
     for (name, fixture) in message_fixtures() {
         let mut keys = Vec::new();
-        key_paths(&fixture, &mut Vec::new(), &mut keys);
+        key_paths(
+            &fixture,
+            &mut Vec::new(),
+            &mut keys,
+            !name.starts_with("pluginScan."),
+        );
         for key in keys {
             let (field, parent) = key.split_last().unwrap();
             let mut mutated = fixture.clone();
@@ -443,7 +485,12 @@ fn sidecar_message_fixtures_reject_missing_and_unknown_keys() {
         }
 
         let mut objects = Vec::new();
-        object_paths(&fixture, &mut Vec::new(), &mut objects);
+        object_paths(
+            &fixture,
+            &mut Vec::new(),
+            &mut objects,
+            !name.starts_with("pluginScan."),
+        );
         for object in objects {
             let mut mutated = fixture.clone();
             at_path(&mut mutated, &object)

@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "contract/SidecarMessages.h"
 #include "plugins/PluginRack.h"
 #include "protocol/ProtocolChannel.h"
 
@@ -12,50 +13,12 @@ void writeJson(const juce::var& value) {
 }
 
 juce::var makeError(const juce::String& path, const juce::String& message) {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "pluginScanError");
-    result->setProperty("kind", "pluginScanRejected");
-    result->setProperty("path", path);
-    result->setProperty("message", message);
-    result->setProperty("operation", "plugin.scan");
-    auto* details = new juce::DynamicObject();
-    if (path.isNotEmpty()) details->setProperty("path", path);
-    result->setProperty("details", juce::var(details));
-    return juce::var(result);
+    return riffra::encodePluginScanError({path, message});
 }
 
-juce::var describePlugin(const juce::PluginDescription& description) {
-    auto* plugin = new juce::DynamicObject();
-    plugin->setProperty("name", description.name);
-    plugin->setProperty("descriptiveName", description.descriptiveName);
-    plugin->setProperty("vendor", description.manufacturerName);
-    plugin->setProperty("version", description.version);
-    plugin->setProperty("category", description.category);
-    plugin->setProperty("format", description.pluginFormatName);
-    plugin->setProperty("path", description.fileOrIdentifier);
-    plugin->setProperty("identifier", description.createIdentifierString());
-    plugin->setProperty("uniqueId", static_cast<juce::int64>(description.uniqueId));
-    plugin->setProperty("deprecatedUid", static_cast<juce::int64>(description.deprecatedUid));
-    plugin->setProperty("numInputs", description.numInputChannels);
-    plugin->setProperty("numOutputs", description.numOutputChannels);
-    plugin->setProperty("isInstrument", description.isInstrument);
-    plugin->setProperty("hasSharedContainer", description.hasSharedContainer);
-    plugin->setProperty("lastFileModifiedMs",
-                        static_cast<juce::int64>(description.lastFileModTime.toMilliseconds()));
-    plugin->setProperty("lastInfoUpdatedMs",
-                        static_cast<juce::int64>(description.lastInfoUpdateTime.toMilliseconds()));
-    return juce::var(plugin);
-}
-
-juce::var makeLoadTestResult(const juce::String& path, bool success, const juce::String& message,
-                             double durationMs) {
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "pluginLoadTestResult");
-    result->setProperty("path", path);
-    result->setProperty("success", success);
-    result->setProperty("message", message);
-    result->setProperty("durationMs", durationMs);
-    return juce::var(result);
+juce::var makeLoadTestResult(const juce::String& path, const bool success,
+                             const juce::String& message, const double durationMs) {
+    return riffra::encodePluginLoadTestResult({path, success, message, durationMs});
 }
 
 std::optional<juce::String> validateInstanceCreation(const juce::String& path) {
@@ -63,11 +26,10 @@ std::optional<juce::String> validateInstanceCreation(const juce::String& path) {
     if (const auto loadError =
             rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime))
         return loadError->message;
-    rack.clear();
     return std::nullopt;
 }
 
-int scan(const juce::String& path, bool includeLoadTest) {
+int scan(const juce::String& path) {
     const auto started = juce::Time::getMillisecondCounterHiRes();
     if (!juce::File(path).exists()) {
         writeJson(makeError(path, "VST3 bundle or file does not exist."));
@@ -82,28 +44,18 @@ int scan(const juce::String& path, bool includeLoadTest) {
         return 3;
     }
 
-    juce::Array<juce::var> plugins;
+    riffra::PluginScanResultSpec result;
+    result.path = path;
     for (const auto* description : descriptions)
-        if (description != nullptr) plugins.add(describePlugin(*description));
-
-    auto* result = new juce::DynamicObject();
-    result->setProperty("type", "pluginScanResult");
-    result->setProperty("path", path);
-    result->setProperty("plugins", plugins);
-
-    if (includeLoadTest) {
-        const auto loadTestStarted = juce::Time::getMillisecondCounterHiRes();
-        const auto loadError = validateInstanceCreation(path);
-        const auto loadDurationMs = juce::Time::getMillisecondCounterHiRes() - loadTestStarted;
-        result->setProperty("loadTested", loadError == std::nullopt);
-        result->setProperty(
-            "loadTestMessage",
-            loadError.value_or("VST3 instance created and initialized successfully."));
-        result->setProperty("loadTestDurationMs", loadDurationMs);
-    }
-
-    result->setProperty("scanDurationMs", juce::Time::getMillisecondCounterHiRes() - started);
-    writeJson(juce::var(result));
+        if (description != nullptr) result.plugins.push_back(*description);
+    const auto loadTestStarted = juce::Time::getMillisecondCounterHiRes();
+    const auto loadError = validateInstanceCreation(path);
+    result.loadTestDurationMs = juce::Time::getMillisecondCounterHiRes() - loadTestStarted;
+    result.loadTested = !loadError.has_value();
+    result.loadTestMessage =
+        loadError.value_or("VST3 instance created and initialized successfully.");
+    result.scanDurationMs = juce::Time::getMillisecondCounterHiRes() - started;
+    writeJson(riffra::encodePluginScanResult(result));
     return 0;
 }
 
@@ -150,7 +102,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const auto path = juce::String::fromUTF8(argv[2]);
-    if (mode == "--scan") return scan(path, true);
+    if (mode == "--scan") return scan(path);
     if (mode == "--validate-load") return validateLoad(path);
     writeJson(makeError({}, "Usage: riffra-plugin-scan --scan|--validate-load <vst3-path>"));
     return 1;

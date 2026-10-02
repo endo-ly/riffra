@@ -1,0 +1,18 @@
+{
+  "type": "deviceChannels",
+  "driver": "ASIO",
+  "inputDevice": "Interface",
+  "inputChannels": [
+    {
+      "index": 0,
+      "name": "Input 1"
+    }
+  ],
+  "outputDevice": "Interface",
+  "outputChannels": [
+    {
+      "index": 0,
+      "name": "Output 1"
+    }
+  ]
+}

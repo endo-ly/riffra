@@ -171,6 +171,51 @@ std::vector<std::pair<juce::String, juce::var>> messageFixtures() {
         "render.error.json",
         encodeOfflineRenderError(
             {"renderRejected", "Offline Render request is invalid.", "renderTimelineOffline", {}}));
+    fixtures.emplace_back(
+        "probe.audioDeviceProbe.json",
+        encodeAudioDeviceProbe({{{"ASIO",
+                                  "driverManaged",
+                                  "sameDevice",
+                                  {{"Interface", {{0, "Input 1"}}}},
+                                  {{"Interface", {{0, "Output 1"}}}}},
+                                 {"Windows Audio", "shared", "independent", {}, {}}},
+                                1234,
+                                "Audio device list refreshed.",
+                                0,
+                                0.98}));
+    fixtures.emplace_back(
+        "probe.deviceChannels.json",
+        encodeDeviceChannels(
+            {"ASIO", "Interface", {{0, "Input 1"}}, "Interface", {{0, "Output 1"}}}));
+    juce::PluginDescription plugin;
+    plugin.name = "Test Effect";
+    plugin.descriptiveName = "Riffra Test Effect";
+    plugin.manufacturerName = "Riffra";
+    plugin.version = "1.0";
+    plugin.category = "Fx";
+    plugin.pluginFormatName = "VST3";
+    plugin.fileOrIdentifier = "plugins/test.vst3";
+    plugin.uniqueId = 123;
+    plugin.deprecatedUid = 456;
+    plugin.numInputChannels = 2;
+    plugin.numOutputChannels = 2;
+    plugin.lastFileModTime = juce::Time(1000);
+    plugin.lastInfoUpdateTime = juce::Time(2000);
+    fixtures.emplace_back(
+        "pluginScan.result.json",
+        encodePluginScanResult({"plugins/test.vst3",
+                                {plugin},
+                                true,
+                                "VST3 instance created and initialized successfully.",
+                                5.0,
+                                8.0}));
+    fixtures.emplace_back(
+        "pluginScan.error.json",
+        encodePluginScanError({"plugins/missing.vst3", "VST3 bundle or file does not exist."}));
+    fixtures.emplace_back(
+        "pluginScan.loadTestResult.json",
+        encodePluginLoadTestResult({"plugins/test.vst3", true,
+                                    "VST3 instance created and initialized successfully.", 5.0}));
     return fixtures;
 }
 

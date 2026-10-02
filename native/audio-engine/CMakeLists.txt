@@ -190,6 +190,7 @@ target_sources(riffra-audio PRIVATE
 )
 
 target_sources(riffra-plugin-scan PRIVATE
+  src/contract/SidecarMessages.cpp
   tools/plugin-scanner/PluginScannerMain.cpp
   src/plugins/PluginRack.cpp
   src/plugins/PluginRackState.cpp

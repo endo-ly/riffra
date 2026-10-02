@@ -423,6 +423,98 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
 
 }  // namespace
 
+juce::var encodeAudioDeviceProbe(const AudioDeviceProbeSpec& probe) {
+    const auto encodeDevice = [](const AudioDeviceProbeSpec::Device& device) {
+        return ObjectBuilder{}
+            .set("name", device.name)
+            .set("channels", array(device.channels, encodeChannel))
+            .build();
+    };
+    const auto encodeDriver = [&](const AudioDeviceProbeSpec::Driver& driver) {
+        return ObjectBuilder{}
+            .set("name", driver.name)
+            .set("accessMode", driver.accessMode)
+            .set("devicePairing", driver.devicePairing)
+            .set("inputs", array(driver.inputs, encodeDevice))
+            .set("outputs", array(driver.outputs, encodeDevice))
+            .build();
+    };
+    return ObjectBuilder{}
+        .set("type", "audioDeviceProbe")
+        .set("drivers", array(probe.drivers, encodeDriver))
+        .set("refreshedAtMs", integer(probe.refreshedAtMs))
+        .set("message", probe.message)
+        .set("muteReasons", integer(probe.muteReasons))
+        .set("limiterCeiling", probe.limiterCeiling)
+        .build();
+}
+
+juce::var encodeDeviceChannels(const DeviceChannelsSpec& channels) {
+    return ObjectBuilder{}
+        .set("type", "deviceChannels")
+        .set("driver", channels.driver)
+        .set("inputDevice", channels.inputDevice)
+        .set("inputChannels", array(channels.inputChannels, encodeChannel))
+        .set("outputDevice", channels.outputDevice)
+        .set("outputChannels", array(channels.outputChannels, encodeChannel))
+        .build();
+}
+
+juce::var encodePluginScanResult(const PluginScanResultSpec& result) {
+    const auto encodePlugin = [](const juce::PluginDescription& plugin) {
+        return ObjectBuilder{}
+            .set("name", plugin.name)
+            .set("descriptiveName", plugin.descriptiveName)
+            .set("vendor", plugin.manufacturerName)
+            .set("version", plugin.version)
+            .set("category", plugin.category)
+            .set("format", plugin.pluginFormatName)
+            .set("path", plugin.fileOrIdentifier)
+            .set("identifier", plugin.createIdentifierString())
+            .set("uniqueId", juce::var(static_cast<juce::int64>(plugin.uniqueId)))
+            .set("deprecatedUid", juce::var(static_cast<juce::int64>(plugin.deprecatedUid)))
+            .set("numInputs", plugin.numInputChannels)
+            .set("numOutputs", plugin.numOutputChannels)
+            .set("isInstrument", plugin.isInstrument)
+            .set("hasSharedContainer", plugin.hasSharedContainer)
+            .set("lastFileModifiedMs", juce::var(plugin.lastFileModTime.toMilliseconds()))
+            .set("lastInfoUpdatedMs", juce::var(plugin.lastInfoUpdateTime.toMilliseconds()))
+            .build();
+    };
+    return ObjectBuilder{}
+        .set("type", "pluginScanResult")
+        .set("path", result.path)
+        .set("plugins", array(result.plugins, encodePlugin))
+        .set("loadTested", result.loadTested)
+        .set("loadTestMessage", result.loadTestMessage)
+        .set("loadTestDurationMs", result.loadTestDurationMs)
+        .set("scanDurationMs", result.scanDurationMs)
+        .build();
+}
+
+juce::var encodePluginScanError(const PluginScanErrorSpec& error) {
+    return ObjectBuilder{}
+        .set("type", "pluginScanError")
+        .set("kind", "pluginScanRejected")
+        .set("path", error.path)
+        .set("message", error.message)
+        .set("operation", "plugin.scan")
+        .set("details", ObjectBuilder{}
+                            .set("path", error.path.isEmpty() ? juce::var() : juce::var(error.path))
+                            .build())
+        .build();
+}
+
+juce::var encodePluginLoadTestResult(const PluginLoadTestResultSpec& result) {
+    return ObjectBuilder{}
+        .set("type", "pluginLoadTestResult")
+        .set("path", result.path)
+        .set("success", result.success)
+        .set("message", result.message)
+        .set("durationMs", result.durationMs)
+        .build();
+}
+
 std::string_view sidecarResponseType(const SidecarResponseSpec& response) noexcept {
     return kSidecarResponseTypes[response.index()];
 }
