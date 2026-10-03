@@ -46,6 +46,31 @@ const verb: PluginEntry = {
   scanState: 'validated',
 };
 
+const synth: PluginEntry = { ...verb, id: 'plugin:synth', name: 'Wave Synth', role: 'instrument' };
+const unclassified: PluginEntry = {
+  ...verb,
+  id: 'plugin:unknown',
+  name: 'Unknown Plug-in',
+  role: null,
+};
+
+const sourceAsset: LibraryAsset = {
+  id: 'asset:source',
+  name: 'Source Asset',
+  kind: 'audio',
+  path: null,
+  tag: null,
+  note: null,
+  createdAtMs: null,
+  updatedAtMs: null,
+  stability: 'stable',
+};
+const targetAsset: LibraryAsset = {
+  ...sourceAsset,
+  id: 'asset:target',
+  name: 'Target Asset',
+};
+
 const take = {
   id: 'recording:C:\\inbox\\take-a',
   name: 'Take A',
@@ -85,9 +110,6 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     onQueryChange: vi.fn(),
     library: {
       results: [] as LibraryAsset[],
-      selectedAsset: null,
-      relatedAssets: [],
-      onSelectAsset: vi.fn(),
       onPreviewAsset: vi.fn(),
       onUpdateAsset: vi.fn(),
       onImportMidi: vi.fn(),
@@ -115,6 +137,7 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     inbox: inbox(),
     selectedTrack: null,
     onApply: vi.fn(),
+    onOpenPlugin: vi.fn(),
     ...overrides,
   };
   render(<BrowserPanel {...props} />);
@@ -163,6 +186,69 @@ describe('BrowserPanel', () => {
       pluginPath: 'C:\\VST3\\SpaceVerb.vst3',
       name: 'Space Verb',
     });
+  });
+
+  it('opens instrument and effect plug-ins from their rows instead of previewing them', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const props = renderBrowser({ plugins: [verb, synth] });
+    await user.click(treeItem('Plug-ins'));
+
+    // Act
+    await user.click(treeItem('Wave Synth'));
+    await user.click(screen.getByRole('button', { name: 'Open Wave Synth' }));
+    await user.click(treeItem('Effects'));
+    await user.click(treeItem('Space Verb'));
+    await user.click(screen.getByRole('button', { name: 'Open Space Verb' }));
+
+    // Assert
+    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(1, synth);
+    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(2, verb);
+  });
+
+  it('only offers Open for a validated plug-in with a classified role', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    renderBrowser({ plugins: [unclassified] });
+    await user.click(treeItem('Unclassified Plug-ins'));
+
+    // Act
+    await user.click(treeItem('Unknown Plug-in'));
+
+    // Assert
+    expect(screen.queryByRole('button', { name: 'Open Unknown Plug-in' })).not.toBeInTheDocument();
+  });
+
+  it('previews and edits the asset from the invoked row', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onPreviewAsset = vi.fn();
+    const onUpdateAsset = vi.fn();
+    renderBrowser({
+      query: 'Asset',
+      library: {
+        results: [sourceAsset, targetAsset],
+        onPreviewAsset,
+        onUpdateAsset,
+        onImportMidi: vi.fn(),
+      },
+    });
+    await user.click(treeItem('Source Asset'));
+
+    // Act
+    const targetRow = treeItem('Target Asset');
+    await user.hover(targetRow);
+    await user.click(screen.getByRole('button', { name: 'Preview Target Asset' }));
+    fireEvent.contextMenu(treeItem('Target Asset'));
+    await user.click(screen.getByRole('menuitem', { name: 'Preview' }));
+    fireEvent.contextMenu(treeItem('Target Asset'));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit tag…' }));
+    await user.type(screen.getByRole('textbox', { name: 'Asset tag' }), 'Kit{Enter}');
+
+    // Assert
+    expect(onPreviewAsset).toHaveBeenNthCalledWith(1, targetAsset);
+    expect(onPreviewAsset).toHaveBeenNthCalledWith(2, targetAsset);
+    expect(onUpdateAsset).toHaveBeenCalledWith(targetAsset, 'Kit', null);
   });
 
   it('lists search matches from every source with where they live', () => {
@@ -216,7 +302,7 @@ describe('BrowserPanel', () => {
     expect(props.inbox.remove).toHaveBeenCalledWith(take.id);
   });
 
-  it('renames the selected take in place from its actions menu', async () => {
+  it('renames a take in place from its context menu', async () => {
     // Arrange
     const user = userEvent.setup();
     const props = renderBrowser();
@@ -224,7 +310,7 @@ describe('BrowserPanel', () => {
     await user.click(treeItem('Take A'));
 
     // Act
-    await user.click(screen.getByRole('button', { name: 'More actions for Take A' }));
+    await user.pointer({ keys: '[MouseRight]', target: treeItem('Take A') });
     await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     const name = screen.getByRole('textbox', { name: 'Rename Take A' });
     await user.clear(name);
@@ -242,7 +328,7 @@ describe('BrowserPanel', () => {
     await user.click(treeItem('Clean Sub Bass'));
 
     // Act
-    await user.click(screen.getByRole('button', { name: 'More actions for Clean Sub Bass' }));
+    await user.pointer({ keys: '[MouseRight]', target: treeItem('Clean Sub Bass') });
     await user.click(screen.getByRole('menuitem', { name: 'Edit tags…' }));
     await user.type(
       screen.getByRole('textbox', { name: 'Tags for Clean Sub Bass' }),

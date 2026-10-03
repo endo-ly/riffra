@@ -371,6 +371,15 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
     if (type == "stopPreview") return decodeEmpty<StopPreviewCommand>(value, output, error);
     if (type == "stopInstrumentPreview")
         return decodeEmpty<StopInstrumentPreviewCommand>(value, output, error);
+    if (type == "openPluginAudition") {
+        auto fields = reader({"type", "path"});
+        OpenPluginAuditionCommand command;
+        if (!fields.string("type", ignoredType) || !fields.string("path", command.path) ||
+            !fields.finish())
+            return false;
+        output = command;
+        return true;
+    }
     if (type == "startTakeComparison") {
         auto fields = reader({"type", "rawPath", "processedPath", "rawStartFrame", "rawEndFrame",
                               "processedStartFrame", "processedEndFrame"});

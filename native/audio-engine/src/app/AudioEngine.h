@@ -39,6 +39,7 @@ private:
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     std::atomic<bool> timelineOperationRunning{false};

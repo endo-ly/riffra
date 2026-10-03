@@ -186,6 +186,7 @@ export type { PhrasePlacement } from './PhrasePlacement';
 export type { PhrasePreview } from './PhrasePreview';
 export type { PhrasePreviewNote } from './PhrasePreviewNote';
 export type { PhrasePreviewParams } from './PhrasePreviewParams';
+export type { PluginAuditionParams } from './PluginAuditionParams';
 export type { PluginEntry } from './PluginEntry';
 export type { PluginFormat } from './PluginFormat';
 export type { PluginPathParams } from './PluginPathParams';

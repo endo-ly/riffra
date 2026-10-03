@@ -9,6 +9,7 @@
 
 #include "AudioMetrics.h"
 #include "AudioSafetyDsp.h"
+#include "PluginAudition.h"
 #include "PreviewEngine.h"
 #include "app/RecordingController.h"
 
@@ -32,9 +33,9 @@ public:
     AudioRenderPipeline(const AudioRenderPipeline&) = delete;
     AudioRenderPipeline& operator=(const AudioRenderPipeline&) = delete;
 
-    // Control-side setters update atomic state consumed by processBlock().
-    // Muting does not silence timeline instruments; callers that need it
-    // request TimelineEngine::panicAllInstrumentTracks().
+    // Control-side setters update atomic state consumed by processBlock(). Muting panics an
+    // auditioned instrument. Callers that need timeline instruments silenced must request
+    // TimelineEngine::panicAllInstrumentTracks().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
     // Control side; the realtime detector applies protection on the audio owner.
@@ -88,6 +89,7 @@ public:
     [[nodiscard]] AudioMetrics& metrics() noexcept { return audioMetrics; }
     [[nodiscard]] const AudioMetrics& metrics() const noexcept { return audioMetrics; }
     [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
+    [[nodiscard]] PluginAudition& audition() noexcept { return pluginAudition; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
     RealtimeRequest startArrangeRecording(const juce::File& directory, int countInBeats,
@@ -169,6 +171,7 @@ private:
     TimelineEngine& timelineEngine;
     AudioMetrics audioMetrics;
     PreviewEngine previewEngine;
+    PluginAudition pluginAudition;
     RecordingController recordingController;
 
     std::atomic<std::uint32_t> muteReasons{0};

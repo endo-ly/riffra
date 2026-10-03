@@ -7,6 +7,7 @@ import type {
 } from '@/model/domain';
 import { toAssetId } from '@/native/contracts';
 import {
+  browserItemSummary,
   buildBrowserTree,
   searchBrowserItems,
   type BrowserFolder,
@@ -125,5 +126,24 @@ describe('searchBrowserItems', () => {
       ['recording:recording:take', 'Recordings'],
       ['asset:asset:loop', 'Assets'],
     ]);
+  });
+});
+
+describe('browserItemSummary', () => {
+  it('names an instrument with its category, origin, and tags', () => {
+    // Arrange
+    const user = instrument('user:pad', 'Night Pad', 'Pad', {
+      origin: 'user',
+      tags: ['Dark', 'Wide'],
+    });
+
+    // Act
+    const summary = browserItemSummary(
+      { kind: 'instrument', key: 'instrument:user:pad', instrument: user },
+      false,
+    );
+
+    // Assert
+    expect(summary).toBe('Night Pad · Pad · User · Dark, Wide');
   });
 });

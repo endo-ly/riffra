@@ -23,38 +23,19 @@ export function useLibrary(
     projectId = null,
   }: UseLibraryOptions,
 ) {
-  const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
+  const { searchLibrary, updateLibraryAsset: updateAssetMetadata, previewAsset } = api;
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
-  const [selectedLibraryAsset, setSelectedLibraryAsset] = useState<LibraryAsset | null>(null);
-  const [relatedAssets, setRelatedAssets] = useState<LibraryAsset[]>([]);
   const query = requestedQuery.trim().toLowerCase();
 
   useEffect(() => {
     setLibraryResults([]);
-    setSelectedLibraryAsset(null);
-    setRelatedAssets([]);
   }, [hostGeneration, projectId]);
 
-  const selectLibraryAsset = useCallback(
-    async (asset: LibraryAsset) => {
-      setSelectedLibraryAsset(asset);
+  const updateLibraryAsset = useCallback(
+    async (asset: LibraryAsset, tag: string | null, note: string | null) => {
       try {
-        const next = await relatedLibraryAssets(asset.id);
-        setRelatedAssets(next);
-      } catch (error) {
-        logNativeError('relatedLibraryAssets')(error);
-      }
-    },
-    [relatedLibraryAssets],
-  );
-
-  const updateSelectedLibraryAsset = useCallback(
-    async (tag: string | null, note: string | null) => {
-      if (!selectedLibraryAsset) return;
-      try {
-        const updated = await updateLibraryAsset(selectedLibraryAsset.id, tag, note);
+        const updated = await updateAssetMetadata(asset.id, tag, note);
         if (!updated) return;
-        setSelectedLibraryAsset(updated);
         setLibraryResults((current) =>
           current.map((asset) => (asset.id === updated.id ? updated : asset)),
         );
@@ -62,23 +43,25 @@ export function useLibrary(
         logNativeError('updateLibraryAsset')(error);
       }
     },
-    [selectedLibraryAsset, updateLibraryAsset],
+    [updateAssetMetadata],
   );
 
-  const previewSelectedLibraryAsset = useCallback(async () => {
-    const asset = selectedLibraryAsset;
-    // The library mixes Canonical Assets (id `asset:…`, kind `audio`) with
-    // Read Model entries (recordings/plugins). Only a Canonical Audio Asset has
-    // an AssetId `previewAsset` can resolve; recordings are previewed from the
-    // Inbox, which carries their Canonical Asset ids directly.
-    if (!asset || asset.kind !== 'audio') return;
-    try {
-      const next = await previewAsset(toAssetId(asset.id), {});
-      setAudio(next);
-    } catch (error) {
-      logNativeError('previewLibraryAsset')(error);
-    }
-  }, [previewAsset, selectedLibraryAsset, setAudio]);
+  const previewLibraryAsset = useCallback(
+    async (asset: LibraryAsset) => {
+      // The library mixes Canonical Assets (id `asset:…`, kind `audio`) with
+      // Read Model entries (recordings/plugins). Only a Canonical Audio Asset has
+      // an AssetId `previewAsset` can resolve; recordings are previewed from the
+      // Inbox, which carries their Canonical Asset ids directly.
+      if (asset.kind !== 'audio') return;
+      try {
+        const next = await previewAsset(toAssetId(asset.id), {});
+        setAudio(next);
+      } catch (error) {
+        logNativeError('previewLibraryAsset')(error);
+      }
+    },
+    [previewAsset, setAudio],
+  );
   // Imports an external Standard MIDI File as a canonical MIDI Asset through the
   // native dialog, then drives the cross-asset search by the file stem so the
   // freshly imported MIDI shows up in the results without a manual reload.
@@ -108,8 +91,6 @@ export function useLibrary(
     let active = true;
     if (!query) {
       setLibraryResults([]);
-      setSelectedLibraryAsset(null);
-      setRelatedAssets([]);
       return () => {
         active = false;
       };
@@ -126,12 +107,9 @@ export function useLibrary(
 
   return {
     libraryResults,
-    selectedLibraryAsset,
-    relatedAssets,
     query,
-    selectLibraryAsset,
-    previewSelectedLibraryAsset,
-    updateSelectedLibraryAsset,
+    previewLibraryAsset,
+    updateLibraryAsset,
     importMidi,
   };
 }

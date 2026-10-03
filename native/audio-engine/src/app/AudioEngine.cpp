@@ -87,8 +87,9 @@ AudioEngine::AudioEngine()
       }) {
     commandDispatcher = std::make_unique<AudioCommandDispatcher>(AudioCommandDispatcher::Context{
         formatManager, timelineEngine, pipeline, deviceController, midiInputs, runtimeLifecycle,
-        trackPluginEditor, trackPluginEditorTrackId, trackPluginEditorDeviceId, comparisonRaw,
-        comparisonProcessed, timelineOperationRunning});
+        trackPluginEditor, trackPluginEditorTrackId, trackPluginEditorDeviceId, auditionEditor,
+        comparisonRaw, comparisonProcessed, timelineOperationRunning});
+    midiInputs.monitor().setAudition(&pipeline.audition());
 }
 
 AudioEngine::~AudioEngine() = default;
@@ -238,6 +239,7 @@ int AudioEngine::serve(const std::optional<std::uint32_t> parentPid,
                     trackPluginEditorTrackId.clear();
                     trackPluginEditorDeviceId.clear();
                 }
+                commandDispatcher->closePluginAudition();
                 timelineOperationRunning.store(false, std::memory_order_release);
             },
             std::chrono::seconds(10));

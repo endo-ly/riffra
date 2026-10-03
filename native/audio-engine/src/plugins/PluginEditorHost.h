@@ -14,13 +14,18 @@ class PluginEditorHost final : public std::enable_shared_from_this<PluginEditorH
 public:
     using StateCallback = std::function<void(const PluginStateSpec&)>;
     using ParameterCallback = std::function<void(int, float)>;
+    /// Runs on the Message Thread after the user closed the editor window.
+    using ClosedCallback = std::function<void()>;
 
     explicit PluginEditorHost(PluginRack& rack, StateCallback stateCallback = {},
-                              ParameterCallback parameterCallback = {});
+                              ParameterCallback parameterCallback = {},
+                              ClosedCallback closedCallback = {});
     ~PluginEditorHost();
 
     bool open(juce::String& error);
     bool close();
+    /// Whether the editor window is showing. Message Thread only.
+    [[nodiscard]] bool isOpen() const noexcept { return window != nullptr; }
 
 private:
     class EditorWindow;
@@ -52,6 +57,7 @@ private:
     PluginRack& rack;
     StateCallback onStateChanged;
     ParameterCallback onParameterChanged;
+    ClosedCallback onClosed;
     std::unique_ptr<std::atomic<float>[]> parameterValues;
     std::unique_ptr<std::atomic<bool>[]> parameterDirty;
     std::size_t parameterCapacity = 0;

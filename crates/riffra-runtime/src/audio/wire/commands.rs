@@ -115,6 +115,9 @@ pub(crate) enum SidecarCommand {
     },
     StopPreview,
     StopInstrumentPreview,
+    OpenPluginAudition {
+        path: String,
+    },
     StartTakeComparison {
         raw_path: String,
         processed_path: String,
@@ -184,6 +187,7 @@ impl SidecarCommand {
             | Self::PreviewInstrument { .. }
             | Self::StopPreview
             | Self::StopInstrumentPreview
+            | Self::OpenPluginAudition { .. }
             | Self::StartTakeComparison { .. }
             | Self::SwitchTakeComparisonVariant { .. }
             | Self::StopTakeComparison

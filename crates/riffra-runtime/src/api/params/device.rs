@@ -12,6 +12,13 @@ pub struct PluginPathParams {
     pub plugin_path: String,
 }
 
+/// Opens a validated VST3 outside the Project.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PluginAuditionParams {
+    pub plugin_path: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EffectReorderParams {

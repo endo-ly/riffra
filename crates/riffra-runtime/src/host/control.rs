@@ -585,6 +585,17 @@ impl HostState {
             RuntimeCommand::InstrumentPreviewStop(_) => {
                 audio_status(self.audio.stop_instrument_preview())?
             }
+            RuntimeCommand::PluginAuditionOpen(params) => {
+                if self.safe_mode {
+                    return Err(runtime_unavailable("Safe Mode blocks VST3 loading"));
+                }
+                let (_, path, _) = crate::plugins::validated_catalog_plugin(
+                    &self.data_root,
+                    std::path::Path::new(&params.plugin_path),
+                )
+                .map_err(command_error)?;
+                audio_status(self.audio.open_plugin_audition(&path))?
+            }
 
             RuntimeCommand::MidiListeningEnable(_) => {
                 if self.safe_mode {

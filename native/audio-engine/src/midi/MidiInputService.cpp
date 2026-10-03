@@ -1,5 +1,6 @@
 #include "MidiInputService.h"
 
+#include "audio/PluginAudition.h"
 #include "audio/PreviewEngine.h"
 #include "timeline/TimelineEngine.h"
 
@@ -13,11 +14,16 @@ void MidiMonitor::setTimelineEngine(TimelineEngine* const engine) noexcept {
     timelineEngine = engine;
 }
 
+void MidiMonitor::setAudition(PluginAudition* const audition) noexcept {
+    pluginAudition = audition;
+}
+
 void MidiMonitor::receive(const std::uint16_t sourceIndex, const juce::MidiMessage& message) {
     messageCount.fetch_add(1, std::memory_order_relaxed);
-    const auto routedToTimeline =
-        timelineEngine != nullptr && timelineEngine->enqueueLiveMidi(sourceIndex, message);
-    if (routedToTimeline) {
+    const auto routed =
+        (pluginAudition != nullptr && pluginAudition->enqueueMidi(message)) ||
+        (timelineEngine != nullptr && timelineEngine->enqueueLiveMidi(sourceIndex, message));
+    if (routed) {
         if (message.isNoteOn() || message.isNoteOff())
             lastNote.store(message.getNoteNumber(), std::memory_order_release);
         return;

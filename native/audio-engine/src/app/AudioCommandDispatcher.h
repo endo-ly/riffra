@@ -38,6 +38,7 @@ public:
         std::shared_ptr<PluginEditorHost>& trackPluginEditor;
         juce::String& trackPluginEditorTrackId;
         juce::String& trackPluginEditorDeviceId;
+        std::shared_ptr<PluginEditorHost>& auditionEditor;
         juce::AudioBuffer<float>& comparisonRaw;
         juce::AudioBuffer<float>& comparisonProcessed;
         std::atomic<bool>& timelineOperationRunning;
@@ -53,6 +54,9 @@ public:
     void run(std::istream& input);
     void dispatch(const SidecarRequestSpec& request, CommandResponder responder);
     [[nodiscard]] bool waitForBackgroundWork(std::chrono::milliseconds timeout);
+    /// Closes the auditioned plug-in's editor and destroys the plug-in.
+    /// Lifecycle thread only.
+    void closePluginAudition();
 
 private:
     /// Status reported by commands whose response is the full audio status.
@@ -100,6 +104,10 @@ private:
     void handle(const PreviewInstrumentCommand& command, CommandResponder responder);
     void handle(const StopPreviewCommand&, CommandResponder responder);
     void handle(const StopInstrumentPreviewCommand&, CommandResponder responder);
+    void handle(const OpenPluginAuditionCommand& command, CommandResponder responder);
+    /// Shows the editor of the plug-in at `path`, loading it unless it is
+    /// already the auditioned one. Lifecycle thread only.
+    [[nodiscard]] bool openPluginAudition(const juce::String& path, juce::String& error);
     void handle(const StartTakeComparisonCommand& command, CommandResponder responder);
     void handle(const SwitchTakeComparisonVariantCommand& command, CommandResponder responder);
     void handle(const StopTakeComparisonCommand&, CommandResponder responder);

@@ -206,12 +206,14 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 |                     | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`setTrackPluginState`、`openTrackPluginEditor`                                   | `trackDeviceAck`                                                    |
 |                     | `getTrackDeviceStatus`、`getTrackDeviceParameters`、`getTrackDevicePrograms`                                                          | `trackDeviceStatus`、`trackDeviceParameters`、`trackDevicePrograms` |
 |                     | `getTrackPluginState`、`setTrackDeviceProgram`                                                                                        | `trackPluginState`、`trackDeviceProgramChanged`                     |
-| プレビュー          | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`                                                          | `audioStatus`                                                       |
+| プレビュー          | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`openPluginAudition`                                    | `audioStatus`                                                       |
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                       |
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
 
 `setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。`trackMixAck` は値の Canonical commit を意味しない。
+
+`openPluginAudition` は検証済みの VST3 を Project の外で読み込み、そのエディタを開く。音源ならライブ MIDI が Track より先に届き、エフェクトなら選択中のオーディオ入力を処理する。エフェクトが入力を鳴らしている間は、Track の入力モニタリングと同じくフィードバック保護の対象になる。出力はアレンジメントの後に加算される。エディタのウィンドウを閉じるとプラグインは破棄され、その状態は Project に入らない。
 
 `prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、C++ の厳格デコーダが契約違反を `kind: timelineContract` として返し、グラフの準備処理へ進めない。投影の置換には prepare / commit / discard を使う。
 

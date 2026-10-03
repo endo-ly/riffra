@@ -11,6 +11,7 @@
 
 namespace riffra {
 
+class PluginAudition;
 class PreviewEngine;
 class TimelineEngine;
 
@@ -20,6 +21,8 @@ public:
     // taking a lock.
     void setPreviewEngine(PreviewEngine* preview) noexcept;
     void setTimelineEngine(TimelineEngine* engine) noexcept;
+    /// Installs the audition that receives live MIDI ahead of the Timeline.
+    void setAudition(PluginAudition* audition) noexcept;
 
     // JUCE MIDI callback threads. This path must remain non-blocking.
     /// Routes one message from the device with the given MidiSourceRegistry index.
@@ -36,6 +39,7 @@ private:
     std::atomic<int> lastNote{-1};
     PreviewEngine* previewEngine = nullptr;
     TimelineEngine* timelineEngine = nullptr;
+    PluginAudition* pluginAudition = nullptr;
 };
 
 class MidiInputService final {

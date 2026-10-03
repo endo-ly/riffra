@@ -158,6 +158,9 @@ fn command_samples() -> Vec<SidecarCommand> {
             },
         },
         SidecarCommand::StopPreview,
+        SidecarCommand::OpenPluginAudition {
+            path: "plugins/Synth.vst3".into(),
+        },
         SidecarCommand::StopInstrumentPreview,
         SidecarCommand::StartTakeComparison {
             raw_path: "takes/raw.wav".into(),

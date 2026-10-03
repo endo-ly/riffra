@@ -134,6 +134,7 @@ export type ControlCommandResults = {
   'plugin.scan': OutputValue<'pluginScan'>;
   'plugin.scan.start': OutputValue<'job'>;
   'plugin.editor.open': OutputValue<'ok'>;
+  'plugin.audition.open': OutputValue<'audioStatus'>;
   'device.inspect': OutputValue<'deviceInspection'>;
   'device.parameter.list': OutputValue<'deviceParameters'>;
   'device.parameter.get': OutputValue<'deviceParameter'>;

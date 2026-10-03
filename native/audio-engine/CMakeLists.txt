@@ -159,6 +159,8 @@ target_sources(riffra-audio-core PRIVATE
   src/audio/PreviewEngine.h
   src/audio/InstrumentPreviewSession.cpp
   src/audio/InstrumentPreviewSession.h
+  src/audio/PluginAudition.cpp
+  src/audio/PluginAudition.h
   src/audio/AudioRenderPipeline.cpp
   src/audio/AudioRenderPipeline.h
   src/app/RecordingController.cpp
@@ -477,6 +479,7 @@ if(BUILD_TESTING)
     tests/audio/AudioRenderPipelineTest.cpp
     tests/audio/AudioSafetyDspTest.cpp
     tests/audio/InstrumentPreviewSessionTest.cpp
+    tests/audio/PluginAuditionTest.cpp
     tests/device/AudioDeviceControllerTest.cpp
     tests/plugins/PluginRackTest.cpp
     tests/plugins/PluginChainTest.cpp

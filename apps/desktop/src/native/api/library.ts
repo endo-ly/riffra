@@ -57,10 +57,6 @@ export async function updateLibraryAsset(
   );
 }
 
-export async function relatedLibraryAssets(id: string): Promise<LibraryAsset[]> {
-  return dispatchControlOrFallback({ command: 'library.related', params: { id } }, []);
-}
-
 export async function listInstruments(): Promise<InstrumentLibraryItem[]> {
   return dispatchControlOrFallback({ command: 'library.instrument.list', params: {} }, []);
 }

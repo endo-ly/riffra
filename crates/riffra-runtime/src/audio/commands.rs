@@ -15,6 +15,8 @@ use std::path::Path;
 use std::time::Duration;
 
 const TRACK_DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+/// The sidecar's budget for loading a VST3, which is the slowest step of an audition.
+const PLUGIN_AUDITION_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Programs exposed by a Track Device plugin.
 #[derive(Clone, Debug)]
@@ -482,6 +484,23 @@ impl AudioSupervisor {
             },
             "Instrument preview started through the realtime runtime.",
             COMMAND_ACK_TIMEOUT,
+        )
+    }
+
+    /// Opens the editor of a VST3 played live outside the Project: an
+    /// instrument by live MIDI, an effect on the selected audio input.
+    /// Closing the window discards the instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sidecar cannot load the plug-in or show its editor.
+    pub fn open_plugin_audition(&self, path: &Path) -> NativeAudioResult<AudioStatus> {
+        self.request_status(
+            SidecarCommand::OpenPluginAudition {
+                path: path.to_string_lossy().into_owned(),
+            },
+            "",
+            PLUGIN_AUDITION_TIMEOUT,
         )
     }
 
