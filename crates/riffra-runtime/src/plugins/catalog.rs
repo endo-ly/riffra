@@ -98,11 +98,11 @@ pub fn reuse_cached_scan_results(data_root: &Path, report: &mut ScanReport) {
     }
 }
 
-pub fn validated_plugin(
+/// Resolves a VST3 the current catalog validated, with its name, path, and role.
+pub fn validated_catalog_plugin(
     data_root: &Path,
     requested_path: &Path,
-    expected_role: PluginRole,
-) -> Result<(String, PathBuf), String> {
+) -> Result<(String, PathBuf, PluginRole), String> {
     let catalog_path = data_root.join("plugins/catalog.json");
     let payload = fs::read(&catalog_path)
         .map_err(|error| format!("Validated plugin catalog could not be read: {error}"))?;
@@ -130,19 +130,28 @@ pub fn validated_plugin(
             requested_path.display()
         ));
     }
-    if plugin.role != Some(expected_role) {
-        return Err(match plugin.role {
-            Some(role) => format!(
-                "The requested VST3 has role {role:?}, but this device requires {expected_role:?}: {}",
-                requested_path.display()
-            ),
-            None => format!(
-                "The requested VST3 has no validated role. Scan VST3 plugins before adding it: {}",
-                requested_path.display()
-            ),
-        });
+    let role = plugin.role.ok_or_else(|| {
+        format!(
+            "The requested VST3 has no validated role. Scan VST3 plugins before adding it: {}",
+            requested_path.display()
+        )
+    })?;
+    Ok((plugin.name, plugin.path, role))
+}
+
+pub fn validated_plugin(
+    data_root: &Path,
+    requested_path: &Path,
+    expected_role: PluginRole,
+) -> Result<(String, PathBuf), String> {
+    let (name, path, role) = validated_catalog_plugin(data_root, requested_path)?;
+    if role != expected_role {
+        return Err(format!(
+            "The requested VST3 has role {role:?}, but this device requires {expected_role:?}: {}",
+            requested_path.display()
+        ));
     }
-    Ok((plugin.name, plugin.path))
+    Ok((name, path))
 }
 
 #[cfg(test)]

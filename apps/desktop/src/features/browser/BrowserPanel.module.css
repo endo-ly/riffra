@@ -176,7 +176,7 @@
   border-radius: var(--radius-sm);
 }
 
-.rowPreview {
+.rowAction {
   width: var(--size-control-dense);
   height: var(--size-control-dense);
   flex: 0 0 auto;
@@ -189,9 +189,9 @@
   border-radius: var(--radius-sm);
 }
 
-.row:hover .rowPreview,
-.row.selected .rowPreview,
-.rowPreview.previewing {
+.row:hover .rowAction,
+.row.selected .rowAction,
+.rowAction.previewing {
   display: grid;
 }
 
@@ -200,12 +200,12 @@
   display: none;
 }
 
-.rowPreview:hover {
+.rowAction:hover {
   color: var(--color-text-primary);
   background: var(--color-bg-control-hover);
 }
 
-.rowPreview svg {
+.rowAction svg {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
 }

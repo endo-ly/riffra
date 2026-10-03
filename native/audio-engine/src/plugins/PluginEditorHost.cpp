@@ -43,8 +43,9 @@ public:
 
     void closeButtonPressed() override {
         auto self = host.shared_from_this();
-        juce::MessageManager::callAsync(
-            [self = std::move(self)] { (void)self->closeOnMessageThread(); });
+        juce::MessageManager::callAsync([self = std::move(self)] {
+            if (self->closeOnMessageThread() && self->onClosed) self->onClosed();
+        });
     }
 
 private:
@@ -52,10 +53,12 @@ private:
 };
 
 PluginEditorHost::PluginEditorHost(PluginRack& pluginRack, StateCallback stateCallback,
-                                   ParameterCallback parameterCallback)
+                                   ParameterCallback parameterCallback,
+                                   ClosedCallback closedCallback)
     : rack(pluginRack),
       onStateChanged(std::move(stateCallback)),
       onParameterChanged(std::move(parameterCallback)),
+      onClosed(std::move(closedCallback)),
       listener(std::make_unique<ProcessorListener>(*this)) {
     resizeParameterQueue();
 }

@@ -189,6 +189,12 @@ export interface AudioApi {
   previewAsset(assetId: AssetId, options: AssetPreviewOptions): Promise<AudioStatus>;
   previewInstrument(instrumentId: string): Promise<AudioStatus>;
   stopInstrumentPreview(): Promise<AudioStatus>;
+  /**
+   * Opens a VST3's editor outside the Project, played live like its standalone
+   * application: an instrument by live MIDI, an effect on the selected audio
+   * input. Closing the window discards it.
+   */
+  openPluginAudition(pluginPath: string): Promise<AudioStatus>;
   stopPreview(): Promise<AudioStatus>;
 
   getAudioStatus(): Promise<AudioStatus>;

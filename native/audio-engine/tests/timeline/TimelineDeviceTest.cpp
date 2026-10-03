@@ -88,6 +88,7 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     std::atomic<bool> timelineOperationRunning{false};
@@ -101,6 +102,7 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
         trackPluginEditor,
         trackPluginEditorTrackId,
         trackPluginEditorDeviceId,
+        auditionEditor,
         comparisonRaw,
         comparisonProcessed,
         timelineOperationRunning,
@@ -156,6 +158,7 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     std::atomic<bool> timelineOperationRunning{false};
@@ -169,6 +172,7 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
         trackPluginEditor,
         trackPluginEditorTrackId,
         trackPluginEditorDeviceId,
+        auditionEditor,
         comparisonRaw,
         comparisonProcessed,
         timelineOperationRunning,
@@ -210,6 +214,7 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
     juce::String trackPluginEditorTrackId;
     juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
     juce::AudioBuffer<float> comparisonProcessed;
     std::atomic<bool> timelineOperationRunning{false};
@@ -223,6 +228,7 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
         trackPluginEditor,
         trackPluginEditorTrackId,
         trackPluginEditorDeviceId,
+        auditionEditor,
         comparisonRaw,
         comparisonProcessed,
         timelineOperationRunning,

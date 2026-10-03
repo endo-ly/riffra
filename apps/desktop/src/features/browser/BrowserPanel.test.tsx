@@ -46,6 +46,8 @@ const verb: PluginEntry = {
   scanState: 'validated',
 };
 
+const synth: PluginEntry = { ...verb, id: 'plugin:synth', name: 'Wave Synth', role: 'instrument' };
+
 const take = {
   id: 'recording:C:\\inbox\\take-a',
   name: 'Take A',
@@ -115,6 +117,7 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     inbox: inbox(),
     selectedTrack: null,
     onApply: vi.fn(),
+    onOpenPlugin: vi.fn(),
     ...overrides,
   };
   render(<BrowserPanel {...props} />);
@@ -163,6 +166,32 @@ describe('BrowserPanel', () => {
       pluginPath: 'C:\\VST3\\SpaceVerb.vst3',
       name: 'Space Verb',
     });
+  });
+
+  it('opens instrument and effect plug-ins instead of previewing them', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const props = renderBrowser({ plugins: [verb, synth] });
+    await user.click(treeItem('Plug-ins'));
+
+    // Act
+    await user.click(treeItem('Wave Synth'));
+    await user.click(
+      within(screen.getByRole('region', { name: 'Selected: Wave Synth' })).getByRole('button', {
+        name: 'Open Wave Synth',
+      }),
+    );
+    await user.click(treeItem('Effects'));
+    await user.click(treeItem('Space Verb'));
+    await user.click(
+      within(screen.getByRole('region', { name: 'Selected: Space Verb' })).getByRole('button', {
+        name: 'Open Space Verb',
+      }),
+    );
+
+    // Assert
+    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(1, synth);
+    expect(props.onOpenPlugin).toHaveBeenNthCalledWith(2, verb);
   });
 
   it('lists search matches from every source with where they live', () => {

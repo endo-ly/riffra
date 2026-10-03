@@ -484,6 +484,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               }}
               instruments={browser.instruments}
               plugins={browser.plugins}
+              onOpenPlugin={(plugin) => void browser.onOpenPlugin(plugin)}
               recordings={browser.recordings}
               inbox={browser.inbox}
               selectedTrack={arrange.selectedTrack}

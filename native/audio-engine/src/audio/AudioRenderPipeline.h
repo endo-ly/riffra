@@ -9,6 +9,7 @@
 
 #include "AudioMetrics.h"
 #include "AudioSafetyDsp.h"
+#include "PluginAudition.h"
 #include "PreviewEngine.h"
 #include "app/RecordingController.h"
 
@@ -88,6 +89,7 @@ public:
     [[nodiscard]] AudioMetrics& metrics() noexcept { return audioMetrics; }
     [[nodiscard]] const AudioMetrics& metrics() const noexcept { return audioMetrics; }
     [[nodiscard]] PreviewEngine& preview() noexcept { return previewEngine; }
+    [[nodiscard]] PluginAudition& audition() noexcept { return pluginAudition; }
     [[nodiscard]] RecordingController& recording() noexcept { return recordingController; }
 
     RealtimeRequest startArrangeRecording(const juce::File& directory, int countInBeats,
@@ -169,6 +171,7 @@ private:
     TimelineEngine& timelineEngine;
     AudioMetrics audioMetrics;
     PreviewEngine previewEngine;
+    PluginAudition pluginAudition;
     RecordingController recordingController;
 
     std::atomic<std::uint32_t> muteReasons{0};

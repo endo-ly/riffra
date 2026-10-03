@@ -131,6 +131,11 @@ struct StopPreviewCommand final {};
 
 struct StopInstrumentPreviewCommand final {};
 
+/// Opens a VST3's editor outside the Project, played live like its standalone application.
+struct OpenPluginAuditionCommand final {
+    juce::String path;
+};
+
 struct StartTakeComparisonCommand final {
     juce::String rawPath;
     juce::String processedPath;
@@ -166,19 +171,18 @@ struct StartArrangeRecordingCommand final {
 
 struct StopArrangeRecordingCommand final {};
 
-using SidecarCommandSpec =
-    std::variant<StatusCommand, SetEmergencyMuteCommand, SetFeedbackProtectionCommand,
-                 SetEngineTransitionMuteCommand, PreviewMasterGainDbCommand,
-                 PrepareTimelineSnapshotCommand, CommitTimelineSnapshotCommand,
-                 DiscardTimelineSnapshotCommand, WaitForTimelineIdleCommand, TransportCommand,
-                 SetMidiListeningCommand, SetLiveMidiTargetCommand, SendTrackMidiCommand,
-                 PanicTrackMidiCommand, SetTrackMixCommand, SetTrackDeviceBypassedCommand,
-                 SetTrackDeviceParameterCommand, GetTrackDeviceCommand, SetTrackPluginStateCommand,
-                 SetTrackDeviceProgramCommand, OpenTrackPluginEditorCommand, PreviewSampleCommand,
-                 PreviewInstrumentCommand, StopPreviewCommand, StopInstrumentPreviewCommand,
-                 StartTakeComparisonCommand, SwitchTakeComparisonVariantCommand,
-                 StopTakeComparisonCommand, RecoverAudioDeviceCommand, SetAudioDriverCommand,
-                 StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
+using SidecarCommandSpec = std::variant<
+    StatusCommand, SetEmergencyMuteCommand, SetFeedbackProtectionCommand,
+    SetEngineTransitionMuteCommand, PreviewMasterGainDbCommand, PrepareTimelineSnapshotCommand,
+    CommitTimelineSnapshotCommand, DiscardTimelineSnapshotCommand, WaitForTimelineIdleCommand,
+    TransportCommand, SetMidiListeningCommand, SetLiveMidiTargetCommand, SendTrackMidiCommand,
+    PanicTrackMidiCommand, SetTrackMixCommand, SetTrackDeviceBypassedCommand,
+    SetTrackDeviceParameterCommand, GetTrackDeviceCommand, SetTrackPluginStateCommand,
+    SetTrackDeviceProgramCommand, OpenTrackPluginEditorCommand, PreviewSampleCommand,
+    PreviewInstrumentCommand, StopPreviewCommand, StopInstrumentPreviewCommand,
+    OpenPluginAuditionCommand, StartTakeComparisonCommand, SwitchTakeComparisonVariantCommand,
+    StopTakeComparisonCommand, RecoverAudioDeviceCommand, SetAudioDriverCommand,
+    StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
 
 /// One decoded stdin line of the realtime sidecar.
 struct SidecarRequestSpec final {
@@ -187,7 +191,7 @@ struct SidecarRequestSpec final {
 };
 
 /// Every command `type` accepted on stdin.
-inline constexpr std::array<std::string_view, 39> kSidecarCommandTypes{
+inline constexpr std::array<std::string_view, 40> kSidecarCommandTypes{
     "status",
     "setEmergencyMute",
     "setFeedbackProtection",
@@ -220,6 +224,7 @@ inline constexpr std::array<std::string_view, 39> kSidecarCommandTypes{
     "previewInstrument",
     "stopPreview",
     "stopInstrumentPreview",
+    "openPluginAudition",
     "startTakeComparison",
     "switchTakeComparisonVariant",
     "stopTakeComparison",

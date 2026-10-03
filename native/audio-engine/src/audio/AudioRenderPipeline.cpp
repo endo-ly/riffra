@@ -162,6 +162,11 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
                                                        inputChannelData[channel] != selectedInput));
         }
     }
+    // An auditioned effect plays the selected input, so it is monitored like a Track route.
+    if (selectedInput != nullptr && pluginAudition.monitorsInput()) {
+        monitoringActive = true;
+        monitoredInputPeak = std::max(monitoredInputPeak, rawInputPeak);
+    }
     if (invalidInputSamples > 0)
         audioMetrics.recordBlock(projectEpoch, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0,
                                  invalidInputSamples);
@@ -222,6 +227,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
     timelineEngine.mixMetronome(outputChannelData, numOutputChannels, numSamples);
     (void)previewEngine.tryMix(outputChannelData, numOutputChannels, numSamples,
                                activeSampleRate.load(std::memory_order_acquire));
+    pluginAudition.mix(selectedInput, outputChannelData, numOutputChannels, numSamples,
+                       activeSampleRate.load(std::memory_order_acquire));
     dcBlocker.processBlock(outputChannelData, numOutputChannels, numSamples);
 
     for (int sample = 0; sample < numSamples; ++sample) {

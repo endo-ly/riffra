@@ -382,6 +382,9 @@ export class FakeNativeApi implements NativeApi {
   stopInstrumentPreview(...args: Parameters<NativeApi['stopInstrumentPreview']>) {
     return this.command('stopInstrumentPreview', args);
   }
+  openPluginAudition(...args: Parameters<NativeApi['openPluginAudition']>) {
+    return this.command('openPluginAudition', args);
+  }
   stopPreview(...args: Parameters<NativeApi['stopPreview']>) {
     return this.command('stopPreview', args);
   }
@@ -890,6 +893,8 @@ export class FakeNativeApi implements NativeApi {
       case 'stopInstrumentPreview':
         this.audio = { ...this.audio, instrumentPreviewing: false };
         this.emitAudioStatus(this.audio);
+        return Promise.resolve(this.audio);
+      case 'openPluginAudition':
         return Promise.resolve(this.audio);
       case 'stopPreview':
         this.audio = { ...this.audio, previewing: false, instrumentPreviewing: false };

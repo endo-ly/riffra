@@ -8,10 +8,14 @@
 
 #include "../AudioCommandDispatcher.h"
 #include "audio/InstrumentPreviewSession.h"
+#include "plugins/PluginEditorHost.h"
 #include "timeline/TimelineEngine.h"
 
 namespace riffra {
 namespace {
+
+/// Loading a VST3 gets the same budget as loading one into the Arrangement Graph.
+constexpr auto kPluginAuditionTimeout = std::chrono::seconds(45);
 
 struct InstrumentPreviewResult final {
     bool success = false;
@@ -64,6 +68,88 @@ bool loadComparisonFile(juce::AudioFormatManager& formatManager, const double ta
 }
 
 }  // namespace
+
+void AudioCommandDispatcher::handle(const OpenPluginAuditionCommand& command,
+                                    CommandResponder responder) {
+    if (rejectWhileTimelineBusy(responder,
+                                "The Arrangement Graph is still loading a VST3. The plug-in can "
+                                "be opened when it finishes."))
+        return;
+    const auto pending = std::make_shared<CommandResponder>(std::move(responder));
+    context.timelineOperationRunning.store(true, std::memory_order_release);
+    const auto submitted = context.runtimeLifecycle.submit(
+        [this, path = command.path, pending] {
+            juce::String error;
+            bool opened = false;
+            try {
+                opened = openPluginAudition(path, error);
+            } catch (const std::exception& exception) {
+                error = "Opening the VST3 raised an exception: " + juce::String(exception.what());
+            } catch (...) {
+                error = "Opening the VST3 failed with an unknown exception.";
+            }
+            if (!opened) closePluginAudition();
+            context.timelineOperationRunning.store(false, std::memory_order_release);
+            if (!opened) {
+                pending->fail("pluginAudition", error, "plugin.audition.open");
+                return;
+            }
+            pending->respond(currentStatus());
+        },
+        kPluginAuditionTimeout);
+    if (!submitted) {
+        context.timelineOperationRunning.store(false, std::memory_order_release);
+        pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
+                      "plugin.audition.open");
+    }
+}
+
+bool AudioCommandDispatcher::openPluginAudition(const juce::String& path, juce::String& error) {
+    auto& audition = context.pipeline.audition();
+    const auto sampleRate = context.pipeline.getSampleRate();
+    const auto blockSize = context.pipeline.getBlockSize();
+    if (const auto* current = audition.installed(); current != nullptr) {
+        const auto status = current->status();
+        // An instance prepared for an earlier device format stays silent, so it is reloaded.
+        if (status.path == path && status.sampleRate == sampleRate && status.blockSize == blockSize)
+            return context.auditionEditor->open(error);
+    }
+    closePluginAudition();
+
+    if (sampleRate <= 0.0 || blockSize <= 0) {
+        error = "Opening a plug-in requires an active audio device.";
+        return false;
+    }
+    auto loaded = std::make_unique<PluginRack>();
+    if (const auto loadError =
+            loaded->load(path, sampleRate, blockSize, PluginProcessingMode::realtime)) {
+        error = loadError->scope + ": " + loadError->message;
+        return false;
+    }
+    auto& rack = *loaded;
+    audition.install(std::move(loaded), sampleRate, blockSize);
+    context.auditionEditor = std::make_shared<PluginEditorHost>(
+        rack, PluginEditorHost::StateCallback{}, PluginEditorHost::ParameterCallback{}, [this] {
+            // Closing the window ends the audition; the plug-in is not kept.
+            // The audition may have been reopened or replaced before this runs.
+            (void)context.runtimeLifecycle.submit(
+                [this] {
+                    if (context.auditionEditor != nullptr && !context.auditionEditor->isOpen())
+                        closePluginAudition();
+                },
+                kPluginAuditionTimeout);
+        });
+    return context.auditionEditor->open(error);
+}
+
+void AudioCommandDispatcher::closePluginAudition() {
+    if (context.auditionEditor != nullptr) {
+        context.auditionEditor->close();
+        context.auditionEditor.reset();
+    }
+    // The plug-in is destroyed here, on the lifecycle thread.
+    (void)context.pipeline.audition().uninstall();
+}
 
 void AudioCommandDispatcher::handle(const StartTakeComparisonCommand& command,
                                     CommandResponder responder) {

@@ -357,6 +357,7 @@ control_commands! {
         PluginScan = "plugin.scan" (PluginScanParams) -> PluginScan, host;
         PluginScanStart = "plugin.scan.start" (PluginScanParams) -> Job, host;
         PluginEditorOpen = "plugin.editor.open" (TrackDeviceParams) -> Ok, project;
+        PluginAuditionOpen = "plugin.audition.open" (PluginAuditionParams) -> AudioStatus, host;
         DeviceInspect = "device.inspect" (TrackDeviceParams) -> DeviceInspection, project;
         DeviceParameterList = "device.parameter.list" (TrackDeviceParams) -> DeviceParameters, project;
         DeviceParameterGet = "device.parameter.get" (DeviceParameterGetParams) -> DeviceParameter, project;

@@ -57,6 +57,8 @@ export interface BrowserPanelProps {
   onApply: (placement: BrowserPlacement) => void;
   projectSwitching?: boolean;
   safeMode?: boolean;
+  /** Opens a VST3's editor outside the Project. */
+  onOpenPlugin: (plugin: PluginEntry) => void;
 }
 
 interface BrowserRow {
@@ -159,12 +161,13 @@ export function BrowserPanel(props: BrowserPanelProps) {
     };
   };
 
-  const previewFor = (item: BrowserItem): BrowserItemAction | null => {
+  const actionFor = (item: BrowserItem): BrowserItemAction | null => {
     switch (item.kind) {
       case 'instrument':
         if (item.instrument.preview === null || props.safeMode) return null;
         return {
           label: instruments.previewingId === item.instrument.id ? 'Stop preview' : 'Preview',
+          icon: instruments.previewingId === item.instrument.id ? 'stop' : 'play',
           active: instruments.previewingId === item.instrument.id,
           pending: instruments.previewPendingId !== null,
           run: () => void instruments.preview(item.instrument),
@@ -173,15 +176,30 @@ export function BrowserPanel(props: BrowserPanelProps) {
         if (!browserItemPlacement(item)) return null;
         return {
           label: 'Preview',
+          icon: 'play',
           active: false,
           pending: false,
           run: () => void inbox.preview(item.recording),
         };
       case 'asset':
         if (item.asset.kind !== 'audio') return null;
-        return { label: 'Preview', active: false, pending: false, run: library.onPreviewAsset };
+        return {
+          label: 'Preview',
+          icon: 'play',
+          active: false,
+          pending: false,
+          run: library.onPreviewAsset,
+        };
       case 'plugin':
-        return null;
+        // A VST3 opens like its standalone application instead of previewing.
+        if (item.plugin.scanState !== 'validated' || props.safeMode) return null;
+        return {
+          label: 'Open',
+          icon: 'maximize',
+          active: false,
+          pending: false,
+          run: () => props.onOpenPlugin(item.plugin),
+        };
     }
   };
 
@@ -280,7 +298,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
       case ' ':
         if (!row) return;
         if (row.node.kind === 'folder') toggleFolder(row.node);
-        else previewFor(row.node)?.run();
+        else actionFor(row.node)?.run();
         break;
       default:
         return;
@@ -289,10 +307,10 @@ export function BrowserPanel(props: BrowserPanelProps) {
   };
 
   const menuItems = (item: BrowserItem): ContextMenuItem[] => {
-    const preview = previewFor(item);
+    const action = actionFor(item);
     const placement = placementFor(item);
     const items: ContextMenuItem[] = [
-      ...(preview ? [{ label: preview.label, onClick: preview.run }] : []),
+      ...(action ? [{ label: action.label, onClick: action.run }] : []),
       ...(placement
         ? [{ label: placement.label, disabled: !placement.available, onClick: () => apply(item) }]
         : []),
@@ -408,7 +426,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
               active={index === activeIndex}
               selected={node.key === selectedKey}
               duplicate={node.kind === 'recording' && inbox.duplicateIds.has(node.recording.id)}
-              preview={previewFor(node)}
+              action={actionFor(node)}
               onSelect={() => select(row)}
               onApply={() => apply(node)}
               onDragStart={(event) => startDrag(event, node)}
@@ -429,7 +447,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
       </div>
       <BrowserSelection
         item={selected}
-        preview={selected && previewFor(selected)}
+        action={selected && actionFor(selected)}
         placement={selected && placementFor(selected)}
         onApply={() => selected && apply(selected)}
         onDeleteRecording={(recording) => setPendingDelete(recording)}
@@ -546,7 +564,7 @@ function ItemRow(props: {
   active: boolean;
   selected: boolean;
   duplicate: boolean;
-  preview: BrowserItemAction | null;
+  action: BrowserItemAction | null;
   onSelect: () => void;
   onApply: () => void;
   onDragStart: (event: DragEvent) => void;
@@ -578,19 +596,19 @@ function ItemRow(props: {
       {props.item.kind === 'plugin' && <span className={styles.badge}>VST3</span>}
       {props.duplicate && <span className={styles.badge}>Duplicate</span>}
       <span className={styles.detail}>{detail}</span>
-      {props.preview && (
+      {props.action && (
         <button
           type="button"
           tabIndex={-1}
-          className={clsx(styles.rowPreview, props.preview.active && styles.previewing)}
-          aria-label={`${props.preview.label} ${browserItemName(props.item)}`}
-          disabled={props.preview.pending}
+          className={clsx(styles.rowAction, props.action.active && styles.previewing)}
+          aria-label={`${props.action.label} ${browserItemName(props.item)}`}
+          disabled={props.action.pending}
           onClick={(event) => {
             event.stopPropagation();
-            props.preview?.run();
+            props.action?.run();
           }}
         >
-          <Icon name={props.preview.active ? 'stop' : 'play'} />
+          <Icon name={props.action.icon} />
         </button>
       )}
     </div>

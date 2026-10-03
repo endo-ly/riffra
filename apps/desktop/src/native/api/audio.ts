@@ -75,6 +75,14 @@ export async function stopInstrumentPreview(): Promise<AudioStatus> {
   }
 }
 
+export async function openPluginAudition(pluginPath: string): Promise<AudioStatus> {
+  try {
+    return await dispatchControl({ command: 'plugin.audition.open', params: { pluginPath } });
+  } catch (error) {
+    return await audioCommandError('Open plug-in', error);
+  }
+}
+
 export async function stopPreview(): Promise<AudioStatus> {
   try {
     return await dispatchControl({ command: 'asset.preview.stop', params: {} });

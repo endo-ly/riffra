@@ -3,6 +3,7 @@ import { isEditableTypingTarget } from '@/shared/input';
 import { logNativeError } from '@/native/invoke';
 import { defaultNativeApi } from '@/native/native';
 import type { NativeApi } from '@/native/native-api';
+import type { PluginEntry } from '@/model/domain';
 import { useAppRuntime } from '@/app/runtime/useAppRuntime';
 import { useHostConnection } from '@/app/runtime/useHostConnection';
 import { useStartupRuntimeRestore } from '@/app/runtime/useStartupRuntimeRestore';
@@ -75,6 +76,16 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     runBackgroundJob,
   });
   const { plugins, scanPlugins } = pluginCatalog;
+  const openPlugin = useCallback(
+    async (plugin: PluginEntry) => {
+      try {
+        setAudio(await api.openPluginAudition(plugin.path));
+      } catch (error) {
+        logNativeError('openPluginAudition')(error);
+      }
+    },
+    [api, setAudio],
+  );
   useStartupRuntimeRestore({
     hostGeneration: hostConnection.state.generation,
     hostReady,
@@ -343,6 +354,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       },
       instruments,
       plugins,
+      onOpenPlugin: openPlugin,
       recordings,
       inbox,
     },

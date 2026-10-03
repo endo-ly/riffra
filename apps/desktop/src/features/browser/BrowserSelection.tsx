@@ -8,8 +8,10 @@ import { Icon } from '@/shared/ui/primitives';
 import { browserItemDetail, browserItemName, type BrowserItem } from './model/browser-tree';
 import styles from './BrowserPanel.module.css';
 
+/** The one-click action of a Browser item: a preview, or opening a plug-in. */
 export interface BrowserItemAction {
   label: string;
+  icon: 'play' | 'stop' | 'maximize';
   active: boolean;
   /** The engine is still starting or stopping this preview. */
   pending: boolean;
@@ -18,7 +20,7 @@ export interface BrowserItemAction {
 
 interface BrowserSelectionProps {
   item: BrowserItem | null;
-  preview: BrowserItemAction | null;
+  action: BrowserItemAction | null;
   placement: { label: string; available: boolean } | null;
   onApply: () => void;
   onDeleteRecording: (recording: RecordingAsset) => void;
@@ -154,15 +156,15 @@ function SelectedItem(props: BrowserSelectionProps & { item: BrowserItem }) {
         {(editing && editor(props, editing, stopEditing)) ?? info(props)}
       </div>
       <div className={styles.selectionActions}>
-        {props.preview && (
+        {props.action && (
           <button
             type="button"
-            className={clsx(styles.selectionIcon, props.preview.active && styles.previewing)}
-            aria-label={`${props.preview.label} ${name}`}
-            disabled={props.preview.pending}
-            onClick={props.preview.run}
+            className={clsx(styles.selectionIcon, props.action.active && styles.previewing)}
+            aria-label={`${props.action.label} ${name}`}
+            disabled={props.action.pending}
+            onClick={props.action.run}
           >
-            <Icon name={props.preview.active ? 'stop' : 'play'} />
+            <Icon name={props.action.icon} />
           </button>
         )}
         {props.placement && (
