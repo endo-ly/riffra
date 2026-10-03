@@ -6,6 +6,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from 'react';
 import type { LibraryAsset, PluginEntry, RecordingAsset, Track } from '@/model/domain';
 import type { InboxController } from '@/features/library/hooks/useInbox';
@@ -22,11 +23,12 @@ import { showToast } from '@/shared/toasts';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
-import { BrowserSelection, InlineEdit, type BrowserItemAction } from './BrowserSelection';
+import { BrowserItemEditor, InlineEdit, type BrowserItemEdit } from './BrowserItemEditor';
 import {
   browserItemDetail,
   browserItemName,
   browserItemPlacement,
+  browserItemSummary,
   buildBrowserTree,
   searchBrowserItems,
   type BrowserFolder,
@@ -37,13 +39,28 @@ import styles from './BrowserPanel.module.css';
 
 type InstrumentController = ReturnType<typeof useInstrumentLibrary>;
 
+/** The one-click action of a Browser item: a preview, or opening a plug-in. */
+interface BrowserItemAction {
+  label: string;
+  icon: 'play' | 'stop' | 'maximize';
+  active: boolean;
+  /** The engine is still starting or stopping this preview. */
+  pending: boolean;
+  run: () => void;
+}
+
+/** Where a Browser item would be placed, and whether that is possible now. */
+interface BrowserItemPlacementAction {
+  placement: BrowserPlacement;
+  label: string;
+  available: boolean;
+}
+
 export interface BrowserPanelProps {
   query: string;
   onQueryChange: (query: string) => void;
   library: {
     results: LibraryAsset[];
-    selectedAsset: LibraryAsset | null;
-    relatedAssets: LibraryAsset[];
     onSelectAsset: (asset: LibraryAsset) => void;
     onPreviewAsset: () => void;
     onUpdateAsset: (tag: string | null, note: string | null) => void;
@@ -97,6 +114,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
     name: string;
   } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<RecordingAsset | null>(null);
+  const [editing, setEditing] = useState<{ key: string; edit: BrowserItemEdit } | null>(null);
 
   const sources = useMemo(
     () => ({
@@ -131,11 +149,6 @@ export function BrowserPanel(props: BrowserPanelProps) {
         : visibleRows(tree, expanded),
     [expanded, library.results, props.query, searching, sources, tree],
   );
-  const selected = useMemo(
-    () => findItem(selectedKey, tree, rows, library.selectedAsset),
-    [library.selectedAsset, rows, selectedKey, tree],
-  );
-
   const activeIndex = rows.findIndex((row) => row.key === activeRowKey);
   useEffect(() => {
     if (activeIndex < 0) return;
@@ -150,7 +163,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
     showToast('inbox', inbox.error ?? inbox.message, { kind: inbox.error ? 'error' : 'info' });
   }, [inbox.error, inbox.message]);
 
-  const placementFor = (item: BrowserItem) => {
+  const placementFor = (item: BrowserItem): BrowserItemPlacementAction | null => {
     const placement = browserItemPlacement(item);
     if (!placement) return null;
     const target = resolvePlacementTarget(placement, props.selectedTrack, false);
@@ -295,6 +308,14 @@ export function BrowserPanel(props: BrowserPanelProps) {
         if (row.node.kind === 'folder') toggleFolder(row.node);
         else apply(row.node);
         break;
+      case 'ContextMenu':
+      case 'F10': {
+        if (!row || row.node.kind === 'folder') return;
+        if (event.key === 'F10' && !event.shiftKey) return;
+        const bounds = document.getElementById(rowId(activeIndex))?.getBoundingClientRect();
+        setMenu({ x: bounds?.left ?? 0, y: bounds?.bottom ?? 0, items: menuItems(row.node) });
+        break;
+      }
       case ' ':
         if (!row) return;
         if (row.node.kind === 'folder') toggleFolder(row.node);
@@ -309,28 +330,75 @@ export function BrowserPanel(props: BrowserPanelProps) {
   const menuItems = (item: BrowserItem): ContextMenuItem[] => {
     const action = actionFor(item);
     const placement = placementFor(item);
-    const items: ContextMenuItem[] = [
-      ...(action ? [{ label: action.label, onClick: action.run }] : []),
+    const edit = (field: BrowserItemEdit) => () => setEditing({ key: item.key, edit: field });
+    const items: ContextMenuItem[] = [];
+    const section = (entries: ContextMenuItem[]) => {
+      if (entries.length === 0) return;
+      if (items.length > 0) items.push({ separator: true });
+      items.push(...entries);
+    };
+    section([
+      ...(action ? [{ label: action.label, disabled: action.pending, onClick: action.run }] : []),
       ...(placement
         ? [{ label: placement.label, disabled: !placement.available, onClick: () => apply(item) }]
         : []),
-    ];
-    if (item.kind === 'instrument') {
-      items.push(
-        { separator: true },
-        {
-          label: item.instrument.favorite ? 'Remove from Favorites' : 'Add to Favorites',
-          onClick: () => void instruments.toggleFavorite(item.instrument),
-        },
-      );
-    }
-    if (item.kind === 'recording' && !item.recording.error) {
-      items.push(
-        { separator: true },
-        { label: 'Promote', onClick: () => void inbox.promote(item.recording.id) },
-        { label: 'Archive', onClick: () => void inbox.archive(item.recording.id) },
-        { label: 'Delete…', danger: true, onClick: () => setPendingDelete(item.recording) },
-      );
+    ]);
+    switch (item.kind) {
+      case 'instrument': {
+        const { instrument } = item;
+        section([
+          {
+            label: instrument.favorite ? 'Remove from Favorites' : 'Add to Favorites',
+            onClick: () => void instruments.toggleFavorite(instrument),
+          },
+          { label: 'Edit tags…', onClick: edit('tags') },
+        ]);
+        section([
+          ...instruments.collections.map((collection) => {
+            const included = instrument.collectionIds.includes(collection.id);
+            return {
+              label: `${included ? '✓ ' : ''}${collection.name}`,
+              onClick: () =>
+                void instruments.setCollectionMembership(instrument, collection.id, !included),
+            };
+          }),
+          { label: 'New collection…', onClick: edit('collection') },
+        ]);
+        // Built-in categories are fixed; only User Instruments can be refiled.
+        if (instrument.origin === 'user')
+          section([
+            { label: 'Change category…', onClick: edit('category') },
+            ...(instrument.category !== instrument.defaultCategory
+              ? [
+                  {
+                    label: `Reset to ${instrument.defaultCategory}`,
+                    onClick: () => void instruments.setCategory(instrument, null),
+                  },
+                ]
+              : []),
+          ]);
+        break;
+      }
+      case 'recording':
+        if (item.recording.error) break;
+        section([
+          { label: 'Rename…', onClick: edit('rename') },
+          { label: 'Tag and note…', onClick: edit('tagNote') },
+        ]);
+        section([
+          { label: 'Promote', onClick: () => void inbox.promote(item.recording.id) },
+          { label: 'Archive', onClick: () => void inbox.archive(item.recording.id) },
+          { label: 'Delete…', danger: true, onClick: () => setPendingDelete(item.recording) },
+        ]);
+        break;
+      case 'asset':
+        section([
+          { label: 'Edit tag…', onClick: edit('assetTag') },
+          { label: 'Edit note…', onClick: edit('assetNote') },
+        ]);
+        break;
+      case 'plugin':
+        break;
     }
     return items;
   };
@@ -417,6 +485,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
                 }}
               />
             );
+          const duplicate = node.kind === 'recording' && inbox.duplicateIds.has(node.recording.id);
           return (
             <ItemRow
               key={row.key}
@@ -425,15 +494,28 @@ export function BrowserPanel(props: BrowserPanelProps) {
               item={node}
               active={index === activeIndex}
               selected={node.key === selectedKey}
-              duplicate={node.kind === 'recording' && inbox.duplicateIds.has(node.recording.id)}
+              duplicate={duplicate}
+              summary={browserItemSummary(node, duplicate)}
               action={actionFor(node)}
+              placement={placementFor(node)}
+              editor={
+                editing?.key === node.key ? (
+                  <BrowserItemEditor
+                    item={node}
+                    edit={editing.edit}
+                    instruments={instruments}
+                    inbox={inbox}
+                    onUpdateAsset={library.onUpdateAsset}
+                    onDone={() => setEditing(null)}
+                  />
+                ) : null
+              }
               onSelect={() => select(row)}
               onApply={() => apply(node)}
               onDragStart={(event) => startDrag(event, node)}
-              onContextMenu={(event) => {
-                event.preventDefault();
+              onMenu={(x, y) => {
                 select(row);
-                setMenu({ x: event.clientX, y: event.clientY, items: menuItems(node) });
+                setMenu({ x, y, items: menuItems(node) });
               }}
             />
           );
@@ -445,17 +527,6 @@ export function BrowserPanel(props: BrowserPanelProps) {
           </p>
         )}
       </div>
-      <BrowserSelection
-        item={selected}
-        action={selected && actionFor(selected)}
-        placement={selected && placementFor(selected)}
-        onApply={() => selected && apply(selected)}
-        onDeleteRecording={(recording) => setPendingDelete(recording)}
-        duplicate={selected?.kind === 'recording' && inbox.duplicateIds.has(selected.recording.id)}
-        instruments={instruments}
-        inbox={inbox}
-        onUpdateAsset={library.onUpdateAsset}
-      />
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
       )}
@@ -493,29 +564,6 @@ function rowId(index: number): string {
   return `browser-row-${index}`;
 }
 
-function findItem(
-  key: string | null,
-  tree: BrowserFolder[],
-  rows: BrowserRow[],
-  selectedAsset: LibraryAsset | null,
-): BrowserItem | null {
-  if (!key) return null;
-  if (selectedAsset && key === `asset:${selectedAsset.id}`)
-    return { kind: 'asset', key, asset: selectedAsset };
-  const visit = (nodes: BrowserNode[]): BrowserItem | null => {
-    for (const node of nodes) {
-      if (node.kind !== 'folder' && node.key === key) return node;
-      if (node.kind === 'folder') {
-        const found = visit(node.children);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-  const inRows = rows.find((row) => row.node.kind !== 'folder' && row.node.key === key);
-  return inRows && inRows.node.kind !== 'folder' ? inRows.node : visit(tree);
-}
-
 function FolderRow(props: {
   id: string;
   row: BrowserRow;
@@ -543,12 +591,14 @@ function FolderRow(props: {
         <Icon name="chevron" />
       </span>
       {props.renaming ? (
-        <InlineEdit
-          label={`Rename ${props.folder.label}`}
-          initial={props.folder.label}
-          onCommit={props.onRename}
-          onDone={props.onRenameEnd}
-        />
+        <EditSlot>
+          <InlineEdit
+            label={`Rename ${props.folder.label}`}
+            initial={props.folder.label}
+            onCommit={props.onRename}
+            onDone={props.onRenameEnd}
+          />
+        </EditSlot>
       ) : (
         <span className={styles.name}>{props.folder.label}</span>
       )}
@@ -564,13 +614,17 @@ function ItemRow(props: {
   active: boolean;
   selected: boolean;
   duplicate: boolean;
+  summary: string;
   action: BrowserItemAction | null;
+  placement: BrowserItemPlacementAction | null;
+  editor: ReactNode;
   onSelect: () => void;
   onApply: () => void;
   onDragStart: (event: DragEvent) => void;
-  onContextMenu: (event: MouseEvent) => void;
+  onMenu: (x: number, y: number) => void;
 }) {
-  const placeable = browserItemPlacement(props.item) !== null;
+  const name = browserItemName(props.item);
+  const placeable = props.placement !== null;
   const detail = props.row.location ?? browserItemDetail(props.item);
   return (
     <div
@@ -578,6 +632,7 @@ function ItemRow(props: {
       role="treeitem"
       aria-level={props.row.depth + 1}
       aria-selected={props.selected}
+      title={props.summary}
       className={clsx(
         styles.row,
         props.active && styles.active,
@@ -585,32 +640,86 @@ function ItemRow(props: {
         !placeable && styles.unavailable,
       )}
       style={{ paddingLeft: `calc(var(--space-4) * ${props.row.depth} + var(--space-1))` }}
-      draggable={placeable}
+      draggable={placeable && !props.editor}
       onDragStart={props.onDragStart}
       onClick={props.onSelect}
       onDoubleClick={props.onApply}
-      onContextMenu={props.onContextMenu}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        props.onMenu(event.clientX, event.clientY);
+      }}
     >
       <span className={styles.disclosure} />
-      <span className={styles.name}>{browserItemName(props.item)}</span>
-      {props.item.kind === 'plugin' && <span className={styles.badge}>VST3</span>}
-      {props.duplicate && <span className={styles.badge}>Duplicate</span>}
-      <span className={styles.detail}>{detail}</span>
-      {props.action && (
-        <button
-          type="button"
-          tabIndex={-1}
-          className={clsx(styles.rowAction, props.action.active && styles.previewing)}
-          aria-label={`${props.action.label} ${browserItemName(props.item)}`}
-          disabled={props.action.pending}
-          onClick={(event) => {
-            event.stopPropagation();
-            props.action?.run();
-          }}
-        >
-          <Icon name={props.action.icon} />
-        </button>
+      {props.editor ? (
+        <EditSlot>{props.editor}</EditSlot>
+      ) : (
+        <>
+          <span className={styles.name}>{name}</span>
+          {props.item.kind === 'plugin' && <span className={styles.badge}>VST3</span>}
+          {props.item.kind === 'instrument' && props.item.instrument.origin === 'user' && (
+            <span className={styles.badge}>User</span>
+          )}
+          {props.duplicate && <span className={styles.badge}>Duplicate</span>}
+          <span className={styles.detail}>{detail}</span>
+          {props.action && (
+            <RowButton
+              className={clsx(styles.rowAction, props.action.active && styles.previewing)}
+              label={`${props.action.label} ${name}`}
+              disabled={props.action.pending}
+              onClick={props.action.run}
+            >
+              <Icon name={props.action.icon} />
+            </RowButton>
+          )}
+          {props.placement && (
+            <RowButton
+              label={props.placement.label}
+              disabled={!props.placement.available}
+              onClick={props.onApply}
+            >
+              <Icon name="plus" />
+            </RowButton>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+/** A button on a row, shown while the row is hovered, selected, or active. */
+function RowButton(props: {
+  label: string;
+  className?: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      className={clsx(styles.rowButton, props.className)}
+      aria-label={props.label}
+      // aria-disabled keeps the tooltip, which says why the button cannot be used.
+      aria-disabled={props.disabled}
+      title={props.label}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!props.disabled) props.onClick();
+      }}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/** Keeps clicks and keys inside an in-row editor from reaching the row and the tree. */
+function EditSlot(props: { children: ReactNode }) {
+  const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+  return (
+    <span className={styles.editSlot} onClick={stop} onDoubleClick={stop} onKeyDown={stop}>
+      {props.children}
+    </span>
   );
 }

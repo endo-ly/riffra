@@ -345,8 +345,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       setQuery,
       library: {
         results: libraryResults,
-        selectedAsset: selectedLibraryAsset,
-        relatedAssets,
         onSelectAsset: selectLibraryAsset,
         onPreviewAsset: previewSelectedLibraryAsset,
         onUpdateAsset: updateSelectedLibraryAsset,

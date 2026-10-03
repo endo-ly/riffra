@@ -176,36 +176,51 @@
   border-radius: var(--radius-sm);
 }
 
-.rowAction {
+/* Row buttons take the place of the detail, so a row never grows. */
+.rowButton {
   width: var(--size-control-dense);
   height: var(--size-control-dense);
   flex: 0 0 auto;
   display: none;
   place-items: center;
-  margin-right: calc(var(--space-1) * -1);
   padding: 0;
   color: var(--color-text-secondary);
   background: transparent;
   border-radius: var(--radius-sm);
 }
 
-.row:hover .rowAction,
-.row.selected .rowAction,
+.rowButton + .rowButton {
+  margin-left: calc(var(--space-2) * -1);
+}
+
+.rowButton:last-child {
+  margin-right: calc(var(--space-1) * -1);
+}
+
+.row:hover .rowButton,
+.row.selected .rowButton,
+.tree:focus-visible .row.active .rowButton,
 .rowAction.previewing {
   display: grid;
 }
 
 .row:hover .detail,
-.row.selected .detail {
+.row.selected .detail,
+.tree:focus-visible .row.active .detail {
   display: none;
 }
 
-.rowAction:hover {
+.rowButton:hover:not([aria-disabled='true']) {
   color: var(--color-text-primary);
   background: var(--color-bg-control-hover);
 }
 
-.rowAction svg {
+.rowButton[aria-disabled='true'] {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.rowButton svg {
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
 }
@@ -221,117 +236,16 @@
   font-size: var(--font-size-control);
 }
 
-.applyButton {
+.editSlot {
   min-width: 0;
-  height: var(--size-control-normal);
   flex: 1;
-  overflow: hidden;
-  padding: 0 var(--space-3);
-  color: var(--color-text-strong);
-  font-size: var(--font-size-control);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: var(--color-bg-surface-raised);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-sm);
-}
-
-.applyButton:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
-}
-
-/* Fixed height whether or not something is selected, so the tree never moves. */
-.selection {
-  flex: 0 0 auto;
-  height: calc(
-    var(--size-control-dense) * 2 + var(--size-control-normal) + var(--space-1) * 2 +
-      var(--space-2) * 2 + 1px
-  );
-  display: grid;
-  grid-template-rows: var(--size-control-dense) var(--size-control-dense) var(--size-control-normal);
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.selectionEmpty {
-  grid-template-rows: minmax(0, 1fr);
-  place-items: center;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-small);
-  text-align: center;
-}
-
-.selectionTop,
-.selectionInfo,
-.selectionActions {
-  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.selectionTop strong {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: var(--color-text-strong);
-  font-size: var(--font-size-emphasis);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.selectionIcon {
-  width: var(--size-control-dense);
-  height: var(--size-control-dense);
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  font-size: var(--font-size-emphasis);
-  line-height: 1;
-  color: var(--color-text-secondary);
-  background: transparent;
-  border-radius: var(--radius-sm);
-}
-
-.selectionActions .selectionIcon {
-  width: var(--size-control-normal);
-  height: var(--size-control-normal);
-  background: var(--color-bg-control-raised);
-}
-
-.selectionIcon:hover:not(:disabled) {
-  color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
-}
-
-.selectionIcon svg {
-  width: var(--size-icon-sm);
-  height: var(--size-icon-sm);
-}
-
-.selectionIcon.favorite {
-  color: var(--color-status-warning);
-}
-
-.selectionInfo {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-small);
-}
-
-.selectionInfo > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .inlineEdit,
 .inlineEditPair input {
   min-width: 0;
-  height: calc(var(--size-control-dense) - var(--space-1));
+  height: calc(var(--size-control-normal) - var(--space-1));
   flex: 1;
   padding: 0 var(--space-2);
   color: var(--color-text-primary);

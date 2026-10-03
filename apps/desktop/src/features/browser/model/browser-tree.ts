@@ -213,6 +213,51 @@ export function browserItemDetail(item: BrowserItem): string {
   }
 }
 
+/** Everything that tells an item apart, for its tooltip. */
+export function browserItemSummary(item: BrowserItem, duplicate: boolean): string {
+  let parts: (string | null)[];
+  switch (item.kind) {
+    case 'instrument':
+      parts = [
+        item.instrument.category,
+        item.instrument.origin === 'builtIn' ? 'Built-in' : 'User',
+        item.instrument.tags.join(', ') || null,
+      ];
+      break;
+    case 'recording':
+      parts = item.recording.error
+        ? [item.recording.error]
+        : [
+            recordingDetail(item.recording),
+            item.recording.startedAt && formatTakeTime(item.recording.startedAt),
+            duplicate ? 'Duplicate' : null,
+          ];
+      break;
+    case 'asset':
+      parts = [browserItemDetail(item), item.asset.tag, item.asset.note];
+      break;
+    case 'plugin':
+      parts =
+        item.plugin.scanState === 'validated'
+          ? [item.plugin.vendor, 'VST3', item.plugin.version]
+          : [browserItemDetail(item)];
+      break;
+  }
+  return [browserItemName(item), ...parts].filter(Boolean).join(' · ');
+}
+
+function formatTakeTime(startedAt: string): string {
+  const date = new Date(startedAt);
+  return Number.isNaN(date.getTime())
+    ? startedAt
+    : date.toLocaleString(undefined, {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+}
+
 function recordingDetail(recording: RecordingAsset): string {
   if (recording.error) return 'Unreadable';
   if (recording.state !== 'completed') return capitalize(recording.state);

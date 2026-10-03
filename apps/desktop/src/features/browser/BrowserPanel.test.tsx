@@ -87,8 +87,6 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     onQueryChange: vi.fn(),
     library: {
       results: [] as LibraryAsset[],
-      selectedAsset: null,
-      relatedAssets: [],
       onSelectAsset: vi.fn(),
       onPreviewAsset: vi.fn(),
       onUpdateAsset: vi.fn(),
@@ -168,7 +166,7 @@ describe('BrowserPanel', () => {
     });
   });
 
-  it('opens instrument and effect plug-ins instead of previewing them', async () => {
+  it('opens instrument and effect plug-ins from their rows instead of previewing them', async () => {
     // Arrange
     const user = userEvent.setup();
     const props = renderBrowser({ plugins: [verb, synth] });
@@ -176,18 +174,10 @@ describe('BrowserPanel', () => {
 
     // Act
     await user.click(treeItem('Wave Synth'));
-    await user.click(
-      within(screen.getByRole('region', { name: 'Selected: Wave Synth' })).getByRole('button', {
-        name: 'Open Wave Synth',
-      }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Open Wave Synth' }));
     await user.click(treeItem('Effects'));
     await user.click(treeItem('Space Verb'));
-    await user.click(
-      within(screen.getByRole('region', { name: 'Selected: Space Verb' })).getByRole('button', {
-        name: 'Open Space Verb',
-      }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Open Space Verb' }));
 
     // Assert
     expect(props.onOpenPlugin).toHaveBeenNthCalledWith(1, synth);
@@ -245,7 +235,7 @@ describe('BrowserPanel', () => {
     expect(props.inbox.remove).toHaveBeenCalledWith(take.id);
   });
 
-  it('renames the selected take in place from its actions menu', async () => {
+  it('renames a take in place from its context menu', async () => {
     // Arrange
     const user = userEvent.setup();
     const props = renderBrowser();
@@ -253,7 +243,7 @@ describe('BrowserPanel', () => {
     await user.click(treeItem('Take A'));
 
     // Act
-    await user.click(screen.getByRole('button', { name: 'More actions for Take A' }));
+    await user.pointer({ keys: '[MouseRight]', target: treeItem('Take A') });
     await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     const name = screen.getByRole('textbox', { name: 'Rename Take A' });
     await user.clear(name);
@@ -271,7 +261,7 @@ describe('BrowserPanel', () => {
     await user.click(treeItem('Clean Sub Bass'));
 
     // Act
-    await user.click(screen.getByRole('button', { name: 'More actions for Clean Sub Bass' }));
+    await user.pointer({ keys: '[MouseRight]', target: treeItem('Clean Sub Bass') });
     await user.click(screen.getByRole('menuitem', { name: 'Edit tags…' }));
     await user.type(
       screen.getByRole('textbox', { name: 'Tags for Clean Sub Bass' }),
