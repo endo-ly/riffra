@@ -26,6 +26,7 @@ void AudioRenderPipeline::setMuteReason(const MuteReason reason, const bool acti
         muteReasons.fetch_or(bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);
         previewEngine.requestSynthPanic();
+        pluginAudition.panic();
     } else {
         muteReasons.fetch_and(~bit, std::memory_order_acq_rel);
         resetGainOnNextCallback.store(true, std::memory_order_release);

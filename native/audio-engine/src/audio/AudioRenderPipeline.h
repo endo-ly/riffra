@@ -33,9 +33,9 @@ public:
     AudioRenderPipeline(const AudioRenderPipeline&) = delete;
     AudioRenderPipeline& operator=(const AudioRenderPipeline&) = delete;
 
-    // Control-side setters update atomic state consumed by processBlock().
-    // Muting does not silence timeline instruments; callers that need it
-    // request TimelineEngine::panicAllInstrumentTracks().
+    // Control-side setters update atomic state consumed by processBlock(). Muting panics an
+    // auditioned instrument. Callers that need timeline instruments silenced must request
+    // TimelineEngine::panicAllInstrumentTracks().
     void setUserEmergencyMute(bool shouldMute) noexcept;
     void setEngineTransitionMute(bool active) noexcept;
     // Control side; the realtime detector applies protection on the audio owner.

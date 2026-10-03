@@ -59,6 +59,13 @@ bool PluginAudition::enqueueMidi(const juce::MidiMessage& message) noexcept {
     return true;
 }
 
+void PluginAudition::panic() noexcept {
+    const Use use(*this);
+    auto* current = use.get();
+    if (current == nullptr || !current->instrument) return;
+    current->rack->allNotesOff();
+}
+
 bool PluginAudition::monitorsInput() noexcept {
     const Use use(*this);
     const auto* current = use.get();

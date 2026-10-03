@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
-import type { RecordingAsset } from '@/model/domain';
+import type { LibraryAsset, RecordingAsset } from '@/model/domain';
 import type { InboxController } from '@/features/library/hooks/useInbox';
 import type { useInstrumentLibrary } from '@/features/instruments/hooks/useInstrumentLibrary';
 import { browserItemName, type BrowserItem } from './model/browser-tree';
@@ -14,7 +14,7 @@ interface BrowserItemEditorProps {
   edit: BrowserItemEdit;
   instruments: ReturnType<typeof useInstrumentLibrary>;
   inbox: InboxController;
-  onUpdateAsset: (tag: string | null, note: string | null) => void;
+  onUpdateAsset: (asset: LibraryAsset, tag: string | null, note: string | null) => void;
   onDone: () => void;
 }
 
@@ -99,7 +99,7 @@ export function BrowserItemEditor(props: BrowserItemEditorProps) {
       <InlineEdit
         label="Asset tag"
         initial={item.asset.tag ?? ''}
-        onCommit={(tag) => props.onUpdateAsset(tag || null, item.asset.note)}
+        onCommit={(tag) => props.onUpdateAsset(item.asset, tag || null, item.asset.note)}
         onDone={onDone}
       />
     );
@@ -108,7 +108,7 @@ export function BrowserItemEditor(props: BrowserItemEditorProps) {
       <InlineEdit
         label="Asset note"
         initial={item.asset.note ?? ''}
-        onCommit={(note) => props.onUpdateAsset(item.asset.tag, note || null)}
+        onCommit={(note) => props.onUpdateAsset(item.asset, item.asset.tag, note || null)}
         onDone={onDone}
       />
     );

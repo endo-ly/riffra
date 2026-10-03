@@ -115,7 +115,8 @@ public:
             ++trace.midiMessageCount;
             if (trace.lastMidiMessage.isNoteOn())
                 trace.noteHeld = true;
-            else if (trace.lastMidiMessage.isNoteOff())
+            else if (trace.lastMidiMessage.isNoteOff() || trace.lastMidiMessage.isAllNotesOff() ||
+                     trace.lastMidiMessage.isAllSoundOff())
                 trace.noteHeld = false;
         }
         buffer.clear();

@@ -136,9 +136,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     redo,
     toggleMute,
     resetFeedback,
-    selectLibraryAsset,
-    previewSelectedLibraryAsset,
-    updateSelectedLibraryAsset,
+    previewLibraryAsset,
+    updateLibraryAsset,
     recoverAudio,
     exportProject,
     importProject,
@@ -477,9 +476,8 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               onQueryChange={browser.setQuery}
               library={{
                 ...browser.library,
-                onSelectAsset: (asset) => void selectLibraryAsset(asset),
-                onPreviewAsset: () => void previewSelectedLibraryAsset(),
-                onUpdateAsset: (tag, note) => void updateSelectedLibraryAsset(tag, note),
+                onPreviewAsset: (asset) => void previewLibraryAsset(asset),
+                onUpdateAsset: (asset, tag, note) => void updateLibraryAsset(asset, tag, note),
                 onImportMidi: () => void importMidi(),
               }}
               instruments={browser.instruments}

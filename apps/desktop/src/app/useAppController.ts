@@ -177,13 +177,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
     projectId,
   });
-  const {
-    libraryResults,
-    selectLibraryAsset,
-    previewSelectedLibraryAsset,
-    updateSelectedLibraryAsset,
-    importMidi,
-  } = library;
+  const { libraryResults, previewLibraryAsset, updateLibraryAsset, importMidi } = library;
   const instruments = useInstrumentLibrary(api, {
     hostGeneration: hostConnection.state.generation,
     safeMode: boot?.safeMode ?? false,
@@ -323,9 +317,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     importProject,
     restoreRecovery,
     dismissRecovery,
-    selectLibraryAsset,
-    updateSelectedLibraryAsset,
-    previewSelectedLibraryAsset,
+    updateLibraryAsset,
+    previewLibraryAsset,
     toggleMute,
     resetFeedback,
     toggleRecording,
@@ -341,9 +334,8 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
       setQuery,
       library: {
         results: libraryResults,
-        onSelectAsset: selectLibraryAsset,
-        onPreviewAsset: previewSelectedLibraryAsset,
-        onUpdateAsset: updateSelectedLibraryAsset,
+        onPreviewAsset: previewLibraryAsset,
+        onUpdateAsset: updateLibraryAsset,
         onImportMidi: importMidi,
       },
       instruments,

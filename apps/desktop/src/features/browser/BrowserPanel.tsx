@@ -61,9 +61,8 @@ export interface BrowserPanelProps {
   onQueryChange: (query: string) => void;
   library: {
     results: LibraryAsset[];
-    onSelectAsset: (asset: LibraryAsset) => void;
-    onPreviewAsset: () => void;
-    onUpdateAsset: (tag: string | null, note: string | null) => void;
+    onPreviewAsset: (asset: LibraryAsset) => void;
+    onUpdateAsset: (asset: LibraryAsset, tag: string | null, note: string | null) => void;
     onImportMidi: () => void;
   };
   instruments: InstrumentController;
@@ -201,11 +200,12 @@ export function BrowserPanel(props: BrowserPanelProps) {
           icon: 'play',
           active: false,
           pending: false,
-          run: library.onPreviewAsset,
+          run: () => library.onPreviewAsset(item.asset),
         };
       case 'plugin':
         // A VST3 opens like its standalone application instead of previewing.
-        if (item.plugin.scanState !== 'validated' || props.safeMode) return null;
+        if (item.plugin.scanState !== 'validated' || item.plugin.role === null || props.safeMode)
+          return null;
         return {
           label: 'Open',
           icon: 'maximize',
@@ -220,7 +220,6 @@ export function BrowserPanel(props: BrowserPanelProps) {
     setActiveRowKey(row.key);
     if (row.node.kind === 'folder') return;
     setSelectedKey(row.node.key);
-    if (row.node.kind === 'asset') library.onSelectAsset(row.node.asset);
   };
 
   const toggleFolder = (folder: BrowserFolder) =>

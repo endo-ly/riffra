@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
 #include <thread>
+#include <utility>
 
+#include "../support/TestAudioProcessor.h"
 #include "../timeline/TimelineTestSupport.h"
 #include "audio/AudioRenderPipeline.h"
 #include "audio/PreviewEngine.h"
@@ -83,6 +86,37 @@ TEST(AudioRenderPipelineTest, SilencesOutputWhenEmergencyMuted) {
     callback.processBlock(inputs.data(), 1, outputs.data(), 1, kBlockSize, context);
 
     for (const auto sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
+}
+
+TEST(AudioRenderPipelineTest, EmergencyMutePanicsAuditionedInstrumentBeforeUnmuting) {
+    // Arrange
+    TimelineEngine timeline;
+    InstrumentTrace trace;
+    AudioRenderPipeline callback(timeline);
+    juce::String error;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    callback.audition().install(std::move(rack), 48'000.0, kBlockSize);
+    ASSERT_TRUE(callback.audition().enqueueMidi(juce::MidiMessage::noteOn(1, 60, 0.8f)));
+    std::array<float, kBlockSize> left{};
+    std::array<float, kBlockSize> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    callback.audition().mix(nullptr, outputs.data(), 2, kBlockSize, 48'000.0);
+    ASSERT_TRUE(trace.noteHeld);
+
+    // Act
+    callback.setUserEmergencyMute(true);
+    callback.setUserEmergencyMute(false);
+    left.fill(0.0f);
+    right.fill(0.0f);
+    callback.audition().mix(nullptr, outputs.data(), 2, kBlockSize, 48'000.0);
+
+    // Assert
+    EXPECT_FALSE(trace.noteHeld);
+    EXPECT_TRUE(
+        std::any_of(trace.midiMessages.begin(), trace.midiMessages.end(),
+                    [](const juce::MidiMessage& message) { return message.isAllNotesOff(); }));
 }
 
 TEST(AudioRenderPipelineTest, ReportsInvalidAudioSamples) {

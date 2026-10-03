@@ -33,6 +33,8 @@ public:
     // MIDI callback threads.
     /// Queues live MIDI for an installed instrument; false when there is none.
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept;
+    /// Queues all-notes-off for an installed instrument.
+    void panic() noexcept;
 
     // Audio thread only.
     /// Whether an installed effect is monitoring the audio input.

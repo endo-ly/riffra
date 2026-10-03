@@ -47,6 +47,29 @@ const verb: PluginEntry = {
 };
 
 const synth: PluginEntry = { ...verb, id: 'plugin:synth', name: 'Wave Synth', role: 'instrument' };
+const unclassified: PluginEntry = {
+  ...verb,
+  id: 'plugin:unknown',
+  name: 'Unknown Plug-in',
+  role: null,
+};
+
+const sourceAsset: LibraryAsset = {
+  id: 'asset:source',
+  name: 'Source Asset',
+  kind: 'audio',
+  path: null,
+  tag: null,
+  note: null,
+  createdAtMs: null,
+  updatedAtMs: null,
+  stability: 'stable',
+};
+const targetAsset: LibraryAsset = {
+  ...sourceAsset,
+  id: 'asset:target',
+  name: 'Target Asset',
+};
 
 const take = {
   id: 'recording:C:\\inbox\\take-a',
@@ -87,7 +110,6 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     onQueryChange: vi.fn(),
     library: {
       results: [] as LibraryAsset[],
-      onSelectAsset: vi.fn(),
       onPreviewAsset: vi.fn(),
       onUpdateAsset: vi.fn(),
       onImportMidi: vi.fn(),
@@ -182,6 +204,51 @@ describe('BrowserPanel', () => {
     // Assert
     expect(props.onOpenPlugin).toHaveBeenNthCalledWith(1, synth);
     expect(props.onOpenPlugin).toHaveBeenNthCalledWith(2, verb);
+  });
+
+  it('only offers Open for a validated plug-in with a classified role', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    renderBrowser({ plugins: [unclassified] });
+    await user.click(treeItem('Unclassified Plug-ins'));
+
+    // Act
+    await user.click(treeItem('Unknown Plug-in'));
+
+    // Assert
+    expect(screen.queryByRole('button', { name: 'Open Unknown Plug-in' })).not.toBeInTheDocument();
+  });
+
+  it('previews and edits the asset from the invoked row', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onPreviewAsset = vi.fn();
+    const onUpdateAsset = vi.fn();
+    renderBrowser({
+      query: 'Asset',
+      library: {
+        results: [sourceAsset, targetAsset],
+        onPreviewAsset,
+        onUpdateAsset,
+        onImportMidi: vi.fn(),
+      },
+    });
+    await user.click(treeItem('Source Asset'));
+
+    // Act
+    const targetRow = treeItem('Target Asset');
+    await user.hover(targetRow);
+    await user.click(screen.getByRole('button', { name: 'Preview Target Asset' }));
+    fireEvent.contextMenu(treeItem('Target Asset'));
+    await user.click(screen.getByRole('menuitem', { name: 'Preview' }));
+    fireEvent.contextMenu(treeItem('Target Asset'));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit tag…' }));
+    await user.type(screen.getByRole('textbox', { name: 'Asset tag' }), 'Kit{Enter}');
+
+    // Assert
+    expect(onPreviewAsset).toHaveBeenNthCalledWith(1, targetAsset);
+    expect(onPreviewAsset).toHaveBeenNthCalledWith(2, targetAsset);
+    expect(onUpdateAsset).toHaveBeenCalledWith(targetAsset, 'Kit', null);
   });
 
   it('lists search matches from every source with where they live', () => {
