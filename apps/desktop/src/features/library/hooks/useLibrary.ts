@@ -23,30 +23,19 @@ export function useLibrary(
     projectId = null,
   }: UseLibraryOptions,
 ) {
-  const { searchLibrary, relatedLibraryAssets, updateLibraryAsset, previewAsset } = api;
+  const { searchLibrary, updateLibraryAsset, previewAsset } = api;
   const [libraryResults, setLibraryResults] = useState<LibraryAsset[]>([]);
   const [selectedLibraryAsset, setSelectedLibraryAsset] = useState<LibraryAsset | null>(null);
-  const [relatedAssets, setRelatedAssets] = useState<LibraryAsset[]>([]);
   const query = requestedQuery.trim().toLowerCase();
 
   useEffect(() => {
     setLibraryResults([]);
     setSelectedLibraryAsset(null);
-    setRelatedAssets([]);
   }, [hostGeneration, projectId]);
 
-  const selectLibraryAsset = useCallback(
-    async (asset: LibraryAsset) => {
-      setSelectedLibraryAsset(asset);
-      try {
-        const next = await relatedLibraryAssets(asset.id);
-        setRelatedAssets(next);
-      } catch (error) {
-        logNativeError('relatedLibraryAssets')(error);
-      }
-    },
-    [relatedLibraryAssets],
-  );
+  const selectLibraryAsset = useCallback((asset: LibraryAsset) => {
+    setSelectedLibraryAsset(asset);
+  }, []);
 
   const updateSelectedLibraryAsset = useCallback(
     async (tag: string | null, note: string | null) => {
@@ -109,7 +98,6 @@ export function useLibrary(
     if (!query) {
       setLibraryResults([]);
       setSelectedLibraryAsset(null);
-      setRelatedAssets([]);
       return () => {
         active = false;
       };
@@ -126,8 +114,6 @@ export function useLibrary(
 
   return {
     libraryResults,
-    selectedLibraryAsset,
-    relatedAssets,
     query,
     selectLibraryAsset,
     previewSelectedLibraryAsset,

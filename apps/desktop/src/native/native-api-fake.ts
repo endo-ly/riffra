@@ -326,9 +326,6 @@ export class FakeNativeApi implements NativeApi {
   updateLibraryAsset(...args: Parameters<NativeApi['updateLibraryAsset']>) {
     return this.command('updateLibraryAsset', args);
   }
-  relatedLibraryAssets(...args: Parameters<NativeApi['relatedLibraryAssets']>) {
-    return this.command('relatedLibraryAssets', args);
-  }
   listInstruments(...args: Parameters<NativeApi['listInstruments']>) {
     return this.command('listInstruments', args);
   }
@@ -960,7 +957,6 @@ export class FakeNativeApi implements NativeApi {
       case 'listRecordings':
         return Promise.resolve(this.recordings);
       case 'searchLibrary':
-      case 'relatedLibraryAssets':
         return Promise.resolve([]);
       case 'getMissingDependencies':
         return Promise.resolve(this.missing);

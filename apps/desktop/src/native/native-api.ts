@@ -141,7 +141,6 @@ export interface LibraryApi {
     tag: string | null,
     note: string | null,
   ): Promise<LibraryAsset | null>;
-  relatedLibraryAssets(id: string): Promise<LibraryAsset[]>;
 }
 
 export interface InstrumentLibraryApi {

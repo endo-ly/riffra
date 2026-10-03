@@ -179,8 +179,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
   });
   const {
     libraryResults,
-    selectedLibraryAsset,
-    relatedAssets,
     selectLibraryAsset,
     previewSelectedLibraryAsset,
     updateSelectedLibraryAsset,
@@ -302,8 +300,6 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     refreshAudioDevices,
     probeAudioChannels,
     libraryResults,
-    selectedLibraryAsset,
-    relatedAssets,
     importMidi,
     commandOpen,
     setCommandOpen,
