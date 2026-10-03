@@ -55,6 +55,7 @@ pub enum ControlOutput {
     ProjectExport(ProjectExport),
     InstrumentLibrary(Vec<InstrumentLibraryItem>),
     InstrumentLibraryItem(InstrumentLibraryItem),
+    InstrumentCategories(Vec<String>),
     InstrumentExport(InstrumentExport),
     InstrumentCollections(Vec<InstrumentCollection>),
     InstrumentCollection(InstrumentCollection),

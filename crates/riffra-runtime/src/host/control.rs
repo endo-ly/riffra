@@ -1025,6 +1025,11 @@ impl HostState {
                     .map_err(command_error)?,
                 )
             }
+            RuntimeCommand::LibraryInstrumentCategoryList(_) => {
+                ControlOutput::InstrumentCategories(library::instruments::categories(
+                    self.built_in_instruments.as_ref(),
+                ))
+            }
             RuntimeCommand::LibraryInstrumentCategorySet(params) => {
                 ControlOutput::InstrumentLibraryItem(
                     library::instruments::set_category_override(
@@ -1697,18 +1702,13 @@ mod tests {
         .unwrap();
         assert!(favorite.favorite);
 
-        let overridden: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
+        let fixed_category = host.dispatch_control(ControlRequest::new(
             "library.instrument.category.set",
-            serde_json::json!({"instrumentId":"builtin:01-bass","category":" Basses "}),
-        ))
-        .unwrap();
-        assert_eq!(overridden.category.as_deref(), Some("Basses"));
-        let restored: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
             "library.instrument.category.set",
-            serde_json::json!({"instrumentId":"builtin:01-bass","category":null}),
-        ))
-        .unwrap();
-        assert_eq!(restored.category.as_deref(), Some("Bass"));
+            serde_json::json!({"instrumentId":"builtin:01-bass","category":"Lead"}),
+            Some(0),
+        ));
+        assert!(!fixed_category.ok);
 
         let tagged: crate::InstrumentLibraryItem = serde_json::from_value(dispatch(
             "library.instrument.tags.set",

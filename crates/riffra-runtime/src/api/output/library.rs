@@ -35,8 +35,10 @@ pub struct InstrumentLibraryItem {
     pub name: String,
     pub author: Option<String>,
     pub description: Option<String>,
-    pub default_category: Option<String>,
-    pub category: Option<String>,
+    /// The library category the instrument's definition files it under.
+    pub default_category: String,
+    /// The default category, or the user's choice for a User Instrument.
+    pub category: String,
     pub default_tags: Vec<String>,
     pub user_tags: Vec<String>,
     pub tags: Vec<String>,

@@ -16,7 +16,7 @@ import {
 function instrument(
   id: string,
   name: string,
-  category: string | null,
+  category: string,
   extra: Partial<InstrumentLibraryItem> = {},
 ): InstrumentLibraryItem {
   return {
@@ -73,14 +73,15 @@ function child(folder: BrowserFolder | undefined, label: string): BrowserFolder 
 }
 
 describe('buildBrowserTree', () => {
-  it('files instruments by category and plug-ins by role, leaving out empty folders', () => {
+  it("files instruments in the Host's category order and plug-ins by role, leaving out empty folders", () => {
     // Arrange
     const sources = {
       instruments: [
         instrument('pad', 'Glass Pad', 'Pad', { favorite: true }),
-        instrument('odd', 'Odd Noise', null),
+        instrument('odd', 'Odd Noise', 'Other'),
         instrument('bass', 'Sub Bass', 'Bass'),
       ],
+      categories: ['Pad', 'Bass', 'Keys', 'Other'],
       collections: [{ id: 1, name: 'Sketches' }],
       plugins: [plugin('Verb', 'effect'), plugin('Synth', 'instrument')],
       recordings: [],
@@ -92,7 +93,7 @@ describe('buildBrowserTree', () => {
 
     // Assert
     expect(labels(tree)).toEqual(['Favorites', 'Collections', 'Instruments', 'Effects']);
-    expect(labels(instruments!.children)).toEqual(['Bass', 'Pad', 'Uncategorized', 'Plug-ins']);
+    expect(labels(instruments!.children)).toEqual(['Pad', 'Bass', 'Other', 'Plug-ins']);
     expect(instruments!.itemCount).toBe(4);
     expect(labels(child(instruments, 'Plug-ins')!.children)).toEqual(['plugin:plugin:Synth']);
     expect(child(tree[1], 'Sketches')?.itemCount).toBe(0);
@@ -104,6 +105,7 @@ describe('searchBrowserItems', () => {
     // Arrange
     const sources = {
       instruments: [instrument('bass', 'Sub Bass', 'Bass'), instrument('pad', 'Glass Pad', 'Pad')],
+      categories: ['Bass', 'Pad', 'Other'],
       collections: [],
       plugins: [plugin('Bass Amp', 'effect')],
       recordings: [take],

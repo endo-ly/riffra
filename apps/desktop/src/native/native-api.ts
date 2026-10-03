@@ -152,6 +152,7 @@ export interface InstrumentLibraryApi {
     category: string | null,
   ): Promise<InstrumentLibraryItem>;
   setInstrumentUserTags(instrumentId: string, tags: string[]): Promise<InstrumentLibraryItem>;
+  listInstrumentCategories(): Promise<string[]>;
   listInstrumentCollections(): Promise<InstrumentCollection[]>;
   createInstrumentCollection(name: string): Promise<InstrumentCollection>;
   renameInstrumentCollection(id: number, name: string): Promise<InstrumentCollection>;

@@ -94,6 +94,7 @@ function renderBrowser(overrides: Partial<BrowserPanelProps> = {}) {
     },
     instruments: {
       items: [bass],
+      categories: ['Bass', 'Other'],
       collections: [],
       previewingId: null,
       previewPendingId: null,
@@ -215,20 +216,40 @@ describe('BrowserPanel', () => {
     expect(props.inbox.remove).toHaveBeenCalledWith(take.id);
   });
 
-  it('renames the selected take from its details', async () => {
+  it('renames the selected take in place from its actions menu', async () => {
     // Arrange
     const user = userEvent.setup();
     const props = renderBrowser();
     await user.click(treeItem('Recordings'));
     await user.click(treeItem('Take A'));
-    await user.click(screen.getByRole('button', { name: /Take A/, expanded: false }));
 
     // Act
+    await user.click(screen.getByRole('button', { name: 'More actions for Take A' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Rename…' }));
     const name = screen.getByRole('textbox', { name: 'Rename Take A' });
     await user.clear(name);
     await user.type(name, 'Verse take{Enter}');
 
     // Assert
     expect(props.inbox.rename).toHaveBeenCalledWith(take.id, 'Verse take');
+  });
+
+  it('edits the tags of the selected instrument in place', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const props = renderBrowser();
+    await user.click(treeItem('Bass'));
+    await user.click(treeItem('Clean Sub Bass'));
+
+    // Act
+    await user.click(screen.getByRole('button', { name: 'More actions for Clean Sub Bass' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit tags…' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Tags for Clean Sub Bass' }),
+      'Dark, Wide{Enter}',
+    );
+
+    // Assert
+    expect(props.instruments.setTags).toHaveBeenCalledWith(bass, ['Dark', 'Wide']);
   });
 });

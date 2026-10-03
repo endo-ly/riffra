@@ -4,7 +4,8 @@
   min-height: 0;
   display: grid;
   isolation: isolate;
-  grid-template-rows: 1fr 5px 1fr;
+  /* The Browser takes most of the column by default; see DEFAULT_PROPERTIES_SHARE. */
+  grid-template-rows: 7fr 5px 3fr;
   overflow: hidden;
   background: var(--color-bg-panel);
 }

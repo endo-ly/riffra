@@ -6,4 +6,12 @@ import type { InstrumentRecommendedRange } from "./InstrumentRecommendedRange";
 /**
  * A user-visible instrument with persisted library preferences.
  */
-export type InstrumentLibraryItem = { id: string, presetId: string | null, origin: InstrumentOrigin, name: string, author: string | null, description: string | null, defaultCategory: string | null, category: string | null, defaultTags: Array<string>, userTags: Array<string>, tags: Array<string>, favorite: boolean, collectionIds: Array<number>, recommendedRange: InstrumentRecommendedRange | null, preview: InstrumentPreviewDefinition | null, };
+export type InstrumentLibraryItem = { id: string, presetId: string | null, origin: InstrumentOrigin, name: string, author: string | null, description: string | null, 
+/**
+ * The library category the instrument's definition files it under.
+ */
+defaultCategory: string, 
+/**
+ * The default category, or the user's choice for a User Instrument.
+ */
+category: string, defaultTags: Array<string>, userTags: Array<string>, tags: Array<string>, favorite: boolean, collectionIds: Array<number>, recommendedRange: InstrumentRecommendedRange | null, preview: InstrumentPreviewDefinition | null, };

@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 const BUILT_IN_ID_PREFIX: &str = "builtin:";
+/// Where a User Instrument is filed when its category is not one the built-in catalog uses.
+const OTHER_CATEGORY: &str = "Other";
 
 /// Creates the instrument preference tables in the shared library database.
 pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
@@ -37,6 +39,30 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("instrument library schema could not be prepared: {error}"))
 }
 
+/// Lists the categories instruments are filed under: those Sonalloy's built-in
+/// catalog uses, in catalog order, then `Other` for anything else.
+pub(crate) fn categories(catalog: &BuiltInInstrumentCatalog) -> Vec<String> {
+    let mut categories: Vec<String> = Vec::new();
+    for summary in catalog.summaries() {
+        if matching_category(&categories, &summary.category).is_none() {
+            categories.push(summary.category);
+        }
+    }
+    if matching_category(&categories, OTHER_CATEGORY).is_none() {
+        categories.push(OTHER_CATEGORY.into());
+    }
+    categories
+}
+
+/// Finds a filing category by name, ignoring case and surrounding whitespace.
+fn matching_category(categories: &[String], name: &str) -> Option<String> {
+    let name = name.trim();
+    categories
+        .iter()
+        .find(|category| category.eq_ignore_ascii_case(name))
+        .cloned()
+}
+
 /// Lists built-in and User Instruments, merging persisted preferences and memberships.
 pub fn list(
     data_root: &Path,
@@ -56,11 +82,12 @@ pub fn list(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let user_store = UserInstrumentStore::new(data_root, Path::new(""));
+    let categories = categories(catalog);
     items.extend(
         user_store
             .list()?
             .into_iter()
-            .map(|instrument| read_user_item(&connection, instrument))
+            .map(|instrument| read_user_item(&connection, &categories, instrument))
             .collect::<Result<Vec<_>, _>>()?,
     );
     Ok(items)
@@ -98,15 +125,25 @@ pub fn set_favorite(
     read_item(&connection, data_root, catalog, instrument_id)
 }
 
-/// Sets or clears a user category override.
+/// Files a User Instrument under a category, or restores the category its
+/// definition declares. Built-in instrument categories are fixed.
 pub fn set_category_override(
     data_root: &Path,
     catalog: &BuiltInInstrumentCatalog,
     instrument_id: &str,
     category: Option<String>,
 ) -> Result<InstrumentLibraryItem, String> {
+    if instrument_id.starts_with(BUILT_IN_ID_PREFIX) {
+        return Err("built-in instrument categories are fixed".into());
+    }
     resolve_library_id(data_root, catalog, instrument_id)?;
-    let category = normalize_category(category)?;
+    let category = category
+        .map(|category| {
+            matching_category(&categories(catalog), &category).ok_or_else(|| {
+                format!("instrument category '{category}' is not a library category")
+            })
+        })
+        .transpose()?;
     let connection = super::open(data_root)?;
     connection
         .execute(
@@ -329,10 +366,8 @@ fn read_item(
             name: definition.summary.name.clone(),
             author: definition.summary.author.clone(),
             description: definition.summary.description.clone(),
-            default_category: Some(definition.summary.category.clone()),
-            category: Some(
-                category_override.unwrap_or_else(|| definition.summary.category.clone()),
-            ),
+            default_category: definition.summary.category.clone(),
+            category: definition.summary.category.clone(),
             default_tags: definition.summary.tags.clone(),
             user_tags,
             tags,
@@ -347,6 +382,7 @@ fn read_item(
             UserInstrumentStore::new(data_root, Path::new("")).resolve(instrument_id)?;
         return Ok(read_user_item_with_preferences(
             instrument,
+            &categories(catalog),
             favorite,
             category_override,
             user_tags,
@@ -358,6 +394,7 @@ fn read_item(
 
 fn read_user_item(
     connection: &Connection,
+    categories: &[String],
     instrument: crate::instrument::ResolvedUserInstrument,
 ) -> Result<InstrumentLibraryItem, String> {
     let instrument_id = instrument.manifest.instrument_id.clone();
@@ -366,6 +403,7 @@ fn read_user_item(
     let collection_ids = read_collection_ids(connection, &instrument_id)?;
     Ok(read_user_item_with_preferences(
         instrument,
+        categories,
         favorite,
         category_override,
         user_tags,
@@ -373,14 +411,26 @@ fn read_user_item(
     ))
 }
 
+/// Files a User Instrument under its chosen category, else the category its
+/// definition declares, else `Other`. A stored choice that is no longer a
+/// library category is ignored.
 fn read_user_item_with_preferences(
     instrument: crate::instrument::ResolvedUserInstrument,
+    categories: &[String],
     favorite: bool,
     category_override: Option<String>,
     user_tags: Vec<String>,
     collection_ids: Vec<i64>,
 ) -> InstrumentLibraryItem {
     let tags = merge_tags(&instrument.tags, &user_tags);
+    let default_category = instrument
+        .category
+        .as_deref()
+        .and_then(|declared| matching_category(categories, declared))
+        .unwrap_or_else(|| OTHER_CATEGORY.into());
+    let category = category_override
+        .and_then(|chosen| matching_category(categories, &chosen))
+        .unwrap_or_else(|| default_category.clone());
     InstrumentLibraryItem {
         id: instrument.manifest.instrument_id,
         preset_id: None,
@@ -388,8 +438,8 @@ fn read_user_item_with_preferences(
         name: instrument.name,
         author: instrument.author,
         description: instrument.description,
-        default_category: instrument.category.clone(),
-        category: category_override.or(instrument.category),
+        default_category,
+        category,
         default_tags: instrument.tags.clone(),
         tags,
         user_tags,
@@ -457,18 +507,6 @@ fn merge_tags(default_tags: &[String], user_tags: &[String]) -> Vec<String> {
         .filter(|tag| seen.insert(tag.to_lowercase()))
         .cloned()
         .collect()
-}
-
-fn normalize_category(category: Option<String>) -> Result<Option<String>, String> {
-    let Some(category) = category else {
-        return Ok(None);
-    };
-    let category = category.trim().to_owned();
-    if category.is_empty() {
-        return Ok(None);
-    }
-    validate_text(&category, 64, "instrument category")?;
-    Ok(Some(category))
 }
 
 fn normalize_user_tags(tags: Vec<String>) -> Result<Vec<String>, String> {
@@ -566,16 +604,15 @@ mod tests {
         assert_eq!(updated.user_tags, ["Warm"]);
         assert_eq!(updated.tags, ["Low", "Warm"]);
 
-        let updated = set_category_override(
-            &root.0,
-            &catalog,
-            "builtin:01-bass",
-            Some("  Synth Bass  ".into()),
-        )
-        .unwrap();
-        assert_eq!(updated.category.as_deref(), Some("Synth Bass"));
-        assert_eq!(updated.default_category.as_deref(), Some("Bass"));
-        assert_eq!(list(&root.0, &catalog).unwrap().len(), 1);
+        let rejected =
+            set_category_override(&root.0, &catalog, "builtin:01-bass", Some("Bass".into()));
+        assert_eq!(
+            rejected.unwrap_err(),
+            "built-in instrument categories are fixed"
+        );
+        let listed = list(&root.0, &catalog).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].category, "Bass");
     }
 
     #[test]
@@ -600,26 +637,14 @@ mod tests {
     }
 
     #[test]
-    fn preferences_persist_and_category_can_be_cleared() {
+    fn favorites_persist() {
         let root = TempRoot::new();
         let catalog = catalog(&root.0);
 
         let favorited = set_favorite(&root.0, &catalog, "builtin:01-bass", true).unwrap();
+
         assert!(favorited.favorite);
         assert!(list(&root.0, &catalog).unwrap()[0].favorite);
-
-        let overridden = set_category_override(
-            &root.0,
-            &catalog,
-            "builtin:01-bass",
-            Some("Synth Bass".into()),
-        )
-        .unwrap();
-        assert_eq!(overridden.category.as_deref(), Some("Synth Bass"));
-
-        let restored = set_category_override(&root.0, &catalog, "builtin:01-bass", None).unwrap();
-        assert_eq!(restored.category, restored.default_category);
-        assert!(restored.favorite);
     }
 
     #[test]
@@ -699,14 +724,19 @@ mod tests {
         assert_eq!(user.origin, InstrumentOrigin::User);
         assert_eq!(user.name, "User Piano");
         assert_eq!(user.author.as_deref(), Some("Composer"));
-        assert_eq!(user.default_category.as_deref(), Some("Keys"));
+        assert_eq!(user.default_category, "Other");
         assert_eq!(user.default_tags, ["warm"]);
         assert_eq!(user.recommended_range.as_ref().unwrap().min_midi, 36);
         assert_eq!(user.recommended_range.as_ref().unwrap().max_midi, 96);
         assert_eq!(user.preview.as_ref().unwrap().tempo_bpm, 100.0);
 
         set_favorite(&root.0, &catalog, &instrument_id, true).unwrap();
-        set_category_override(&root.0, &catalog, &instrument_id, Some("Keys".into())).unwrap();
+        let unknown = set_category_override(&root.0, &catalog, &instrument_id, Some("Pad".into()));
+        assert_eq!(
+            unknown.unwrap_err(),
+            "instrument category 'Pad' is not a library category"
+        );
+        set_category_override(&root.0, &catalog, &instrument_id, Some(" bass ".into())).unwrap();
         set_user_tags(&root.0, &catalog, &instrument_id, vec!["Cool".into()]).unwrap();
         let collection = create_collection(&root.0, "My Instruments".into()).unwrap();
         set_collection_membership(&root.0, &catalog, collection.id, &instrument_id, true).unwrap();
@@ -717,9 +747,39 @@ mod tests {
             .find(|item| item.id == instrument_id)
             .unwrap();
         assert!(user.favorite);
-        assert_eq!(user.category.as_deref(), Some("Keys"));
+        assert_eq!(user.category, "Bass");
         assert_eq!(user.user_tags, ["Cool"]);
         assert_eq!(user.collection_ids, [collection.id]);
         assert_eq!(user.tags, ["warm", "Cool"]);
+
+        let restored = set_category_override(&root.0, &catalog, &instrument_id, None).unwrap();
+        assert_eq!(restored.category, "Other");
+    }
+
+    #[test]
+    fn categories_follow_catalog_order_once_each_and_end_with_other() {
+        let root = TempRoot::new();
+        let presets =
+            [("01-sub", "Bass"), ("02-pad", "Pad"), ("03-reese", "Bass")].map(|(id, category)| {
+                fs::create_dir_all(root.0.join(id)).unwrap();
+                fs::write(root.0.join(id).join("definition.json"), "opaque").unwrap();
+                serde_json::json!({
+                    "id": id, "name": id, "author": "Riffra", "category": category,
+                    "tags": ["Test"], "recommendedRange": {"minMidi": 36, "maxMidi": 84},
+                    "preview": {"tempoBpm": 120, "ticksPerBeat": 480,
+                        "timeSignature": {"numerator": 4, "denominator": 4}, "lengthTicks": 1920,
+                        "notes": [{"tick": 0, "durationTicks": 480, "note": 48, "velocity": 100}]},
+                    "definitionPath": format!("{id}/definition.json"), "resourceBasePath": id,
+                })
+            });
+        fs::write(
+            root.0.join("manifest.json"),
+            serde_json::json!({"sourceRelease": "vtest", "presets": presets}).to_string(),
+        )
+        .unwrap();
+
+        let catalog = BuiltInInstrumentCatalog::load(&root.0).unwrap();
+
+        assert_eq!(categories(&catalog), ["Bass", "Pad", "Other"]);
     }
 }

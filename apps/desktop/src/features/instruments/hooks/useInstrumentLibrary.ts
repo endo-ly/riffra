@@ -21,6 +21,7 @@ export function useInstrumentLibrary(
 ) {
   const {
     listInstruments,
+    listInstrumentCategories,
     listInstrumentCollections,
     setInstrumentFavorite,
     setInstrumentCategoryOverride,
@@ -33,6 +34,8 @@ export function useInstrumentLibrary(
     stopInstrumentPreview,
   } = api;
   const [items, setItems] = useState<InstrumentLibraryItem[]>([]);
+  /** The categories the Host files instruments under, in display order. */
+  const [categories, setCategories] = useState<string[]>([]);
   const [collections, setCollections] = useState<InstrumentCollection[]>([]);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewPendingId, setPreviewPendingId] = useState<string | null>(null);
@@ -45,11 +48,13 @@ export function useInstrumentLibrary(
     setLoading(true);
     setError(null);
     try {
-      const [nextItems, nextCollections] = await Promise.all([
+      const [nextItems, nextCategories, nextCollections] = await Promise.all([
         listInstruments(),
+        listInstrumentCategories(),
         listInstrumentCollections(),
       ]);
       setItems(nextItems);
+      setCategories(nextCategories);
       setCollections(nextCollections);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -57,7 +62,7 @@ export function useInstrumentLibrary(
     } finally {
       setLoading(false);
     }
-  }, [listInstrumentCollections, listInstruments]);
+  }, [listInstrumentCategories, listInstrumentCollections, listInstruments]);
   const reloadCollections = useCallback(async () => {
     try {
       const next = await listInstrumentCollections();
@@ -69,6 +74,7 @@ export function useInstrumentLibrary(
   }, [listInstrumentCollections]);
   useEffect(() => {
     setItems([]);
+    setCategories([]);
     setCollections([]);
     setPreviewingId(null);
     previewPendingIdRef.current = null;
@@ -133,14 +139,17 @@ export function useInstrumentLibrary(
     [runItemMutation, setInstrumentUserTags],
   );
 
+  /** Creates a collection and returns it, or null when it could not be created. */
   const createCollection = useCallback(
-    async (name: string) => {
+    async (name: string): Promise<InstrumentCollection | null> => {
       try {
-        await createInstrumentCollection(name);
+        const created = await createInstrumentCollection(name);
         await reloadCollections();
+        return created;
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
         logNativeError('createInstrumentCollection')(cause);
+        return null;
       }
     },
     [createInstrumentCollection, reloadCollections],
@@ -250,6 +259,7 @@ export function useInstrumentLibrary(
 
   return {
     items,
+    categories,
     collections,
     previewingId,
     previewPendingId,

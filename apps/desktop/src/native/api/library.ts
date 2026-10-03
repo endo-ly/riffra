@@ -95,6 +95,11 @@ export async function setInstrumentUserTags(
   });
 }
 
+/** Lists the categories the Host files instruments under, in display order. */
+export async function listInstrumentCategories(): Promise<string[]> {
+  return dispatchControlOrFallback({ command: 'library.instrument.category.list', params: {} }, []);
+}
+
 export async function listInstrumentCollections(): Promise<InstrumentCollection[]> {
   return dispatchControlOrFallback(
     { command: 'library.instrument.collection.list', params: {} },

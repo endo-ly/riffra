@@ -3,6 +3,8 @@ import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import styles from './LeftColumn.module.css';
 
 const PROPERTIES_HEIGHT = { min: 160, browserMin: 180, handle: 5 } as const;
+/** Properties' default share of the column; matches the `7fr / 3fr` rows in LeftColumn.module.css. */
+const DEFAULT_PROPERTIES_SHARE = 0.3;
 
 interface LeftColumnProps {
   propertiesHeight: number | null;
@@ -28,7 +30,8 @@ function effectivePropertiesHeight(
   availableHeight: number,
 ): number {
   if (propertiesHeight !== null) return propertiesHeight;
-  if (availableHeight > 0) return Math.round((availableHeight - PROPERTIES_HEIGHT.handle) / 2);
+  if (availableHeight > 0)
+    return Math.round((availableHeight - PROPERTIES_HEIGHT.handle) * DEFAULT_PROPERTIES_SHARE);
   return 320;
 }
 

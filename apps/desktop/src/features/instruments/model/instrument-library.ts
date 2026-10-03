@@ -50,10 +50,3 @@ export function matchesInstrumentQuery(
     value.toLocaleLowerCase().includes(normalized),
   );
 }
-
-/** Formats a MIDI note number using the conventional C4 = 60 octave name. */
-export function formatMidiNote(note: number): string {
-  if (!Number.isInteger(note) || note < 0 || note > 127) return '—';
-  const names = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-  return `${names[note % 12]}${Math.floor(note / 12) - 1}`;
-}

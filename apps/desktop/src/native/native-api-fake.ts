@@ -341,6 +341,9 @@ export class FakeNativeApi implements NativeApi {
   setInstrumentUserTags(...args: Parameters<NativeApi['setInstrumentUserTags']>) {
     return this.command('setInstrumentUserTags', args);
   }
+  listInstrumentCategories(...args: Parameters<NativeApi['listInstrumentCategories']>) {
+    return this.command('listInstrumentCategories', args);
+  }
   listInstrumentCollections(...args: Parameters<NativeApi['listInstrumentCollections']>) {
     return this.command('listInstrumentCollections', args);
   }
@@ -809,11 +812,7 @@ export class FakeNativeApi implements NativeApi {
       case 'setInstrumentCategoryOverride': {
         const [instrumentId, category] = arguments_ as [string, string | null];
         const instrument = this.instrumentById(instrumentId);
-        const normalized = category?.trim() || null;
-        const updated = {
-          ...instrument,
-          category: normalized ?? instrument.defaultCategory,
-        };
+        const updated = { ...instrument, category: category ?? instrument.defaultCategory };
         this.replaceInstrument(updated);
         return Promise.resolve(updated);
       }
@@ -831,6 +830,18 @@ export class FakeNativeApi implements NativeApi {
         const updated = { ...instrument, userTags, tags: tagsWithDefaults };
         this.replaceInstrument(updated);
         return Promise.resolve(updated);
+      }
+      case 'listInstrumentCategories': {
+        const categories = [
+          ...new Set(
+            this.instruments
+              .filter((instrument) => instrument.origin === 'builtIn')
+              .map((instrument) => instrument.defaultCategory),
+          ),
+        ];
+        return Promise.resolve(
+          categories.includes('Other') ? categories : [...categories, 'Other'],
+        );
       }
       case 'listInstrumentCollections':
         return Promise.resolve(this.instrumentCollections);
@@ -1231,8 +1242,8 @@ function defaultInstrumentLibraryItems(): InstrumentLibraryItem[] {
       name: 'Tight Drums',
       author: 'Riffra',
       description: 'A compact kit for rhythmic sketches.',
-      defaultCategory: 'Drums',
-      category: 'Drums',
+      defaultCategory: 'Drum',
+      category: 'Drum',
       defaultTags: ['drums', 'kit'],
       userTags: [],
       tags: ['drums', 'kit'],
@@ -1277,8 +1288,8 @@ function defaultInstrumentLibraryItems(): InstrumentLibraryItem[] {
       name: 'Haze Chord',
       author: null,
       description: 'A user instrument without a preview definition.',
-      defaultCategory: null,
-      category: null,
+      defaultCategory: 'Other',
+      category: 'Other',
       defaultTags: [],
       userTags: [],
       tags: [],

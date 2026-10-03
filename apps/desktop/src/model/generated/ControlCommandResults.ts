@@ -169,6 +169,7 @@ export type ControlCommandResults = {
   'library.related': OutputValue<'library'>;
   'library.instrument.list': OutputValue<'instrumentLibrary'>;
   'library.instrument.favorite.set': OutputValue<'instrumentLibraryItem'>;
+  'library.instrument.category.list': OutputValue<'instrumentCategories'>;
   'library.instrument.category.set': OutputValue<'instrumentLibraryItem'>;
   'library.instrument.tags.set': OutputValue<'instrumentLibraryItem'>;
   'library.instrument.collection.list': OutputValue<'instrumentCollections'>;

@@ -395,6 +395,7 @@ control_commands! {
         LibraryRelated = "library.related" (IdParams) -> Library, host;
         LibraryInstrumentList = "library.instrument.list" (EmptyParams) -> InstrumentLibrary, host;
         LibraryInstrumentFavoriteSet = "library.instrument.favorite.set" (InstrumentFavoriteParams) -> InstrumentLibraryItem, host;
+        LibraryInstrumentCategoryList = "library.instrument.category.list" (EmptyParams) -> InstrumentCategories, host;
         LibraryInstrumentCategorySet = "library.instrument.category.set" (InstrumentCategoryParams) -> InstrumentLibraryItem, host;
         LibraryInstrumentTagsSet = "library.instrument.tags.set" (InstrumentTagsParams) -> InstrumentLibraryItem, host;
         LibraryInstrumentCollectionList = "library.instrument.collection.list" (EmptyParams) -> InstrumentCollections, host;

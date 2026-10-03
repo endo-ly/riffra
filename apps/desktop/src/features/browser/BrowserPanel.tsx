@@ -22,7 +22,7 @@ import { showToast } from '@/shared/toasts';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { Icon } from '@/shared/ui/primitives';
-import { BrowserFooter, type BrowserItemAction } from './BrowserFooter';
+import { BrowserSelection, InlineEdit, type BrowserItemAction } from './BrowserSelection';
 import {
   browserItemDetail,
   browserItemName,
@@ -88,17 +88,29 @@ export function BrowserPanel(props: BrowserPanelProps) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(DEFAULT_EXPANDED));
   const [activeRowKey, setActiveRowKey] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; item: BrowserItem } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  const [renamingCollectionId, setRenamingCollectionId] = useState<number | null>(null);
+  const [pendingCollectionDelete, setPendingCollectionDelete] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<RecordingAsset | null>(null);
 
   const sources = useMemo(
     () => ({
       instruments: instruments.items,
+      categories: instruments.categories,
       collections: instruments.collections,
       plugins: props.plugins,
       recordings: props.recordings,
     }),
-    [instruments.collections, instruments.items, props.plugins, props.recordings],
+    [
+      instruments.categories,
+      instruments.collections,
+      instruments.items,
+      props.plugins,
+      props.recordings,
+    ],
   );
   const tree = useMemo(() => buildBrowserTree(sources), [sources]);
   const searching = props.query.trim().length > 0;
@@ -355,9 +367,35 @@ export function BrowserPanel(props: BrowserPanelProps) {
                 folder={node}
                 open={expanded.has(node.key)}
                 active={index === activeIndex}
+                renaming={
+                  node.collectionId !== undefined && node.collectionId === renamingCollectionId
+                }
                 onClick={() => {
                   select(row);
                   toggleFolder(node);
+                }}
+                onRename={(name) => {
+                  if (node.collectionId !== undefined && name && name !== node.label)
+                    void instruments.renameCollection(node.collectionId, name);
+                }}
+                onRenameEnd={() => setRenamingCollectionId(null)}
+                onContextMenu={(event) => {
+                  const collectionId = node.collectionId;
+                  if (collectionId === undefined) return;
+                  event.preventDefault();
+                  setMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    items: [
+                      { label: 'Rename…', onClick: () => setRenamingCollectionId(collectionId) },
+                      {
+                        label: 'Delete…',
+                        danger: true,
+                        onClick: () =>
+                          setPendingCollectionDelete({ id: collectionId, name: node.label }),
+                      },
+                    ],
+                  });
                 }}
               />
             );
@@ -377,7 +415,7 @@ export function BrowserPanel(props: BrowserPanelProps) {
               onContextMenu={(event) => {
                 event.preventDefault();
                 select(row);
-                setMenu({ x: event.clientX, y: event.clientY, item: node });
+                setMenu({ x: event.clientX, y: event.clientY, items: menuItems(node) });
               }}
             />
           );
@@ -389,24 +427,31 @@ export function BrowserPanel(props: BrowserPanelProps) {
           </p>
         )}
       </div>
-      {selected && (
-        <BrowserFooter
-          item={selected}
-          preview={previewFor(selected)}
-          placement={placementFor(selected)}
-          onApply={() => apply(selected)}
-          onDeleteRecording={(recording) => setPendingDelete(recording)}
-          instruments={instruments}
-          inbox={inbox}
-          library={library}
-        />
-      )}
+      <BrowserSelection
+        item={selected}
+        preview={selected && previewFor(selected)}
+        placement={selected && placementFor(selected)}
+        onApply={() => selected && apply(selected)}
+        onDeleteRecording={(recording) => setPendingDelete(recording)}
+        duplicate={selected?.kind === 'recording' && inbox.duplicateIds.has(selected.recording.id)}
+        instruments={instruments}
+        inbox={inbox}
+        onUpdateAsset={library.onUpdateAsset}
+      />
       {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          items={menuItems(menu.item)}
-          onClose={() => setMenu(null)}
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
+      {pendingCollectionDelete && (
+        <ConfirmDialog
+          title="Delete collection"
+          message={`Delete ${pendingCollectionDelete.name}? The instruments in it are kept.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            void instruments.deleteCollection(pendingCollectionDelete.id);
+            setPendingCollectionDelete(null);
+          }}
+          onCancel={() => setPendingCollectionDelete(null)}
         />
       )}
       {pendingDelete && (
@@ -459,7 +504,11 @@ function FolderRow(props: {
   folder: BrowserFolder;
   open: boolean;
   active: boolean;
+  renaming: boolean;
   onClick: () => void;
+  onRename: (name: string) => void;
+  onRenameEnd: () => void;
+  onContextMenu: (event: MouseEvent) => void;
 }) {
   return (
     <div
@@ -470,11 +519,21 @@ function FolderRow(props: {
       className={clsx(styles.row, styles.folder, props.active && styles.active)}
       style={{ paddingLeft: `calc(var(--space-4) * ${props.row.depth} + var(--space-1))` }}
       onClick={props.onClick}
+      onContextMenu={props.onContextMenu}
     >
       <span className={clsx(styles.disclosure, props.open && styles.open)}>
         <Icon name="chevron" />
       </span>
-      <span className={styles.name}>{props.folder.label}</span>
+      {props.renaming ? (
+        <InlineEdit
+          label={`Rename ${props.folder.label}`}
+          initial={props.folder.label}
+          onCommit={props.onRename}
+          onDone={props.onRenameEnd}
+        />
+      ) : (
+        <span className={styles.name}>{props.folder.label}</span>
+      )}
       <span className={styles.count}>{props.folder.itemCount}</span>
     </div>
   );

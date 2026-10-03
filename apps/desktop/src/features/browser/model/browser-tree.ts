@@ -21,12 +21,16 @@ export interface BrowserFolder {
   label: string;
   children: BrowserNode[];
   itemCount: number;
+  /** Set on a user collection, which the user can rename or delete. */
+  collectionId?: number;
 }
 
 export type BrowserNode = BrowserFolder | BrowserItem;
 
 interface BrowserSources {
   instruments: InstrumentLibraryItem[];
+  /** The Host's filing categories, in display order. */
+  categories: string[];
   collections: InstrumentCollection[];
   plugins: PluginEntry[];
   recordings: RecordingAsset[];
@@ -36,8 +40,6 @@ interface BrowserSearchResult {
   item: BrowserItem;
   location: string;
 }
-
-const UNCATEGORIZED = 'Uncategorized';
 
 const instrumentItem = (instrument: InstrumentLibraryItem): BrowserItem => ({
   kind: 'instrument',
@@ -60,12 +62,17 @@ const assetItem = (asset: LibraryAsset): BrowserItem => ({
   asset,
 });
 
-function folder(key: string, label: string, children: BrowserNode[]): BrowserFolder {
+function folder(
+  key: string,
+  label: string,
+  children: BrowserNode[],
+  collectionId?: number,
+): BrowserFolder {
   const itemCount = children.reduce(
     (count, child) => count + (child.kind === 'folder' ? child.itemCount : 1),
     0,
   );
-  return { kind: 'folder', key, label, children, itemCount };
+  return { kind: 'folder', key, label, children, itemCount, collectionId };
 }
 
 const byName = (left: { name: string }, right: { name: string }) =>
@@ -78,18 +85,15 @@ const byName = (left: { name: string }, right: { name: string }) =>
  * user's own collections.
  */
 export function buildBrowserTree(sources: BrowserSources): BrowserFolder[] {
-  const categories = new Map<string, InstrumentLibraryItem[]>();
-  for (const instrument of sources.instruments) {
-    const category = instrument.category ?? UNCATEGORIZED;
-    categories.set(category, [...(categories.get(category) ?? []), instrument]);
-  }
-  const categoryFolders = [...categories.entries()]
-    .sort(([left], [right]) =>
-      left === UNCATEGORIZED ? 1 : right === UNCATEGORIZED ? -1 : left.localeCompare(right),
-    )
-    .map(([category, items]) =>
-      folder(`instruments/${category}`, category, items.map(instrumentItem)),
-    );
+  const categoryFolders = sources.categories.map((category) =>
+    folder(
+      `instruments/${category}`,
+      category,
+      sources.instruments
+        .filter((instrument) => instrument.category === category)
+        .map(instrumentItem),
+    ),
+  );
   const plugins = [...sources.plugins].sort(byName);
   const pluginsWithRole = (role: PluginEntry['role']) =>
     plugins.filter((plugin) => plugin.role === role).map(pluginItem);
@@ -110,6 +114,7 @@ export function buildBrowserTree(sources: BrowserSources): BrowserFolder[] {
           sources.instruments
             .filter((instrument) => instrument.collectionIds.includes(collection.id))
             .map(instrumentItem),
+          collection.id,
         ),
       ),
     ),
@@ -126,12 +131,12 @@ export function buildBrowserTree(sources: BrowserSources): BrowserFolder[] {
 }
 
 function withoutEmptyFolders(node: BrowserFolder): BrowserFolder | null {
-  const keepEmpty = node.key.startsWith('collections/');
+  const keepEmpty = node.collectionId !== undefined;
   const children = node.children
     .map((child) => (child.kind === 'folder' ? withoutEmptyFolders(child) : child))
     .filter((child): child is BrowserNode => child !== null);
   if (!keepEmpty && children.length === 0) return null;
-  return folder(node.key, node.label, children);
+  return folder(node.key, node.label, children, node.collectionId);
 }
 
 /**
@@ -159,7 +164,7 @@ export function searchBrowserItems(
       .filter((instrument) => matchesInstrumentQuery(instrument, normalized, sources.collections))
       .map((instrument) => ({
         item: instrumentItem(instrument),
-        location: `Instruments › ${instrument.category ?? UNCATEGORIZED}`,
+        location: `Instruments › ${instrument.category}`,
       })),
     ...[...sources.plugins]
       .sort(byName)
