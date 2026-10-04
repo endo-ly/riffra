@@ -6,14 +6,14 @@ let pendingUpdate: Update | null = null;
 
 /**
  * Checks GitHub Releases for a newer application version. Resolves with the
- * available version string, or null when the application is current, the
- * endpoint is unreachable, or the browser preview is running without the
- * Tauri shell. A failed check must never surface as an application error;
- * Riffra stays fully functional offline.
+ * available version, or null when the application is current or the browser
+ * preview is running without the Tauri shell. Rejects when the endpoint is
+ * unreachable or the response is invalid; the startup check silences the
+ * rejection, while the manual check reports it to the user.
  */
 export async function checkForAppUpdate(): Promise<string | null> {
   if (!isNativeRuntime()) return null;
-  const update = await check().catch(() => null);
+  const update = await check();
   pendingUpdate = update;
   return update?.version ?? null;
 }
