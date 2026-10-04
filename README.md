@@ -71,7 +71,7 @@ DesktopはHostConnectionManagerを介して自身のEmbedded Hostまたは別プ
 - Node.js と npm
 - Rust toolchain（`Cargo.toml` の `rust-version` を確認）
 - ネイティブ音声エンジンをビルドできるCMakeと対応するC++ toolchain（`native/audio-engine/` 参照）
-- アップデータ用の署名鍵 `.tauri/riffra-updater.key`（Git管理外。`npm run build:tauri` / `npm run release:tauri` に必要。無ければ `npx tauri signer generate -w .tauri/riffra-updater.key --ci` で生成する）
+- アップデータ用の署名鍵ペア `.tauri/riffra-updater.key`（Git管理外。`npm run build:tauri` / `npm run release:tauri` に必須）。配布済みアプリの更新検証はこの鍵ペアの公開鍵に固定されるため、紛失時はバックアップから復元する。新しい鍵の生成は初回セットアップ時のみ行う
 - CLIまたはHeadless Hostを起動するには、同梱Built-in instrument resourceが必要。`./native/audio-engine/build.sh Debug` またはWindowsの `./native/audio-engine/build.ps1 -Configuration Debug` がサイドカーとresourceを配置する。別の場所へstagingしたresourceを使う場合は `RIFFRA_BUILTIN_INSTRUMENTS_ROOT` に `instruments/builtin` のパスを指定する
 
 Linux ではトラックワーカーをリアルタイム優先度で起動できる `RLIMIT_RTPRIO`（99）の設定が必要である。音声サイドカーとオフラインレンダラーはこの権限を持つプロセスから起動する。
