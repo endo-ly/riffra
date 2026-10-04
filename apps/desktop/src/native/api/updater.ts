@@ -1,33 +1,24 @@
-import { relaunch } from '@tauri-apps/plugin-process';
-import { check, type Update } from '@tauri-apps/plugin-updater';
-import { isNativeRuntime } from '../invoke';
-
-let pendingUpdate: Update | null = null;
+import { isNativeRuntime, invoke } from '../invoke';
 
 /**
- * Checks GitHub Releases for a newer application version. Resolves with the
- * available version, or null when the application is current or the browser
- * preview is running without the Tauri shell. Rejects when the endpoint is
- * unreachable or the response is invalid; the startup check silences the
- * rejection, while the manual check reports it to the user.
+ * Checks the release endpoint for a newer application version. Resolves with
+ * the available version, or null when the application is current or the
+ * browser preview is running without the Tauri shell. Rejects when the
+ * endpoint is unreachable or the response is invalid; the startup check
+ * silences the rejection, while the manual check reports it to the user.
  */
 export async function checkForAppUpdate(): Promise<string | null> {
   if (!isNativeRuntime()) return null;
-  const update = await check();
-  pendingUpdate = update;
-  return update?.version ?? null;
+  return invoke<string | null>('check_for_app_update');
 }
 
 /**
- * Downloads and installs the update found by the last successful check, then
- * relaunches the application. Rejects when no update was checked first or the
- * download failed; the caller keeps the session alive in that case.
+ * Downloads and installs the update published on the release endpoint.
+ * Rejects when no update is available or the download fails. On Windows the
+ * updater shuts the application down through its before-exit hook and hands
+ * over to the installer, which restarts the application; the promise does
+ * not resolve in that case.
  */
 export async function installAppUpdate(): Promise<void> {
-  const update = pendingUpdate;
-  if (!update) {
-    throw new Error('No application update has been checked');
-  }
-  await update.downloadAndInstall();
-  await relaunch();
+  await invoke('install_app_update');
 }

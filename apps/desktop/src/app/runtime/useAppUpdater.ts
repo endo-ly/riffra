@@ -44,6 +44,9 @@ export function useAppUpdater({ api }: AppUpdaterOptions) {
     if (!availableVersion || installing) return;
     setInstalling(true);
     try {
+      // On Windows the updater exits the application through its before-exit
+      // hook; reaching the await is failure-free shutdown, so only rejections
+      // return control here.
       await api.installAppUpdate();
     } catch (error) {
       setInstalling(false);
