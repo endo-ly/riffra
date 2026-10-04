@@ -25,6 +25,14 @@ function ensureTagIsNew(tag) {
   }
 }
 
+/** Official releases are always cut from the default branch. */
+function ensureReleaseBranch() {
+  const branch = runGit('rev-parse', '--abbrev-ref', 'HEAD');
+  if (branch !== 'main') {
+    throw new Error(`Desktop releases must be created from main, not from ${branch}.`);
+  }
+}
+
 /** A release build must come from a committed state so the tag can point at it. */
 function ensureCleanWorkingTree() {
   if (runGit('status', '--porcelain') !== '') {
@@ -98,8 +106,7 @@ function publishBundle(version, tag) {
     )}\n`,
   );
 
-  const branch = runGit('rev-parse', '--abbrev-ref', 'HEAD');
-  runGit('push', 'origin', branch);
+  runGit('push', 'origin', 'main');
   runGit('push', 'origin', tag);
   execFileSync(
     'gh',
@@ -120,10 +127,11 @@ function publishBundle(version, tag) {
 }
 
 function main() {
+  ensureReleaseBranch();
+  ensureCleanWorkingTree();
   const version = releaseVersion();
   const tag = `v${version}`;
   ensureTagIsNew(tag);
-  ensureCleanWorkingTree();
   const stamped = stampVersion(version);
   if (stamped) {
     runGit('add', 'apps/desktop/src-tauri/tauri.conf.json');
