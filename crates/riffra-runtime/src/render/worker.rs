@@ -6,7 +6,7 @@ use crate::render::OfflineRenderRequest;
 use std::{
     io::{Read, Write},
     path::PathBuf,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
@@ -95,7 +95,7 @@ impl RenderWorker {
         };
         let encoded = serde_json::to_vec(&payload).map_err(RenderWorkerError::Encode)?;
         tracing::info!("starting offline render worker");
-        let mut child = Command::new(&self.executable)
+        let mut child = crate::process::sidecar_command(&self.executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

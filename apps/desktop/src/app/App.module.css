@@ -129,6 +129,16 @@
   color: var(--color-accent-primary);
 }
 
+.updateNotice {
+  color: var(--color-status-success);
+  background: color-mix(in srgb, var(--color-status-success) 14%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-status-success) 50%, transparent);
+}
+
+.updateNotice strong {
+  color: var(--color-status-success);
+}
+
 .recoveryActions {
   display: flex;
   flex-wrap: wrap;

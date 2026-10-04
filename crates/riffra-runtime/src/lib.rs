@@ -20,6 +20,7 @@ pub mod missing;
 mod model;
 pub mod plugins;
 mod preferences;
+mod process;
 pub mod projects;
 pub mod recording;
 pub mod render;

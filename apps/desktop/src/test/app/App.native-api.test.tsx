@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
+import { useAppUpdater } from '@/app/runtime/useAppUpdater';
 import { getHostGeneration } from '@/native/invoke';
 import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { defaultSession } from '@/native/browser-defaults';
@@ -232,5 +233,41 @@ describe('App native boundary', () => {
       expect(screen.getByText(/Feedback suspected near the input monitor/)).toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
+  });
+
+  it('offers the checked application update and installs it on demand', async () => {
+    const api = new FakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
+
+    await renderApp(api);
+
+    expect(screen.getByText(/Riffra 9\.9\.9 can be installed/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Update & Restart' }));
+
+    await waitFor(() => expect(api.calls).toContain('installAppUpdate'));
+  });
+
+  it('stays silent when the startup check fails and reports a failed manual check', async () => {
+    const api = new FakeNativeApi({ failures: { checkForAppUpdate: new Error('offline') } });
+    function UpdateCheckProbe() {
+      const updater = useAppUpdater({ api });
+      return (
+        <>
+          <ToastStack />
+          <button type="button" onClick={() => void updater.checkNow()}>
+            Check now
+          </button>
+        </>
+      );
+    }
+    render(<UpdateCheckProbe />);
+
+    await waitFor(() => expect(api.calls).toContain('checkForAppUpdate'));
+    expect(screen.queryByText(/check for updates/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Could not check for updates/)).toBeInTheDocument(),
+    );
   });
 });

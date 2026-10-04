@@ -37,3 +37,4 @@ apps/desktop/src-tauri/out.txt
 .codex/
 .agents/
 patches/
+.tauri/

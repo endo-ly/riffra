@@ -2,7 +2,7 @@ use super::AudioSupervisor;
 use super::wire::ProbeMessage;
 use crate::api::output::{AudioDeviceProbe, DeviceChannels};
 use std::io::Read;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -125,7 +125,7 @@ fn run_probe<'a, I>(
 where
     I: IntoIterator<Item = &'a str>,
 {
-    let mut child = Command::new(executable)
+    let mut child = crate::process::sidecar_command(executable)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

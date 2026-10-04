@@ -20,6 +20,7 @@ mod model;
 mod render;
 #[cfg(test)]
 mod types;
+mod update_commands;
 
 use host_commands::*;
 use host_connection::{EmbeddedHostSettings, HostConnectionManager, NativeCommandError};
@@ -78,6 +79,7 @@ fn monitor_shutdown_request(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed)
                 && let Some(state) = window.try_state::<AppState>()
@@ -124,7 +126,9 @@ pub fn run() {
             host_connection::switch_host,
             host_connection::reconnect_host,
             asset::commands::import_midi_bytes,
-            render::commands::render_timeline
+            render::commands::render_timeline,
+            update_commands::check_for_app_update,
+            update_commands::install_app_update
         ])
         .run(tauri::generate_context!())
         .expect("Riffra failed to run");

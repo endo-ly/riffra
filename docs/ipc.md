@@ -492,6 +492,11 @@ Desktop の Tauri command 境界と Live Host の Control Server の機能分担
 | `core:default` / `core:window:allow-destroy` | コア操作とウィンドウ破棄 |
 | `dialog:default`                             | ファイルダイアログ       |
 
+更新フローはDesktop所有の`check_for_app_update` / `install_app_update`コマンドで提供する。
+Windows updaterはインストーラ起動直後にプロセスを終了させるため、`install_app_update`は
+`on_before_exit`フックでEmbedded Hostの停止を注入する。インストーラがアプリケーションを
+再起動するため、プロセス再起動の権限は不要である。
+
 ---
 
 ## 10. NativeApi と境界の対応規則

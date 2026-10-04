@@ -10,7 +10,7 @@ use crate::model::RuntimeRestarted;
 use crate::preferences::AudioPreferences;
 use crate::{HostEvent, RuntimeBinaries, SharedHostEventSink};
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -272,7 +272,7 @@ impl AudioSupervisor {
         if let Some(buffer_size) = preferences.buffer_size {
             arguments.extend(["--buffer-size".to_string(), buffer_size.to_string()]);
         }
-        let mut child = Command::new(&self.binaries.audio)
+        let mut child = crate::process::sidecar_command(&self.binaries.audio)
             .args(arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

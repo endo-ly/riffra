@@ -433,6 +433,20 @@ export interface MissingDependencyApi {
   replaceMissingTrackPlugin(deviceId: string, newPath: string): Promise<ArrangementMutationResult>;
 }
 
+export interface UpdaterApi {
+  /**
+   * Checks the release endpoint for a newer application version. Resolves
+   * with the available version, or null when current, offline, or in the
+   * browser preview. Shell-level capability; independent of the Host.
+   */
+  checkForAppUpdate(): Promise<string | null>;
+  /**
+   * Downloads and installs the update found by the last check and relaunches
+   * the application. Rejects when no update was checked or the install failed.
+   */
+  installAppUpdate(): Promise<void>;
+}
+
 export interface NativeEventApi {
   /**
    * Subscribes to the `audio-status` event pushed by the Rust audio supervisor.
@@ -470,4 +484,5 @@ export interface NativeApi
     TransportApi,
     MissingDependencyApi,
     HostConnectionApi,
+    UpdaterApi,
     NativeEventApi {}

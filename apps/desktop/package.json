@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "dev:tauri": "node ../../scripts/dev/ensure-desktop.mjs && tauri dev",
+    "build:tauri": "node ../../scripts/dev/build-desktop.mjs",
+    "release:tauri": "node ../../scripts/release/release-desktop.mjs",
     "gen:types": "cargo test --manifest-path ../../Cargo.toml -p riffra-desktop export_types && node ../../scripts/gen-barrel.js",
     "check": "npm run build && npm run test",
     "typecheck": "tsc -b"
