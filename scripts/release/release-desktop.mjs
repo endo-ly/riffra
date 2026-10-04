@@ -7,9 +7,31 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const tauriConfPath = join(repositoryRoot, 'apps/desktop/src-tauri/tauri.conf.json');
 const bundleDir = join(repositoryRoot, 'target/release/bundle/nsis');
 
+function runGit(...arguments_) {
+  return execFileSync('git', arguments_, { cwd: repositoryRoot, encoding: 'utf8' }).trim();
+}
+
 /** CalVer release identifier: the local date as major.minor.patch. */
 function releaseVersion(now = new Date()) {
   return `${now.getFullYear()}.${now.getMonth() + 1}.${now.getDate()}`;
+}
+
+function ensureTagIsNew(tag) {
+  if (runGit('ls-remote', '--tags', 'origin', `refs/tags/${tag}`) !== '') {
+    throw new Error(
+      `Tag ${tag} already exists on the remote. CalVer allows one release per day; ` +
+        'replace the existing release manually or wait for the next day.',
+    );
+  }
+}
+
+/** A release build must come from a committed state so the tag can point at it. */
+function ensureCleanWorkingTree() {
+  if (runGit('status', '--porcelain') !== '') {
+    throw new Error(
+      'The working tree has uncommitted changes. Commit or stash them before releasing.',
+    );
+  }
 }
 
 function stampVersion(version) {
@@ -20,28 +42,31 @@ function stampVersion(version) {
   return true;
 }
 
-function ensureTagIsNew(tag) {
-  const output = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], {
-    encoding: 'utf8',
-  });
-  if (output.trim() !== '') {
-    throw new Error(
-      `Tag ${tag} already exists on the remote. A release was already published today; ` +
-        'bump the patch segment manually for another one.',
-    );
+function ensureTagIsAbsentLocally(tag) {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`], {
+      cwd: repositoryRoot,
+      stdio: 'ignore',
+    });
+  } catch {
+    return;
   }
+  throw new Error(
+    `Local tag ${tag} already exists from an earlier attempt. ` +
+      `If it points at the commit to release, remove it with "git tag -d ${tag}" and rerun.`,
+  );
 }
 
 function readGithubRepository() {
-  const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' });
-  const match = remote.trim().match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+  const remote = runGit('remote', 'get-url', 'origin');
+  const match = remote.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
   if (!match) {
     throw new Error('The origin remote is not a GitHub repository.');
   }
   return `${match[1]}/${match[2]}`;
 }
 
-function publishBundle(version) {
+function publishBundle(version, tag) {
   const installerName = `Riffra_${version}_x64-setup.exe`;
   const installerPath = join(bundleDir, installerName);
   const signaturePath = `${installerPath}.sig`;
@@ -64,7 +89,7 @@ function publishBundle(version) {
         platforms: {
           'windows-x86_64': {
             signature: readFileSync(signaturePath, 'utf8').trim(),
-            url: `https://github.com/${repository}/releases/download/v${version}/${installerName}`,
+            url: `https://github.com/${repository}/releases/download/${tag}/${installerName}`,
           },
         },
       },
@@ -73,17 +98,21 @@ function publishBundle(version) {
     )}\n`,
   );
 
+  const branch = runGit('rev-parse', '--abbrev-ref', 'HEAD');
+  runGit('push', 'origin', branch);
+  runGit('push', 'origin', tag);
   execFileSync(
     'gh',
     [
       'release',
       'create',
-      `v${version}`,
+      tag,
       installerPath,
       latestJsonPath,
       '--title',
-      `Riffra v${version}`,
+      `Riffra ${tag}`,
       '--generate-notes',
+      '--verify-tag',
       '--latest',
     ],
     { cwd: repositoryRoot, stdio: 'inherit' },
@@ -92,19 +121,27 @@ function publishBundle(version) {
 
 function main() {
   const version = releaseVersion();
-  ensureTagIsNew(`v${version}`);
+  const tag = `v${version}`;
+  ensureTagIsNew(tag);
+  ensureCleanWorkingTree();
   const stamped = stampVersion(version);
+  if (stamped) {
+    runGit('add', 'apps/desktop/src-tauri/tauri.conf.json');
+    runGit('commit', '-m', `chore(release): ${tag}`);
+  }
+  ensureTagIsAbsentLocally(tag);
+  runGit('tag', tag);
 
   execFileSync('node', [join(repositoryRoot, 'scripts/dev/build-desktop.mjs')], {
     cwd: repositoryRoot,
     stdio: 'inherit',
   });
-  publishBundle(version);
+  publishBundle(version, tag);
 
-  console.log(`Published Riffra v${version}. Installed applications will pick it up.`);
+  console.log(`Published Riffra ${tag}. Installed applications will pick it up.`);
   if (stamped) {
     console.log(
-      `Version ${version} was written to tauri.conf.json. Commit and push it together with the release.`,
+      `The version bump was committed to ${runGit('rev-parse', '--abbrev-ref', 'HEAD')}.`,
     );
   }
 }
