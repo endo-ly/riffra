@@ -25,6 +25,7 @@ import { ProjectHostSelector } from './layout/ProjectHostSelector';
 import { LeftColumn } from './layout/LeftColumn';
 import { isEmergencyMuteActive } from '@/shared/audio/audio-safety';
 import { useAudioFeedbackSuspected } from '@/shared/audio/audio-meters';
+import { useAppUpdater } from '@/app/runtime/useAppUpdater';
 import { clearToast, showToast, toast } from '@/shared/toasts';
 import styles from './App.module.css';
 import shellStyles from './AppShell.module.css';
@@ -159,6 +160,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     projectState?.activeProjectId ?? null,
   );
   const liveFeedbackSuspected = useAudioFeedbackSuspected();
+  const appUpdater = useAppUpdater({ api: nativeApi });
 
   useEffect(() => {
     if (!panelResize) return;
@@ -287,6 +289,12 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     },
     {
       section: 'SETTINGS',
+      label: 'Check for Updates',
+      description: 'Check GitHub Releases for a newer Riffra',
+      run: () => void appUpdater.checkNow(),
+    },
+    {
+      section: 'SETTINGS',
       label: 'Audio Settings',
       description: 'Configure driver and Windows devices',
       run: () => setAudioSettingsOpen(true),
@@ -399,6 +407,24 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 onClick={dismissRecovery}
               >
                 Keep recovered session
+              </button>
+            </div>
+          </div>
+        )}
+        {appUpdater.availableVersion && (
+          <div className={`${styles.shellNotice} ${styles.updateNotice}`} role="status">
+            <strong>UPDATE AVAILABLE</strong>
+            <span>
+              Riffra {appUpdater.availableVersion} can be installed. The session stays untouched
+              until you restart.
+            </span>
+            <div className={styles.recoveryActions}>
+              <button
+                className={surface.textButton}
+                disabled={appUpdater.installing}
+                onClick={() => void appUpdater.install()}
+              >
+                {appUpdater.installing ? 'Installing…' : 'Update & Restart'}
               </button>
             </div>
           </div>

@@ -13,6 +13,7 @@ import * as projectApi from './project';
 import * as recordingApi from './recording';
 import * as renderApi from './render';
 import * as transportApi from './transport';
+import * as updaterApi from './updater';
 
 export function createNativeApi(): NativeApi {
   return {
@@ -29,6 +30,7 @@ export function createNativeApi(): NativeApi {
     ...devicesApi,
     ...transportApi,
     ...missingApi,
+    ...updaterApi,
     ...eventApi,
   };
 }

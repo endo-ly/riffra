@@ -487,10 +487,12 @@ Desktop の Tauri command 境界と Live Host の Control Server の機能分担
 
 メインウィンドウは最小ケイパビリティで構成する。
 
-| 権限                                         | 内容                     |
-| -------------------------------------------- | ------------------------ |
-| `core:default` / `core:window:allow-destroy` | コア操作とウィンドウ破棄 |
-| `dialog:default`                             | ファイルダイアログ       |
+| 権限                                         | 内容                                           |
+| -------------------------------------------- | ---------------------------------------------- |
+| `core:default` / `core:window:allow-destroy` | コア操作とウィンドウ破棄                       |
+| `dialog:default`                             | ファイルダイアログ                             |
+| `updater:default`                            | リリース確認と更新のダウンロード・インストール |
+| `process:allow-restart`                      | 更新適用後のアプリケーション再起動             |
 
 ---
 

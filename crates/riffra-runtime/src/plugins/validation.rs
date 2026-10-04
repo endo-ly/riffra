@@ -2,7 +2,7 @@ use crate::api::output::{PluginRole, PluginScanState, ScanIssue, ScanReport};
 use crate::audio::wire::{PluginScanMessage, PluginScanMetadata};
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -78,7 +78,7 @@ fn validate_one(
     path: &str,
     cancelled: Option<&AtomicBool>,
 ) -> Result<ValidationOutcome, String> {
-    let mut child = Command::new(scanner)
+    let mut child = crate::process::sidecar_command(scanner)
         .args(["--scan", path])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

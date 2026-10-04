@@ -13,6 +13,8 @@
     "ensure:desktop-runtime": "node scripts/dev/ensure-desktop.mjs",
     "test": "npm run test --workspace @riffra/desktop --",
     "dev:tauri": "npm run dev:tauri --workspace @riffra/desktop",
+    "build:tauri": "npm run build:tauri --workspace @riffra/desktop",
+    "release:tauri": "npm run release:tauri --workspace @riffra/desktop",
     "gen:types": "npm run gen:types --workspace @riffra/desktop",
     "check": "npm run check --workspace @riffra/desktop",
     "typecheck": "npm run typecheck --workspace @riffra/desktop",

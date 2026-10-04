@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use uuid::Uuid;
 
 use super::metadata::read_definition_metadata;
@@ -234,7 +233,7 @@ impl UserInstrumentStore {
         if self.sonalloy.as_os_str().is_empty() {
             return Err("bundled Sonalloy binary path is not configured".into());
         }
-        let output = Command::new(&self.sonalloy)
+        let output = crate::process::sidecar_command(&self.sonalloy)
             .args(["instrument", "inspect"])
             .arg(definition_path)
             .arg("--json")

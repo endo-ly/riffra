@@ -233,4 +233,15 @@ describe('App native boundary', () => {
     );
     expect(screen.getByRole('button', { name: /UNMUTE/ })).toBeInTheDocument();
   });
+
+  it('offers the checked application update and installs it on demand', async () => {
+    const api = new FakeNativeApi({ responses: { checkForAppUpdate: '9.9.9' } });
+
+    await renderApp(api);
+
+    expect(screen.getByText(/Riffra 9\.9\.9 can be installed/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Update & Restart' }));
+
+    await waitFor(() => expect(api.calls).toContain('installAppUpdate'));
+  });
 });

@@ -361,6 +361,12 @@ export class FakeNativeApi implements NativeApi {
   analyzeAsset(...args: Parameters<NativeApi['analyzeAsset']>) {
     return this.command('analyzeAsset', args);
   }
+  checkForAppUpdate() {
+    return this.command('checkForAppUpdate', []);
+  }
+  installAppUpdate() {
+    return this.command('installAppUpdate', []);
+  }
   renderTimeline(...args: Parameters<NativeApi['renderTimeline']>) {
     return this.command('renderTimeline', args);
   }
@@ -990,6 +996,7 @@ export class FakeNativeApi implements NativeApi {
       case 'importMidiFile':
       case 'importMidiBytes':
       case 'analyzeAsset':
+      case 'checkForAppUpdate':
       case 'sendMidiToTrack':
       case 'setLiveMidiTarget':
       case 'panicMidiTrack':
@@ -1139,6 +1146,7 @@ const audioMethodNames = new Set<keyof NativeApi>([
 
 const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
+  'installAppUpdate',
   'previewMasterGainDb',
   'previewTrackMix',
   'openTrackPluginEditor',
