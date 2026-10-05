@@ -386,6 +386,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     }
     const next = await editor.commit(props.api.removeTrack(trackId));
     if (next) {
+      if (selectedTrackId === trackId && lower.view === 'devices') lower.close();
       if (props.focusedTrackId === trackId) {
         props.onFocusTrack(null);
       }
@@ -394,7 +395,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         ...next.arrangement.midiClips.map((clip) => clip.id),
       ]);
       const clipIds = selectedClipIds.filter((id) => remaining.has(id));
-      props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
+      if (props.selection.kind !== 'track' || selectedTrackId === trackId)
+        props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
     }
   };
 
@@ -665,17 +667,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
-                  missingDeviceIds={missingDeviceIds}
-                  onAddDevice={() => {
+                  onOpenDevices={() => {
                     props.setSelection({ kind: 'track', trackId: track.id });
                     lower.openDevices();
-                  }}
-                  onOpenPluginEditor={(deviceId) => {
-                    void props.api
-                      .openTrackPluginEditor(track.id, deviceId)
-                      .catch((error: unknown) => {
-                        editor.setMessage(error instanceof Error ? error.message : String(error));
-                      });
                   }}
                   onReorder={(sourceTrackId, insertAfter) => {
                     const sourceIndex = arrangement.tracks.findIndex(

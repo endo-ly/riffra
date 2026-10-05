@@ -70,6 +70,7 @@ export function useDeviceDetails(
     try {
       const result = await operation();
       if (sequence.current !== request) return false;
+      setLoading(true);
       applyArrangementMutation(result, applyCanonicalState, setError);
       setRefresh((value) => value + 1);
       return true;

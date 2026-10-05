@@ -82,7 +82,7 @@ Timeline 上で選択している Track または Clip 群を表す。Properties
 
 #### Devices の編集対象
 
-Devices は Arrange Selection で明示的に選択した Track を扱う。Track Header の Device 操作、Properties の Open Devices、Mixer の FX から開く。Track を切り替えると Device 選択を解除し、選択 Device を削除した場合も詳細を閉じる。Effect の順序変更では Device の選択を維持する。
+Devices は Arrange Selection で明示的に選択した Track を扱う。Track Header の Device 操作、Properties の Open Devices、Mixer の FX から開く。Track を切り替えると Device 選択を解除し、選択 Device を削除した場合も詳細を閉じる。選択 Track を削除した場合は Devices を閉じる。Effect の順序変更では Device の選択を維持する。
 
 #### Active MIDI Clip
 
@@ -193,13 +193,12 @@ Track Header は Track の識別と、演奏・録音中に頻繁に触る操作
 
 Input、Monitoring、名称など Track 自体の詳細属性は Properties が扱う。Instrument / Effect Chain は Devices で編集し、Properties は Track 属性へ集中する。Volume / Pan は制作中の確認頻度が高いため Track Header に簡易操作を置き、Properties では数値確認と精密調整を行える。
 
-Track Menu は Track 単位の操作をまとめる。Audio Track と Instrument Track で同じ構造を持ち、Device の編集面への入口と Track の複製・削除を提供する。Device が挿入された Track では挿入済み Device をそのまま開けるため、Track を選んで Plugin Editor へ至る最短経路になる。
+Track Menu は Track 単位の操作をまとめる。Audio Track と Instrument Track で同じ構造を持ち、Open Devices で選択 Track の音源と Effect Chain を開く。Plugin Editor は Devices 内の選択 Device から開く。Track の複製・削除もこの Menu から行う。
 
-| 項目                           | 仕様                                                                 |
-| ------------------------------ | -------------------------------------------------------------------- |
-| Open `<Device 名>`             | 挿入済みVST3 DeviceのPlugin Editorを開く。Built-in音源には表示しない |
-| Choose Instrument / Add Effect | Track を選択して Devices を開く                                      |
-| Duplicate / Delete             | Track の複製と削除。Delete は Clip 数の確認を伴う                    |
+| 項目               | 仕様                                            |
+| ------------------ | ----------------------------------------------- |
+| Open Devices       | Track を選択して Devices を開く                 |
+| Duplicate / Delete | Track の複製と削除。Delete は Clip 数を確認する |
 
 ### 3.4 Clip 共通操作
 

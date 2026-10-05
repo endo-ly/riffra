@@ -33,12 +33,13 @@ export function useArrangeShell(
     midiClips: session?.arrangement.midiClips ?? [],
     selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
   });
+  const { close: closeLowerArea } = lower;
 
   useEffect(() => {
     setSelection({ kind: 'none' });
     setFocusedTrackId(null);
-    lower.close();
-  }, [hostGeneration, projectId, lower.close]);
+    closeLowerArea();
+  }, [hostGeneration, projectId, closeLowerArea]);
 
   const selectedTrack = useMemo(
     () =>
@@ -47,6 +48,14 @@ export function useArrangeShell(
         : null,
     [selection, session],
   );
+  const lowerView = lower.view;
+
+  useEffect(() => {
+    if (selection.kind === 'track' && !selectedTrack) {
+      setSelection({ kind: 'none' });
+      if (lowerView === 'devices') closeLowerArea();
+    }
+  }, [selection, selectedTrack, lowerView, closeLowerArea]);
 
   useEffect(() => {
     if (

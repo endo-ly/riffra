@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { useState } from 'react';
+import { Profiler, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceParameterInfo, Track } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
@@ -107,7 +107,16 @@ describe('DevicesPanel', () => {
     const currentSession = defaultSession();
     currentSession.arrangement.tracks = [structuredClone(track)];
     const currentParameters = structuredClone(parameters);
-    const parameterReads = vi.fn(async () => structuredClone(currentParameters));
+    let releaseModeMetadata!: () => void;
+    const modeMetadata = new Promise<void>((resolve) => {
+      releaseModeMetadata = resolve;
+    });
+    let refreshingMode = false;
+    const enabledDuringRefresh: boolean[] = [];
+    const parameterReads = vi.fn(async () => {
+      if (currentParameters[1].value === 1) await modeMetadata;
+      return structuredClone(currentParameters);
+    });
     api.listTrackDeviceParameters = parameterReads;
     api.setTrackDeviceParameter = vi.fn(async (_trackId, _deviceId, index, value) => {
       currentParameters[index] = {
@@ -116,6 +125,7 @@ describe('DevicesPanel', () => {
         displayValue: String(value),
       };
       currentSession.arrangement.tracks[0].effects[0].plugin.parameterValues[index] = value;
+      if (index === 1) refreshingMode = true;
       return {
         canonical: canonicalState(structuredClone(currentSession)),
         createdEntityIds: {},
@@ -136,7 +146,17 @@ describe('DevicesPanel', () => {
       };
     });
     api.openTrackPluginEditor = vi.fn().mockResolvedValue(undefined);
-    render(<Harness api={api} />);
+    render(
+      <Profiler
+        id="device-editor"
+        onRender={() => {
+          const reset = screen.queryByRole('button', { name: 'Reset Level' });
+          if (refreshingMode && reset) enabledDuringRefresh.push(!reset.hasAttribute('disabled'));
+        }}
+      >
+        <Harness api={api} />
+      </Profiler>,
+    );
     expect(screen.getByText('Audio Input →')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     const slider = await screen.findByLabelText('Level');
@@ -152,6 +172,10 @@ describe('DevicesPanel', () => {
     await waitFor(() =>
       expect(api.setTrackDeviceParameter).toHaveBeenLastCalledWith(track.id, effect.id, 1, 1),
     );
+    expect(screen.getByRole('button', { name: 'Reset Level' })).toBeDisabled();
+    expect(enabledDuringRefresh).not.toContain(true);
+    refreshingMode = false;
+    await act(async () => releaseModeMetadata());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Reset Level' }));
     await waitFor(() =>

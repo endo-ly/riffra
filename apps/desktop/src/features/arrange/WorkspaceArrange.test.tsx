@@ -1107,7 +1107,7 @@ describe('WorkspaceArrange', () => {
     await waitFor(() => expect(Number.parseFloat(second.style.left)).toBeCloseTo(129.6));
   });
 
-  it('reports MIDI and Audio clips when confirming Track deletion', () => {
+  it('reports clips when confirming Track deletion and closes the selected Track Devices', async () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
@@ -1135,18 +1135,34 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const afterDelete = structuredClone(session);
+    afterDelete.arrangement.tracks = afterDelete.arrangement.tracks.filter(
+      (track) => track.id !== 'track:instrument-delete',
+    );
+    afterDelete.arrangement.midiClips = [];
+    api.removeTrack = vi.fn().mockResolvedValue(mutationResult(afterDelete));
     render(<Harness api={api} initialSession={session} />);
 
     // Act
+    fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
+      'data-view',
+      'devices',
+    );
     fireEvent.click(screen.getByLabelText('Instrument Delete track menu'));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     // Assert
     expect(screen.getByText(/This also removes 1 Clip from the Timeline/)).toBeInTheDocument();
     expect(screen.getByText(/Source assets will be kept\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Track' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument(),
+    );
   });
 
-  it('opens the inserted plugin editor from the track menu', async () => {
+  it('opens Devices from the track menu with available and disabled plugins', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
@@ -1171,6 +1187,16 @@ describe('WorkspaceArrange', () => {
             disabledPlaceholder: false,
           },
         },
+        {
+          id: 'device:disabled',
+          name: 'Disabled Effect',
+          bypassed: false,
+          plugin: {
+            path: 'C:/Plugins/Disabled.vst3',
+            parameterValues: [],
+            disabledPlaceholder: true,
+          },
+        },
       ],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
@@ -1178,10 +1204,15 @@ describe('WorkspaceArrange', () => {
 
     // Act
     fireEvent.click(screen.getByLabelText('Guitar track menu'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Amplitube' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
 
     // Assert
-    await waitFor(() => expect(api.calls).toContain('openTrackPluginEditor'));
+    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toHaveAttribute(
+      'data-view',
+      'devices',
+    );
+    expect(screen.getByRole('button', { name: 'Amplitube' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disabled Effect' })).toBeInTheDocument();
   });
 
   it('keeps an unavailable clip on the timeline and labels its missing source', async () => {
