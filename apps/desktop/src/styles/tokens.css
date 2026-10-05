@@ -14,9 +14,9 @@
   --color-bg-surface: #151a21;
   --color-bg-surface-raised: #1a2028;
   --color-bg-control: #0d1216;
-  --color-bg-control-raised: #141a20;
   --color-bg-control-hover: #1c2b33;
   --color-bg-overlay: #151f26;
+  --color-bg-scrim: rgba(3, 5, 7, 0.65);
 
   /* Border roles */
   --color-border-subtle: #252c35;
@@ -32,13 +32,11 @@
   --color-text-on-accent: #071216;
 
   /* Accent and status roles */
-  --color-accent-primary: #55d9e8;
-  --color-accent-secondary: #45d6b3;
+  --color-accent: #55d9e8;
   --color-status-success: #45d6b3;
   --color-status-warning: #e7b55d;
   --color-status-danger: #ee5a67;
-  --color-selection-accent: #f2a33a;
-  --color-selection-highlight: #bfeff1;
+  --color-selection: #bfeff1;
   --color-scrollbar-thumb: #313b45;
   --color-scrollbar-track: #0b0f13;
 

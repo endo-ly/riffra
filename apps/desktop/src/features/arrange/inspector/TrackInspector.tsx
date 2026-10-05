@@ -9,7 +9,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { Icon } from '@/shared/ui/primitives';
-import { resolveTrackColor, TRACK_COLOR_PALETTE } from './track-colors';
+import { resolveTrackColor, TRACK_COLOR_PALETTE } from '../model/track-colors';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';

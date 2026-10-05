@@ -44,7 +44,7 @@
 }
 
 .card[data-selected='true'] {
-  border-color: var(--color-accent-primary);
+  border-color: var(--color-accent);
 }
 
 .chain button,
@@ -103,7 +103,7 @@
 
 .parameter input {
   width: 100%;
-  accent-color: var(--color-accent-primary);
+  accent-color: var(--color-accent);
 }
 
 .panel [role='alert'] {

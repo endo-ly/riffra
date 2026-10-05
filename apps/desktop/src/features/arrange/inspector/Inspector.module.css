@@ -54,7 +54,7 @@
 .colorSwatch[aria-pressed='true'] {
   box-shadow:
     0 0 0 2px var(--color-bg-surface-raised),
-    0 0 0 3px var(--color-accent-primary);
+    0 0 0 3px var(--color-accent);
 }
 
 .colorClear {
@@ -99,7 +99,7 @@
 }
 
 .identityName:hover {
-  background: var(--color-bg-control-raised);
+  background: var(--color-bg-surface);
 }
 
 .identityBlock {
@@ -163,7 +163,7 @@
 .headerAction {
   min-height: 0;
   padding: 2px 0;
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: transparent;
   border-radius: var(--radius-sm);
@@ -301,7 +301,7 @@ select.control {
 }
 
 .valueInput:focus-visible {
-  border-color: var(--color-accent-primary);
+  border-color: var(--color-accent);
   outline: none;
 }
 
@@ -357,7 +357,7 @@ select.control {
 
 .segmented button[aria-pressed='true'] {
   color: var(--color-text-strong);
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .smallButton {
@@ -368,7 +368,7 @@ select.control {
   padding: 0 9px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
-  background: var(--color-bg-control-raised);
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -379,9 +379,9 @@ select.control {
 }
 
 .smallButton.accent {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
-  border-color: color-mix(in srgb, var(--color-accent-primary) 28%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
 .smallButton.danger,
@@ -408,8 +408,8 @@ select.control {
 
 .iconButton:hover,
 .iconButton:focus-visible {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .iconButton.danger:hover,
@@ -446,7 +446,7 @@ select.control {
 }
 
 .take.auditioning {
-  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }
 
 .takeLine {
@@ -470,11 +470,11 @@ select.control {
 
 .badge {
   padding: 1px 4px;
-  color: var(--color-accent-secondary);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.08em;
-  background: color-mix(in srgb, var(--color-accent-secondary) 10%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   border-radius: var(--radius-sm);
 }
 

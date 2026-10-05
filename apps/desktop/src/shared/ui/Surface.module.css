@@ -23,8 +23,8 @@
   color: var(--color-text-on-accent);
   background: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--color-accent-primary) 75%, white),
-    var(--color-accent-primary)
+    color-mix(in srgb, var(--color-accent) 75%, white),
+    var(--color-accent)
   );
   box-shadow:
     inset 0 1px rgba(255, 255, 255, 0.45),
@@ -78,7 +78,7 @@
 
 .textButton {
   padding: 5px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: transparent;
 }

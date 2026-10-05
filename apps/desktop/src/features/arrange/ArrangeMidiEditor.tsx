@@ -21,6 +21,7 @@ type ArrangeMidiApi = Pick<
 
 interface ArrangeMidiEditorProps {
   clip: MidiClip | null;
+  trackColor: string | null;
   timebase: ProjectTimebase;
   ghostNotes: MidiGhostNote[];
   playheadTick: number;
@@ -40,6 +41,7 @@ export function ArrangeMidiEditor(props: ArrangeMidiEditorProps) {
   return (
     <MidiEditorPanel
       clip={props.clip}
+      trackColor={props.trackColor}
       timebase={props.timebase}
       ghostNotes={props.ghostNotes}
       playheadTick={props.playheadTick}

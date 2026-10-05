@@ -89,14 +89,10 @@
 }
 
 .selected {
-  border-color: var(--track-color, var(--color-accent-primary));
-  background: color-mix(
-    in srgb,
-    var(--track-color, var(--color-accent-primary)) 8%,
-    var(--color-bg-panel)
-  );
+  border-color: var(--track-color, var(--color-accent));
+  background: color-mix(in srgb, var(--track-color, var(--color-accent)) 8%, var(--color-bg-panel));
   box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--track-color, var(--color-accent-primary)) 34%, transparent);
+    color-mix(in srgb, var(--track-color, var(--color-accent)) 34%, transparent);
 }
 
 .channelIdentity {
@@ -114,7 +110,7 @@
 }
 
 .channelIdentity:hover {
-  color: var(--track-color, var(--color-accent-primary));
+  color: var(--track-color, var(--color-accent));
 }
 
 .channelIdentity strong {
@@ -137,7 +133,7 @@
   width: 8px;
   height: 26px;
   border-radius: 2px;
-  background: var(--track-color, var(--color-accent-primary));
+  background: var(--track-color, var(--color-accent));
 }
 
 .fxSummary {
@@ -216,7 +212,7 @@
 .faderControl input,
 .masterFader input {
   width: 100%;
-  accent-color: var(--track-color, var(--color-accent-primary));
+  accent-color: var(--track-color, var(--color-accent));
 }
 
 .faderControl input,
@@ -309,7 +305,7 @@
 }
 
 .meterNormal {
-  --meter-color: var(--color-accent-primary);
+  --meter-color: var(--color-accent);
 }
 
 .meterWarning {
@@ -326,7 +322,7 @@
   bottom: 1px;
   left: 1px;
   display: block;
-  background: var(--meter-color, var(--color-accent-primary));
+  background: var(--meter-color, var(--color-accent));
 }
 
 .meterPeak {
@@ -385,11 +381,11 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 6px;
   padding: 6px;
-  border-top: 3px solid var(--color-accent-primary);
+  border-top: 3px solid var(--color-accent);
   border-right: 0;
   border-bottom: 0;
   border-radius: 6px 0 0 0;
-  background: color-mix(in srgb, var(--color-bg-panel) 92%, var(--color-accent-primary));
+  background: color-mix(in srgb, var(--color-bg-panel) 92%, var(--color-accent));
 }
 
 .masterHeader {
@@ -409,9 +405,9 @@
   height: 22px;
   display: grid;
   place-items: center;
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 48%, var(--color-border-default));
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 48%, var(--color-border-default));
   border-radius: 4px;
 }
 
@@ -431,7 +427,7 @@
 }
 
 .masterFader input {
-  accent-color: var(--color-accent-primary);
+  accent-color: var(--color-accent);
 }
 
 .safety {

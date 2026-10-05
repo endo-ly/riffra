@@ -46,7 +46,7 @@
 }
 
 .actions button:hover:not(:disabled) {
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   background: var(--color-bg-control-hover);
   border-color: var(--color-border-strong);
 }

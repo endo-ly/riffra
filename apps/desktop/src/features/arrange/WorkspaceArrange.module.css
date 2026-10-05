@@ -18,18 +18,12 @@
 }
 
 .timeline {
+  composes: scope from './TimelineTokens.module.css';
   position: relative;
   min-width: 100%;
   min-height: 100%;
   padding-top: 34px;
   background: var(--color-bg-panel);
-
-  /* Clip palette for this timeline scope. */
-  --clip-audio-bg: #1b4657;
-  --clip-audio-border: #34788c;
-  --clip-midi-bg: #2a2150;
-  --clip-midi-border: #4a3e80;
-  --clip-midi-note-fill: #b9a4f0;
 }
 
 /*
@@ -156,9 +150,9 @@
   top: 0;
   height: 100%;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-accent-primary) 13%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 .punchRange {
@@ -418,11 +412,11 @@
 }
 
 .trackHeader[data-drop='before'] {
-  box-shadow: inset 0 2px 0 var(--color-accent-primary);
+  box-shadow: inset 0 2px 0 var(--color-accent);
 }
 
 .trackHeader[data-drop='after'] {
-  box-shadow: inset 0 -2px 0 var(--color-accent-primary);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
 }
 
 .trackIdentity {
@@ -575,8 +569,8 @@
 }
 .trackSwitches .soloActive {
   color: var(--color-text-on-accent);
-  background: var(--color-accent-primary);
-  border-color: var(--color-accent-primary);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 .trackSwitches .armActive {
   color: var(--color-text-on-accent);
@@ -594,8 +588,8 @@
 }
 .trackSwitches .monOn {
   color: var(--color-text-on-accent);
-  background: var(--color-accent-secondary);
-  border-color: var(--color-accent-secondary);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .trackControl {
@@ -631,7 +625,7 @@
   cursor: ns-resize;
 }
 .resizeHandle:hover {
-  background: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
 .lane {
@@ -646,14 +640,10 @@
       90deg,
       transparent 0,
       transparent 23px,
-      color-mix(in srgb, var(--color-accent-primary) 8%, transparent) 24px
+      color-mix(in srgb, var(--color-accent) 8%, transparent) 24px
     ),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-accent-primary) 6%, transparent),
-      transparent
-    );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 35%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
 .automationRow {
@@ -676,11 +666,11 @@
   padding: 9px 11px 9px 14px;
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
-  border-left: 3px solid color-mix(in srgb, var(--color-accent-primary) 52%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 52%, transparent);
 }
 
 .automationHeader strong {
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.08em;
 }
@@ -713,19 +703,24 @@
   overflow: hidden;
   outline: none;
   background:
-    linear-gradient(180deg, transparent 49%, rgba(255, 255, 255, 0.035) 50%, transparent 51%),
+    linear-gradient(
+      180deg,
+      transparent 49%,
+      color-mix(in srgb, var(--color-text-strong) 3.5%, transparent) 50%,
+      transparent 51%
+    ),
     repeating-linear-gradient(
       90deg,
       transparent 0,
       transparent 47px,
-      rgba(255, 255, 255, 0.018) 48px
+      color-mix(in srgb, var(--color-text-strong) 1.8%, transparent) 48px
     ),
     var(--color-bg-app);
   cursor: crosshair;
 }
 
 .automationLane:focus-visible {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 
 .automationLane svg {
@@ -737,7 +732,7 @@
 
 .automationLane polyline {
   fill: none;
-  stroke: var(--color-accent-primary);
+  stroke: var(--color-accent);
   stroke-width: 1.5;
 }
 
@@ -758,7 +753,7 @@
   height: 10px;
   padding: 0;
   background: var(--color-bg-control);
-  border: 2px solid var(--color-accent-primary);
+  border: 2px solid var(--color-accent);
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
   cursor: grab;
@@ -766,8 +761,8 @@
 }
 
 .automationPointSelected {
-  background: var(--color-selection-accent);
-  border-color: var(--color-selection-accent);
+  background: var(--color-selection);
+  border-color: var(--color-selection);
 }
 
 .clip {
@@ -777,11 +772,17 @@
   padding: 0;
   text-align: left;
   color: var(--color-text-primary);
-  background: var(--clip-audio-bg);
-  border: 1px solid var(--clip-audio-border);
+  /*
+   * Track color drives the clip at a fixed OKLCH lightness so every hue reads
+   * with equal weight; --clip-content colors the waveform and note marks.
+   */
+  background: oklch(from var(--track-color) 0.4 calc(c * 0.55) h);
+  border: 1px solid oklch(from var(--track-color) 0.55 calc(c * 0.7) h);
   border-radius: var(--radius-sm);
   cursor: grab;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  --clip-content: oklch(from var(--track-color) 0.88 calc(c * 0.8) h);
 }
 
 .clip:hover {
@@ -791,13 +792,13 @@
   cursor: grabbing;
 }
 .clip.selected {
-  border-color: var(--color-selection-highlight);
+  border-color: var(--color-selection);
   box-shadow:
-    0 0 0 1px var(--color-selection-highlight),
+    0 0 0 1px var(--color-selection),
     0 5px 16px rgba(0, 0, 0, 0.4);
 }
 .clip.looped {
-  background: color-mix(in srgb, var(--clip-audio-bg) 86%, var(--color-accent-primary));
+  background: oklch(from var(--track-color) 0.45 calc(c * 0.6) h);
 }
 .clip.missingClip {
   background: repeating-linear-gradient(
@@ -820,21 +821,11 @@
   letter-spacing: 0.08em;
   pointer-events: none;
 }
-.clip.midiClip {
-  background: var(--clip-midi-bg);
-  border-color: var(--clip-midi-border);
-}
-.clip.midiClip.selected {
-  border-color: var(--color-selection-highlight);
-  box-shadow:
-    0 0 0 1px var(--color-selection-highlight),
-    0 5px 16px rgba(0, 0, 0, 0.4);
-}
 .clip.midiClip .waveform path {
   stroke: none;
 }
 .clip.midiClip .waveform rect {
-  fill: var(--clip-midi-note-fill);
+  fill: var(--clip-content);
 }
 
 .clipHeader {
@@ -846,7 +837,7 @@
   justify-content: space-between;
   gap: 7px;
   padding: 0 7px;
-  background: rgba(5, 16, 20, 0.34);
+  background: color-mix(in srgb, var(--color-bg-app) 34%, transparent);
   pointer-events: none;
 }
 .clipHeader strong {
@@ -875,7 +866,7 @@
 }
 .waveform path {
   fill: none;
-  stroke: var(--color-text-primary);
+  stroke: var(--clip-content);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -967,7 +958,7 @@
   bottom: 0;
   width: 1px;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-selection-highlight) 48%, transparent);
+  background: color-mix(in srgb, var(--color-selection) 48%, transparent);
   box-shadow: 1px 0 rgba(0, 0, 0, 0.22);
 }
 
@@ -1010,8 +1001,8 @@
   position: absolute;
   z-index: 11;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 70%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
 }
 
 .empty {
@@ -1033,10 +1024,10 @@
   height: 44px;
   display: grid;
   place-content: center;
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font-size: 27px;
-  background: color-mix(in srgb, var(--color-accent-primary) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
   border-radius: var(--radius-lg);
 }
 .empty strong {
@@ -1048,19 +1039,19 @@
   color: var(--color-text-primary);
   background: radial-gradient(
     circle at 50% 42%,
-    color-mix(in srgb, var(--color-accent-primary) 22%, transparent),
+    color-mix(in srgb, var(--color-accent) 22%, transparent),
     transparent 38%
   );
-  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 .empty button {
   margin-top: 7px;
   padding: 8px 12px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
-  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 32%, transparent);
   border-radius: var(--radius-sm);
 }
 .emptyActions {
@@ -1097,14 +1088,14 @@
 }
 .selectionChip button {
   padding: 3px 7px;
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
-  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
   border-radius: var(--radius-sm);
 }
 .selectionChip button:hover {
-  background: color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 /* Drop target below the last Track; dropping here places the item without a target Track. */
@@ -1120,6 +1111,6 @@
 
 .newTrackDropActive {
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
-  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
 }

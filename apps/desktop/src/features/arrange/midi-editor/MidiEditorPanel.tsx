@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MutableRefObject, ReactNode } from 'react';
+import type { CSSProperties, MutableRefObject, ReactNode } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
 import {
   SNAP_GRID_OPTIONS,
@@ -55,6 +55,8 @@ const LANE_LABEL_WIDTH = 48;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
+  /** Color of the track that owns the clip; notes are drawn in it. */
+  trackColor: string | null;
   timebase: ProjectTimebase;
   onUpdateNote?: (clipId: string, note: MidiNote) => void | PromiseLike<CreativeSession | null>;
   onUpdateNotes?: (
@@ -895,6 +897,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     <div
       ref={editorRef}
       className={styles.editor}
+      style={
+        props.trackColor ? ({ '--track-color': props.trackColor } as CSSProperties) : undefined
+      }
       aria-label="MIDI Editor"
       data-midi-editor-clip-id={clipId}
       tabIndex={0}

@@ -45,5 +45,5 @@
 
 .handle:hover .grip,
 .handle:focus-visible .grip {
-  background: var(--color-accent-primary);
+  background: var(--color-accent);
 }

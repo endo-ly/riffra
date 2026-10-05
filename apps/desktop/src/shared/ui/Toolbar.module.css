@@ -124,14 +124,14 @@ select.control {
 .control.active,
 .segmentedButton.active {
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-bg-control));
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-control));
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .field input[type='range'] {
   width: 82px;
   height: 3px;
-  accent-color: var(--color-accent-primary);
+  accent-color: var(--color-accent);
 }
 
 .field .value,

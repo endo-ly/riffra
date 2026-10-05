@@ -82,7 +82,7 @@
 }
 
 .hostDot[data-mode='attached'] {
-  background: var(--color-accent-primary);
+  background: var(--color-accent);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -148,7 +148,7 @@
 
 .nameInput:focus-visible {
   background: var(--color-bg-control);
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .nameInput::placeholder {
@@ -188,7 +188,7 @@
 }
 
 .search:focus-within {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .search svg {
@@ -306,7 +306,7 @@
   padding: 0 10px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-control);
-  background: var(--color-bg-control-raised);
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }

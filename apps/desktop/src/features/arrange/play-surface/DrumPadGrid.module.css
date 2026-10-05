@@ -91,7 +91,7 @@
   --pad-accent: #4e8eff;
 }
 .hihat {
-  --pad-accent: var(--color-accent-secondary);
+  --pad-accent: var(--color-accent);
 }
 .tom {
   --pad-accent: var(--color-status-warning);

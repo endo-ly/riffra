@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
-import { resolveTrackColor } from '@/features/arrange/inspector/track-colors';
+import { resolveTrackColor } from '@/features/arrange/model/track-colors';
 import { MixerMeter } from './MixerMeter';
 import { useTrackMixControl } from './hooks/useTrackMixControl';
 import styles from './Mixer.module.css';

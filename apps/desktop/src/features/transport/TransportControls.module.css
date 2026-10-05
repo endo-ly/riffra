@@ -44,13 +44,13 @@
 }
 
 .transportGroup .toggleActive {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .transportGroup .toggleActive:hover:not(:disabled) {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .transportGroup .playButton {
@@ -179,7 +179,7 @@
 
 .tempo:focus-within,
 .timebase select:focus-visible {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 60%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 
 @media (max-width: 1280px) {

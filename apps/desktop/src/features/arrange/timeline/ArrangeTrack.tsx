@@ -20,7 +20,7 @@ import {
   type TrackSize,
 } from '@/features/arrange/model/arrange-timeline';
 import { isBrowserItemDrag } from '@/features/arrange/hooks/useArrangeDrop';
-import { resolveTrackColor } from '../inspector/track-colors';
+import { resolveTrackColor } from '../model/track-colors';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import styles from '../WorkspaceArrange.module.css';
@@ -211,7 +211,12 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   return (
     <div
       className={styles.trackRow}
-      style={{ '--track-height': `${laneCount * laneHeight}px` } as CSSProperties}
+      style={
+        {
+          '--track-height': `${laneCount * laneHeight}px`,
+          '--track-color': resolveTrackColor(props.track, props.trackIndex ?? 0),
+        } as CSSProperties
+      }
       data-arrange-track
       data-track-id={props.track.id}
       data-selected={props.selected || undefined}
@@ -221,11 +226,6 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     >
       <aside
         className={styles.trackHeader}
-        style={
-          {
-            '--track-color': resolveTrackColor(props.track, props.trackIndex ?? 0),
-          } as CSSProperties
-        }
         data-drop={dropHint ?? undefined}
         onClick={(event) => {
           if (!(event.target as HTMLElement).closest('button, input, details, summary')) {
