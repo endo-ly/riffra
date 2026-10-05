@@ -37,6 +37,22 @@ void emitProtocolPollution() {
 
 }  // namespace
 
+class ModeDependentParameter final : public juce::AudioParameterChoice {
+public:
+    explicit ModeDependentParameter(const juce::AudioParameterChoice& modeIn)
+        : AudioParameterChoice("shape", "Shape", {"Small", "Medium", "Large"}, 0), mode(modeIn) {}
+
+    juce::String getText(float normalizedValue, int) const override {
+        const juce::StringArray labels = mode.getIndex() == 0
+                                             ? juce::StringArray{"Small", "Medium", "Large"}
+                                             : juce::StringArray{"Short", "Medium", "Long"};
+        return labels[juce::jlimit(0, 2, juce::roundToInt(normalizedValue * 2.0f))];
+    }
+
+private:
+    const juce::AudioParameterChoice& mode;
+};
+
 class RiffraTestProcessor final : public juce::AudioProcessor {
 private:
     juce::AudioParameterFloat* gain = nullptr;
@@ -51,8 +67,9 @@ public:
         addParameter(new juce::AudioParameterFloat(
             juce::ParameterID{"level", 1}, "Level", juce::NormalisableRange<float>{-60.0f, 0.0f},
             -6.0f, juce::AudioParameterFloatAttributes{}.withLabel("dB")));
-        addParameter(
-            new juce::AudioParameterChoice("mode", "Mode", {"Clean", "Warm", "Bright"}, 0));
+        auto* mode = new juce::AudioParameterChoice("mode", "Mode", {"Clean", "Warm", "Bright"}, 0);
+        addParameter(mode);
+        addParameter(new ModeDependentParameter(*mode));
         emitProtocolPollution();
     }
 

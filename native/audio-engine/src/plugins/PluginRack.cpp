@@ -366,11 +366,10 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
     }
 
     auto* active = plugin.get();
-    auto* queue = parameterQueue.get();
     if (active == nullptr || numOutputChannels <= 0 || numSamples <= 0) {
         return;
     }
-    applyQueuedParameterChanges(active, queue);
+    applyQueuedParameterChanges();
     if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;

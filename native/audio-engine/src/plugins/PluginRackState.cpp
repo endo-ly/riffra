@@ -18,7 +18,7 @@ void PluginRack::removeProcessorListener(juce::AudioProcessorListener& listener)
     if (plugin != nullptr) plugin->removeListener(&listener);
 }
 
-void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
+void PluginRack::queueParameterValue(const int index, const float value) noexcept {
     auto* queue = parameterQueue.get();
     if (queue == nullptr || index < 0 || static_cast<std::size_t>(index) >= queue->capacity) {
         return;
@@ -27,6 +27,12 @@ void PluginRack::enqueueParameterChange(const int index, const float value) noex
     const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     queue->values[offset].store(normalized, std::memory_order_release);
     queue->dirty[offset].store(true, std::memory_order_release);
+    parameterControllerSyncPending.store(true, std::memory_order_release);
+}
+
+void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
+    queueParameterValue(index, value);
+    const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     const juce::ScopedLock statusGuard(statusLock);
     const auto cached =
         std::find_if(cachedParameters.begin(), cachedParameters.end(),
@@ -167,7 +173,11 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
             const auto index = static_cast<int>(offset);
             const auto target = state.parameterValues[offset];
             const auto availableIndex = available[offset].index;
-            const auto current = available[offset].value;
+            const auto current =
+                parameterQueue != nullptr && offset < parameterQueue->capacity &&
+                        parameterQueue->dirty[offset].load(std::memory_order_acquire)
+                    ? parameterQueue->values[offset].load(std::memory_order_acquire)
+                    : available[offset].value;
             // VST instruments often expose thousands of parameters, most of
             // which are already at their saved/default value immediately
             // after construction. Avoid calling third-party automation hooks
@@ -222,8 +232,9 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
     return result;
 }
 
-void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const processor,
-                                             ParameterQueue* const queue) noexcept {
+void PluginRack::applyQueuedParameterChanges() noexcept {
+    auto* processor = plugin.get();
+    auto* queue = parameterQueue.get();
     if (processor == nullptr || queue == nullptr) return;
     const auto& parameters = processor->getParameters();
     const auto count = std::min(parameters.size(), static_cast<int>(queue->capacity));
@@ -234,6 +245,22 @@ void PluginRack::applyQueuedParameterChanges(juce::AudioProcessor* const process
         if (auto* parameter = parameters[index])
             parameter->setValueNotifyingHost(
                 queue->values[static_cast<std::size_t>(index)].load(std::memory_order_acquire));
+    }
+}
+
+bool PluginRack::synchronizeParameterController(juce::String& error) {
+    if (!parameterControllerSyncPending.load(std::memory_order_acquire)) return true;
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    try {
+        // JUCE flushes pending VST3 Edit Controller updates at the state-capture
+        // boundary. A completed audio block alone does not flush that dispatcher.
+        juce::MemoryBlock state;
+        plugin->getStateInformation(state);
+        parameterControllerSyncPending.store(false, std::memory_order_release);
+        return true;
+    } catch (...) {
+        error = "VST3 parameter controller synchronization failed.";
+        return false;
     }
 }
 
@@ -285,11 +312,7 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
     for (int index = 0; index < parameters.size(); ++index) {
         auto* parameter = parameters[index];
         if (parameter == nullptr) continue;
-        auto value = parameter->getValue();
-        const auto offset = static_cast<std::size_t>(index);
-        if (parameterQueue != nullptr && offset < parameterQueue->capacity &&
-            parameterQueue->dirty[offset].load(std::memory_order_acquire))
-            value = parameterQueue->values[offset].load(std::memory_order_acquire);
+        const auto value = parameter->getValue();
         const auto discrete = parameter->isDiscrete();
         const auto steps =
             discrete ? static_cast<std::uint32_t>(std::max(0, parameter->getNumSteps())) : 0u;

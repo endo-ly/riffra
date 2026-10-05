@@ -211,7 +211,7 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
 
-`getTrackDeviceParameters` は制御側で最新の Plugin metadata を取得し、`trackDeviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。
+`getTrackDeviceParameters` は制御側で最新の Plugin metadata を取得し、`trackDeviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。変更 ACK と metadata の読取は、対象の realtime command が含まれる block の処理完了を確認し、制御側で VST3 Edit Controller の更新を同期してから行う。音声デバイス停止中は制御側の所有者がキューを適用する。
 
 Desktop の Devices は既存 Control Command の `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。Preset と Parameter の編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editor のイベントによる正準値更新も同じ詳細へ反映する。
 

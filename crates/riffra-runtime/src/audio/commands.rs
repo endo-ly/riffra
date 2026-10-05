@@ -236,7 +236,7 @@ impl AudioSupervisor {
                 parameter_index,
                 value: value.clamp(0.0, 1.0),
             },
-            COMMAND_ACK_TIMEOUT,
+            TRACK_DEVICE_COMMAND_TIMEOUT,
         )
     }
 

@@ -192,10 +192,10 @@ PluginRack* TimelineEngine::findDevice(const juce::String& trackId,
     });
 }
 
-const PluginRack* TimelineEngine::findCommittedRack(const ControlGraphRegistry::State& graphs,
-                                                    const juce::String& trackId,
-                                                    const juce::String& deviceId, const char* noun,
-                                                    juce::String& error) {
+PluginRack* TimelineEngine::findCommittedRack(const ControlGraphRegistry::State& graphs,
+                                              const juce::String& trackId,
+                                              const juce::String& deviceId, const char* noun,
+                                              juce::String& error) {
     if (graphs.latestCommitted == nullptr) {
         error = "Arrangement Graph is not loaded.";
         return nullptr;
@@ -205,7 +205,7 @@ const PluginRack* TimelineEngine::findCommittedRack(const ControlGraphRegistry::
         error = "Track was not found.";
         return nullptr;
     }
-    const auto* rack = findRack(*track, deviceId);
+    auto* rack = findRack(*track, deviceId);
     if (rack == nullptr)
         error = isInstrumentDevice(*track, deviceId)
                     ? juce::String("Built-in instruments do not expose plugin ") + noun + "."
@@ -232,11 +232,12 @@ std::optional<TrackDeviceStatusSpec> TimelineEngine::deviceStatus(const juce::St
 }
 
 std::optional<TrackDeviceParametersSpec> TimelineEngine::deviceParameterStatus(
-    const juce::String& trackId, const juce::String& deviceId, juce::String& error) const {
+    const juce::String& trackId, const juce::String& deviceId, juce::String& error) {
     return graphRegistry.access(
         [&](const ControlGraphRegistry::State& graphs) -> std::optional<TrackDeviceParametersSpec> {
-            const auto* rack = findCommittedRack(graphs, trackId, deviceId, "parameters", error);
+            auto* rack = findCommittedRack(graphs, trackId, deviceId, "parameters", error);
             if (rack == nullptr) return std::nullopt;
+            if (!synchronizeDeviceParameters(*rack, error)) return std::nullopt;
             TrackDeviceParametersSpec result;
             for (const auto& parameter : rack->parameters()) {
                 TrackDeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
@@ -366,6 +367,28 @@ bool TimelineEngine::setDeviceBypassed(const juce::String& trackId, const juce::
     });
 }
 
+bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String& error,
+                                                 const int parameterIndex,
+                                                 const float value) noexcept {
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::applyDeviceParameters;
+    command.pluginRack = &rack;
+    command.parameterIndex = parameterIndex;
+    command.parameterValue = value;
+    const auto sequence = submit(command);
+    if (!sequence.has_value()) {
+        error = "The realtime command queue is full.";
+        return false;
+    }
+    if (!waitUntilApplied(*sequence, std::chrono::seconds(5), true)) {
+        error = "Plugin parameter application timed out.";
+        return false;
+    }
+    if (!rack.synchronizeParameterController(error)) return false;
+    if (parameterIndex >= 0) rack.updateParameterCache(*rack.plugin);
+    return true;
+}
+
 bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
                                         const int parameterIndex, const float value,
                                         juce::String& error) noexcept {
@@ -391,7 +414,7 @@ bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce:
             error = "Track Device parameter index is invalid.";
             return false;
         }
-        return rack->setParameter(parameterIndex, value, error);
+        return synchronizeDeviceParameters(*rack, error, parameterIndex, value);
     });
 }
 

@@ -7,6 +7,7 @@ namespace riffra {
 
 struct PreparedTimeline;
 class ArrangementCaptureSink;
+class PluginRack;
 
 /// One request from a control thread to the owner of the realtime timeline state.
 struct RealtimeCommand final {
@@ -26,6 +27,7 @@ struct RealtimeCommand final {
         deviceStarted,
         setRecordingSink,
         clearRecordingSink,
+        applyDeviceParameters,
     };
 
     Kind kind = Kind::play;
@@ -43,6 +45,11 @@ struct RealtimeCommand final {
     /// `publishGraph`.
     PreparedTimeline* graph = nullptr;
     ArrangementCaptureSink* recordingSink = nullptr;
+    /// `applyDeviceParameters`; the control registry retains the rack until applied.
+    PluginRack* pluginRack = nullptr;
+    /// Optional parameter assignment before draining that rack's existing queue.
+    std::int32_t parameterIndex = -1;
+    float parameterValue = 0.0f;
 };
 
 static_assert(std::is_trivially_copyable_v<RealtimeCommand>);

@@ -561,6 +561,7 @@ void TimelineEngine::mix(const float* const* inputChannels, const int inputChann
                          const int sampleCount) noexcept {
     mixActiveGraph(inputChannels, inputChannelCount, outputChannels, channelCount, sampleCount);
     publishFrame(realtime);
+    completedBlockCommandSequence.store(realtime.appliedCommandSequence, std::memory_order_release);
 }
 
 void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int inputChannelCount,
