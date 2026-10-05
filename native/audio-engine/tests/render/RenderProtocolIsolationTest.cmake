@@ -19,7 +19,7 @@ file(TO_CMAKE_PATH "${DESTINATION}" DESTINATION)
 set(request_template [=[
 {
   "type": "renderTimelineOffline",
-  "protocolVersion": 3,
+  "protocolVersion": 4,
   "request": {
     "graph": {
       "timebase": {"ppq": 960, "bpm": 120.0, "timeSignatureNumerator": 4, "timeSignatureDenominator": 4},

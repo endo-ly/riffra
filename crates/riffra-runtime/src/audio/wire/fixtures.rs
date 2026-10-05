@@ -364,6 +364,25 @@ fn sidecar_message_fixtures_decode() {
     let mut decoded = BTreeSet::new();
     for (name, value) in message_fixtures() {
         let bytes = serde_json::to_vec(&value).unwrap();
+        if name == "response.trackDeviceParameters.json" {
+            let SidecarMessage::Response {
+                response: SidecarResponse::TrackDeviceParameters(status),
+                ..
+            } = decode_message(&bytes).unwrap()
+            else {
+                panic!("expected device parameters")
+            };
+            let level = &status.parameters[0];
+            assert_eq!(level.display_value, "-6");
+            assert_eq!(level.label, "dB");
+            assert!(!level.discrete);
+            assert_eq!(level.step_count, 0);
+            let mode = &status.parameters[1];
+            assert!(mode.discrete);
+            assert_eq!(mode.step_count, 2);
+            assert_eq!(mode.choices[1].value, 1.0);
+            assert_eq!(mode.choices[1].display_value, "Warm");
+        }
         let implied = decode_fixture(&name, &bytes)
             .unwrap_or_else(|error| panic!("message fixture {name} did not decode: {error}"));
         assert_eq!(

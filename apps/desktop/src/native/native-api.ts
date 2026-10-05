@@ -13,6 +13,9 @@ import type {
   HistoryState,
   AssetId,
   DeviceChannels,
+  DeviceInspection,
+  DeviceParameterInfo,
+  PluginPresetInfo,
   LibraryAsset,
   MissingDependency,
   ProjectExport,
@@ -324,6 +327,20 @@ export interface ArrangeApi {
     deviceId: string,
     parameterIndex: number,
     value: number,
+  ): Promise<ArrangementMutationResult>;
+  inspectTrackDevice(trackId: string, deviceId: string): Promise<DeviceInspection>;
+  listTrackDeviceParameters(trackId: string, deviceId: string): Promise<DeviceParameterInfo[]>;
+  getTrackDeviceParameter(
+    trackId: string,
+    deviceId: string,
+    parameterIndex: number,
+  ): Promise<DeviceParameterInfo>;
+  listTrackPluginPresets(trackId: string, deviceId: string): Promise<PluginPresetInfo[]>;
+  getTrackPluginPreset(trackId: string, deviceId: string): Promise<PluginPresetInfo | null>;
+  setTrackPluginPreset(
+    trackId: string,
+    deviceId: string,
+    presetIndex: number,
   ): Promise<ArrangementMutationResult>;
   openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
   removeTrack(trackId: string): Promise<ArrangementMutationResult>;

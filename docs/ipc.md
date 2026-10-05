@@ -187,7 +187,7 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 ### 5.3 起動とプロトコル版
 
-- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント（`protocolVersion` と初期 `AudioStatus`）を 1 回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`（`3`）で一致させる
+- サイドカーはデバイスの接続後、最初のメッセージとして `ready` イベント（`protocolVersion` と初期 `AudioStatus`）を 1 回だけ送る。版は両言語の `SIDECAR_PROTOCOL_VERSION`（`4`）で一致させる
 - Rust は `ready` を受けたときだけその世代を ready にする。版が異なる場合はその世代を起動失敗とする。`ready` の前にプロセスが終了した場合も起動失敗である
 - 版の確認は `ready` に一本化し、個々の命令は版を持たない
 
@@ -210,6 +210,10 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 | テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                       |
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
+
+`getTrackDeviceParameters` は制御側で最新の Plugin metadata を取得し、`trackDeviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。変更 ACK と metadata の読取は、対象の realtime command が含まれる block の処理完了を確認し、制御側で VST3 Edit Controller の更新を同期してから行う。音声デバイス停止中は制御側の所有者がキューを適用する。
+
+Desktop の Devices は既存 Control Command の `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。Preset と Parameter の編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editor のイベントによる正準値更新も同じ詳細へ反映する。
 
 `setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。`trackMixAck` は値の Canonical commit を意味しない。
 
@@ -308,7 +312,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 | 項目 | 内容                                                                                                                                                                                                                                                                                            |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 起動 | `render_timeline` 命令ごとに `riffra-runtime::render` が `RuntimeBinaries` の executable を 1 プロセス起動する。配置規則は Desktop / Headless 共通                                                                                                                                              |
-| 要求 | stdin へ JSON 1 行を書いて閉じる。`renderTimelineOffline` + `protocolVersion: 3` + `request`（`graph` / `destination` / `startTick` / `endTick` / `sampleRate` / `blockSize` / `normalize`）。Master Gain は `graph.masterGainDb` に含む                                                        |
+| 要求 | stdin へ JSON 1 行を書いて閉じる。`renderTimelineOffline` + `protocolVersion: 4` + `request`（`graph` / `destination` / `startTick` / `endTick` / `sampleRate` / `blockSize` / `normalize`）。Master Gain は `graph.masterGainDb` に含む                                                        |
 | 応答 | stdout へ JSON 1 行。成功は `offlineRenderComplete`（`frames`、`sampleRate`）、失敗は `error`（`operation: renderTimelineOffline`。`kind` は要求の契約違反 `renderContract`、版の不一致 `protocol`、レンダー失敗 `renderRejected`）。形は `contracts/sidecar/messages/render.*.json` で固定する |
 | 異常 | プロセス異常終了・応答の不一致・デコードできない応答はエラー扱いとし、部分的な WAV は破棄する。失敗時のエラーには stdout / stderr の末尾を抜粋として含める                                                                                                                                      |
 | 分担 | 計画（範囲・出力先 `renders/render-{ms}/timeline.wav`・manifest）はシェル側で組み立て、ワーカーは実行のみ                                                                                                                                                                                       |

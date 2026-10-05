@@ -1,0 +1,111 @@
+.panel {
+  height: 100%;
+  font-size: var(--font-size-control);
+  overflow: auto;
+  padding: var(--space-3);
+  background: var(--color-bg-panel);
+  color: var(--color-text-primary);
+}
+
+.header,
+.actions,
+.chain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.header {
+  margin-bottom: var(--space-3);
+  padding-right: 110px;
+}
+
+.header span,
+.card small {
+  color: var(--color-text-muted);
+}
+
+.chain {
+  align-items: stretch;
+  overflow-x: auto;
+  padding-bottom: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--space-2);
+  min-width: 180px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+}
+
+.card[data-selected='true'] {
+  border-color: var(--color-accent-primary);
+}
+
+.chain button,
+.details button,
+.details select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-control);
+  color: var(--color-text-primary);
+}
+
+.chain button:hover,
+.details button:hover {
+  background: var(--color-bg-control-hover);
+}
+
+.chain button:disabled,
+.details button:disabled {
+  color: var(--color-text-disabled);
+}
+
+.deviceName {
+  text-align: left;
+  font-weight: 600;
+}
+
+.input {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.recovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  color: var(--color-status-warning);
+}
+
+.recovery strong {
+  flex-basis: 100%;
+}
+
+.details {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-3);
+}
+
+.parameter {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr) minmax(100px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.parameter input {
+  width: 100%;
+  accent-color: var(--color-accent-primary);
+}
+
+.panel [role='alert'] {
+  color: var(--color-status-danger);
+}

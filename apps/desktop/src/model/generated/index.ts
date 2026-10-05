@@ -63,6 +63,7 @@ export type { DeviceCapabilities } from './DeviceCapabilities';
 export type { DeviceChannels } from './DeviceChannels';
 export type { DeviceIdParams } from './DeviceIdParams';
 export type { DeviceInspection } from './DeviceInspection';
+export type { DeviceParameterChoice } from './DeviceParameterChoice';
 export type { DeviceParameterGetParams } from './DeviceParameterGetParams';
 export type { DeviceParameterInfo } from './DeviceParameterInfo';
 export type { DeviceParameterSetParams } from './DeviceParameterSetParams';

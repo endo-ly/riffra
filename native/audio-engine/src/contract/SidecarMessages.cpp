@@ -325,16 +325,29 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
             [](const TrackDeviceParametersSpec& status) {
                 return ObjectBuilder{}
                     .set("type", "trackDeviceParameters")
-                    .set("parameters", array(status.parameters,
-                                             [](const TrackDeviceParameterSpec& parameter) {
-                                                 return ObjectBuilder{}
-                                                     .set("index", integer(parameter.index))
-                                                     .set("name", parameter.name)
-                                                     .set("value", parameter.value)
-                                                     .set("defaultValue", parameter.defaultValue)
-                                                     .set("automatable", parameter.automatable)
-                                                     .build();
-                                             }))
+                    .set("parameters",
+                         array(status.parameters,
+                               [](const TrackDeviceParameterSpec& parameter) {
+                                   return ObjectBuilder{}
+                                       .set("index", integer(parameter.index))
+                                       .set("name", parameter.name)
+                                       .set("value", parameter.value)
+                                       .set("defaultValue", parameter.defaultValue)
+                                       .set("automatable", parameter.automatable)
+                                       .set("displayValue", parameter.displayValue)
+                                       .set("label", parameter.label)
+                                       .set("discrete", parameter.discrete)
+                                       .set("stepCount", integer(parameter.stepCount))
+                                       .set("choices",
+                                            array(parameter.choices,
+                                                  [](const TrackDeviceParameterChoiceSpec& choice) {
+                                                      return ObjectBuilder{}
+                                                          .set("value", choice.value)
+                                                          .set("displayValue", choice.displayValue)
+                                                          .build();
+                                                  }))
+                                       .build();
+                               }))
                     .build();
             },
             [](const TrackDeviceProgramsSpec& status) {

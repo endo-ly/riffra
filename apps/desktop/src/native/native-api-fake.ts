@@ -529,6 +529,24 @@ export class FakeNativeApi implements NativeApi {
   setTrackDeviceParameter(...args: Parameters<NativeApi['setTrackDeviceParameter']>) {
     return this.command('setTrackDeviceParameter', args);
   }
+  inspectTrackDevice(...args: Parameters<NativeApi['inspectTrackDevice']>) {
+    return this.command('inspectTrackDevice', args);
+  }
+  listTrackDeviceParameters(...args: Parameters<NativeApi['listTrackDeviceParameters']>) {
+    return this.command('listTrackDeviceParameters', args);
+  }
+  getTrackDeviceParameter(...args: Parameters<NativeApi['getTrackDeviceParameter']>) {
+    return this.command('getTrackDeviceParameter', args);
+  }
+  listTrackPluginPresets(...args: Parameters<NativeApi['listTrackPluginPresets']>) {
+    return this.command('listTrackPluginPresets', args);
+  }
+  getTrackPluginPreset(...args: Parameters<NativeApi['getTrackPluginPreset']>) {
+    return this.command('getTrackPluginPreset', args);
+  }
+  setTrackPluginPreset(...args: Parameters<NativeApi['setTrackPluginPreset']>) {
+    return this.command('setTrackPluginPreset', args);
+  }
   openTrackPluginEditor(...args: Parameters<NativeApi['openTrackPluginEditor']>) {
     return this.command('openTrackPluginEditor', args);
   }
@@ -1107,6 +1125,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'reorderTrackEffects',
   'setTrackDeviceBypassed',
   'setTrackDeviceParameter',
+  'setTrackPluginPreset',
   'removeTrack',
   'duplicateTrack',
   'reorderTrack',

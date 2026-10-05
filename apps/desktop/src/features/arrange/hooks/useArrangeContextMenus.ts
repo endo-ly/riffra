@@ -20,11 +20,6 @@ import type { useArrangeLowerAreaController } from './useArrangeLowerAreaControl
 import type { useArrangeEditor } from './useArrangeEditor';
 import type { useArrangeRulerController } from './useArrangeRulerController';
 
-export interface ArrangePluginPickerRequest {
-  trackId: string;
-  kind: 'effect' | 'instrument';
-}
-
 interface UseArrangeContextMenusOptions {
   arrangement: CreativeSession['arrangement'];
   api: Pick<
@@ -42,7 +37,7 @@ interface UseArrangeContextMenusOptions {
   snap: SnapGrid;
   timebase: ProjectTimebase;
   displayTick: number;
-  setPluginPicker: (picker: ArrangePluginPickerRequest | null) => void;
+  onOpenDevices: (trackId: string) => void;
   addTrack: (kind: TrackKind) => Promise<CreativeSession | null>;
   deleteTrack: (trackId: string, name: string, clipCount: number) => void;
   trackClipCounts: Map<string, number>;
@@ -58,7 +53,7 @@ export function useArrangeContextMenus({
   snap,
   timebase,
   displayTick,
-  setPluginPicker,
+  onOpenDevices,
   addTrack,
   deleteTrack,
   trackClipCounts,
@@ -348,12 +343,8 @@ export function useArrangeContextMenus({
                   ]
                 : []),
               {
-                label: track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument',
-                onClick: () =>
-                  setPluginPicker({
-                    trackId: track.id,
-                    kind: track.kind === 'audio' ? 'effect' : 'instrument',
-                  }),
+                label: 'Open Devices',
+                onClick: () => onOpenDevices(track.id),
               },
               { separator: true },
               {

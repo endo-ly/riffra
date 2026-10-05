@@ -179,7 +179,7 @@ public:
                                                                     const juce::String& deviceId,
                                                                     juce::String& error) const;
     [[nodiscard]] std::optional<TrackDeviceParametersSpec> deviceParameterStatus(
-        const juce::String& trackId, const juce::String& deviceId, juce::String& error) const;
+        const juce::String& trackId, const juce::String& deviceId, juce::String& error);
     [[nodiscard]] std::optional<TrackDeviceProgramsSpec> deviceProgramStatus(
         const juce::String& trackId, const juce::String& deviceId, juce::String& error) const;
     [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
@@ -298,10 +298,13 @@ private:
 
     // Realtime command path.
     [[nodiscard]] std::optional<std::uint64_t> submit(RealtimeCommand command) noexcept;
-    bool waitUntilApplied(std::uint64_t commandSequence, std::chrono::milliseconds timeout) const;
+    bool waitUntilApplied(std::uint64_t commandSequence, std::chrono::milliseconds timeout,
+                          bool requireCompletedBlock = false) const;
     void waitUntilApplied(std::uint64_t commandSequence) const;
     void applyRealtimeCommand(RealtimeState& state, const RealtimeCommand& command) noexcept;
     void drainRealtimeCommands(RealtimeState& state) noexcept;
+    bool synchronizeDeviceParameters(PluginRack& rack, juce::String& error, int parameterIndex = -1,
+                                     float value = 0.0f) noexcept;
     void publishFrame(const RealtimeState& state) noexcept;
     void publishGraph(RealtimeState& state, PreparedTimeline* graph) noexcept;
     void advanceCountIn(RealtimeState& state, int sampleCount) noexcept;
@@ -367,9 +370,10 @@ private:
     [[nodiscard]] static InstrumentProcessContext instrumentProcessContext(
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     /// Finds a plugin rack in the committed graph. The caller holds the registry lock.
-    [[nodiscard]] static const PluginRack* findCommittedRack(
-        const ControlGraphRegistry::State& graphs, const juce::String& trackId,
-        const juce::String& deviceId, const char* noun, juce::String& error);
+    [[nodiscard]] static PluginRack* findCommittedRack(const ControlGraphRegistry::State& graphs,
+                                                       const juce::String& trackId,
+                                                       const juce::String& deviceId,
+                                                       const char* noun, juce::String& error);
 
     juce::TimeSliceThread readAheadThread{"Riffra timeline read-ahead"};
     bool offlineMode = false;
@@ -383,6 +387,7 @@ private:
     mutable std::mutex ownerMutex;
     std::atomic<RealtimeOwner> owner{RealtimeOwner::control};
     std::uint64_t nextCommandSequence = 1;
+    std::atomic<std::uint64_t> completedBlockCommandSequence{0};
     RealtimeState realtime;
     MidiSourceRegistry midiSources;
     BoundedMpmcQueue<LiveMidiEvent, kLiveMidiCapacity> liveMidi;

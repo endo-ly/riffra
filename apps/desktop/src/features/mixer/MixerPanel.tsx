@@ -11,6 +11,7 @@ interface MixerPanelProps {
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelectTrack: (trackId: string) => void;
+  onOpenDevices: (trackId: string) => void;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
@@ -47,6 +48,7 @@ export function MixerPanel(props: MixerPanelProps) {
                 api={props.api}
                 applyCanonicalState={props.applyCanonicalState}
                 onSelect={() => props.onSelectTrack(track.id)}
+                onOpenDevices={() => props.onOpenDevices(track.id)}
                 onError={props.onError}
                 disabled={props.disabled}
               />

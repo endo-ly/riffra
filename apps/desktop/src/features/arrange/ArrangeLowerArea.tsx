@@ -16,6 +16,7 @@ interface ArrangeLowerAreaProps {
   controls: ReactNode;
   midiEditor: ReactNode;
   mixer: ReactNode;
+  devices: ReactNode;
 }
 
 export function ArrangeLowerArea({
@@ -29,6 +30,7 @@ export function ArrangeLowerArea({
   controls,
   midiEditor,
   mixer,
+  devices,
 }: ArrangeLowerAreaProps) {
   if (view === 'closed') return null;
 
@@ -90,7 +92,9 @@ export function ArrangeLowerArea({
         {controls}
       </div>
       <div className={styles.content} hidden={collapsed}>
-        {view === 'midiEditor' ? midiEditor : mixer}
+        {view === 'midiEditor' && midiEditor}
+        {view === 'mixer' && mixer}
+        {view === 'devices' && devices}
       </div>
     </section>
   );

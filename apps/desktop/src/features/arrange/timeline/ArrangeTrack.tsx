@@ -68,9 +68,7 @@ interface ArrangeTrackProps {
   onDelete: () => void;
   onReorder: (sourceTrackId: string, insertAfter: boolean) => void;
   onSetTrackSize?: (size: TrackSize) => void;
-  missingDeviceIds: string[];
-  onAddDevice: () => void;
-  onOpenPluginEditor: (deviceId: string) => void;
+  onOpenDevices: () => void;
 }
 
 interface PendingTrackValues {
@@ -175,52 +173,17 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 
   const closeMenu = () => detailsRef.current?.removeAttribute('open');
-  const availableDevices = [
-    ...(props.track.instrument?.source.type === 'vst3'
-      ? [
-          {
-            id: props.track.instrument.id,
-            name: props.track.instrument.name,
-            unavailable:
-              props.track.instrument.source.disabledPlaceholder ||
-              props.missingDeviceIds.includes(props.track.instrument.id),
-          },
-        ]
-      : []),
-    ...props.track.effects.map((device) => ({
-      id: device.id,
-      name: device.name,
-      unavailable: device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
-    })),
-  ].filter((device) => !device.unavailable);
-  const trackMenuItems: ReactNode[] = [];
-  if (availableDevices.length > 0) {
-    for (const device of availableDevices) {
-      trackMenuItems.push(
-        <button
-          key={device.id}
-          onClick={() => {
-            closeMenu();
-            props.onOpenPluginEditor(device.id);
-          }}
-        >
-          Open {device.name}
-        </button>,
-      );
-    }
-  } else {
-    trackMenuItems.push(
-      <button
-        key="add-device"
-        onClick={() => {
-          closeMenu();
-          props.onAddDevice();
-        }}
-      >
-        {props.track.kind === 'audio' ? 'Add Effect' : 'Choose Instrument'}
-      </button>,
-    );
-  }
+  const trackMenuItems: ReactNode[] = [
+    <button
+      key="devices"
+      onClick={() => {
+        closeMenu();
+        props.onOpenDevices();
+      }}
+    >
+      Open Devices
+    </button>,
+  ];
   trackMenuItems.push(
     <hr key="separator-actions" className={styles.menuSeparator} />,
     <button

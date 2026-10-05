@@ -5,16 +5,11 @@ import type {
   AudioStatus,
   CanonicalState,
   CreativeSession,
-  InstrumentLibraryItem,
-  PluginEntry,
   Track,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor, TRACK_COLOR_PALETTE } from './track-colors';
-import { TrackPluginChainEditor } from './TrackPluginChainEditor';
-import { PluginPicker } from './PluginPicker';
-import { InstrumentPicker } from './InstrumentPicker';
 import { useInspectorOperation } from './useInspectorOperation';
 import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -24,12 +19,7 @@ interface TrackInspectorProps {
   session: CreativeSession;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   audio: AudioStatus;
-  missingDeviceIds: string[];
-  plugins: PluginEntry[];
-  instruments?: InstrumentLibraryItem[];
-  onDisableMissingPlugin: (deviceId: string) => Promise<void>;
-  onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
-  onRescanMissingPlugins: () => Promise<void>;
+  onOpenDevices: () => void;
   api: ArrangeInspectorApi;
 }
 
@@ -45,8 +35,6 @@ export function TrackInspector(props: TrackInspectorProps) {
   const [gainEdit, setGainEdit] = useState(false);
   const [panEdit, setPanEdit] = useState(false);
   const [colorOpen, setColorOpen] = useState(false);
-  const [instrumentPickerOpen, setInstrumentPickerOpen] = useState(false);
-  const [replaceTarget, setReplaceTarget] = useState<{ deviceId: string } | null>(null);
   const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
   useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
@@ -58,20 +46,6 @@ export function TrackInspector(props: TrackInspectorProps) {
       );
     },
     [props.applyCanonicalState, runOperation, setOperationMessage],
-  );
-  const setInstrument = (instrumentId: string) => {
-    commit(props.api.applyInstrument(props.track.id, instrumentId));
-  };
-  const setVst3Instrument = (plugin: PluginEntry) => {
-    commit(props.api.setTrackVst3Instrument(props.track.id, plugin.path));
-  };
-  const instrument = props.track.instrument;
-  const instrumentId = instrument?.id ?? '';
-  const instrumentVst3Source = instrument?.source.type === 'vst3' ? instrument.source : undefined;
-  const instrumentIsVst3 = instrumentVst3Source !== undefined;
-  const instrumentIsDisabled = instrumentVst3Source?.disabledPlaceholder ?? false;
-  const instrumentUnavailable = Boolean(
-    instrumentVst3Source && (instrumentIsDisabled || props.missingDeviceIds.includes(instrumentId)),
   );
   const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
   const displayColor = resolveTrackColor(props.track, trackIndex);
@@ -352,140 +326,21 @@ export function TrackInspector(props: TrackInspectorProps) {
               </select>
             </div>
           </section>
-          <section className={styles.section}>
-            <header className={styles.sectionHeader}>
-              <strong>INSTRUMENT</strong>
-            </header>
-            {instrumentPickerOpen && (
-              <InstrumentPicker
-                api={props.api}
-                instruments={props.instruments ?? []}
-                plugins={props.plugins}
-                onSelectInstrument={(instrumentId) => {
-                  setInstrument(instrumentId);
-                  setInstrumentPickerOpen(false);
-                }}
-                onSelectVst3={(plugin) => {
-                  setVst3Instrument(plugin);
-                  setInstrumentPickerOpen(false);
-                }}
-                onClose={() => setInstrumentPickerOpen(false)}
-              />
-            )}
-            <div className={styles.deviceRow}>
-              <span className={styles.deviceIcon}>
-                <Icon name="module" />
-              </span>
-              <div className={styles.deviceMeta}>
-                <strong>{instrument?.name ?? 'None'}</strong>
-                {!instrument && <small>No instrument selected</small>}
-              </div>
-              <div className={clsx(styles.deviceActions, styles.visible)}>
-                {!instrumentUnavailable && (
-                  <button
-                    type="button"
-                    className={styles.textButton}
-                    onClick={() => setInstrumentPickerOpen(true)}
-                  >
-                    {instrument ? 'Change' : 'Choose'}
-                  </button>
-                )}
-                {instrument && !instrumentUnavailable && (
-                  <button
-                    type="button"
-                    className={clsx(styles.textButton, styles.plain)}
-                    aria-pressed={instrument.bypassed}
-                    onClick={() =>
-                      commit(
-                        props.api.setTrackDeviceBypassed(
-                          props.track.id,
-                          instrument.id,
-                          !instrument.bypassed,
-                        ),
-                      )
-                    }
-                  >
-                    {instrument.bypassed ? 'Enable' : 'Bypass'}
-                  </button>
-                )}
-                {instrumentIsVst3 && !instrumentUnavailable && (
-                  <button
-                    type="button"
-                    className={clsx(styles.textButton, styles.plain)}
-                    onClick={() =>
-                      runOperation(props.api.openTrackPluginEditor(props.track.id, instrumentId))
-                    }
-                  >
-                    Edit
-                  </button>
-                )}
-                {instrument && !instrumentUnavailable && (
-                  <button
-                    type="button"
-                    className={clsx(styles.textButton, styles.plain)}
-                    onClick={() => commit(props.api.clearTrackInstrument(props.track.id))}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            {instrumentUnavailable && (
-              <div className={styles.missingState}>
-                <strong>{instrumentIsDisabled ? 'DISABLED PLACEHOLDER' : 'MISSING PLUGIN'}</strong>
-                <button
-                  type="button"
-                  className={styles.smallButton}
-                  onClick={() => runOperation(props.onRescanMissingPlugins())}
-                >
-                  Re-scan
-                </button>
-                <button
-                  type="button"
-                  className={styles.smallButton}
-                  onClick={() => setReplaceTarget({ deviceId: instrument!.id })}
-                >
-                  Replace
-                </button>
-                {!instrumentIsDisabled && (
-                  <button
-                    type="button"
-                    className={styles.smallButton}
-                    onClick={() => runOperation(props.onDisableMissingPlugin(instrument!.id))}
-                  >
-                    Disable
-                  </button>
-                )}
-              </div>
-            )}
-            {replaceTarget && (
-              <PluginPicker
-                api={props.api}
-                plugins={props.plugins}
-                role="instrument"
-                title="Replace Plugin"
-                onSelect={(plugin) => {
-                  runOperation(props.onReplaceMissingPlugin(replaceTarget.deviceId, plugin.path));
-                  setReplaceTarget(null);
-                }}
-                onClose={() => setReplaceTarget(null)}
-              />
-            )}
-          </section>
         </>
       )}
-
-      <TrackPluginChainEditor
-        track={props.track}
-        api={props.api}
-        plugins={props.plugins}
-        commit={commit}
-        missingDeviceIds={props.missingDeviceIds}
-        onDisableMissingPlugin={props.onDisableMissingPlugin}
-        onReplaceMissingPlugin={props.onReplaceMissingPlugin}
-        onRescanMissingPlugins={props.onRescanMissingPlugins}
-        runOperation={runOperation}
-      />
+      <section className={styles.section} aria-label="Track devices">
+        {props.track.kind === 'instrument' && (
+          <>
+            <strong>INSTRUMENT</strong>
+            <p>{props.track.instrument?.name ?? 'None'}</p>
+          </>
+        )}
+        <strong>EFFECTS</strong>
+        <p>{props.track.effects.length} Effects</p>
+        <button type="button" className={styles.smallButton} onClick={props.onOpenDevices}>
+          Open Devices
+        </button>
+      </section>
       {operationMessage && (
         <p className={styles.message} role="status">
           {operationMessage}

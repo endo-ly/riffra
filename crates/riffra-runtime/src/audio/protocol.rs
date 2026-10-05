@@ -479,7 +479,7 @@ mod tests {
         assert!(matches!(
             supervisor.process.startup_failure(generation),
             Some(NativeAudioError::Protocol { message })
-                if message == "sidecar protocol version mismatch: expected 3, got 2"
+                if message == "sidecar protocol version mismatch: expected 4, got 2"
         ));
     }
 

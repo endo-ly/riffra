@@ -2,7 +2,7 @@
   "kind": "event",
   "event": {
     "type": "ready",
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "status": {
       "state": "muted",
       "message": "Native audio is connected and muted.",

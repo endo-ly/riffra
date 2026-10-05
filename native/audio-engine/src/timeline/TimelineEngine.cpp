@@ -161,6 +161,7 @@ std::optional<std::uint64_t> TimelineEngine::submit(RealtimeCommand command) noe
     if (owner.load(std::memory_order_relaxed) == RealtimeOwner::control) {
         applyRealtimeCommand(realtime, command);
         publishFrame(realtime);
+        completedBlockCommandSequence.store(command.commandSequence, std::memory_order_release);
     } else if (!realtimeCommands.tryPush(command)) {
         return std::nullopt;
     }
@@ -168,9 +169,14 @@ std::optional<std::uint64_t> TimelineEngine::submit(RealtimeCommand command) noe
 }
 
 bool TimelineEngine::waitUntilApplied(const std::uint64_t commandSequence,
-                                      const std::chrono::milliseconds timeout) const {
+                                      const std::chrono::milliseconds timeout,
+                                      const bool requireCompletedBlock) const {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (realtimeFrame.read().appliedCommandSequence < commandSequence) {
+    const auto applied = [&] {
+        return requireCompletedBlock ? completedBlockCommandSequence.load(std::memory_order_acquire)
+                                     : realtimeFrame.read().appliedCommandSequence;
+    };
+    while (applied() < commandSequence) {
         if (std::chrono::steady_clock::now() >= deadline) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -196,6 +202,8 @@ void TimelineEngine::setRealtimeOwner(const RealtimeOwner next) {
     if (next == RealtimeOwner::control) {
         drainRealtimeCommands(realtime);
         publishFrame(realtime);
+        completedBlockCommandSequence.store(realtime.appliedCommandSequence,
+                                            std::memory_order_release);
     }
     owner.store(next, std::memory_order_release);
 }
@@ -314,6 +322,12 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
             break;
         case RealtimeCommand::Kind::clearRecordingSink:
             recordingCapture->clearSink();
+            break;
+        case RealtimeCommand::Kind::applyDeviceParameters:
+            if (command.parameterIndex >= 0)
+                command.pluginRack->queueParameterValue(command.parameterIndex,
+                                                        command.parameterValue);
+            command.pluginRack->applyQueuedParameterChanges();
             break;
         case RealtimeCommand::Kind::deviceStarted:
             state.audioClockSample = 0;

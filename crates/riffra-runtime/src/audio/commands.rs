@@ -236,7 +236,7 @@ impl AudioSupervisor {
                 parameter_index,
                 value: value.clamp(0.0, 1.0),
             },
-            COMMAND_ACK_TIMEOUT,
+            TRACK_DEVICE_COMMAND_TIMEOUT,
         )
     }
 
@@ -287,6 +287,18 @@ impl AudioSupervisor {
                     value: parameter.value,
                     default_value: parameter.default_value,
                     automatable: parameter.automatable,
+                    display_value: parameter.display_value,
+                    label: parameter.label,
+                    discrete: parameter.discrete,
+                    step_count: parameter.step_count,
+                    choices: parameter
+                        .choices
+                        .into_iter()
+                        .map(|choice| crate::api::output::DeviceParameterChoice {
+                            value: choice.value,
+                            display_value: choice.display_value,
+                        })
+                        .collect(),
                 })
                 .collect()),
             response => Err(unexpected(&response)),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
 import { HostConnectionChangedError, logNativeError } from '@/native/invoke';
+import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 import type { ArrangeSelection } from './useArrangeEditor';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 import { toast } from '@/shared/toasts';
@@ -28,10 +29,17 @@ export function useArrangeShell(
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
+  const lower = useArrangeLowerAreaController({
+    midiClips: session?.arrangement.midiClips ?? [],
+    selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
+  });
+  const { close: closeLowerArea } = lower;
+
   useEffect(() => {
     setSelection({ kind: 'none' });
     setFocusedTrackId(null);
-  }, [hostGeneration, projectId]);
+    closeLowerArea();
+  }, [hostGeneration, projectId, closeLowerArea]);
 
   const selectedTrack = useMemo(
     () =>
@@ -40,6 +48,14 @@ export function useArrangeShell(
         : null,
     [selection, session],
   );
+  const lowerView = lower.view;
+
+  useEffect(() => {
+    if (selection.kind === 'track' && !selectedTrack) {
+      setSelection({ kind: 'none' });
+      if (lowerView === 'devices') closeLowerArea();
+    }
+  }, [selection, selectedTrack, lowerView, closeLowerArea]);
 
   useEffect(() => {
     if (
@@ -79,6 +95,7 @@ export function useArrangeShell(
   };
 
   return {
+    lower,
     selection,
     setSelection,
     focusedTrackId,

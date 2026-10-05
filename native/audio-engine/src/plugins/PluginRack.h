@@ -48,6 +48,12 @@ struct PluginRackStatus final {
     std::uint64_t destroyCount = 0;
 };
 
+/// One normalized discrete value and its plugin-provided text.
+struct PluginParameterChoice final {
+    float value = 0.0f;
+    juce::String displayValue;
+};
+
 /// One host-visible plugin parameter.
 struct PluginParameterInfo final {
     int index = 0;
@@ -55,6 +61,11 @@ struct PluginParameterInfo final {
     float value = 0.0f;
     float defaultValue = 0.0f;
     bool automatable = false;
+    juce::String displayValue;
+    juce::String label;
+    bool discrete = false;
+    std::uint32_t stepCount = 0;
+    std::vector<PluginParameterChoice> choices;
 };
 
 /// Programs exposed by a plugin, or the reason they could not be enumerated.
@@ -107,6 +118,7 @@ public:
 private:
     friend class PluginEditorHost;
     friend class PluginRackTestPeer;
+    friend class TimelineEngine;
 
     static constexpr std::size_t kMaximumPanicMidiEvents = 16 * 3;
     static constexpr std::size_t kMidiEventOverhead = sizeof(std::int32_t) + sizeof(std::uint16_t);
@@ -126,8 +138,9 @@ private:
         juce::AudioProcessor& processor, double sampleRate, int blockSize,
         PluginProcessingMode mode);
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
-    void applyQueuedParameterChanges(juce::AudioProcessor* processor,
-                                     ParameterQueue* queue) noexcept;
+    void applyQueuedParameterChanges() noexcept;
+    void queueParameterValue(int index, float value) noexcept;
+    bool synchronizeParameterController(juce::String& error);
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 
     class PendingMidi final {
@@ -180,6 +193,7 @@ private:
     std::atomic<std::uint64_t> destroyCount{0};
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
+    std::atomic<bool> parameterControllerSyncPending{false};
 };
 
 }  // namespace riffra

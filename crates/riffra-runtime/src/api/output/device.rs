@@ -27,7 +27,15 @@ pub struct DeviceCapabilities {
     pub editor: bool,
 }
 
-/// One persisted or runtime-reported plugin parameter.
+/// One normalized discrete value and its plugin-provided display text.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceParameterChoice {
+    pub value: f32,
+    pub display_value: String,
+}
+
+/// One runtime-reported plugin parameter.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceParameterInfo {
@@ -38,6 +46,11 @@ pub struct DeviceParameterInfo {
     pub value: f32,
     pub default_value: f32,
     pub automatable: bool,
+    pub display_value: String,
+    pub label: String,
+    pub discrete: bool,
+    pub step_count: u32,
+    pub choices: Vec<DeviceParameterChoice>,
 }
 
 /// One program exposed by a plugin host.

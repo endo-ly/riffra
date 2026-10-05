@@ -15,6 +15,7 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
+import { DevicesPanel } from './devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
@@ -37,20 +38,21 @@ import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
-import { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
+import type { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import type { ArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
-import {
-  useArrangeContextMenus,
-  type ArrangePluginPickerRequest,
-} from '@/features/arrange/hooks/useArrangeContextMenus';
+import { useArrangeContextMenus } from '@/features/arrange/hooks/useArrangeContextMenus';
 import { isBrowserItemDrag, useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
+  lower: ReturnType<typeof useArrangeLowerAreaController>;
+  onDisableMissingPlugin: (deviceId: string) => Promise<void>;
+  onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
+  onRescanMissingPlugins: () => Promise<void>;
   hostGeneration?: number;
   transport: ArrangementTransport;
   session: CreativeSession;
@@ -90,7 +92,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
-  const [pluginPicker, setPluginPicker] = useState<ArrangePluginPickerRequest | null>(null);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
@@ -210,10 +211,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     seekLocally,
     setMessage: editor.setMessage,
   });
-  const lower = useArrangeLowerAreaController({
-    midiClips: arrangement.midiClips,
-    selectClip: editor.selectClip,
-  });
+  const { lower } = props;
   const { activeMidiClip } = lower;
   const { handleKeyboard: handleRulerKeyboard, timeSelection: rulerTimeSelection } = ruler;
   const activeMidiTrack = activeMidiClip
@@ -388,6 +386,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     }
     const next = await editor.commit(props.api.removeTrack(trackId));
     if (next) {
+      if (selectedTrackId === trackId && lower.view === 'devices') lower.close();
       if (props.focusedTrackId === trackId) {
         props.onFocusTrack(null);
       }
@@ -396,7 +395,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         ...next.arrangement.midiClips.map((clip) => clip.id),
       ]);
       const clipIds = selectedClipIds.filter((id) => remaining.has(id));
-      props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
+      if (props.selection.kind !== 'track' || selectedTrackId === trackId)
+        props.setSelection(clipIds.length ? { kind: 'clips', clipIds } : { kind: 'none' });
     }
   };
 
@@ -425,7 +425,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     snap,
     timebase,
     displayTick,
-    setPluginPicker,
+    onOpenDevices: (trackId) => {
+      props.setSelection({ kind: 'track', trackId });
+      lower.openDevices();
+    },
     addTrack,
     deleteTrack,
     trackClipCounts,
@@ -463,17 +466,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       />
 
       <ArrangeOverlays
-        api={props.api}
-        plugins={props.plugins}
-        instruments={props.instruments ?? []}
-        commit={commit}
         ruler={ruler}
         contextMenu={menus.contextMenu}
         onCloseContextMenu={menus.closeContextMenu}
         confirmRequest={confirmRequest}
         onDismissConfirm={() => setConfirmRequest(null)}
-        pluginPicker={pluginPicker}
-        setPluginPicker={setPluginPicker}
       />
 
       <div
@@ -670,19 +667,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   onDelete={() =>
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
-                  missingDeviceIds={missingDeviceIds}
-                  onAddDevice={() =>
-                    setPluginPicker({
-                      trackId: track.id,
-                      kind: track.kind === 'audio' ? 'effect' : 'instrument',
-                    })
-                  }
-                  onOpenPluginEditor={(deviceId) => {
-                    void props.api
-                      .openTrackPluginEditor(track.id, deviceId)
-                      .catch((error: unknown) => {
-                        editor.setMessage(error instanceof Error ? error.message : String(error));
-                      });
+                  onOpenDevices={() => {
+                    props.setSelection({ kind: 'track', trackId: track.id });
+                    lower.openDevices();
                   }}
                   onReorder={(sourceTrackId, insertAfter) => {
                     const sourceIndex = arrangement.tracks.findIndex(
@@ -781,6 +768,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             commit={commit}
           />
         }
+        devices={
+          <DevicesPanel
+            key={`${props.session.sessionId}:${selectedTrackId ?? ''}:${props.hostGeneration ?? 0}`}
+            track={arrangement.tracks.find((track) => track.id === selectedTrackId) ?? null}
+            projectId={props.session.sessionId}
+            api={props.api}
+            applyCanonicalState={props.applyCanonicalState}
+            plugins={props.plugins ?? []}
+            instruments={props.instruments ?? []}
+            missingDeviceIds={missingDeviceIds}
+            onDisableMissingPlugin={props.onDisableMissingPlugin}
+            onReplaceMissingPlugin={props.onReplaceMissingPlugin}
+            onRescanMissingPlugins={props.onRescanMissingPlugins}
+          />
+        }
         mixer={
           <MixerPanel
             session={props.session}
@@ -791,6 +793,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onSelectTrack={(trackId) => {
               ruler.clearSelectedRange();
               props.setSelection({ kind: 'track', trackId });
+            }}
+            onOpenDevices={(trackId) => {
+              props.setSelection({ kind: 'track', trackId });
+              lower.openDevices();
             }}
             onError={setMessage}
           />
@@ -808,7 +814,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         runtimeReady={runtimeReady}
         missingDeviceIds={missingDeviceIds}
         onChooseInstrument={() => {
-          if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
+          if (focusedTrack) {
+            props.setSelection({ kind: 'track', trackId: focusedTrack.id });
+            lower.openDevices();
+          }
         }}
         onSummaryChange={setPlaySurfaceSummary}
       />

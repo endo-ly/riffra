@@ -364,12 +364,24 @@ pub(crate) struct WireTrackDeviceStatus {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WireTrackDeviceParameterChoice {
+    pub(crate) value: f32,
+    pub(crate) display_value: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireTrackDeviceParameter {
     pub(crate) index: u32,
     pub(crate) name: String,
     pub(crate) value: f32,
     pub(crate) default_value: f32,
     pub(crate) automatable: bool,
+    pub(crate) display_value: String,
+    pub(crate) label: String,
+    pub(crate) discrete: bool,
+    pub(crate) step_count: u32,
+    pub(crate) choices: Vec<WireTrackDeviceParameterChoice>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
