@@ -238,10 +238,21 @@ std::optional<TrackDeviceParametersSpec> TimelineEngine::deviceParameterStatus(
             const auto* rack = findCommittedRack(graphs, trackId, deviceId, "parameters", error);
             if (rack == nullptr) return std::nullopt;
             TrackDeviceParametersSpec result;
-            for (const auto& parameter : rack->parameters())
-                result.parameters.push_back({static_cast<std::uint32_t>(parameter.index),
-                                             parameter.name, parameter.value,
-                                             parameter.defaultValue, parameter.automatable});
+            for (const auto& parameter : rack->parameters()) {
+                TrackDeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
+                                              parameter.name,
+                                              parameter.value,
+                                              parameter.defaultValue,
+                                              parameter.automatable,
+                                              parameter.displayValue,
+                                              parameter.label,
+                                              parameter.discrete,
+                                              parameter.stepCount,
+                                              {}};
+                for (const auto& choice : parameter.choices)
+                    info.choices.push_back({choice.value, choice.displayValue});
+                result.parameters.push_back(std::move(info));
+            }
             return result;
         });
 }

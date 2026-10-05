@@ -14,7 +14,7 @@
 namespace riffra {
 
 /// Version announced by `ready` and required by every `riffra-render` request.
-inline constexpr std::uint32_t kSidecarProtocolVersion = 3;
+inline constexpr std::uint32_t kSidecarProtocolVersion = 4;
 
 enum class AudioStateSpec { ready, muted, faulted };
 enum class RecoveryStatusSpec { clean, partial };
@@ -256,12 +256,22 @@ struct TrackDeviceStatusSpec final {
     TrackDeviceCapabilitiesSpec capabilities;
 };
 
+struct TrackDeviceParameterChoiceSpec final {
+    float value = 0.0f;
+    juce::String displayValue;
+};
+
 struct TrackDeviceParameterSpec final {
     std::uint32_t index = 0;
     juce::String name;
     float value = 0.0f;
     float defaultValue = 0.0f;
     bool automatable = false;
+    juce::String displayValue;
+    juce::String label;
+    bool discrete = false;
+    std::uint32_t stepCount = 0;
+    std::vector<TrackDeviceParameterChoiceSpec> choices;
 };
 
 struct TrackDeviceParametersSpec final {

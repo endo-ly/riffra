@@ -277,8 +277,42 @@ PluginRackStatus PluginRack::status() const {
 }
 
 std::vector<PluginParameterInfo> PluginRack::parameters() const {
-    const juce::ScopedLock lock(statusLock);
-    return cachedParameters;
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    std::vector<PluginParameterInfo> result;
+    if (plugin == nullptr) return result;
+    const auto& parameters = plugin->getParameters();
+    result.reserve(static_cast<std::size_t>(parameters.size()));
+    for (int index = 0; index < parameters.size(); ++index) {
+        auto* parameter = parameters[index];
+        if (parameter == nullptr) continue;
+        auto value = parameter->getValue();
+        const auto offset = static_cast<std::size_t>(index);
+        if (parameterQueue != nullptr && offset < parameterQueue->capacity &&
+            parameterQueue->dirty[offset].load(std::memory_order_acquire))
+            value = parameterQueue->values[offset].load(std::memory_order_acquire);
+        const auto discrete = parameter->isDiscrete();
+        const auto steps =
+            discrete ? static_cast<std::uint32_t>(std::max(0, parameter->getNumSteps())) : 0u;
+        PluginParameterInfo info{index,
+                                 parameter->getName(96),
+                                 value,
+                                 parameter->getDefaultValue(),
+                                 parameter->isAutomatable(),
+                                 parameter->getText(value, 96),
+                                 parameter->getLabel(),
+                                 discrete,
+                                 steps,
+                                 {}};
+        if (steps >= 2 && steps <= 256) {
+            info.choices.reserve(steps);
+            for (std::uint32_t choice = 0; choice < steps; ++choice) {
+                const auto normalized = static_cast<float>(choice) / static_cast<float>(steps - 1);
+                info.choices.push_back({normalized, parameter->getText(normalized, 96)});
+            }
+        }
+        result.push_back(std::move(info));
+    }
+    return result;
 }
 
 PluginProgramStatus PluginRack::programStatus() const {

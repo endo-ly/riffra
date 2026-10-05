@@ -23,7 +23,7 @@ pub(crate) use messages::{
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Protocol version announced by `ready` and required by every sidecar request.
-pub(crate) const SIDECAR_PROTOCOL_VERSION: u32 = 3;
+pub(crate) const SIDECAR_PROTOCOL_VERSION: u32 = 4;
 
 /// Maximum number of line bytes copied into protocol diagnostics.
 const DIAGNOSTIC_LINE_LIMIT: usize = 256;

@@ -48,6 +48,12 @@ struct PluginRackStatus final {
     std::uint64_t destroyCount = 0;
 };
 
+/// One normalized discrete value and its plugin-provided text.
+struct PluginParameterChoice final {
+    float value = 0.0f;
+    juce::String displayValue;
+};
+
 /// One host-visible plugin parameter.
 struct PluginParameterInfo final {
     int index = 0;
@@ -55,6 +61,11 @@ struct PluginParameterInfo final {
     float value = 0.0f;
     float defaultValue = 0.0f;
     bool automatable = false;
+    juce::String displayValue;
+    juce::String label;
+    bool discrete = false;
+    std::uint32_t stepCount = 0;
+    std::vector<PluginParameterChoice> choices;
 };
 
 /// Programs exposed by a plugin, or the reason they could not be enumerated.

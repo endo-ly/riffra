@@ -56,5 +56,26 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 1;
     }
+    const auto parameters =
+        engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    if (!parameters || parameters->parameters.size() < 3) {
+        std::cerr << "test effect parameters missing: " << error << '\n';
+        return 1;
+    }
+    const auto& level = parameters->parameters[1];
+    const auto& mode = parameters->parameters[2];
+    if (level.label != "dB" || level.displayValue.isEmpty() || level.discrete ||
+        level.stepCount != 0 || !mode.discrete || mode.stepCount != 3 || mode.choices.size() != 3 ||
+        mode.choices[1].displayValue != "Warm" || mode.choices[1].value != 0.5f ||
+        parameters->parameters[0].defaultValue != 0.5f) {
+        std::cerr << "test effect metadata mismatch\n";
+        return 1;
+    }
+    if (!engine.setDeviceParameter("track:audio", "device:audio-effect", 0, 0.25f, error)) {
+        std::cerr << error << '\n';
+        return 1;
+    }
+    const auto changed = engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    if (!changed || changed->parameters[0].value != 0.25f) return 1;
     return 0;
 }

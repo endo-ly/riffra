@@ -9,7 +9,33 @@
         "name": "Gain",
         "value": 0.5,
         "defaultValue": 0.25,
-        "automatable": true
+        "automatable": true,
+        "displayValue": "-6",
+        "label": "dB",
+        "discrete": false,
+        "stepCount": 0,
+        "choices": []
+      },
+      {
+        "index": 1,
+        "name": "Mode",
+        "value": 0.0,
+        "defaultValue": 0.0,
+        "automatable": true,
+        "displayValue": "Clean",
+        "label": "",
+        "discrete": true,
+        "stepCount": 2,
+        "choices": [
+          {
+            "value": 0.0,
+            "displayValue": "Clean"
+          },
+          {
+            "value": 1.0,
+            "displayValue": "Warm"
+          }
+        ]
       }
     ]
   }

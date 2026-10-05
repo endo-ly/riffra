@@ -38,11 +38,21 @@ void emitProtocolPollution() {
 }  // namespace
 
 class RiffraTestProcessor final : public juce::AudioProcessor {
+private:
+    juce::AudioParameterFloat* gain = nullptr;
+
 public:
     RiffraTestProcessor()
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+        gain = new juce::AudioParameterFloat("gain", "Gain", 0.0f, 1.0f, 0.5f);
+        addParameter(gain);
+        addParameter(new juce::AudioParameterFloat(
+            juce::ParameterID{"level", 1}, "Level", juce::NormalisableRange<float>{-60.0f, 0.0f},
+            -6.0f, juce::AudioParameterFloatAttributes{}.withLabel("dB")));
+        addParameter(
+            new juce::AudioParameterChoice("mode", "Mode", {"Clean", "Warm", "Bright"}, 0));
         emitProtocolPollution();
     }
 
@@ -56,7 +66,10 @@ public:
 
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         juce::ignoreUnused(midi);
-        buffer.clear();
+        if (JucePlugin_IsSynth)
+            buffer.clear();
+        else
+            buffer.applyGain(gain->get());
     }
 
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }

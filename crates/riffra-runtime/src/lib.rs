@@ -35,14 +35,14 @@ pub use api::output::{
     AudioDeviceInfo, AudioDevicePairing, AudioDeviceProbe, AudioDiagnostics,
     AudioDiagnosticsDevice, AudioDiagnosticsMute, AudioDiagnosticsOutput, AudioDiagnosticsRealtime,
     AudioDiagnosticsReport, AudioDriverInfo, AudioInstrumentFault, AudioState, AudioStatus,
-    DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterInfo, HostBootstrap,
-    InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin, InstrumentPreviewDefinition,
-    InstrumentPreviewNote, InstrumentPreviewTimeSignature, InstrumentRecommendedRange,
-    MidiDeviceInfo, PluginPresetInfo, PluginStateSnapshot, ProjectActivationResult,
-    ProjectRecoveryState, ProjectState, ProjectSummary, ProjectionDiagnostics,
-    RecordingFinalizationOutcome, RecordingStatus, RecordingStopResult, RecoveryCandidate,
-    RuntimeProjectionState, RuntimeProjectionStatus, TrackEffectSummary, TrackInstrumentSummary,
-    TrackInstrumentSummarySource, TrackSummary,
+    DeviceCapabilities, DeviceChannels, DeviceInspection, DeviceParameterChoice,
+    DeviceParameterInfo, HostBootstrap, InstrumentCollection, InstrumentLibraryItem,
+    InstrumentOrigin, InstrumentPreviewDefinition, InstrumentPreviewNote,
+    InstrumentPreviewTimeSignature, InstrumentRecommendedRange, MidiDeviceInfo, PluginPresetInfo,
+    PluginStateSnapshot, ProjectActivationResult, ProjectRecoveryState, ProjectState,
+    ProjectSummary, ProjectionDiagnostics, RecordingFinalizationOutcome, RecordingStatus,
+    RecordingStopResult, RecoveryCandidate, RuntimeProjectionState, RuntimeProjectionStatus,
+    TrackEffectSummary, TrackInstrumentSummary, TrackInstrumentSummarySource, TrackSummary,
 };
 pub use api::params::AudioDriverConfig;
 pub use audio::{
