@@ -66,3 +66,33 @@ export async function setTrackDeviceParameter(
 export async function openTrackPluginEditor(trackId: string, deviceId: string): Promise<void> {
   await dispatchControl({ command: 'plugin.editor.open', params: { trackId, deviceId } });
 }
+
+export function inspectTrackDevice(trackId: string, deviceId: string) {
+  return dispatchControl({ command: 'device.inspect', params: { trackId, deviceId } });
+}
+
+export function listTrackDeviceParameters(trackId: string, deviceId: string) {
+  return dispatchControl({ command: 'device.parameter.list', params: { trackId, deviceId } });
+}
+
+export function getTrackDeviceParameter(trackId: string, deviceId: string, parameterIndex: number) {
+  return dispatchControl({
+    command: 'device.parameter.get',
+    params: { trackId, deviceId, parameterIndex },
+  });
+}
+
+export function listTrackPluginPresets(trackId: string, deviceId: string) {
+  return dispatchControl({ command: 'plugin.preset.list', params: { trackId, deviceId } });
+}
+
+export function getTrackPluginPreset(trackId: string, deviceId: string) {
+  return dispatchControl({ command: 'plugin.preset.get', params: { trackId, deviceId } });
+}
+
+export function setTrackPluginPreset(trackId: string, deviceId: string, presetIndex: number) {
+  return dispatchControl({
+    command: 'plugin.preset.set',
+    params: { trackId, deviceId, presetIndex },
+  });
+}
