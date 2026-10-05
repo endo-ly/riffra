@@ -2064,6 +2064,14 @@ describe('WorkspaceArrange', () => {
     fireEvent.click(within(trackChannel).getByTitle('Mix Track'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Automation' })).toBeEnabled());
     expect(trackChannel).toHaveAttribute('data-selected', 'true');
+    fireEvent.click(within(trackChannel).getByTitle('Open Track Devices'));
+    expect(lowerArea).toHaveAttribute('data-view', 'devices');
+    expect(screen.getByText('Audio Input →')).toBeInTheDocument();
+    fireEvent.click(mixerToggle);
+    expect(lowerArea).toHaveAttribute('data-view', 'mixer');
+    fireEvent.click(mixerToggle);
+    expect(lowerArea).toHaveAttribute('data-view', 'devices');
+
     expect(screen.getByRole('button', { name: 'Play Surface' })).toBeEnabled();
   });
 

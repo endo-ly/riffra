@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PropertiesPanel } from './PropertiesPanel';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
@@ -13,6 +13,7 @@ afterEach(cleanup);
 function renderPanel(
   selection: Parameters<typeof PropertiesPanel>[0]['arrangeSelection'],
   initialSession = defaultSession(),
+  onOpenDevices = () => undefined,
 ) {
   const session = initialSession;
   session.arrangement.tracks.push({
@@ -37,7 +38,7 @@ function renderPanel(
       applyCanonicalState={() => true}
       arrangeSelection={selection}
       setArrangeSelection={() => undefined}
-      onOpenDevices={() => undefined}
+      onOpenDevices={onOpenDevices}
       onRecordAnotherTake={() => undefined}
       api={api}
     />,
@@ -46,7 +47,10 @@ function renderPanel(
 
 describe('PropertiesPanel', () => {
   it('shows the appropriate header for track and empty Arrange selections', () => {
-    renderPanel({ kind: 'track', trackId: 'track:audio' });
+    const openDevices = vi.fn();
+    renderPanel({ kind: 'track', trackId: 'track:audio' }, defaultSession(), openDevices);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    expect(openDevices).toHaveBeenCalledOnce();
 
     expect(screen.getByLabelText('Track name')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Close Properties/ })).not.toBeInTheDocument();

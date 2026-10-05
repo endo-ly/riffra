@@ -29,15 +29,16 @@ export function useArrangeShell(
 ) {
   const [selection, setSelection] = useState<ArrangeSelection>({ kind: 'none' });
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(null);
-  useEffect(() => {
-    setSelection({ kind: 'none' });
-    setFocusedTrackId(null);
-  }, [hostGeneration, projectId]);
-
   const lower = useArrangeLowerAreaController({
     midiClips: session?.arrangement.midiClips ?? [],
     selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
   });
+
+  useEffect(() => {
+    setSelection({ kind: 'none' });
+    setFocusedTrackId(null);
+    lower.close();
+  }, [hostGeneration, projectId, lower.close]);
 
   const selectedTrack = useMemo(
     () =>

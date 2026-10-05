@@ -42,10 +42,7 @@ import type { useArrangeLowerAreaController } from '@/features/arrange/hooks/use
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import type { ArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
-import {
-  useArrangeContextMenus,
-  type ArrangePluginPickerRequest,
-} from '@/features/arrange/hooks/useArrangeContextMenus';
+import { useArrangeContextMenus } from '@/features/arrange/hooks/useArrangeContextMenus';
 import { isBrowserItemDrag, useArrangeDrop } from '@/features/arrange/hooks/useArrangeDrop';
 import { useWaveformAnalyses } from '@/features/arrange/hooks/useWaveformAnalyses';
 import { MixerPanel } from '@/features/mixer/MixerPanel';
@@ -95,7 +92,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
-  const [pluginPicker, setPluginPicker] = useState<ArrangePluginPickerRequest | null>(null);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
@@ -427,7 +423,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     snap,
     timebase,
     displayTick,
-    setPluginPicker,
+    onOpenDevices: (trackId) => {
+      props.setSelection({ kind: 'track', trackId });
+      lower.openDevices();
+    },
     addTrack,
     deleteTrack,
     trackClipCounts,
@@ -465,17 +464,11 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       />
 
       <ArrangeOverlays
-        api={props.api}
-        plugins={props.plugins}
-        instruments={props.instruments ?? []}
-        commit={commit}
         ruler={ruler}
         contextMenu={menus.contextMenu}
         onCloseContextMenu={menus.closeContextMenu}
         confirmRequest={confirmRequest}
         onDismissConfirm={() => setConfirmRequest(null)}
-        pluginPicker={pluginPicker}
-        setPluginPicker={setPluginPicker}
       />
 
       <div
@@ -827,7 +820,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         runtimeReady={runtimeReady}
         missingDeviceIds={missingDeviceIds}
         onChooseInstrument={() => {
-          if (focusedTrack) setPluginPicker({ trackId: focusedTrack.id, kind: 'instrument' });
+          if (focusedTrack) {
+            props.setSelection({ kind: 'track', trackId: focusedTrack.id });
+            lower.openDevices();
+          }
         }}
         onSummaryChange={setPlaySurfaceSummary}
       />

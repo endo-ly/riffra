@@ -1,5 +1,6 @@
 .panel {
   height: 100%;
+  font-size: var(--font-size-control);
   overflow: auto;
   padding: var(--space-3);
   background: var(--color-bg-panel);
@@ -46,8 +47,9 @@
   border-color: var(--color-accent-primary);
 }
 
-.panel button,
-.panel select {
+.chain button,
+.details button,
+.details select {
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
@@ -55,11 +57,13 @@
   color: var(--color-text-primary);
 }
 
-.panel button:hover {
+.chain button:hover,
+.details button:hover {
   background: var(--color-bg-control-hover);
 }
 
-.panel button:disabled {
+.chain button:disabled,
+.details button:disabled {
   color: var(--color-text-disabled);
 }
 
@@ -100,4 +104,8 @@
 .parameter input {
   width: 100%;
   accent-color: var(--color-accent-primary);
+}
+
+.panel [role='alert'] {
+  color: var(--color-status-danger);
 }
