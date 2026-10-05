@@ -1,11 +1,4 @@
-import type {
-  AudioStatus,
-  CanonicalState,
-  CreativeSession,
-  InstrumentLibraryItem,
-  MissingDependency,
-  PluginEntry,
-} from '@/model/domain';
+import type { AudioStatus, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
 import { MultiClipInspector } from './MultiClipInspector';
@@ -18,6 +11,7 @@ import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
 
 interface PropertiesPanelProps {
+  onOpenDevices: () => void;
   hostGeneration?: number;
   audio: AudioStatus;
   recordingCommandPending: boolean;
@@ -25,12 +19,6 @@ interface PropertiesPanelProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   arrangeSelection: ArrangeSelection;
   setArrangeSelection: (selection: ArrangeSelection) => void;
-  missingDependencies: MissingDependency[];
-  plugins: PluginEntry[];
-  instruments?: InstrumentLibraryItem[];
-  onDisableMissingPlugin: (deviceId: string) => Promise<void>;
-  onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
-  onRescanMissingPlugins: () => Promise<void>;
   onRecordAnotherTake: (recordingSessionId: string) => void | Promise<void>;
   api: ArrangeInspectorApi;
 }
@@ -63,14 +51,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               session={props.session}
               applyCanonicalState={props.applyCanonicalState}
               audio={props.audio}
-              missingDeviceIds={props.missingDependencies
-                .filter((item) => item.kind === 'plugin')
-                .map((item) => item.id)}
-              onDisableMissingPlugin={props.onDisableMissingPlugin}
-              onReplaceMissingPlugin={props.onReplaceMissingPlugin}
-              onRescanMissingPlugins={props.onRescanMissingPlugins}
-              plugins={props.plugins}
-              instruments={props.instruments ?? []}
+              onOpenDevices={props.onOpenDevices}
               api={props.api}
             />
             <TakeInspector

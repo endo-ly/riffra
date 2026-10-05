@@ -18,6 +18,7 @@ interface MixerTrackChannelStripProps {
   api: MixerTrackApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelect: () => void;
+  onOpenDevices: () => void;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
@@ -78,9 +79,9 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
         className={`${styles.fxSummary}${hasMissingFx ? ` ${styles.warning}` : ''}`}
         onClick={(event) => {
           event.stopPropagation();
-          props.onSelect();
+          props.onOpenDevices();
         }}
-        title={hasMissingFx ? 'Missing effect device' : 'Select Track to inspect effects'}
+        title={hasMissingFx ? 'Missing effect device' : 'Open Track Devices'}
       >
         <Icon name="module" /> FX {fxCount === 0 ? '—' : fxCount}
       </button>

@@ -15,6 +15,7 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
+import { DevicesPanel } from './devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
@@ -37,7 +38,7 @@ import { HostConnectionChangedError } from '@/native/invoke';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { useArrangeEditor, type ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { useArrangeStatusToast } from '@/features/arrange/hooks/useArrangeStatusToast';
-import { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
+import type { useArrangeLowerAreaController } from '@/features/arrange/hooks/useArrangeLowerAreaController';
 import { useArrangeRulerController } from '@/features/arrange/hooks/useArrangeRulerController';
 import type { ArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import { useArrangeViewport } from '@/features/arrange/hooks/useArrangeViewport';
@@ -51,6 +52,10 @@ import { MixerPanel } from '@/features/mixer/MixerPanel';
 import styles from './WorkspaceArrange.module.css';
 
 interface WorkspaceArrangeProps {
+  lower: ReturnType<typeof useArrangeLowerAreaController>;
+  onDisableMissingPlugin: (deviceId: string) => Promise<void>;
+  onReplaceMissingPlugin: (deviceId: string, newPath: string) => Promise<void>;
+  onRescanMissingPlugins: () => Promise<void>;
   hostGeneration?: number;
   transport: ArrangementTransport;
   session: CreativeSession;
@@ -210,10 +215,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     seekLocally,
     setMessage: editor.setMessage,
   });
-  const lower = useArrangeLowerAreaController({
-    midiClips: arrangement.midiClips,
-    selectClip: editor.selectClip,
-  });
+  const { lower } = props;
   const { activeMidiClip } = lower;
   const { handleKeyboard: handleRulerKeyboard, timeSelection: rulerTimeSelection } = ruler;
   const activeMidiTrack = activeMidiClip
@@ -671,12 +673,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     void deleteTrack(track.id, track.name, trackClipCounts.get(track.id) ?? 0)
                   }
                   missingDeviceIds={missingDeviceIds}
-                  onAddDevice={() =>
-                    setPluginPicker({
-                      trackId: track.id,
-                      kind: track.kind === 'audio' ? 'effect' : 'instrument',
-                    })
-                  }
+                  onAddDevice={() => {
+                    props.setSelection({ kind: 'track', trackId: track.id });
+                    lower.openDevices();
+                  }}
                   onOpenPluginEditor={(deviceId) => {
                     void props.api
                       .openTrackPluginEditor(track.id, deviceId)
@@ -781,6 +781,21 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             commit={commit}
           />
         }
+        devices={
+          <DevicesPanel
+            key={`${props.session.sessionId}:${selectedTrackId ?? ''}:${props.hostGeneration ?? 0}`}
+            track={arrangement.tracks.find((track) => track.id === selectedTrackId) ?? null}
+            projectId={props.session.sessionId}
+            api={props.api}
+            applyCanonicalState={props.applyCanonicalState}
+            plugins={props.plugins ?? []}
+            instruments={props.instruments ?? []}
+            missingDeviceIds={missingDeviceIds}
+            onDisableMissingPlugin={props.onDisableMissingPlugin}
+            onReplaceMissingPlugin={props.onReplaceMissingPlugin}
+            onRescanMissingPlugins={props.onRescanMissingPlugins}
+          />
+        }
         mixer={
           <MixerPanel
             session={props.session}
@@ -791,6 +806,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onSelectTrack={(trackId) => {
               ruler.clearSelectedRange();
               props.setSelection({ kind: 'track', trackId });
+            }}
+            onOpenDevices={(trackId) => {
+              props.setSelection({ kind: 'track', trackId });
+              lower.openDevices();
             }}
             onError={setMessage}
           />

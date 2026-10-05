@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MidiClip } from '@/model/domain';
 
-export type ArrangeLowerView = 'closed' | 'midiEditor' | 'mixer';
+type ArrangeDetailView = 'midiEditor' | 'devices';
+export type ArrangeLowerView = 'closed' | ArrangeDetailView | 'mixer';
 
 interface ArrangeLowerAreaControllerOptions {
   midiClips: MidiClip[];
@@ -19,7 +20,7 @@ export function useArrangeLowerAreaController({
   const [maximized, setMaximizedState] = useState(false);
   const [detailHeight, setDetailHeight] = useState(380);
   const [mixerHeight, setMixerHeight] = useState(320);
-  const [returnViewAfterMixer, setReturnViewAfterMixer] = useState<'midiEditor' | null>(null);
+  const [returnViewAfterMixer, setReturnViewAfterMixer] = useState<ArrangeDetailView | null>(null);
   const activeMidiClip = useMemo(
     () => midiClips.find((clip) => clip.id === activeMidiClipId) ?? null,
     [activeMidiClipId, midiClips],
@@ -46,13 +47,17 @@ export function useArrangeLowerAreaController({
   const toggleMixer = useCallback(() => {
     if (view === 'mixer') {
       const nextView =
-        returnViewAfterMixer === 'midiEditor' && activeMidiClip ? 'midiEditor' : 'closed';
+        returnViewAfterMixer === 'devices'
+          ? 'devices'
+          : returnViewAfterMixer === 'midiEditor' && activeMidiClip
+            ? 'midiEditor'
+            : 'closed';
       setReturnViewAfterMixer(null);
       setCollapsedState(false);
       setView(nextView);
       return;
     }
-    setReturnViewAfterMixer(view === 'midiEditor' ? 'midiEditor' : null);
+    setReturnViewAfterMixer(view === 'midiEditor' || view === 'devices' ? view : null);
     setCollapsedState(false);
     setView('mixer');
   }, [activeMidiClip, returnViewAfterMixer, view]);
@@ -67,6 +72,12 @@ export function useArrangeLowerAreaController({
     },
     [selectClip],
   );
+
+  const openDevices = useCallback(() => {
+    setReturnViewAfterMixer(null);
+    setView('devices');
+    setCollapsedState(false);
+  }, []);
 
   const keepSelectedMidiClipVisible = useCallback((clipId: string) => {
     setActiveMidiClipId(clipId);
@@ -95,6 +106,7 @@ export function useArrangeLowerAreaController({
     maximized,
     height,
     openMidiEditor,
+    openDevices,
     keepSelectedMidiClipVisible,
     toggleMixer,
     close,

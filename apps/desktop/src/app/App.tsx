@@ -529,6 +529,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               disabled={!hostConnected || projectSwitching}
             >
               <PropertiesPanel
+                onOpenDevices={arrange.lower.openDevices}
                 hostGeneration={hostConnectionState.generation}
                 audio={audio}
                 recordingCommandPending={recordingCommandPending}
@@ -536,12 +537,6 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
                 applyCanonicalState={applyCanonicalState}
                 arrangeSelection={arrange.selection}
                 setArrangeSelection={arrange.setSelection}
-                missingDependencies={missingDependencies}
-                plugins={plugins}
-                instruments={browser.instruments.items}
-                onDisableMissingPlugin={disableMissingPluginDevice}
-                onReplaceMissingPlugin={replaceMissingPluginDevice}
-                onRescanMissingPlugins={rescanMissingPlugins}
                 onRecordAnotherTake={(recordingSessionId) =>
                   void startRecordingNow(recordingSessionId)
                 }
@@ -566,6 +561,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
             disabled={!hostConnected || projectSwitching}
           >
             <WorkspaceArrange
+              lower={arrange.lower}
+              onDisableMissingPlugin={disableMissingPluginDevice}
+              onReplaceMissingPlugin={replaceMissingPluginDevice}
+              onRescanMissingPlugins={rescanMissingPlugins}
               key={projectState?.activeProjectId ?? 'no-project'}
               hostGeneration={hostConnectionState.generation}
               transport={arrangementTransport}

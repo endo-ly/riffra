@@ -37,11 +37,7 @@ function renderPanel(
       applyCanonicalState={() => true}
       arrangeSelection={selection}
       setArrangeSelection={() => undefined}
-      missingDependencies={[]}
-      plugins={[]}
-      onDisableMissingPlugin={async () => undefined}
-      onReplaceMissingPlugin={async () => undefined}
-      onRescanMissingPlugins={async () => undefined}
+      onOpenDevices={() => undefined}
       onRecordAnotherTake={() => undefined}
       api={api}
     />,

@@ -5,8 +5,8 @@ import type {
   PluginEntry,
 } from '@/model/domain';
 import type { ArrangeApi, JobApi } from '@/native/native-api';
-import { InstrumentPicker } from './inspector/InstrumentPicker';
-import { PluginPicker } from './inspector/PluginPicker';
+import { InstrumentPicker } from './devices/InstrumentPicker';
+import { PluginPicker } from './devices/PluginPicker';
 import { ContextMenu, type ContextMenuItem } from '@/shared/ui/ContextMenu';
 import { ConfirmDialog } from '@/shared/ui/ConfirmDialog';
 import type { ArrangePluginPickerRequest } from './hooks/useArrangeContextMenus';

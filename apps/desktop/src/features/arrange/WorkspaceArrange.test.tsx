@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useArrangeLowerAreaController } from './hooks/useArrangeLowerAreaController';
 import { WorkspaceArrange } from './WorkspaceArrange';
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import {
@@ -51,10 +52,18 @@ function Harness({
     initialFocusedTrackId ?? null,
   );
   const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
+  const lower = useArrangeLowerAreaController({
+    midiClips: session.arrangement.midiClips,
+    selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
+  });
   const transport = useArrangementTransport(api, session.arrangement.timebase);
   return (
     <>
       <WorkspaceArrange
+        lower={lower}
+        onDisableMissingPlugin={async () => undefined}
+        onReplaceMissingPlugin={async () => undefined}
+        onRescanMissingPlugins={async () => undefined}
         transport={transport}
         session={session}
         applyCanonicalState={(canonical) => {
