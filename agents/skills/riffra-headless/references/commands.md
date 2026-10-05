@@ -412,7 +412,7 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 
 取り込んだ Asset の配置は `audio-clip add-asset` / `midi-clip add-asset` で行う。
 
-### Rack 状態(Instrument / Effect / Device)
+### Track Device (Instrument / Effect)
 
 | コマンド                | 主要引数                                                                                       |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |
@@ -431,7 +431,24 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 
 Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
-device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3のparameter list/getはHostから取得できる範囲のindex/valueを返し、parameter名が公開されない場合は推測しない。
+device inspectはmetadataとcapabilityだけを返し、stateData本体や全parameter配列を返さない。Built-in instrumentはparameter、state、preset、editorをサポートしない。VST3 の `device parameter list/get` は現在の Plugin metadata を返す。返却値を使って Parameter の意味を読み、normalized 値から単位や音色を推測しない。
+
+| フィールド     | 意味                                                                               |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `index`        | set/get へ渡す Parameter index                                                     |
+| `name`         | Plugin が返した Parameter 名                                                       |
+| `value`        | normalized 0..1 の現在値                                                           |
+| `defaultValue` | Plugin の normalized 既定値                                                        |
+| `displayValue` | Plugin が返した現在値の表示文字列                                                  |
+| `label`        | Plugin が返した単位。未公開なら空文字                                              |
+| `automatable`  | Plugin の Automation 対応情報                                                      |
+| `discrete`     | Plugin が有限離散値として公開するか                                                |
+| `stepCount`    | 離散状態数。Continuous は 0                                                        |
+| `choices`      | 2〜256 個の状態を列挙できる場合の `{ value, displayValue }` 配列。それ以外は空配列 |
+
+`name` で Parameter を特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
+
+`plugin effect` / `effect.add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。`effect reorder` は Instrument を含めず、Track の Effect ID 全件を一度ずつ処理順に並べる。
 
 ```powershell
 riffra --attach plugin state save --track-id track:01j... --device-id device:01j... --output ./piano-state.json

@@ -43,11 +43,11 @@ description: >-
 既存のSessionを編集するときは、全体を確認してから、音楽上のまとまりが大きい順に組み立てる。
 
 1. `session inspect` で現在の構造と `sequence` を確認する
-2. トラック、音源、テンポ、リージョンを必要な範囲で設定する
+2. トラック、音源、テンポ、リージョンを必要な範囲で設定する。Effect が必要なら `plugin catalog list` で検証済み Effect を選び、`plugin effect` で末尾へ追加し、応答の `createdEntityIds.devices` から Device ID を得る
 3. `music harmony`、リズムパターン、`music phrase` で和声や反復パターンを配置する
 4. Noteは `music note list` で必要な範囲だけ取得し、一括調整は `music note transform`、個別の更新・削除だけ `--include-ids` で取得したIDを使う。raw tickやMIDI値が必要なときだけ `--raw` を付ける
 5. `session inspect` または `track list` で結果を確認する
-6. ミックスのバランスを `track update`、`audio-clip update`、`automation set`、`session settings update --master-db` で整える
+6. Live Host で `device inspect` と `device parameter list` を読み、Parameter の意味と表示値を確認して `device parameter set` で音を調整する。離散値は `choices` の表示から選び、その `value` を渡す。変更後は一覧を再取得する。順序・Bypass・公開 Preset は `effect reorder`、`device bypass`、`plugin preset` を使う。ミックスのバランスを `track update`、`audio-clip update`、`automation set`、`session settings update --master-db` で整える
 7. `render start` で音声を書き出し、完了を `job wait`(ワンショット)または `job get`(interactive)で確認する
 8. `analysis start` または `audio diagnostics` で結果を確認し、必要なら編集へ戻る
 
