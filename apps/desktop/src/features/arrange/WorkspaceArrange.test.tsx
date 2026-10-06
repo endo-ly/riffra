@@ -129,7 +129,7 @@ describe('WorkspaceArrange', () => {
     );
   });
 
-  it('marks tracks that cannot be heard because they are muted or another track is soloed', () => {
+  it('marks inaudible tracks from canonical state while solo and mute edits are pending', async () => {
     // Arrange
     const session = defaultSession();
     for (const [id, muted, solo] of [
@@ -152,6 +152,7 @@ describe('WorkspaceArrange', () => {
       });
     }
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const updateTrack = vi.spyOn(api, 'updateTrack');
 
     // Act
     const { container } = render(<Harness api={api} initialSession={session} />);
@@ -161,6 +162,45 @@ describe('WorkspaceArrange', () => {
       (row) => row.getAttribute('data-track-id'),
     );
     expect(inaudible).toEqual(['track:muted', 'track:other']);
+
+    for (const solo of [false, true]) {
+      let resolveUpdate!: (result: ArrangementMutationResult) => void;
+      updateTrack.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveUpdate = resolve;
+          }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Solo track:soloed' }));
+
+      expect(screen.getByRole('button', { name: 'Solo track:soloed' })).toHaveAttribute(
+        'aria-pressed',
+        String(solo),
+      );
+      expect(container.querySelector('[data-track-id="track:soloed"]')).not.toHaveAttribute(
+        'data-inaudible',
+      );
+      expect(
+        container.querySelector('[data-track-id="track:other"]')?.hasAttribute('data-inaudible'),
+      ).toBe(!solo);
+
+      const next = structuredClone(session);
+      next.arrangement.tracks.find((track) => track.id === 'track:soloed')!.solo = solo;
+      await act(async () => resolveUpdate(mutationResult(next)));
+      expect(
+        container.querySelector('[data-track-id="track:other"]')?.hasAttribute('data-inaudible'),
+      ).toBe(solo);
+    }
+
+    updateTrack.mockImplementationOnce(() => new Promise(() => undefined));
+    fireEvent.click(screen.getByRole('button', { name: 'Mute track:soloed' }));
+    expect(screen.getByRole('button', { name: 'Mute track:soloed' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(container.querySelector('[data-track-id="track:soloed"]')).not.toHaveAttribute(
+      'data-inaudible',
+    );
   });
 
   it('seeks the native timeline from the musical ruler', () => {

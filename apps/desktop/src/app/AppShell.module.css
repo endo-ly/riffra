@@ -5,10 +5,9 @@
   display: grid;
   position: relative;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--size-global-control-bar) auto minmax(0, 1fr) auto;
+  grid-template-rows: var(--size-global-control-bar) minmax(0, 1fr) auto;
   grid-template-areas:
     'global'
-    'banners'
     'body'
     'play-surface';
   background: var(--color-bg-app);

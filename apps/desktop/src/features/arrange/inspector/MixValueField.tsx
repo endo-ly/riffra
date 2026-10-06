@@ -28,7 +28,10 @@ export function MixValueField(props: MixValueFieldProps) {
   const shown = draft ?? props.value;
 
   const finish = (next: number | null) => {
-    if (next !== null && Number.isFinite(next) && next !== props.value) props.onCommit(next);
+    if (next !== null && Number.isFinite(next)) {
+      const value = Math.max(props.min, Math.min(props.max, next));
+      if (value !== props.value) props.onCommit(value);
+    }
     setDraft(null);
   };
 
@@ -53,6 +56,8 @@ export function MixValueField(props: MixValueFieldProps) {
           aria-label={`Edit ${props.name.toLowerCase()}`}
           autoFocus
           type="number"
+          min={props.min}
+          max={props.max}
           step={props.inputStep}
           value={shown}
           onChange={(event) => setDraft(Number(event.currentTarget.value))}

@@ -176,7 +176,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;
   const muted = pendingTrackValues.muted ?? props.track.muted;
   const solo = pendingTrackValues.solo ?? props.track.solo;
-  const audible = !muted && (!props.soloActive || solo);
+  const audible = !props.track.muted && (!props.soloActive || props.track.solo);
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 

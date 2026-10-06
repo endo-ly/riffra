@@ -11,7 +11,9 @@ export default {
     },
     // Spacing uses the --space-* scale; only hairline (1px) offsets stay literal.
     'declaration-property-value-disallowed-list': {
-      '/^(padding|margin|gap|row-gap|column-gap)/': ['/(^|[\\s(,-])([2-9]|\\d{2,})(\\.\\d+)?px/'],
+      '/^(padding|margin|gap|row-gap|column-gap)/': [
+        '/(^|[\\s(,+-])([2-9](\\.\\d+)?|\\d{2,}(\\.\\d+)?|1\\.\\d*[1-9]\\d*)px/',
+      ],
     },
   },
   overrides: [

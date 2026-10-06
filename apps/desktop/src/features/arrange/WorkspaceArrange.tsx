@@ -227,28 +227,28 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   // to the active clip's local time so the editor can show them behind it.
   const midiGhostNotes = useMemo<MidiGhostNote[]>(() => {
     if (!activeMidiClip) return [];
-    return arrangement.tracks.flatMap((track, trackIndex) => {
-      const trackColor = resolveTrackColor(track, trackIndex);
-      return arrangement.midiClips
-        .filter((clip) => clip.trackId === track.id && clip.id !== activeMidiClip.id)
-        .flatMap((clip) =>
-          clip.notes.flatMap((note) => {
-            const localTick = clip.startTick + note.startTick - activeMidiClip.startTick;
-            if (localTick < 0 || localTick >= activeMidiClip.durationTicks) return [];
-            return [
-              {
-                id: `${clip.id}:${note.id}`,
-                pitch: note.note,
-                startTick: localTick,
-                durationTicks: Math.max(
-                  1,
-                  Math.min(note.durationTicks, activeMidiClip.durationTicks - localTick),
-                ),
-                trackColor,
-              },
-            ];
-          }),
-        );
+    const trackColors = new Map(
+      arrangement.tracks.map((track, index) => [track.id, resolveTrackColor(track, index)]),
+    );
+    return arrangement.midiClips.flatMap((clip) => {
+      const trackColor = trackColors.get(clip.trackId);
+      if (clip.id === activeMidiClip.id || !trackColor) return [];
+      return clip.notes.flatMap((note) => {
+        const localTick = clip.startTick + note.startTick - activeMidiClip.startTick;
+        if (localTick < 0 || localTick >= activeMidiClip.durationTicks) return [];
+        return [
+          {
+            id: `${clip.id}:${note.id}`,
+            pitch: note.note,
+            startTick: localTick,
+            durationTicks: Math.max(
+              1,
+              Math.min(note.durationTicks, activeMidiClip.durationTicks - localTick),
+            ),
+            trackColor,
+          },
+        ];
+      });
     });
   }, [arrangement.midiClips, arrangement.tracks, activeMidiClip]);
   const runtimeReady =

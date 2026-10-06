@@ -17,18 +17,25 @@ interface MidiEditorRulerProps {
 }
 
 /**
- * Bars that start on a downbeat read as the bar number, matching the Arrange
- * ruler; a clip that starts mid-bar labels its marks with the beat as well.
+ * Downbeats read as the bar number; a mid-bar clip start includes the beat.
  */
-function barLabel(position: string): string {
-  const [bar, beat] = position.split('.');
-  return beat === '1' ? bar : `${bar}.${beat}`;
+function barLabel(tick: number, timebase: ProjectTimebase): string {
+  const [bar, beat] = formatMusicalPosition(tick, timebase).split('.');
+  return tick % ticksPerBar(timebase) === 0 ? bar : `${bar}.${beat}`;
 }
 
 export function MidiEditorRuler(props: MidiEditorRulerProps) {
   const barTicks = ticksPerBar(props.timebase);
   const beatTicks = ticksPerBeat(props.timebase);
-  const barCount = Math.ceil(props.visibleTicks / barTicks);
+  const endTick = props.clipStartTick + props.visibleTicks;
+  const barStarts = props.visibleTicks > 0 ? [props.clipStartTick] : [];
+  for (
+    let tick = (Math.floor(props.clipStartTick / barTicks) + 1) * barTicks;
+    tick < endTick;
+    tick += barTicks
+  ) {
+    barStarts.push(tick);
+  }
 
   return (
     <div
@@ -44,19 +51,24 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
         props.onSeek?.(props.clipStartTick + localTick);
       }}
     >
-      {Array.from({ length: barCount }, (_, bar) => {
-        const tick = bar * barTicks;
-        const position = formatMusicalPosition(props.clipStartTick + tick, props.timebase);
+      {barStarts.map((tick, index) => {
+        const beatMarks = [];
+        const sectionEnd = barStarts[index + 1] ?? endTick;
+        for (
+          let beat = (Math.floor(tick / beatTicks) + 1) * beatTicks;
+          beat < sectionEnd;
+          beat += beatTicks
+        ) {
+          beatMarks.push(<span key={beat} style={{ left: (beat - tick) * props.pixelsPerTick }} />);
+        }
         return (
           <i
-            key={bar}
+            key={tick}
             className={styles.editorBarMark}
-            style={{ left: tick * props.pixelsPerTick }}
+            style={{ left: (tick - props.clipStartTick) * props.pixelsPerTick }}
           >
-            <strong>{barLabel(position)}</strong>
-            {Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
-              <span key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
-            ))}
+            <strong>{barLabel(tick, props.timebase)}</strong>
+            {beatMarks}
           </i>
         );
       })}

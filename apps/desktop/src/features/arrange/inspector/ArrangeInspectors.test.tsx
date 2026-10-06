@@ -225,11 +225,21 @@ describe('Arrange Inspectors', () => {
     fireEvent.change(cancelled, { target: { value: '9' } });
     fireEvent.keyDown(cancelled, { key: 'Escape' });
     fireEvent.blur(cancelled);
+    for (const value of ['30', '-70']) {
+      fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+      const input = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+      expect(input).toHaveAttribute('min', '-60');
+      expect(input).toHaveAttribute('max', '24');
+      fireEvent.change(input, { target: { value } });
+      fireEvent.blur(input);
+    }
 
     // Assert
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(1, 'clip:a', { gainDb: -6 });
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(2, 'clip:a', { gainDb: 3.2 });
-    expect(api.updateAudioClip).toHaveBeenCalledTimes(2);
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: 24 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(4, 'clip:a', { gainDb: -60 });
+    expect(api.updateAudioClip).toHaveBeenCalledTimes(4);
     expect(screen.getByRole('button', { name: 'Edit clip gain' })).toHaveTextContent('+0.0 dB');
   });
 

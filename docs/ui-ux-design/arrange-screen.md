@@ -545,7 +545,7 @@ Clip 切替や Editor 終了時には Held Note を解放し、Preview の発音
 
 #### Ruler / Grid / Zoom
 
-Ruler は Arrangement 上の小節位置を表示する。Timeline の 9 小節目に置かれた Clip なら、Editor でも 9.1、9.2、9.3… と表示する。
+Ruler の小節線と拍線は Arrangement 上の境界に揃える。小節頭には小節番号を表示し、小節途中から始まる Clip の先頭には拍も添える。たとえば 9.3 から始まる Clip では、先頭を「9.3」、次の小節頭を「10」と表示する。
 
 Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
