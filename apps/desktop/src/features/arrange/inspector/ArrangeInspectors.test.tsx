@@ -129,7 +129,7 @@ describe('Arrange Inspectors', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
   });
 
-  it('edits MIDI Clip timing in bars and beats and discards a cancelled edit', () => {
+  it('edits MIDI Clip timing in bars and beats and shows the current value after editing', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.midiClips.push({
@@ -166,6 +166,7 @@ describe('Arrange Inspectors', () => {
     fireEvent.blur(length);
 
     // Assert
+    expect(start).toHaveValue('1.1.000');
     expect(length).toHaveValue('1.0.000');
     expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
     expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
