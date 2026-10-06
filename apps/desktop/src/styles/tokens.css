@@ -1,11 +1,11 @@
 :root {
   /* Typography */
   --font-family-mono: 'DM Mono', Consolas, monospace;
-  --font-size-micro: 9px;
-  --font-size-small: 10px;
-  --font-size-control: 11px;
+  --font-size-micro: 10px;
+  --font-size-small: 11px;
   --font-size-emphasis: 12px;
   --font-size-title: 14px;
+  --font-size-heading: 18px;
   --font-size-readout: 20px;
 
   /* Background roles */
@@ -51,11 +51,17 @@
   --radius-lg: 8px;
   --radius-pill: 999px;
 
-  /* Spacing scale */
+  /* Spacing scale: --space-N is N × 4px, with half steps below 12px. */
+  --space-0-5: 2px;
   --space-1: 4px;
+  --space-1-5: 6px;
   --space-2: 8px;
+  --space-2-5: 10px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-12: 48px;
 
   /* Elevation */
   --shadow-raised: 0 1px 3px color-mix(in srgb, var(--color-shadow) 35%, transparent);

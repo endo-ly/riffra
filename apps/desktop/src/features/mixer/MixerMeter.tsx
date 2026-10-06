@@ -69,7 +69,7 @@ export function MixerMeter({ mode = 'peak-rms', ...props }: MixerMeterProps) {
               ) : null}
               <b className={styles.meterPeak} style={{ bottom: `${levelPercent(peak)}%` }} />
             </div>
-            <span>{channel.toUpperCase()}</span>
+            <span>{channel === 'left' ? 'L' : 'R'}</span>
             <small>{meter === null ? '—' : formatDb(peak)}</small>
           </div>
         );

@@ -29,7 +29,7 @@
 .master strong {
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

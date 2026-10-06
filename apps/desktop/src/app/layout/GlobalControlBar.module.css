@@ -155,7 +155,7 @@
 
 .audioStatusText strong {
   color: var(--color-text-primary);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   font-weight: 500;
 }
 

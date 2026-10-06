@@ -1,6 +1,6 @@
 .panel {
   height: 100%;
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   overflow: auto;
   padding: var(--space-3);
   background: var(--color-bg-panel);

@@ -86,7 +86,9 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
             : 'Select a Track to edit Automation'
         }
         onClick={props.onToggleAutomation}
-      />
+      >
+        Automation
+      </ToolbarToggle>
       <ToolbarToggle
         active={props.playSurfaceOpen}
         icon="keys"
@@ -98,14 +100,18 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
             : 'Focus an Instrument Track to use the Play Surface'
         }
         onClick={props.onTogglePlaySurface}
-      />
+      >
+        Play Surface
+      </ToolbarToggle>
       <ToolbarToggle
         active={props.mixerOpen}
         icon="mixer"
         ariaLabel="Mixer"
         title="Show or hide the Mixer"
         onClick={props.onToggleMixer}
-      />
+      >
+        Mixer
+      </ToolbarToggle>
     </Toolbar>
   );
 }

@@ -15,8 +15,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px var(--lower-actions-width) 8px 14px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--lower-actions-width) var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--color-border-default);
   background: var(--color-bg-panel);
 }
@@ -24,7 +24,7 @@
 .panelHeader div {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .panelHeader strong,
@@ -62,8 +62,8 @@
   min-height: 0;
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  padding: 4px;
+  gap: var(--space-2);
+  padding: var(--space-1);
 }
 
 .channel,
@@ -80,8 +80,8 @@
   flex: 0 0 108px;
   display: grid;
   grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
-  gap: 2px;
-  padding: 3px;
+  gap: var(--space-0-5);
+  padding: var(--space-1);
   border-top: 3px solid var(--track-color, var(--color-border-strong));
   transition:
     border-color var(--duration-fast) ease,
@@ -100,7 +100,7 @@
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 7px;
+  column-gap: var(--space-2);
   align-items: center;
   padding: 0;
   color: var(--color-text-primary);
@@ -139,7 +139,7 @@
 .fxSummary {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1-5);
   padding: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
@@ -170,12 +170,12 @@
 .masterFader {
   min-height: 0;
   display: grid;
-  gap: 5px;
+  gap: var(--space-1-5);
 }
 
 .panControl,
 .faderControl {
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .panControl > span,
@@ -184,7 +184,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--space-1-5);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
@@ -204,7 +204,7 @@
 .faderLabel b {
   margin-left: auto;
   color: var(--color-status-warning);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   letter-spacing: 0.12em;
 }
 
@@ -237,7 +237,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
-  gap: 5px;
+  gap: var(--space-1-5);
 }
 
 .mixControl > *,
@@ -269,8 +269,8 @@
   display: flex;
   align-items: end;
   justify-content: center;
-  gap: 4px;
-  padding: 2px 0 0;
+  gap: var(--space-1);
+  padding: var(--space-0-5) 0 0;
 }
 
 .meterColumn {
@@ -279,14 +279,14 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
   justify-items: center;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .meterColumn > span,
 .meterColumn > small {
   color: var(--color-text-disabled);
   font-family: var(--font-family-mono);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   white-space: nowrap;
 }
 
@@ -341,7 +341,7 @@
 .switches {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .switches button {
@@ -375,8 +375,8 @@
   grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 6px;
-  padding: 6px;
+  gap: var(--space-1-5);
+  padding: var(--space-1-5);
   border-top: 3px solid var(--color-accent);
   border-right: 0;
   border-bottom: 0;
@@ -388,7 +388,7 @@
   display: grid;
   grid-template-columns: 22px 1fr;
   align-items: center;
-  column-gap: 7px;
+  column-gap: var(--space-2);
 }
 
 .masterHeader small {
@@ -428,8 +428,8 @@
 
 .safety {
   display: grid;
-  gap: 4px;
-  padding: 5px;
+  gap: var(--space-1);
+  padding: var(--space-1-5);
   color: var(--color-text-secondary);
   background: color-mix(in srgb, var(--color-bg-panel) 70%, transparent);
   border: 1px solid var(--color-border-default);
@@ -444,7 +444,7 @@
 .safetyTitle {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1-5);
   font-size: var(--font-size-micro);
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -454,20 +454,20 @@
   margin: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px 5px;
+  gap: var(--space-1) var(--space-1-5);
 }
 
 .diagnostics div {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .diagnostics dt,
 .diagnostics dd {
   margin: 0;
   font-family: var(--font-family-mono);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .diagnostics dt {
@@ -484,8 +484,8 @@
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 5px;
-  padding: 24px;
+  gap: var(--space-1-5);
+  padding: var(--space-6);
   color: var(--color-text-muted);
   font-size: var(--font-size-small);
 }
@@ -500,6 +500,6 @@
   }
 
   .masterChannel {
-    padding: 9px;
+    padding: var(--space-2-5);
   }
 }

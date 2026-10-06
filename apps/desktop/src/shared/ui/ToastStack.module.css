@@ -5,7 +5,7 @@
   bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   width: min(340px, calc(100vw - 28px));
   pointer-events: none;
 }
@@ -13,8 +13,8 @@
 .toast {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: var(--space-2-5);
+  padding: var(--space-2-5) var(--space-3);
   color: var(--color-text-primary);
   font-size: var(--font-size-title);
   line-height: 1.4;
@@ -42,9 +42,9 @@
 
 .action {
   flex: none;
-  padding: 4px 9px;
+  padding: var(--space-1) var(--space-2-5);
   color: var(--color-accent);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   font-weight: 600;
   background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
@@ -62,7 +62,7 @@
   height: 22px;
   padding: 0;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--font-size-title);
   line-height: 1;
   background: transparent;
   border: none;

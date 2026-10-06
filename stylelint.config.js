@@ -1,10 +1,17 @@
+const fontSizeScale = ['/^var\\(--font-size-/', 'inherit'];
+
 /** @type {import('stylelint').Config} */
 export default {
   ignoreFiles: ['**/dist/**', '**/node_modules/**'],
   rules: {
-    // Cross-panel layering must go through the scale in styles/tokens.css.
+    // Cross-panel layering and type sizes go through the scales in styles/tokens.css.
     'declaration-property-value-allowed-list': {
       'z-index': ['/^var\\(--z-/'],
+      'font-size': fontSizeScale,
+    },
+    // Spacing uses the --space-* scale; only hairline (1px) offsets stay literal.
+    'declaration-property-value-disallowed-list': {
+      '/^(padding|margin|gap|row-gap|column-gap)/': ['/(^|[\\s(,-])([2-9]|\\d{2,})(\\.\\d+)?px/'],
     },
   },
   overrides: [
@@ -20,7 +27,7 @@ export default {
         'apps/desktop/src/features/arrange/play-surface/MusicalTypingKeyboard.module.css',
       ],
       rules: {
-        'declaration-property-value-allowed-list': null,
+        'declaration-property-value-allowed-list': { 'font-size': fontSizeScale },
       },
     },
   ],

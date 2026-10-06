@@ -12,7 +12,9 @@
    * Horizontal space the overlaid area controls occupy, including their inset
    * from the right edge. Each view's top bar keeps this clear.
    */
-  --lower-actions-width: calc(var(--size-control-dense) * 3 + 3px * 2 + 12px * 2);
+  --lower-actions-width: calc(
+    var(--size-control-dense) * 3 + var(--space-1) * 2 + var(--space-3) * 2
+  );
 }
 
 .maximized {
@@ -31,12 +33,12 @@
 
 .actions {
   position: absolute;
-  top: 8px;
-  right: 12px;
+  top: var(--space-2);
+  right: var(--space-3);
   z-index: var(--z-lower-area-controls);
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .actions button {

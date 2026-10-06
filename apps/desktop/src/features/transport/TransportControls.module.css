@@ -113,7 +113,7 @@
 
 .position small {
   color: var(--color-text-muted);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
 }
 
 .timebase {
@@ -126,7 +126,7 @@
 .timebase select {
   height: var(--size-control-normal);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   background-color: var(--color-bg-surface);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);

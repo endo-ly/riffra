@@ -215,6 +215,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { lower } = props;
   const { activeMidiClip } = lower;
   const { handleKeyboard: handleRulerKeyboard, timeSelection: rulerTimeSelection } = ruler;
+  const soloActive = arrangement.tracks.some((track) => track.solo);
   const activeMidiTrackIndex = activeMidiClip
     ? arrangement.tracks.findIndex((track) => track.id === activeMidiClip.trackId)
     : -1;
@@ -611,6 +612,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               <Fragment key={track.id}>
                 <ArrangeTrack
                   track={track}
+                  soloActive={soloActive}
                   trackIndex={trackIndex}
                   timeline={buildTrackTimeline(
                     track.id,

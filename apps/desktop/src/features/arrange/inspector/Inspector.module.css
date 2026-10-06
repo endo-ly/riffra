@@ -6,8 +6,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -33,9 +33,9 @@
   z-index: var(--z-chrome);
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-1-5);
   width: 140px;
-  padding: 8px;
+  padding: var(--space-2);
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
@@ -61,7 +61,7 @@
   display: grid;
   place-items: center;
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-small);
   background: transparent;
   border: 1px dashed var(--color-border-default);
 }
@@ -87,7 +87,7 @@
   flex: 1;
   min-width: 0;
   min-height: 22px;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   overflow: hidden;
   color: var(--color-text-primary);
   font-size: var(--font-size-emphasis);
@@ -124,7 +124,7 @@
 }
 
 .section {
-  padding: 8px 12px 10px;
+  padding: var(--space-2) var(--space-3) var(--space-2-5);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -136,9 +136,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 18px;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-1-5);
 }
 
 .sectionHeader strong {
@@ -156,7 +156,7 @@
 
 .headerAction {
   min-height: 0;
-  padding: 2px 0;
+  padding: var(--space-0-5) 0;
   color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: transparent;
@@ -172,21 +172,21 @@
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
 }
 
 .fieldColumn {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1-5);
 }
 
 .summaryRow {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
 }
@@ -203,7 +203,7 @@
 .fieldPair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px 10px;
+  gap: var(--space-1-5) var(--space-2-5);
 }
 
 .fieldPair .field {
@@ -219,14 +219,14 @@
 .mixCluster {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 14px;
-  padding: 7px 12px 9px;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-3) var(--space-2-5);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .mixField {
   display: grid;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .mixField > span {
@@ -245,7 +245,7 @@
   width: 100%;
   min-width: 0;
   height: 24px;
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   color: var(--color-text-primary);
   font-size: var(--font-size-small);
   background-color: var(--color-bg-panel);
@@ -272,7 +272,7 @@
 }
 
 select.control {
-  padding-right: 22px;
+  padding-right: var(--space-6);
 }
 
 .value {
@@ -280,7 +280,7 @@ select.control {
   height: 20px;
   display: inline-grid;
   place-items: center;
-  padding: 0 6px;
+  padding: 0 var(--space-1-5);
   color: var(--color-text-primary);
   font: var(--font-size-small) var(--font-family-mono);
   font-weight: 500;
@@ -297,7 +297,7 @@ select.control {
 .valueInput {
   width: 64px;
   height: 20px;
-  padding: 0 6px;
+  padding: 0 var(--space-1-5);
   color: var(--color-text-primary);
   font: var(--font-size-small) var(--font-family-mono);
   text-align: right;
@@ -317,21 +317,21 @@ select.control {
 
 .segmented {
   display: flex;
-  gap: 2px;
-  padding: 2px;
+  gap: var(--space-0-5);
+  padding: var(--space-0-5);
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
 
 .segmentedGap {
-  margin-top: 6px;
+  margin-top: var(--space-1-5);
 }
 
 .transformRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .transformLabel {
@@ -343,13 +343,13 @@ select.control {
 
 .transformGrid {
   display: grid;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .segmented button {
   flex: 1;
   min-height: 18px;
-  padding: 0 10px;
+  padding: 0 var(--space-2-5);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   font-weight: 500;
@@ -370,8 +370,8 @@ select.control {
   min-height: 22px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 9px;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-2-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   background: var(--color-bg-surface);
@@ -434,7 +434,7 @@ select.control {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1-5);
 }
 
 .clipActions .danger {
@@ -443,8 +443,8 @@ select.control {
 
 .take {
   display: grid;
-  gap: 4px;
-  padding: 3px 5px 4px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-1-5) var(--space-1);
   border-radius: var(--radius-sm);
 }
 
@@ -459,7 +459,7 @@ select.control {
 .takeLine {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   min-height: 22px;
 }
 
@@ -476,7 +476,7 @@ select.control {
 }
 
 .badge {
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   color: var(--color-accent);
   font-size: var(--font-size-micro);
   font-weight: 600;
@@ -493,7 +493,7 @@ select.control {
 .takeActions {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   margin-left: auto;
   opacity: 0;
 }
@@ -506,8 +506,8 @@ select.control {
 .takeSource {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding-left: 19px;
+  gap: var(--space-2);
+  padding-left: var(--space-5);
 }
 
 .takeSource > span {
@@ -527,7 +527,7 @@ select.control {
 
 .message {
   margin: 0;
-  padding: 7px 12px 9px;
+  padding: var(--space-2) var(--space-3) var(--space-2-5);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   line-height: 1.45;

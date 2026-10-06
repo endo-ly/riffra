@@ -128,6 +128,40 @@ describe('WorkspaceArrange', () => {
     );
   });
 
+  it('marks tracks that cannot be heard because they are muted or another track is soloed', () => {
+    // Arrange
+    const session = defaultSession();
+    for (const [id, muted, solo] of [
+      ['track:muted', true, false],
+      ['track:soloed', false, true],
+      ['track:other', false, false],
+    ] as const) {
+      session.arrangement.tracks.push({
+        id,
+        name: id,
+        kind: 'instrument',
+        gainDb: 0,
+        pan: 0,
+        muted,
+        solo,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        effects: [],
+      });
+    }
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+
+    // Act
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Assert
+    const inaudible = [...container.querySelectorAll('[data-arrange-track][data-inaudible]')].map(
+      (row) => row.getAttribute('data-track-id'),
+    );
+    expect(inaudible).toEqual(['track:muted', 'track:other']);
+  });
+
   it('seeks the native timeline from the musical ruler', () => {
     const api = new FakeNativeApi();
     render(<Harness api={api} />);

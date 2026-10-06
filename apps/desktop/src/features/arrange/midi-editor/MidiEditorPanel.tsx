@@ -1272,7 +1272,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         </div>
         <div className={styles.velocityViewport} data-midi-velocity-viewport>
           <div className={styles.velocityRow} style={{ width: canvasWidth }}>
-            <div className={styles.laneLabel}>Velocity</div>
+            <div className={styles.laneLabel}>Vel</div>
             <div
               ref={velocityContentRef}
               className={styles.velocityContent}

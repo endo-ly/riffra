@@ -21,6 +21,7 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { isBrowserItemDrag } from '@/features/arrange/hooks/useArrangeDrop';
 import { resolveTrackColor } from '../model/track-colors';
+import { formatGainDb } from '@/shared/audio/gain';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import styles from '../WorkspaceArrange.module.css';
@@ -34,6 +35,8 @@ interface ArrangeTrackProps {
   selectedClipIds: string[];
   selected: boolean;
   focused: boolean;
+  /** Whether any track in the session is soloed, which silences the others. */
+  soloActive: boolean;
   unavailableClipIds: string[];
   timelineWidth: number;
   pixelsPerTick: number;
@@ -139,7 +142,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   );
   const laneCount = props.timeline.laneCount;
   const laneHeight = trackLaneHeight(props.trackSize);
-  const showMix = props.trackSize !== 'compact';
+  // Volume shows from the default height up; pan joins it on large tracks.
+  const showVolume = props.trackSize !== 'compact';
+  const showPan = props.trackSize === 'large';
 
   const onResizePointerDown = (event: React.PointerEvent) => {
     event.preventDefault();
@@ -169,6 +174,9 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
   };
 
   const activeMonitoring = pendingTrackValues.monitoring ?? props.track.monitoring;
+  const muted = pendingTrackValues.muted ?? props.track.muted;
+  const solo = pendingTrackValues.solo ?? props.track.solo;
+  const audible = !muted && (!props.soloActive || solo);
   const monitoringClass =
     activeMonitoring === 'auto' ? styles.monAuto : activeMonitoring === 'on' ? styles.monOn : '';
 
@@ -221,6 +229,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
       data-track-id={props.track.id}
       data-selected={props.selected || undefined}
       data-focused={props.focused || undefined}
+      data-inaudible={!audible || undefined}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => props.onDrop(event, props.track.id, props.track.kind)}
     >
@@ -295,7 +304,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                   event.stopPropagation();
                   setRenaming(true);
                 }}
-                title="Double-click to rename"
+                title={`${props.track.name} — double-click to rename`}
               >
                 {props.track.name}
               </span>
@@ -304,24 +313,22 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
         </div>
         <div className={styles.trackSwitches}>
           <button
-            className={(pendingTrackValues.muted ?? props.track.muted) ? styles.muteActive : ''}
-            data-state={(pendingTrackValues.muted ?? props.track.muted) ? 'active' : 'idle'}
-            aria-pressed={pendingTrackValues.muted ?? props.track.muted}
+            className={muted ? styles.muteActive : ''}
+            data-state={muted ? 'active' : 'idle'}
+            aria-pressed={muted}
             aria-label={`Mute ${props.track.name}`}
             title="Mute"
-            onClick={() =>
-              commitTrackValue('muted', !(pendingTrackValues.muted ?? props.track.muted))
-            }
+            onClick={() => commitTrackValue('muted', !muted)}
           >
             M
           </button>
           <button
-            className={(pendingTrackValues.solo ?? props.track.solo) ? styles.soloActive : ''}
-            data-state={(pendingTrackValues.solo ?? props.track.solo) ? 'active' : 'idle'}
-            aria-pressed={pendingTrackValues.solo ?? props.track.solo}
+            className={solo ? styles.soloActive : ''}
+            data-state={solo ? 'active' : 'idle'}
+            aria-pressed={solo}
             aria-label={`Solo ${props.track.name}`}
             title="Solo"
-            onClick={() => commitTrackValue('solo', !(pendingTrackValues.solo ?? props.track.solo))}
+            onClick={() => commitTrackValue('solo', !solo)}
           >
             S
           </button>
@@ -363,55 +370,55 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
           </summary>
           <div>{trackMenuItems}</div>
         </details>
-        {showMix && (
-          <>
-            <label className={styles.trackControl}>
-              <span>VOL</span>
-              <input
-                key={`${props.track.id}:gain:${props.track.gainDb}`}
-                className={controls.slider}
-                aria-label={`${props.track.name} gain`}
-                type="range"
-                min="-60"
-                max="12"
-                step="0.5"
-                defaultValue={props.track.gainDb}
-                onPointerUp={(event) =>
-                  void props.onCommit(
-                    props.api.updateTrack(props.track.id, {
-                      gainDb: Number(event.currentTarget.value),
-                    }),
-                  )
-                }
-              />
-              <output>{props.track.gainDb.toFixed(1)}</output>
-            </label>
-            <label className={styles.trackControl}>
-              <span>PAN</span>
-              <input
-                key={`${props.track.id}:pan:${props.track.pan}`}
-                className={controls.slider}
-                aria-label={`${props.track.name} pan`}
-                type="range"
-                min="-1"
-                max="1"
-                step="0.05"
-                defaultValue={props.track.pan}
-                onPointerUp={(event) =>
-                  void props.onCommit(
-                    props.api.updateTrack(props.track.id, {
-                      pan: Number(event.currentTarget.value),
-                    }),
-                  )
-                }
-              />
-              <output>
-                {Math.abs(props.track.pan) < 0.01
-                  ? 'C'
-                  : `${props.track.pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(props.track.pan) * 100)}`}
-              </output>
-            </label>
-          </>
+        {showVolume && (
+          <label className={styles.trackControl}>
+            <span>VOL</span>
+            <input
+              key={`${props.track.id}:gain:${props.track.gainDb}`}
+              className={controls.slider}
+              aria-label={`${props.track.name} gain`}
+              type="range"
+              min="-60"
+              max="12"
+              step="0.5"
+              defaultValue={props.track.gainDb}
+              onPointerUp={(event) =>
+                void props.onCommit(
+                  props.api.updateTrack(props.track.id, {
+                    gainDb: Number(event.currentTarget.value),
+                  }),
+                )
+              }
+            />
+            <output>{formatGainDb(props.track.gainDb)}</output>
+          </label>
+        )}
+        {showPan && (
+          <label className={styles.trackControl}>
+            <span>PAN</span>
+            <input
+              key={`${props.track.id}:pan:${props.track.pan}`}
+              className={controls.slider}
+              aria-label={`${props.track.name} pan`}
+              type="range"
+              min="-1"
+              max="1"
+              step="0.05"
+              defaultValue={props.track.pan}
+              onPointerUp={(event) =>
+                void props.onCommit(
+                  props.api.updateTrack(props.track.id, {
+                    pan: Number(event.currentTarget.value),
+                  }),
+                )
+              }
+            />
+            <output>
+              {Math.abs(props.track.pan) < 0.01
+                ? 'C'
+                : `${props.track.pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(props.track.pan) * 100)}`}
+            </output>
+          </label>
         )}
       </aside>
       <div

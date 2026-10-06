@@ -165,7 +165,7 @@
   display: flex;
   align-items: center;
   box-sizing: border-box;
-  padding-left: 6px;
+  padding-left: var(--space-1-5);
   width: 100%;
   color: var(--key-label);
   background: var(--key-white);
@@ -225,7 +225,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  padding-left: 5px;
+  padding-left: var(--space-1-5);
   overflow: hidden;
   border-bottom: 1px solid color-mix(in srgb, var(--color-text-primary) 7%, transparent);
   color: var(--color-text-muted);
@@ -390,8 +390,8 @@
   min-height: 260px;
   display: grid;
   place-content: center;
-  padding: 24px;
+  padding: var(--space-6);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-small);
   text-align: center;
 }

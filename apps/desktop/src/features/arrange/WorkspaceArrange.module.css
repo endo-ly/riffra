@@ -22,8 +22,11 @@
   position: relative;
   min-width: 100%;
   min-height: 100%;
-  padding-top: 34px;
+  padding-top: var(--ruler-height);
   background: var(--color-bg-panel);
+
+  /* Height of the ruler band every timeline overlay is laid out against. */
+  --ruler-height: 34px;
 }
 
 /*
@@ -33,7 +36,7 @@
 .timelineGrid {
   position: absolute;
   z-index: 0;
-  top: 34px;
+  top: var(--ruler-height);
   bottom: 0;
   left: var(--header-width);
   pointer-events: none;
@@ -50,13 +53,13 @@
   top: 0;
   left: 0;
   width: var(--header-width);
-  height: 34px;
-  margin-top: -34px;
+  height: var(--ruler-height);
+  margin-top: calc(var(--ruler-height) * -1);
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 0 13px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-bottom: 1px solid var(--color-border-default);
@@ -66,7 +69,7 @@
   min-width: 0;
   display: grid;
   justify-items: end;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .rulerMode span {
@@ -84,7 +87,7 @@
   position: absolute;
   z-index: 7;
   top: 0;
-  height: 34px;
+  height: var(--ruler-height);
   cursor: crosshair;
   background: var(--color-bg-panel);
   border-bottom: 1px solid var(--color-border-default);
@@ -135,7 +138,7 @@
   position: absolute;
   top: 0;
   width: 1px;
-  height: 34px;
+  height: var(--ruler-height);
   pointer-events: none;
   background: color-mix(in srgb, var(--color-status-warning) 22%, transparent);
   transition: background var(--duration-fast) ease;
@@ -177,7 +180,7 @@
   position: absolute;
   top: -11px;
   width: 1px;
-  height: 34px;
+  height: var(--ruler-height);
   pointer-events: none;
   background: color-mix(in srgb, var(--color-status-danger) 22%, transparent);
   transition: background var(--duration-fast) ease;
@@ -193,10 +196,10 @@
 .recordingPreview {
   position: absolute;
   z-index: 4;
-  top: 34px;
+  top: var(--ruler-height);
   height: 24px;
   min-width: 3px;
-  padding: 6px 8px;
+  padding: var(--space-1-5) var(--space-2);
   overflow: hidden;
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
@@ -261,7 +264,7 @@
   position: absolute;
   top: 0;
   width: 10px;
-  height: 34px;
+  height: var(--ruler-height);
   cursor: ew-resize;
   z-index: 4;
   background: transparent;
@@ -326,10 +329,10 @@
   top: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   max-width: 140px;
   height: 16px;
-  padding: 0 6px 0 12px;
+  padding: 0 var(--space-1-5) 0 var(--space-3);
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
   font-weight: 600;
@@ -386,6 +389,19 @@
   color: var(--color-text-strong);
 }
 
+.trackRow[data-selected='true'] .lane {
+  background: color-mix(in srgb, var(--track-color) 7%, transparent);
+}
+
+/* Tracks that cannot be heard — muted, or silenced by another track's solo — recede. */
+.trackRow[data-inaudible] .lane {
+  opacity: 0.45;
+}
+
+.trackRow[data-inaudible] .trackName {
+  color: var(--color-text-muted);
+}
+
 /*
  * Each row is its own stacking context (z-index above); an open track menu
  * would paint below the rows that follow it, so lift the row while the menu
@@ -409,8 +425,8 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-auto-rows: auto;
   align-content: center;
-  gap: 3px 6px;
-  padding: 8px 10px;
+  gap: var(--space-1) var(--space-1-5);
+  padding: var(--space-2) var(--space-2-5);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-left: 3px solid transparent;
@@ -437,7 +453,7 @@
 .trackNameRow {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -459,9 +475,10 @@
 .trackNameInput {
   min-width: 0;
   flex: 1;
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   color: var(--color-text-primary);
-  font: 600 10px inherit;
+  font-size: var(--font-size-small);
+  font-weight: 600;
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: 2px;
@@ -471,14 +488,14 @@
 .trackSwitches {
   grid-column: 2;
   display: flex;
-  gap: 3px;
+  gap: var(--space-0-5);
 }
 .trackMenu {
   position: relative;
   grid-column: 3;
 }
 .trackMenu summary {
-  width: 26px;
+  width: 20px;
   height: 22px;
   display: grid;
   place-content: center;
@@ -509,7 +526,7 @@
   right: 0;
   width: 148px;
   display: none;
-  padding: 4px;
+  padding: var(--space-1);
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
@@ -520,7 +537,7 @@
   display: grid;
 }
 .trackMenu button {
-  padding: 3px 7px;
+  padding: var(--space-1) var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   text-align: left;
@@ -536,7 +553,7 @@
   background: var(--color-bg-hover);
 }
 .trackMenu .menuSeparator {
-  margin: 4px 2px;
+  margin: var(--space-1) var(--space-0-5);
   border: 0;
   border-top: 1px solid var(--color-border-default);
 }
@@ -548,8 +565,8 @@
   background: color-mix(in srgb, var(--color-status-danger) 14%, transparent);
 }
 .trackSwitches button {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   color: var(--color-text-muted);
   font: 700 var(--font-size-micro) var(--font-family-mono);
@@ -564,7 +581,8 @@
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
 }
-.trackSwitches .armButton {
+/* Record arming stays quiet until it is pointed at or engaged. */
+.trackSwitches .armButton:not(.armActive):hover {
   color: var(--color-status-danger);
 }
 .trackSwitches .muteActive {
@@ -600,9 +618,9 @@
 .trackControl {
   grid-column: 1 / 4;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 31px;
+  grid-template-columns: 24px minmax(0, 1fr) 44px;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1-5);
   height: 16px;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
@@ -633,10 +651,15 @@
   background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
+/*
+ * Lanes and clips clip their content with overflow: clip rather than hidden so
+ * they do not become scroll containers; clip names can then stay sticky
+ * against the timeline scroller.
+ */
 .lane {
   position: relative;
   height: calc(var(--track-height) - 1px);
-  overflow: hidden;
+  overflow: clip;
 }
 
 .laneDragOver {
@@ -667,8 +690,8 @@
   display: grid;
   grid-template-columns: 1fr auto;
   align-content: center;
-  gap: 5px 7px;
-  padding: 9px 11px 9px 14px;
+  gap: var(--space-1-5) var(--space-2);
+  padding: var(--space-2-5) var(--space-3) var(--space-2-5) var(--space-4);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-left: 3px solid color-mix(in srgb, var(--color-accent) 52%, transparent);
@@ -773,7 +796,7 @@
 .clip {
   position: absolute;
   min-height: 36px;
-  overflow: hidden;
+  overflow: clip;
   padding: 0;
   text-align: left;
   color: var(--color-text-primary);
@@ -840,12 +863,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 7px;
-  padding: 0 7px;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
   background: color-mix(in srgb, var(--color-bg-app) 34%, transparent);
   pointer-events: none;
 }
+/* The name stays visible beside the track headers while a long clip scrolls past. */
 .clipHeader strong {
+  position: sticky;
+  left: calc(var(--header-width) + var(--space-2));
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
@@ -924,7 +950,7 @@
   top: 2px;
   width: 8px;
   height: 8px;
-  margin-left: -4px;
+  margin-left: calc(var(--space-1) * -1);
   opacity: 0;
   pointer-events: none;
   background: var(--color-status-warning);
@@ -1016,8 +1042,8 @@
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 8px;
-  margin: 26px;
+  gap: var(--space-2);
+  margin: var(--space-6);
   color: var(--color-text-muted);
   text-align: center;
   border: 1px dashed var(--color-border-default);
@@ -1034,15 +1060,15 @@
   display: grid;
   place-content: center;
   color: var(--color-accent);
-  font-size: 27px;
+  font-size: var(--font-size-readout);
   background: color-mix(in srgb, var(--color-accent) 7%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
   border-radius: var(--radius-lg);
 }
 .empty strong {
-  margin-top: 4px;
+  margin-top: var(--space-1);
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-title);
 }
 .emptyDragOver {
   color: var(--color-text-primary);
@@ -1055,8 +1081,8 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 .empty button {
-  margin-top: 7px;
-  padding: 8px 12px;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: color-mix(in srgb, var(--color-accent) 9%, transparent);
@@ -1067,8 +1093,8 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 7px;
-  margin-top: 4px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 .emptyActions button {
   margin-top: 0;
@@ -1080,8 +1106,8 @@
   top: 38px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 6px 4px 9px;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   white-space: nowrap;
@@ -1096,7 +1122,7 @@
   font: var(--font-size-micro) var(--font-family-mono);
 }
 .selectionChip button {
-  padding: 3px 7px;
+  padding: var(--space-1) var(--space-2);
   color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
@@ -1114,7 +1140,7 @@
   align-items: center;
   padding-left: calc(var(--header-width) + var(--space-4));
   color: var(--color-text-muted);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   border: 1px dashed transparent;
 }
 
