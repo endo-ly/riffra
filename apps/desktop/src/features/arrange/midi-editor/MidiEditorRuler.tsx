@@ -4,6 +4,7 @@ import {
   formatMusicalPosition,
   ticksPerBar,
   ticksPerBeat,
+  clipGridTicks,
 } from '@/features/arrange/model/arrange-timeline';
 import styles from './MidiEditorPanel.module.css';
 
@@ -16,10 +17,26 @@ interface MidiEditorRulerProps {
   onSeek?: (tick: number) => void;
 }
 
+/**
+ * Downbeats read as the bar number; a mid-bar clip start includes the beat.
+ */
+function barLabel(tick: number, timebase: ProjectTimebase): string {
+  const [bar, beat] = formatMusicalPosition(tick, timebase).split('.');
+  return tick % ticksPerBar(timebase) === 0 ? bar : `${bar}.${beat}`;
+}
+
 export function MidiEditorRuler(props: MidiEditorRulerProps) {
   const barTicks = ticksPerBar(props.timebase);
   const beatTicks = ticksPerBeat(props.timebase);
-  const barCount = Math.ceil(props.visibleTicks / barTicks);
+  const barStarts =
+    props.visibleTicks > 0
+      ? [
+          0,
+          ...clipGridTicks(props.clipStartTick, props.visibleTicks, barTicks).filter(
+            (tick) => tick > 0,
+          ),
+        ]
+      : [];
 
   return (
     <div
@@ -35,19 +52,25 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
         props.onSeek?.(props.clipStartTick + localTick);
       }}
     >
-      {Array.from({ length: barCount }, (_, bar) => {
-        const tick = bar * barTicks;
-        const position = formatMusicalPosition(props.clipStartTick + tick, props.timebase);
+      {barStarts.map((tick, index) => {
+        const beatMarks = [];
+        const sectionEnd = barStarts[index + 1] ?? props.visibleTicks;
+        for (const offset of clipGridTicks(
+          props.clipStartTick + tick,
+          sectionEnd - tick,
+          beatTicks,
+        )) {
+          if (offset === 0) continue;
+          beatMarks.push(<span key={offset} style={{ left: offset * props.pixelsPerTick }} />);
+        }
         return (
           <i
-            key={bar}
+            key={tick}
             className={styles.editorBarMark}
             style={{ left: tick * props.pixelsPerTick }}
           >
-            <strong>{position.split('.').slice(0, 2).join('.')}</strong>
-            {Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
-              <span key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
-            ))}
+            <strong>{barLabel(props.clipStartTick + tick, props.timebase)}</strong>
+            {beatMarks}
           </i>
         );
       })}

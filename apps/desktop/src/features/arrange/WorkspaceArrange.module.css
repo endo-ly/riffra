@@ -18,18 +18,15 @@
 }
 
 .timeline {
+  composes: scope from './TimelineTokens.module.css';
   position: relative;
   min-width: 100%;
   min-height: 100%;
-  padding-top: 34px;
+  padding-top: var(--ruler-height);
   background: var(--color-bg-panel);
 
-  /* Clip palette for this timeline scope. */
-  --clip-audio-bg: #1b4657;
-  --clip-audio-border: #34788c;
-  --clip-midi-bg: #2a2150;
-  --clip-midi-border: #4a3e80;
-  --clip-midi-note-fill: #b9a4f0;
+  /* Height of the ruler band every timeline overlay is laid out against. */
+  --ruler-height: 34px;
 }
 
 /*
@@ -39,25 +36,30 @@
 .timelineGrid {
   position: absolute;
   z-index: 0;
-  top: 34px;
+  top: var(--ruler-height);
   bottom: 0;
   left: var(--header-width);
   pointer-events: none;
 }
 
 .rulerCorner {
-  position: absolute;
-  /* Keep the fixed corner above both the scrolling ruler and track headers. */
+  /*
+   * Sticky on both axes so the corner stays over the track header column while
+   * the timeline scrolls; the negative margin seats it in the ruler band
+   * without taking layout space. It paints above the ruler and track headers.
+   */
+  position: sticky;
   z-index: 13;
   top: 0;
   left: 0;
   width: var(--header-width);
-  height: 34px;
+  height: var(--ruler-height);
+  margin-top: calc(var(--ruler-height) * -1);
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 0 13px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-bottom: 1px solid var(--color-border-default);
@@ -67,7 +69,7 @@
   min-width: 0;
   display: grid;
   justify-items: end;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 
 .rulerMode span {
@@ -85,7 +87,7 @@
   position: absolute;
   z-index: 7;
   top: 0;
-  height: 34px;
+  height: var(--ruler-height);
   cursor: crosshair;
   background: var(--color-bg-panel);
   border-bottom: 1px solid var(--color-border-default);
@@ -136,7 +138,7 @@
   position: absolute;
   top: 0;
   width: 1px;
-  height: 34px;
+  height: var(--ruler-height);
   pointer-events: none;
   background: color-mix(in srgb, var(--color-status-warning) 22%, transparent);
   transition: background var(--duration-fast) ease;
@@ -156,9 +158,9 @@
   top: 0;
   height: 100%;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-accent-primary) 13%, transparent);
-  border-left: 1px solid color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 .punchRange {
@@ -178,7 +180,7 @@
   position: absolute;
   top: -11px;
   width: 1px;
-  height: 34px;
+  height: var(--ruler-height);
   pointer-events: none;
   background: color-mix(in srgb, var(--color-status-danger) 22%, transparent);
   transition: background var(--duration-fast) ease;
@@ -194,10 +196,10 @@
 .recordingPreview {
   position: absolute;
   z-index: 4;
-  top: 34px;
+  top: var(--ruler-height);
   height: 24px;
   min-width: 3px;
-  padding: 6px 8px;
+  padding: var(--space-1-5) var(--space-2);
   overflow: hidden;
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
@@ -262,7 +264,7 @@
   position: absolute;
   top: 0;
   width: 10px;
-  height: 34px;
+  height: var(--ruler-height);
   cursor: ew-resize;
   z-index: 4;
   background: transparent;
@@ -327,10 +329,10 @@
   top: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   max-width: 140px;
   height: 16px;
-  padding: 0 6px 0 12px;
+  padding: 0 var(--space-1-5) 0 var(--space-3);
   color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
   font-weight: 600;
@@ -387,6 +389,19 @@
   color: var(--color-text-strong);
 }
 
+.trackRow[data-selected='true'] .lane {
+  background: color-mix(in srgb, var(--track-color) 7%, transparent);
+}
+
+/* Tracks that cannot be heard — muted, or silenced by another track's solo — recede. */
+.trackRow[data-inaudible] .lane {
+  opacity: 0.45;
+}
+
+.trackRow[data-inaudible] .trackName {
+  color: var(--color-text-muted);
+}
+
 /*
  * Each row is its own stacking context (z-index above); an open track menu
  * would paint below the rows that follow it, so lift the row while the menu
@@ -410,19 +425,19 @@
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-auto-rows: auto;
   align-content: center;
-  gap: 3px 6px;
-  padding: 8px 10px;
+  gap: var(--space-1) var(--space-1-5);
+  padding: var(--space-2) var(--space-2-5);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
   border-left: 3px solid transparent;
 }
 
 .trackHeader[data-drop='before'] {
-  box-shadow: inset 0 2px 0 var(--color-accent-primary);
+  box-shadow: inset 0 2px 0 var(--color-accent);
 }
 
 .trackHeader[data-drop='after'] {
-  box-shadow: inset 0 -2px 0 var(--color-accent-primary);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
 }
 
 .trackIdentity {
@@ -438,7 +453,7 @@
 .trackNameRow {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -460,10 +475,11 @@
 .trackNameInput {
   min-width: 0;
   flex: 1;
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   color: var(--color-text-primary);
-  font: 600 10px inherit;
-  background: var(--color-bg-control);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: 2px;
   outline: none;
@@ -472,14 +488,14 @@
 .trackSwitches {
   grid-column: 2;
   display: flex;
-  gap: 3px;
+  gap: var(--space-0-5);
 }
 .trackMenu {
   position: relative;
   grid-column: 3;
 }
 .trackMenu summary {
-  width: 26px;
+  width: 20px;
   height: 22px;
   display: grid;
   place-content: center;
@@ -500,7 +516,7 @@
 .trackMenu summary:hover,
 .trackMenu[open] summary {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 .trackMenu > div {
@@ -510,7 +526,7 @@
   right: 0;
   width: 148px;
   display: none;
-  padding: 4px;
+  padding: var(--space-1);
   background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
@@ -521,7 +537,7 @@
   display: grid;
 }
 .trackMenu button {
-  padding: 3px 7px;
+  padding: var(--space-1) var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   text-align: left;
@@ -534,10 +550,10 @@
 }
 .trackMenu button:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 .trackMenu .menuSeparator {
-  margin: 4px 2px;
+  margin: var(--space-1) var(--space-0-5);
   border: 0;
   border-top: 1px solid var(--color-border-default);
 }
@@ -549,12 +565,12 @@
   background: color-mix(in srgb, var(--color-status-danger) 14%, transparent);
 }
 .trackSwitches button {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   color: var(--color-text-muted);
   font: 700 var(--font-size-micro) var(--font-family-mono);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -565,7 +581,8 @@
   width: var(--size-icon-sm);
   height: var(--size-icon-sm);
 }
-.trackSwitches .armButton {
+/* Record arming stays quiet until it is pointed at or engaged. */
+.trackSwitches .armButton:not(.armActive):hover {
   color: var(--color-status-danger);
 }
 .trackSwitches .muteActive {
@@ -575,8 +592,8 @@
 }
 .trackSwitches .soloActive {
   color: var(--color-text-on-accent);
-  background: var(--color-accent-primary);
-  border-color: var(--color-accent-primary);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 .trackSwitches .armActive {
   color: var(--color-text-on-accent);
@@ -594,16 +611,16 @@
 }
 .trackSwitches .monOn {
   color: var(--color-text-on-accent);
-  background: var(--color-accent-secondary);
-  border-color: var(--color-accent-secondary);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .trackControl {
   grid-column: 1 / 4;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 31px;
+  grid-template-columns: 24px minmax(0, 1fr) 44px;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1-5);
   height: 16px;
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
@@ -631,13 +648,18 @@
   cursor: ns-resize;
 }
 .resizeHandle:hover {
-  background: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
+/*
+ * Lanes and clips clip their content with overflow: clip rather than hidden so
+ * they do not become scroll containers; clip names can then stay sticky
+ * against the timeline scroller.
+ */
 .lane {
   position: relative;
   height: calc(var(--track-height) - 1px);
-  overflow: hidden;
+  overflow: clip;
 }
 
 .laneDragOver {
@@ -646,14 +668,10 @@
       90deg,
       transparent 0,
       transparent 23px,
-      color-mix(in srgb, var(--color-accent-primary) 8%, transparent) 24px
+      color-mix(in srgb, var(--color-accent) 8%, transparent) 24px
     ),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-accent-primary) 6%, transparent),
-      transparent
-    );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 35%, transparent);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
 .automationRow {
@@ -672,15 +690,15 @@
   display: grid;
   grid-template-columns: 1fr auto;
   align-content: center;
-  gap: 5px 7px;
-  padding: 9px 11px 9px 14px;
+  gap: var(--space-1-5) var(--space-2);
+  padding: var(--space-2-5) var(--space-3) var(--space-2-5) var(--space-4);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border-default);
-  border-left: 3px solid color-mix(in srgb, var(--color-accent-primary) 52%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 52%, transparent);
 }
 
 .automationHeader strong {
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
   font: 700 var(--font-size-micro) var(--font-family-mono);
   letter-spacing: 0.08em;
 }
@@ -702,7 +720,7 @@
   height: var(--size-control-dense);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
-  background-color: var(--color-bg-control);
+  background-color: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -713,19 +731,24 @@
   overflow: hidden;
   outline: none;
   background:
-    linear-gradient(180deg, transparent 49%, rgba(255, 255, 255, 0.035) 50%, transparent 51%),
+    linear-gradient(
+      180deg,
+      transparent 49%,
+      color-mix(in srgb, var(--color-text-strong) 3.5%, transparent) 50%,
+      transparent 51%
+    ),
     repeating-linear-gradient(
       90deg,
       transparent 0,
       transparent 47px,
-      rgba(255, 255, 255, 0.018) 48px
+      color-mix(in srgb, var(--color-text-strong) 1.8%, transparent) 48px
     ),
     var(--color-bg-app);
   cursor: crosshair;
 }
 
 .automationLane:focus-visible {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 
 .automationLane svg {
@@ -737,7 +760,7 @@
 
 .automationLane polyline {
   fill: none;
-  stroke: var(--color-accent-primary);
+  stroke: var(--color-accent);
   stroke-width: 1.5;
 }
 
@@ -757,31 +780,37 @@
   width: 10px;
   height: 10px;
   padding: 0;
-  background: var(--color-bg-control);
-  border: 2px solid var(--color-accent-primary);
+  background: var(--color-bg-panel);
+  border: 2px solid var(--color-accent);
   border-radius: 50%;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-raised);
   cursor: grab;
   transform: translate(-50%, -50%);
 }
 
 .automationPointSelected {
-  background: var(--color-selection-accent);
-  border-color: var(--color-selection-accent);
+  background: var(--color-selection);
+  border-color: var(--color-selection);
 }
 
 .clip {
   position: absolute;
   min-height: 36px;
-  overflow: hidden;
+  overflow: clip;
   padding: 0;
   text-align: left;
   color: var(--color-text-primary);
-  background: var(--clip-audio-bg);
-  border: 1px solid var(--clip-audio-border);
+  /*
+   * Track color drives the clip at a fixed OKLCH lightness so every hue reads
+   * with equal weight; --clip-content colors the waveform and note marks.
+   */
+  background: oklch(from var(--track-color) 0.4 calc(c * 0.55) h);
+  border: 1px solid oklch(from var(--track-color) 0.55 calc(c * 0.7) h);
   border-radius: var(--radius-sm);
   cursor: grab;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-raised);
+
+  --clip-content: oklch(from var(--track-color) 0.88 calc(c * 0.8) h);
 }
 
 .clip:hover {
@@ -791,13 +820,13 @@
   cursor: grabbing;
 }
 .clip.selected {
-  border-color: var(--color-selection-highlight);
+  border-color: var(--color-selection);
   box-shadow:
-    0 0 0 1px var(--color-selection-highlight),
-    0 5px 16px rgba(0, 0, 0, 0.4);
+    0 0 0 1px var(--color-selection),
+    0 5px 16px color-mix(in srgb, var(--color-shadow) 40%, transparent);
 }
 .clip.looped {
-  background: color-mix(in srgb, var(--clip-audio-bg) 86%, var(--color-accent-primary));
+  background: oklch(from var(--track-color) 0.45 calc(c * 0.6) h);
 }
 .clip.missingClip {
   background: repeating-linear-gradient(
@@ -820,21 +849,11 @@
   letter-spacing: 0.08em;
   pointer-events: none;
 }
-.clip.midiClip {
-  background: var(--clip-midi-bg);
-  border-color: var(--clip-midi-border);
-}
-.clip.midiClip.selected {
-  border-color: var(--color-selection-highlight);
-  box-shadow:
-    0 0 0 1px var(--color-selection-highlight),
-    0 5px 16px rgba(0, 0, 0, 0.4);
-}
 .clip.midiClip .waveform path {
   stroke: none;
 }
 .clip.midiClip .waveform rect {
-  fill: var(--clip-midi-note-fill);
+  fill: var(--clip-content);
 }
 
 .clipHeader {
@@ -844,12 +863,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 7px;
-  padding: 0 7px;
-  background: rgba(5, 16, 20, 0.34);
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  background: color-mix(in srgb, var(--color-bg-app) 34%, transparent);
   pointer-events: none;
 }
+/* The name stays visible beside the track headers while a long clip scrolls past. */
 .clipHeader strong {
+  position: sticky;
+  left: calc(var(--header-width) + var(--space-2));
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-primary);
@@ -875,7 +897,7 @@
 }
 .waveform path {
   fill: none;
-  stroke: var(--color-text-primary);
+  stroke: var(--clip-content);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
@@ -928,7 +950,7 @@
   top: 2px;
   width: 8px;
   height: 8px;
-  margin-left: -4px;
+  margin-left: calc(var(--space-1) * -1);
   opacity: 0;
   pointer-events: none;
   background: var(--color-status-warning);
@@ -967,8 +989,8 @@
   bottom: 0;
   width: 1px;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-selection-highlight) 48%, transparent);
-  box-shadow: 1px 0 rgba(0, 0, 0, 0.22);
+  background: color-mix(in srgb, var(--color-selection) 48%, transparent);
+  box-shadow: 1px 0 color-mix(in srgb, var(--color-shadow) 22%, transparent);
 }
 
 .playhead,
@@ -1010,8 +1032,8 @@
   position: absolute;
   z-index: 11;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 70%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
 }
 
 .empty {
@@ -1020,55 +1042,59 @@
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 8px;
-  margin: 26px;
+  gap: var(--space-2);
+  margin: var(--space-6);
   color: var(--color-text-muted);
   text-align: center;
   border: 1px dashed var(--color-border-default);
   border-radius: var(--radius-lg);
-  background: radial-gradient(circle at 50% 42%, rgba(54, 101, 113, 0.13), transparent 38%);
+  background: radial-gradient(
+    circle at 50% 42%,
+    color-mix(in srgb, var(--color-accent) 6%, transparent),
+    transparent 38%
+  );
 }
 .emptyIcon {
   width: 44px;
   height: 44px;
   display: grid;
   place-content: center;
-  color: var(--color-accent-primary);
-  font-size: 27px;
-  background: color-mix(in srgb, var(--color-accent-primary) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
+  color: var(--color-accent);
+  font-size: var(--font-size-readout);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
   border-radius: var(--radius-lg);
 }
 .empty strong {
-  margin-top: 4px;
+  margin-top: var(--space-1);
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-title);
 }
 .emptyDragOver {
   color: var(--color-text-primary);
   background: radial-gradient(
     circle at 50% 42%,
-    color-mix(in srgb, var(--color-accent-primary) 22%, transparent),
+    color-mix(in srgb, var(--color-accent) 22%, transparent),
     transparent 38%
   );
-  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 .empty button {
-  margin-top: 7px;
-  padding: 8px 12px;
-  color: var(--color-accent-primary);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
-  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 32%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 32%, transparent);
   border-radius: var(--radius-sm);
 }
 .emptyActions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 7px;
-  margin-top: 4px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 .emptyActions button {
   margin-top: 0;
@@ -1080,12 +1106,12 @@
   top: 38px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 6px 4px 9px;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   white-space: nowrap;
-  background: color-mix(in srgb, var(--color-bg-control) 94%, transparent);
+  background: color-mix(in srgb, var(--color-bg-panel) 94%, transparent);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-popover);
@@ -1096,15 +1122,15 @@
   font: var(--font-size-micro) var(--font-family-mono);
 }
 .selectionChip button {
-  padding: 3px 7px;
-  color: var(--color-accent-primary);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
-  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
   border-radius: var(--radius-sm);
 }
 .selectionChip button:hover {
-  background: color-mix(in srgb, var(--color-accent-primary) 20%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 /* Drop target below the last Track; dropping here places the item without a target Track. */
@@ -1114,12 +1140,12 @@
   align-items: center;
   padding-left: calc(var(--header-width) + var(--space-4));
   color: var(--color-text-muted);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   border: 1px dashed transparent;
 }
 
 .newTrackDropActive {
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
-  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
 }

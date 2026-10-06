@@ -19,6 +19,7 @@ import { DevicesPanel } from './devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
+import { resolveTrackColor } from './model/track-colors';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
 import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
@@ -131,17 +132,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const barWidth = barTicks * pixelsPerTick;
     const density = timelineGridDensity(timebase, pixelsPerTick);
     const layers = [
-      `repeating-linear-gradient(90deg, rgba(211, 232, 235, 0.2) 0 1px, transparent 1px ${barWidth}px)`,
+      `repeating-linear-gradient(90deg, var(--timeline-grid-bar) 0 1px, transparent 1px ${barWidth}px)`,
     ];
     if (density.showBeats) {
       layers.push(
-        `repeating-linear-gradient(90deg, rgba(211, 232, 235, 0.09) 0 1px, transparent 1px ${beatWidth}px)`,
+        `repeating-linear-gradient(90deg, var(--timeline-grid-beat) 0 1px, transparent 1px ${beatWidth}px)`,
       );
     }
     if (density.subdivisionTicks) {
       const subdivisionWidth = density.subdivisionTicks * pixelsPerTick;
       layers.push(
-        `repeating-linear-gradient(90deg, rgba(211, 232, 235, 0.045) 0 1px, transparent 1px ${subdivisionWidth}px)`,
+        `repeating-linear-gradient(90deg, var(--timeline-grid-subdivision) 0 1px, transparent 1px ${subdivisionWidth}px)`,
       );
     }
     return { width: timelineWidth, backgroundImage: layers.join(', ') } as CSSProperties;
@@ -214,15 +215,24 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const { lower } = props;
   const { activeMidiClip } = lower;
   const { handleKeyboard: handleRulerKeyboard, timeSelection: rulerTimeSelection } = ruler;
-  const activeMidiTrack = activeMidiClip
-    ? (arrangement.tracks.find((track) => track.id === activeMidiClip.trackId) ?? null)
+  const soloActive = arrangement.tracks.some((track) => track.solo);
+  const activeMidiTrackIndex = activeMidiClip
+    ? arrangement.tracks.findIndex((track) => track.id === activeMidiClip.trackId)
+    : -1;
+  const activeMidiTrack = arrangement.tracks[activeMidiTrackIndex] ?? null;
+  const activeMidiTrackColor = activeMidiTrack
+    ? resolveTrackColor(activeMidiTrack, activeMidiTrackIndex)
     : null;
   // Notes from other clips that sound at the same arrangement time, rebased
   // to the active clip's local time so the editor can show them behind it.
   const midiGhostNotes = useMemo<MidiGhostNote[]>(() => {
     if (!activeMidiClip) return [];
+    const trackColors = new Map(
+      arrangement.tracks.map((track, index) => [track.id, resolveTrackColor(track, index)]),
+    );
     return arrangement.midiClips.flatMap((clip) => {
-      if (clip.id === activeMidiClip.id) return [];
+      const trackColor = trackColors.get(clip.trackId);
+      if (clip.id === activeMidiClip.id || !trackColor) return [];
       return clip.notes.flatMap((note) => {
         const localTick = clip.startTick + note.startTick - activeMidiClip.startTick;
         if (localTick < 0 || localTick >= activeMidiClip.durationTicks) return [];
@@ -235,11 +245,12 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               1,
               Math.min(note.durationTicks, activeMidiClip.durationTicks - localTick),
             ),
+            trackColor,
           },
         ];
       });
     });
-  }, [arrangement.midiClips, activeMidiClip]);
+  }, [arrangement.midiClips, arrangement.tracks, activeMidiClip]);
   const runtimeReady =
     !playbackOutOfSync &&
     props.audio.state !== 'starting' &&
@@ -606,6 +617,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               <Fragment key={track.id}>
                 <ArrangeTrack
                   track={track}
+                  soloActive={soloActive}
                   trackIndex={trackIndex}
                   timeline={buildTrackTimeline(
                     track.id,
@@ -755,6 +767,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         midiEditor={
           <ArrangeMidiEditor
             clip={activeMidiClip}
+            trackColor={activeMidiTrackColor}
             timebase={timebase}
             ghostNotes={midiGhostNotes}
             playheadTick={displayTick}

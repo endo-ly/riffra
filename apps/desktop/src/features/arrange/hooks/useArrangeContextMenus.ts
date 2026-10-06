@@ -259,7 +259,7 @@ export function useArrangeContextMenus({
           disabled: gridTicks === 0,
           onClick: () => {
             closeContextMenu();
-            const offGrid = countOffGridNotes(clip.notes, gridTicks);
+            const offGrid = countOffGridNotes(clip.notes, gridTicks, clip.startTick);
             if (offGrid === 0) {
               toast('Notes are already on the grid.');
               return;

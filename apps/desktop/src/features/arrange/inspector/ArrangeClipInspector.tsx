@@ -7,8 +7,11 @@ import type {
   CreativeSession,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
-import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
+import { clipDurationTicks, formatMusicalLength } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { MixValueField } from './MixValueField';
+import { MusicalTimeField } from './MusicalTimeField';
 import styles from './Inspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -24,9 +27,6 @@ interface ArrangeClipInspectorProps {
 
 interface Drafts {
   name: string;
-  startTick: string;
-  gainDb: string;
-  pan: string;
   fadeInMs: string;
   fadeOutMs: string;
 }
@@ -36,17 +36,9 @@ function buildDrafts(clip: AudioClip): Drafts {
   const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
   return {
     name: clip.name,
-    startTick: String(clip.startTick),
-    gainDb: clip.gainDb.toFixed(1),
-    pan: clip.pan.toFixed(2),
     fadeInMs: String(Math.round(fadeInMs)),
     fadeOutMs: String(Math.round(fadeOutMs)),
   };
-}
-
-function formatPan(pan: number) {
-  if (Math.abs(pan) < 0.01) return 'C';
-  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
 }
 
 export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
@@ -55,8 +47,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
-  const [gainEdit, setGainEdit] = useState(false);
-  const [panEdit, setPanEdit] = useState(false);
   const {
     operationMessage: message,
     runOperation,
@@ -114,9 +104,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             if (name && name !== clip.name) patch({ name }, 'Rename');
           }}
         />
-        <span className={styles.identityMeta}>
-          {formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}
-        </span>
       </div>
 
       <section className={styles.section}>
@@ -128,24 +115,21 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           </span>
         </header>
         <div className={styles.fieldPair}>
-          <label className={styles.field}>
-            <span>Start</span>
-            <input
-              className={clsx(styles.control, styles.mono)}
-              type="number"
-              min="0"
-              value={drafts.startTick}
-              onChange={(event) => setDrafts({ ...drafts, startTick: event.currentTarget.value })}
-              onBlur={() => {
-                const next = Number(drafts.startTick);
-                if (Number.isFinite(next) && next >= 0 && next !== clip.startTick)
-                  patch({ startTick: next }, 'Start tick');
-              }}
-            />
-          </label>
-          <div className={styles.readoutRow}>
-            <span>Ticks</span>
-            <strong>{drafts.startTick}</strong>
+          <MusicalTimeField
+            label="Start"
+            kind="position"
+            ticks={clip.startTick}
+            timebase={props.session.arrangement.timebase}
+            onCommit={(startTick) => patch({ startTick }, 'Start')}
+          />
+          <div className={styles.field}>
+            <span>Length</span>
+            <output className={clsx(styles.control, styles.mono, styles.readonly)}>
+              {formatMusicalLength(
+                clipDurationTicks(clip, props.session.arrangement.timebase),
+                props.session.arrangement.timebase,
+              )}
+            </output>
           </div>
         </div>
       </section>
@@ -177,107 +161,28 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       )}
 
       <div className={styles.mixCluster} aria-label="Clip mix">
-        <label className={styles.mixField}>
-          <span>
-            Gain{' '}
-            {gainEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.1"
-                value={drafts.gainDb}
-                onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
-                onBlur={() => {
-                  setGainEdit(false);
-                  const next = Number(drafts.gainDb);
-                  if (Number.isFinite(next) && next !== clip.gainDb)
-                    patch({ gainDb: next }, 'Gain');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setDrafts({ ...drafts, gainDb: clip.gainDb.toFixed(1) });
-                    setGainEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit clip gain"
-                onClick={() => setGainEdit(true)}
-              >
-                {Number(drafts.gainDb).toFixed(1)} dB
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Clip gain"
-            type="range"
-            min="-60"
-            max="24"
-            step="0.5"
-            value={drafts.gainDb}
-            onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
-            onPointerUp={() => {
-              const next = Number(drafts.gainDb);
-              if (Number.isFinite(next) && next !== clip.gainDb) patch({ gainDb: next }, 'Gain');
-            }}
-          />
-        </label>
-        <label className={styles.mixField}>
-          <span>
-            Pan{' '}
-            {panEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.05"
-                value={drafts.pan}
-                onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
-                onBlur={() => {
-                  setPanEdit(false);
-                  const next = Number(drafts.pan);
-                  if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setDrafts({ ...drafts, pan: clip.pan.toFixed(2) });
-                    setPanEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit clip pan"
-                onClick={() => setPanEdit(true)}
-              >
-                {formatPan(Number(drafts.pan))}
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Clip pan"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.05"
-            value={drafts.pan}
-            onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
-            onPointerUp={() => {
-              const next = Number(drafts.pan);
-              if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
-            }}
-          />
-        </label>
+        <MixValueField
+          label="Gain"
+          name="Clip gain"
+          value={clip.gainDb}
+          min={-60}
+          max={24}
+          step={0.5}
+          inputStep={0.1}
+          format={formatGainDb}
+          onCommit={(gainDb) => patch({ gainDb }, 'Gain')}
+        />
+        <MixValueField
+          label="Pan"
+          name="Clip pan"
+          value={clip.pan}
+          min={-1}
+          max={1}
+          step={0.05}
+          inputStep={0.05}
+          format={formatPan}
+          onCommit={(pan) => patch({ pan }, 'Pan')}
+        />
       </div>
 
       <section className={styles.section}>
@@ -344,29 +249,26 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
 
       <section className={styles.section}>
         <div className={styles.clipActions}>
-          <div className={styles.segmented} role="group" aria-label="Clip state">
-            <button
-              type="button"
-              aria-pressed={clip.muted}
-              onClick={() =>
-                commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
-              }
-            >
-              Mute
-            </button>
-            <button
-              type="button"
-              aria-pressed={clip.loopEnabled}
-              onClick={() =>
-                commit(
-                  props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
-                  'Loop',
-                )
-              }
-            >
-              Loop
-            </button>
-          </div>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.muted}
+            onClick={() =>
+              commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
+            }
+          >
+            Mute
+          </button>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.loopEnabled}
+            onClick={() =>
+              commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }), 'Loop')
+            }
+          >
+            Loop
+          </button>
           <button
             type="button"
             className={styles.smallButton}

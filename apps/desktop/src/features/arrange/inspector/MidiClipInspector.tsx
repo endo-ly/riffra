@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import type { ArrangementMutationResult, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
-import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
+import { MusicalTimeField } from './MusicalTimeField';
 import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
@@ -21,15 +21,11 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [name, setName] = useState(clip?.name ?? '');
-  const [startTick, setStartTick] = useState(String(clip?.startTick ?? 0));
-  const [durationTicks, setDurationTicks] = useState(String(clip?.durationTicks ?? 1));
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setName(clip?.name ?? '');
-    setStartTick(String(clip?.startTick ?? 0));
-    setDurationTicks(String(clip?.durationTicks ?? 1));
-  }, [clip?.durationTicks, clip?.id, clip?.name, clip?.startTick]);
+  }, [clip?.id, clip?.name]);
 
   const commit = async (operation: Promise<ArrangementMutationResult | null>) => {
     const next = await operation;
@@ -67,45 +63,26 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
             if (next && next !== clip.name) patch({ name: next });
           }}
         />
-        <span className={styles.identityMeta}>
-          {formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}
-        </span>
       </div>
       <section className={styles.section}>
         <header className={styles.sectionHeader}>
           <strong>TIMING</strong>
         </header>
         <div className={styles.fieldPair}>
-          <label className={styles.field}>
-            <span>Start</span>
-            <input
-              className={clsx(styles.control, styles.mono)}
-              type="number"
-              min="0"
-              value={startTick}
-              onChange={(event) => setStartTick(event.currentTarget.value)}
-              onBlur={() => {
-                const value = Number(startTick);
-                if (Number.isFinite(value) && value >= 0 && value !== clip.startTick)
-                  patch({ startTick: value });
-              }}
-            />
-          </label>
-          <label className={styles.field}>
-            <span>Length</span>
-            <input
-              className={clsx(styles.control, styles.mono)}
-              type="number"
-              min="1"
-              value={durationTicks}
-              onChange={(event) => setDurationTicks(event.currentTarget.value)}
-              onBlur={() => {
-                const value = Number(durationTicks);
-                if (Number.isFinite(value) && value > 0 && value !== clip.durationTicks)
-                  patch({ durationTicks: value });
-              }}
-            />
-          </label>
+          <MusicalTimeField
+            label="Start"
+            kind="position"
+            ticks={clip.startTick}
+            timebase={props.session.arrangement.timebase}
+            onCommit={(startTick) => patch({ startTick })}
+          />
+          <MusicalTimeField
+            label="Length"
+            kind="length"
+            ticks={clip.durationTicks}
+            timebase={props.session.arrangement.timebase}
+            onCommit={(durationTicks) => patch({ durationTicks })}
+          />
         </div>
       </section>
       <section className={styles.section}>
@@ -207,22 +184,22 @@ export function MidiClipInspector(props: MidiClipInspectorProps) {
       </section>
       <section className={styles.section}>
         <div className={styles.clipActions}>
-          <div className={styles.segmented} role="group" aria-label="Clip state">
-            <button
-              type="button"
-              aria-pressed={clip.muted}
-              onClick={() => patch({ muted: !clip.muted })}
-            >
-              Mute
-            </button>
-            <button
-              type="button"
-              aria-pressed={clip.loopEnabled}
-              onClick={() => patch({ loopEnabled: !clip.loopEnabled })}
-            >
-              Loop
-            </button>
-          </div>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.muted}
+            onClick={() => patch({ muted: !clip.muted })}
+          >
+            Mute
+          </button>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.loopEnabled}
+            onClick={() => patch({ loopEnabled: !clip.loopEnabled })}
+          >
+            Loop
+          </button>
           <button
             type="button"
             className={styles.smallButton}

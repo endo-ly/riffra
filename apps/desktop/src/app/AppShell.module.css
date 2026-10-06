@@ -32,7 +32,12 @@
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle at 54% 7%, rgba(43, 65, 76, 0.18), transparent 42%), var(--color-bg-app);
+    radial-gradient(
+      circle at 54% 7%,
+      color-mix(in srgb, var(--color-accent) 6%, transparent),
+      transparent 42%
+    ),
+    var(--color-bg-app);
 }
 
 .playSurfaceHost {
@@ -49,6 +54,8 @@
 }
 
 .logoMark {
+  composes: scope from './BrandTokens.module.css';
+
   width: 28px;
   height: 28px;
   display: inline-grid;
@@ -56,9 +63,14 @@
   border-radius: var(--radius-md);
   color: var(--color-text-on-accent);
   font-weight: 800;
-  font-size: 15px;
-  background: linear-gradient(145deg, #9ff6ed, #49b8dd 65%, #477ce1);
+  font-size: var(--font-size-title);
+  background: linear-gradient(
+    145deg,
+    var(--brand-logo-light),
+    var(--brand-logo-mid) 65%,
+    var(--brand-logo-deep)
+  );
   box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.55),
-    0 0 28px color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+    inset 0 1px color-mix(in srgb, var(--color-highlight) 55%, transparent),
+    0 0 28px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }

@@ -1,5 +1,6 @@
 .editor {
-  composes: scope from './MidiEditorTokens.module.css';
+  composes: scope from '../TimelineTokens.module.css';
+  composes: scope from '../PianoKeyTokens.module.css';
   isolation: isolate;
   height: 100%;
   min-width: 0;
@@ -9,10 +10,25 @@
   overflow: hidden;
   color: var(--color-text-primary);
   background: var(--color-bg-panel);
+
+  /*
+   * Notes follow the owning track's color, set inline as --track-color.
+   * Lightness is fixed in OKLCH so every track color reads with equal weight.
+   */
+  --note-fill: oklch(from var(--track-color) 0.62 calc(c * 0.9) h);
+  --note-edge: oklch(from var(--track-color) 0.86 calc(c * 0.6) h);
+
+  /* The pitch keyboard is always on screen, so its white keys sit back from full white. */
+  --roll-key-white: color-mix(in oklch, var(--piano-key-white) 64%, var(--color-bg-app));
+}
+
+/* Keep the toolbar's trailing controls clear of the overlaid lower-area controls. */
+.editor > header {
+  padding-right: var(--lower-actions-width);
 }
 
 .editor:focus-visible {
-  outline: 1px solid var(--color-accent-primary);
+  outline: 1px solid var(--color-accent);
   outline-offset: -1px;
 }
 
@@ -83,7 +99,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: 1px;
-  background: var(--midi-grid-bar);
+  background: var(--timeline-grid-bar);
 }
 
 .editorBarMark strong {
@@ -100,7 +116,7 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--midi-grid-beat);
+  background: var(--timeline-grid-beat);
 }
 
 .roll {
@@ -129,19 +145,19 @@
 }
 
 .pianoKey:hover .pianoWhiteKey {
-  background: color-mix(in srgb, #f1f5f3 72%, var(--color-accent-primary));
+  background: color-mix(in srgb, var(--roll-key-white) 72%, var(--color-accent));
 }
 
 .pianoKey:active .pianoWhiteKey {
-  background: color-mix(in srgb, #f1f5f3 45%, var(--color-accent-primary));
+  background: color-mix(in srgb, var(--roll-key-white) 45%, var(--color-accent));
 }
 
 .pianoKey:hover .pianoBlackKey {
-  background: color-mix(in srgb, #0b1115 60%, var(--color-accent-primary));
+  background: color-mix(in srgb, var(--piano-key-black) 60%, var(--color-accent));
 }
 
 .pianoKey:focus-visible {
-  outline: 1px solid var(--color-accent-primary);
+  outline: 1px solid var(--color-accent);
   outline-offset: -1px;
 }
 
@@ -152,11 +168,11 @@
   display: flex;
   align-items: center;
   box-sizing: border-box;
-  padding-left: 6px;
+  padding-left: var(--space-1-5);
   width: 100%;
-  color: #25343a;
-  background: #f1f5f3;
-  border-bottom: 1px solid rgba(38, 54, 60, 0.24);
+  color: var(--piano-key-label);
+  background: var(--roll-key-white);
+  border-bottom: 1px solid color-mix(in srgb, var(--piano-key-label) 24%, transparent);
 }
 
 .pianoBlackKey {
@@ -165,8 +181,8 @@
   right: 0;
   width: 70%;
   box-sizing: border-box;
-  background: #0b1115;
-  border: 1px solid #344650;
+  background: var(--piano-key-black);
+  border: 1px solid var(--color-border-strong);
   border-radius: 0 2px 2px 0;
   pointer-events: none;
 }
@@ -192,8 +208,8 @@
 .marquee {
   position: absolute;
   z-index: 4;
-  border: 1px solid #79e0e8;
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  border: 1px solid var(--color-selection);
+  background: color-mix(in srgb, var(--color-selection) 12%, transparent);
   pointer-events: none;
 }
 
@@ -202,8 +218,8 @@
   z-index: 4;
   min-width: 4px;
   box-sizing: border-box;
-  background: rgba(141, 116, 208, 0.7);
-  border: 1px solid var(--midi-note-border);
+  background: color-mix(in srgb, var(--note-fill) 70%, transparent);
+  border: 1px solid var(--note-edge);
   border-radius: var(--radius-sm);
   pointer-events: none;
 }
@@ -212,21 +228,21 @@
   position: absolute;
   left: 0;
   right: 0;
-  padding-left: 5px;
+  padding-left: var(--space-1-5);
   overflow: hidden;
-  border-bottom: 1px solid rgba(198, 220, 225, 0.07);
-  color: rgba(187, 211, 216, 0.55);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+  color: var(--color-text-muted);
   font: var(--font-size-micro) var(--font-family-mono);
   pointer-events: none;
 }
 
 .pitchBlack {
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
 }
 
 .pitchOctave {
-  background: #17242b;
-  border-bottom-color: rgba(198, 220, 225, 0.18);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-app));
+  border-bottom-color: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
   color: var(--color-text-primary);
 }
 
@@ -242,17 +258,17 @@
 
 .barLine {
   z-index: 3;
-  background: var(--midi-grid-bar);
+  background: var(--timeline-grid-bar);
 }
 
 .beatLine {
   z-index: 2;
-  background: var(--midi-grid-beat);
+  background: var(--timeline-grid-beat);
 }
 
 .subdivisionLine {
   z-index: 1;
-  background: var(--midi-grid-subdivision);
+  background: var(--timeline-grid-subdivision);
 }
 
 .note {
@@ -260,20 +276,20 @@
   z-index: 3;
   display: block;
   min-width: 4px;
-  background: var(--midi-note);
-  border: 1px solid var(--midi-note-border);
+  background: var(--note-fill);
+  border: 1px solid var(--note-edge);
   border-radius: var(--radius-sm);
   cursor: grab;
   user-select: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-raised);
 }
 
 .note.dragging {
   cursor: grabbing;
-  background: #a394e1;
+  background: var(--track-color);
   box-shadow:
-    0 0 0 1px #d0fff5,
-    0 0 12px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+    0 0 0 1px var(--color-selection),
+    0 0 12px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
 
 .ghostNote {
@@ -281,18 +297,18 @@
   z-index: 2;
   min-width: 4px;
   box-sizing: border-box;
-  background: color-mix(in srgb, var(--color-text-secondary) 26%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--color-text-secondary) 55%, transparent);
+  background: color-mix(in srgb, var(--ghost-color) 18%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--ghost-color) 55%, transparent);
   border-radius: var(--radius-sm);
   pointer-events: none;
 }
 
 .note.selected {
-  background: #8d74d0;
-  border-color: var(--color-selection-highlight);
+  background: oklch(from var(--track-color) 0.7 c h);
+  border-color: var(--color-selection);
   box-shadow:
-    0 0 0 1px var(--color-selection-highlight),
-    0 0 8px color-mix(in srgb, var(--color-accent-primary) 28%, transparent);
+    0 0 0 1px var(--color-selection),
+    0 0 8px color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
 .resizeHandle {
@@ -302,7 +318,7 @@
   bottom: 0;
   width: min(5px, 50%);
   cursor: ew-resize;
-  background: rgba(255, 255, 255, 0.24);
+  background: color-mix(in srgb, var(--color-text-strong) 24%, transparent);
 }
 
 .note.narrow {
@@ -348,37 +364,71 @@
 }
 
 .velocityBarLine {
-  background: var(--midi-grid-velocity-bar);
+  background: var(--timeline-grid-bar);
 }
 
 .velocityBeatLine {
-  background: var(--midi-grid-velocity-beat);
+  background: var(--timeline-grid-beat);
 }
 
+/*
+ * Velocity reads as a lollipop at each note onset: a stem rising to a head.
+ * The button keeps the note's span as its drag target and shows it on hover.
+ */
 .velocityBar {
   position: absolute;
-  bottom: 4px;
+  bottom: var(--space-1);
   z-index: 3;
   min-width: 4px;
   padding: 0;
-  background: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 82%, transparent);
-  border-radius: 2px 2px 0 0;
+  background: transparent;
+  border: 0;
   cursor: ns-resize;
+
+  --stem-color: var(--note-edge);
+  --head-fill: var(--note-fill);
 }
 
-.velocityBar:hover,
+.velocityBar::before,
+.velocityBar::after {
+  position: absolute;
+  content: '';
+  pointer-events: none;
+}
+
+.velocityBar::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--stem-color);
+}
+
+.velocityBar::after {
+  top: calc(var(--space-1) * -1);
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  background: var(--head-fill);
+  border: 1px solid var(--stem-color);
+  border-radius: 50%;
+}
+
+.velocityBar:hover {
+  background: color-mix(in srgb, var(--note-fill) 18%, transparent);
+}
+
 .velocityBar.velocitySelected {
-  background: var(--color-accent-primary);
-  border-color: var(--color-selection-highlight);
+  --stem-color: var(--color-selection);
+  --head-fill: var(--track-color);
 }
 
 .empty {
   min-height: 260px;
   display: grid;
   place-content: center;
-  padding: 24px;
+  padding: var(--space-6);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-small);
   text-align: center;
 }

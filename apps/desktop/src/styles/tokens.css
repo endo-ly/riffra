@@ -1,11 +1,11 @@
 :root {
   /* Typography */
   --font-family-mono: 'DM Mono', Consolas, monospace;
-  --font-size-micro: 9px;
-  --font-size-small: 10px;
-  --font-size-control: 11px;
+  --font-size-micro: 10px;
+  --font-size-small: 11px;
   --font-size-emphasis: 12px;
   --font-size-title: 14px;
+  --font-size-heading: 18px;
   --font-size-readout: 20px;
 
   /* Background roles */
@@ -13,10 +13,8 @@
   --color-bg-panel: #0f1318;
   --color-bg-surface: #151a21;
   --color-bg-surface-raised: #1a2028;
-  --color-bg-control: #0d1216;
-  --color-bg-control-raised: #141a20;
-  --color-bg-control-hover: #1c2b33;
-  --color-bg-overlay: #151f26;
+  --color-bg-hover: #1c2b33;
+  --color-bg-scrim: rgba(3, 5, 7, 0.65);
 
   /* Border roles */
   --color-border-subtle: #252c35;
@@ -32,15 +30,20 @@
   --color-text-on-accent: #071216;
 
   /* Accent and status roles */
-  --color-accent-primary: #55d9e8;
-  --color-accent-secondary: #45d6b3;
+  --color-accent: #55d9e8;
   --color-status-success: #45d6b3;
   --color-status-warning: #e7b55d;
   --color-status-danger: #ee5a67;
-  --color-selection-accent: #f2a33a;
-  --color-selection-highlight: #bfeff1;
+  --color-selection: #bfeff1;
   --color-scrollbar-thumb: #313b45;
   --color-scrollbar-track: #0b0f13;
+
+  /*
+   * Light and shade: base colors for shadows and specular highlights. Depth
+   * effects take their strength from color-mix() against transparent.
+   */
+  --color-shadow: #000;
+  --color-highlight: #fff;
 
   /* Radius scale */
   --radius-sm: 4px;
@@ -48,16 +51,23 @@
   --radius-lg: 8px;
   --radius-pill: 999px;
 
-  /* Spacing scale */
+  /* Spacing scale: --space-N is N × 4px, with half steps below 12px. */
+  --space-0-5: 2px;
   --space-1: 4px;
+  --space-1-5: 6px;
   --space-2: 8px;
+  --space-2-5: 10px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-12: 48px;
 
   /* Elevation */
-  --shadow-popover: 0 10px 28px rgba(0, 0, 0, 0.42);
-  --shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.38);
-  --shadow-dialog: 0 28px 80px rgba(0, 0, 0, 0.58);
+  --shadow-raised: 0 1px 3px color-mix(in srgb, var(--color-shadow) 35%, transparent);
+  --shadow-popover: 0 10px 28px color-mix(in srgb, var(--color-shadow) 42%, transparent);
+  --shadow-toast: 0 8px 24px color-mix(in srgb, var(--color-shadow) 38%, transparent);
+  --shadow-dialog: 0 28px 80px color-mix(in srgb, var(--color-shadow) 58%, transparent);
 
   /* Icon sizing */
   --size-icon-sm: 12px;
@@ -79,7 +89,7 @@
    */
   --z-chrome: 10;
   --z-handle: 20;
-  --z-detail-actions: 21;
+  --z-lower-area-controls: 21;
   --z-region-raised: 30;
   --z-banner: 40;
   --z-dialog: 50;
@@ -93,8 +103,4 @@
   --size-control-normal: 28px;
   --size-toolbar: 40px;
   --size-global-control-bar: 48px;
-  --size-level-meter: 88px;
-  --size-level-meter-thickness: 4px;
-  --size-play-surface-compact: 48px;
-  --size-play-surface-expanded: 220px;
 }

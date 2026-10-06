@@ -21,8 +21,8 @@
 .empty {
   display: grid;
   justify-items: center;
-  gap: 6px;
-  padding: 48px 20px;
+  gap: var(--space-1-5);
+  padding: var(--space-12) var(--space-5);
   color: var(--color-text-muted);
   text-align: center;
 }

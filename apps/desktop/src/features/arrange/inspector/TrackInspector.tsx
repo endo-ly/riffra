@@ -9,8 +9,10 @@ import type {
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { Icon } from '@/shared/ui/primitives';
-import { resolveTrackColor, TRACK_COLOR_PALETTE } from './track-colors';
+import { resolveTrackColor, TRACK_COLOR_PALETTE } from '../model/track-colors';
 import { useInspectorOperation } from './useInspectorOperation';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { MixValueField } from './MixValueField';
 import styles from './Inspector.module.css';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 
@@ -23,22 +25,11 @@ interface TrackInspectorProps {
   api: ArrangeInspectorApi;
 }
 
-function formatPan(pan: number) {
-  if (Math.abs(pan) < 0.01) return 'C';
-  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
-}
-
 export function TrackInspector(props: TrackInspectorProps) {
   const [name, setName] = useState(props.track.name);
-  const [gainDb, setGainDb] = useState(props.track.gainDb);
-  const [pan, setPan] = useState(props.track.pan);
-  const [gainEdit, setGainEdit] = useState(false);
-  const [panEdit, setPanEdit] = useState(false);
   const [colorOpen, setColorOpen] = useState(false);
   const { operationMessage, runOperation, setOperationMessage } = useInspectorOperation();
   useEffect(() => setName(props.track.name), [props.track.id, props.track.name]);
-  useEffect(() => setGainDb(props.track.gainDb), [props.track.id, props.track.gainDb]);
-  useEffect(() => setPan(props.track.pan), [props.track.id, props.track.pan]);
   const commit = useCallback(
     (operation: Promise<ArrangementMutationResult>) => {
       runOperation(operation, (result) =>
@@ -110,117 +101,28 @@ export function TrackInspector(props: TrackInspectorProps) {
       </div>
 
       <div className={styles.mixCluster} aria-label="Track mix">
-        <label className={styles.mixField}>
-          <span>
-            Gain{' '}
-            {gainEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.1"
-                value={gainDb}
-                onChange={(event) => setGainDb(Number(event.currentTarget.value))}
-                onBlur={() => {
-                  setGainEdit(false);
-                  const next = Number(gainDb);
-                  if (Number.isFinite(next) && next !== props.track.gainDb)
-                    commit(props.api.updateTrack(props.track.id, { gainDb: next }));
-                  else setGainDb(props.track.gainDb);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setGainDb(props.track.gainDb);
-                    setGainEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit track gain"
-                onClick={() => setGainEdit(true)}
-              >
-                {gainDb > 0 ? '+' : ''}
-                {gainDb.toFixed(1)} dB
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Track gain"
-            type="range"
-            min="-60"
-            max="12"
-            step="0.5"
-            value={gainDb}
-            onChange={(event) => setGainDb(Number(event.currentTarget.value))}
-            onPointerUp={() => {
-              if (gainDb !== props.track.gainDb)
-                commit(props.api.updateTrack(props.track.id, { gainDb }));
-            }}
-            onKeyUp={() => {
-              if (gainDb !== props.track.gainDb)
-                commit(props.api.updateTrack(props.track.id, { gainDb }));
-            }}
-          />
-        </label>
-        <label className={styles.mixField}>
-          <span>
-            Pan{' '}
-            {panEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.05"
-                value={pan}
-                onChange={(event) => setPan(Number(event.currentTarget.value))}
-                onBlur={() => {
-                  setPanEdit(false);
-                  const next = Number(pan);
-                  if (Number.isFinite(next) && next !== props.track.pan)
-                    commit(props.api.updateTrack(props.track.id, { pan: next }));
-                  else setPan(props.track.pan);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setPan(props.track.pan);
-                    setPanEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit track pan"
-                onClick={() => setPanEdit(true)}
-              >
-                {formatPan(pan)}
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Track pan"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.05"
-            value={pan}
-            onChange={(event) => setPan(Number(event.currentTarget.value))}
-            onPointerUp={() => {
-              if (pan !== props.track.pan) commit(props.api.updateTrack(props.track.id, { pan }));
-            }}
-            onKeyUp={() => {
-              if (pan !== props.track.pan) commit(props.api.updateTrack(props.track.id, { pan }));
-            }}
-          />
-        </label>
+        <MixValueField
+          label="Gain"
+          name="Track gain"
+          value={props.track.gainDb}
+          min={-60}
+          max={12}
+          step={0.5}
+          inputStep={0.1}
+          format={formatGainDb}
+          onCommit={(gainDb) => commit(props.api.updateTrack(props.track.id, { gainDb }))}
+        />
+        <MixValueField
+          label="Pan"
+          name="Track pan"
+          value={props.track.pan}
+          min={-1}
+          max={1}
+          step={0.05}
+          inputStep={0.05}
+          format={formatPan}
+          onCommit={(pan) => commit(props.api.updateTrack(props.track.id, { pan }))}
+        />
       </div>
 
       {props.track.kind === 'audio' ? (
@@ -329,17 +231,24 @@ export function TrackInspector(props: TrackInspectorProps) {
         </>
       )}
       <section className={styles.section} aria-label="Track devices">
-        {props.track.kind === 'instrument' && (
-          <>
-            <strong>INSTRUMENT</strong>
-            <p>{props.track.instrument?.name ?? 'None'}</p>
-          </>
-        )}
-        <strong>EFFECTS</strong>
-        <p>{props.track.effects.length} Effects</p>
-        <button type="button" className={styles.smallButton} onClick={props.onOpenDevices}>
-          Open Devices
-        </button>
+        <header className={styles.sectionHeader}>
+          <strong>DEVICES</strong>
+          <button type="button" className={styles.headerAction} onClick={props.onOpenDevices}>
+            Open Devices
+          </button>
+        </header>
+        <div className={styles.fieldColumn}>
+          {props.track.kind === 'instrument' && (
+            <div className={styles.summaryRow}>
+              <span>Instrument</span>
+              <strong>{props.track.instrument?.name ?? 'None'}</strong>
+            </div>
+          )}
+          <div className={styles.summaryRow}>
+            <span>Effects</span>
+            <strong>{props.track.effects.length}</strong>
+          </div>
+        </div>
       </section>
       {operationMessage && (
         <p className={styles.message} role="status">

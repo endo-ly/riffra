@@ -1,8 +1,9 @@
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
-import { resolveTrackColor } from '@/features/arrange/inspector/track-colors';
+import { resolveTrackColor } from '@/features/arrange/model/track-colors';
 import { MixerMeter } from './MixerMeter';
 import { useTrackMixControl } from './hooks/useTrackMixControl';
 import styles from './Mixer.module.css';
@@ -163,7 +164,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
             }}
             onBlur={(event) => commitValue('gainDb', Number(event.currentTarget.value))}
           />
-          <output>{formatDb(mix.gainDb)}</output>
+          <output>{formatGainDb(mix.gainDb)}</output>
         </label>
       </div>
 
@@ -199,12 +200,4 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
 }
 function isMixAdjustmentKey(key: string): boolean {
   return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
-}
-function formatPan(pan: number): string {
-  if (Math.abs(pan) < 0.005) return 'C';
-  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
-}
-function formatDb(gainDb: number): string {
-  if (gainDb <= -90) return '−∞ dB';
-  return `${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(1)} dB`;
 }

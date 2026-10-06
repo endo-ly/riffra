@@ -1,0 +1,6 @@
+/* Brand mark gradient. */
+.scope {
+  --brand-logo-light: #9ff6ed;
+  --brand-logo-mid: #49b8dd;
+  --brand-logo-deep: #477ce1;
+}

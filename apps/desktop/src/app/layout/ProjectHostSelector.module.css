@@ -11,8 +11,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 8px;
-  padding: 4px 7px;
+  column-gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   text-align: left;
   color: var(--color-text-primary);
   background: transparent;
@@ -23,7 +23,7 @@
 
 .trigger:hover,
 .trigger[aria-expanded='true'] {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 
@@ -44,7 +44,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -82,7 +82,7 @@
 }
 
 .hostDot[data-mode='attached'] {
-  background: var(--color-accent-primary);
+  background: var(--color-accent);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -106,8 +106,8 @@
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
+  gap: var(--space-1);
+  padding: var(--space-1-5);
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-md);
@@ -116,8 +116,8 @@
 
 .current {
   display: grid;
-  gap: 2px;
-  padding: 6px 6px 10px;
+  gap: var(--space-0-5);
+  padding: var(--space-1-5) var(--space-1-5) var(--space-2-5);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -125,14 +125,14 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .nameInput {
   min-width: 0;
   height: 28px;
-  padding: 0 6px;
-  margin-left: -6px;
+  padding: 0 var(--space-1-5);
+  margin-left: calc(var(--space-1-5) * -1);
   color: var(--color-text-strong);
   font-size: var(--font-size-title);
   font-weight: 600;
@@ -147,8 +147,8 @@
 }
 
 .nameInput:focus-visible {
-  background: var(--color-bg-control);
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  background: var(--color-bg-panel);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .nameInput::placeholder {
@@ -157,16 +157,16 @@
 
 .ghostButton {
   height: var(--size-control-dense);
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   background: transparent;
   border-radius: var(--radius-sm);
 }
 
 .ghostButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .meta {
@@ -178,17 +178,17 @@
   height: var(--size-control-normal);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  margin: 2px 0;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-2);
+  margin: var(--space-0-5) 0;
   color: var(--color-text-muted);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
 
 .search:focus-within {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .search svg {
@@ -202,7 +202,7 @@
   height: 100%;
   padding: 0;
   color: var(--color-text-primary);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   background: transparent;
   border: 0;
   outline: 0;
@@ -230,8 +230,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   color: var(--color-text-primary);
   background: transparent;
   border-radius: var(--radius-sm);
@@ -239,7 +239,7 @@
 }
 
 .item:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .item[aria-current='true'] {
@@ -267,7 +267,7 @@
 
 .itemText strong {
   color: var(--color-text-strong);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   font-weight: 500;
 }
 
@@ -282,17 +282,17 @@
 
 .empty {
   margin: 0;
-  padding: 10px 8px;
+  padding: var(--space-2-5) var(--space-2);
   color: var(--color-text-muted);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
 }
 
 .footer {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 4px;
-  padding-top: 6px;
+  gap: var(--space-1);
+  padding-top: var(--space-1-5);
   border-top: 1px solid var(--color-border-subtle);
 }
 
@@ -302,18 +302,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 0 10px;
+  gap: var(--space-1);
+  padding: 0 var(--space-2-5);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-control);
-  background: var(--color-bg-control-raised);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
 
 .footerButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .footerButton svg {
@@ -327,15 +327,15 @@
 }
 
 .panel > .hostSection:not(:first-child) {
-  padding-top: 4px;
+  padding-top: var(--space-1);
   border-top: 1px solid var(--color-border-subtle);
 }
 
 .hostHeader {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-left: 8px;
+  gap: var(--space-0-5);
+  padding-left: var(--space-2);
 }
 
 .hostHeader > span {
@@ -349,8 +349,8 @@
   height: 30px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
   color: var(--color-text-primary);
   background: transparent;
   border-radius: var(--radius-sm);
@@ -358,7 +358,7 @@
 }
 
 .hostItem:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .hostItem[aria-current='true'] {
@@ -369,7 +369,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-strong);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -389,7 +389,7 @@
 }
 
 .error {
-  margin: 2px 8px 4px;
+  margin: var(--space-0-5) var(--space-2) var(--space-1);
   color: var(--color-status-danger);
   font-size: var(--font-size-small);
   line-height: 1.4;

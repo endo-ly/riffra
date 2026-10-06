@@ -140,9 +140,38 @@ export function snapGridTicks(grid: SnapGrid, timebase: ProjectTimebase) {
   return grid === 'off' ? 0 : values[grid];
 }
 
-export function countOffGridNotes(notes: { startTick: number }[], gridTicks: number): number {
+/** Arrangement grid boundaries within a clip's visible local range. */
+export function clipGridTicks(clipStartTick: number, visibleTicks: number, step: number): number[] {
+  const ticks: number[] = [];
+  for (
+    let tick = Math.ceil(clipStartTick / step) * step;
+    tick < clipStartTick + visibleTicks;
+    tick += step
+  ) {
+    ticks.push(tick - clipStartTick);
+  }
+  return ticks;
+}
+
+/** Snaps a clip-local position to the Arrangement grid, bounded by the clip start. */
+export function snapClipTick(tick: number, clipStartTick: number, gridTicks: number): number {
+  return Math.max(
+    0,
+    gridTicks > 0
+      ? Math.round((clipStartTick + tick) / gridTicks) * gridTicks - clipStartTick
+      : Math.round(tick),
+  );
+}
+
+export function countOffGridNotes(
+  notes: { startTick: number }[],
+  gridTicks: number,
+  clipStartTick: number,
+): number {
   if (gridTicks <= 0) return 0;
-  return notes.filter((note) => note.startTick % gridTicks !== 0).length;
+  return notes.filter(
+    (note) => snapClipTick(note.startTick, clipStartTick, gridTicks) !== note.startTick,
+  ).length;
 }
 
 export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
@@ -154,6 +183,47 @@ export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
   const beat = Math.floor(withinBar / beatTicks) + 1;
   const subdivision = Math.floor(withinBar % beatTicks);
   return `${bar}.${beat}.${subdivision.toString().padStart(3, '0')}`;
+}
+
+/** Formats a tick span as zero-based `bars.beats.ticks`. */
+export function formatMusicalLength(ticks: number, timebase: ProjectTimebase) {
+  const barTicks = ticksPerBar(timebase);
+  const beatTicks = ticksPerBeat(timebase);
+  const safeTicks = Math.max(0, Math.round(ticks));
+  const bars = Math.floor(safeTicks / barTicks);
+  const beats = Math.floor((safeTicks % barTicks) / beatTicks);
+  const remainder = safeTicks % beatTicks;
+  return `${bars}.${beats}.${remainder.toString().padStart(3, '0')}`;
+}
+
+/** Splits `a[.b[.c]]` into whole numbers, or null when the text is not in that form. */
+function parseMusicalFields(text: string): number[] | null {
+  const parts = text.trim().split('.');
+  if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null;
+  return parts.map(Number);
+}
+
+/** Parses a one-based `bar.beat.tick` position; omitted fields start the bar or beat. */
+export function parseMusicalPosition(text: string, timebase: ProjectTimebase): number | null {
+  const fields = parseMusicalFields(text);
+  if (!fields) return null;
+  const [bar, beat = 1, tick = 0] = fields;
+  const beatTicks = ticksPerBeat(timebase);
+  if (bar < 1 || beat < 1 || beat > timebase.timeSignatureNumerator || tick >= beatTicks) {
+    return null;
+  }
+  return (bar - 1) * ticksPerBar(timebase) + (beat - 1) * beatTicks + tick;
+}
+
+/** Parses a zero-based `bars.beats.ticks` span; the result is always positive. */
+export function parseMusicalLength(text: string, timebase: ProjectTimebase): number | null {
+  const fields = parseMusicalFields(text);
+  if (!fields) return null;
+  const [bars, beats = 0, ticks = 0] = fields;
+  const beatTicks = ticksPerBeat(timebase);
+  if (beats >= timebase.timeSignatureNumerator || ticks >= beatTicks) return null;
+  const total = bars * ticksPerBar(timebase) + beats * beatTicks + ticks;
+  return total > 0 ? total : null;
 }
 
 export function formatClock(tick: number, timebase: ProjectTimebase) {

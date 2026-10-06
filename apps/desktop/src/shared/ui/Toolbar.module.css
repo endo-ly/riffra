@@ -4,11 +4,11 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: var(--size-toolbar);
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: linear-gradient(180deg, var(--color-bg-surface), var(--color-bg-panel));
   border-bottom: 1px solid var(--color-border-subtle);
 }
@@ -47,7 +47,7 @@
 .stepper {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .field > span,
@@ -64,18 +64,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 0 10px;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-2-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
-  background-color: var(--color-bg-control);
+  background-color: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
 
 select.control {
   width: 62px;
-  padding: 0 20px 0 6px;
+  padding: 0 var(--space-5) 0 var(--space-1-5);
 }
 
 .control:hover:not(:disabled) {
@@ -92,8 +92,8 @@ select.control {
   display: flex;
   height: var(--size-control-dense);
   box-sizing: border-box;
-  padding: 2px;
-  background: var(--color-bg-control);
+  padding: var(--space-0-5);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -102,9 +102,9 @@ select.control {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--space-1-5);
   min-width: 28px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
   background: transparent;
@@ -118,20 +118,20 @@ select.control {
 
 .segmentedButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-bg-hover);
 }
 
 .control.active,
 .segmentedButton.active {
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-bg-control));
-  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-panel));
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .field input[type='range'] {
   width: 82px;
   height: 3px;
-  accent-color: var(--color-accent-primary);
+  accent-color: var(--color-accent);
 }
 
 .field .value,

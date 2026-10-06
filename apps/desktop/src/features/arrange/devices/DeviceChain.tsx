@@ -148,6 +148,7 @@ export function DeviceChain(props: DeviceChainProps) {
                 <div className={styles.actions}>
                   <button
                     type="button"
+                    className={styles.toggle}
                     aria-pressed={device.bypassed}
                     onClick={() =>
                       props.commit(
@@ -155,7 +156,7 @@ export function DeviceChain(props: DeviceChainProps) {
                       )
                     }
                   >
-                    {device.bypassed ? 'Enable' : 'Bypass'}
+                    Bypass
                   </button>
                   {device.role === 'instrument' && (
                     <button type="button" onClick={() => setPicker('instrument')}>
@@ -187,6 +188,7 @@ export function DeviceChain(props: DeviceChainProps) {
                 )}
                 <button
                   type="button"
+                  className={styles.danger}
                   aria-label={
                     device.role === 'instrument' ? 'Clear instrument' : `Remove ${device.name}`
                   }

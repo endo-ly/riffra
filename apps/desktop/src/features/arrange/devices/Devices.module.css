@@ -1,6 +1,6 @@
 .panel {
   height: 100%;
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   overflow: auto;
   padding: var(--space-3);
   background: var(--color-bg-panel);
@@ -17,7 +17,7 @@
 
 .header {
   margin-bottom: var(--space-3);
-  padding-right: 110px;
+  padding-right: var(--lower-actions-width);
 }
 
 .header span,
@@ -44,7 +44,7 @@
 }
 
 .card[data-selected='true'] {
-  border-color: var(--color-accent-primary);
+  border-color: var(--color-accent);
 }
 
 .chain button,
@@ -53,13 +53,27 @@
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   color: var(--color-text-primary);
 }
 
 .chain button:hover,
 .details button:hover {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
+}
+
+.chain .toggle[aria-pressed='true'] {
+  color: var(--color-status-warning);
+  background: color-mix(in srgb, var(--color-status-warning) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-status-warning) 45%, transparent);
+}
+
+.chain .danger {
+  color: var(--color-status-danger);
+}
+
+.chain .danger:hover {
+  background: color-mix(in srgb, var(--color-status-danger) 12%, transparent);
 }
 
 .chain button:disabled,
@@ -103,7 +117,7 @@
 
 .parameter input {
   width: 100%;
-  accent-color: var(--color-accent-primary);
+  accent-color: var(--color-accent);
 }
 
 .panel [role='alert'] {

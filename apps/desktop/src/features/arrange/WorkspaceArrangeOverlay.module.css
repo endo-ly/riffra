@@ -5,11 +5,11 @@
   left: 50%;
   width: min(300px, calc(100vw - 32px));
   display: grid;
-  gap: 9px;
-  padding: 12px;
+  gap: var(--space-2-5);
+  padding: var(--space-3);
   transform: translateX(-50%);
   color: var(--color-text-primary);
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-popover);
@@ -17,22 +17,22 @@
 
 .markerDialog > strong {
   color: var(--color-text-strong);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
 }
 
 .markerDialog label {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
 }
 
 .markerDialog input {
   min-height: var(--size-control-normal);
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   color: var(--color-text-primary);
-  font-size: var(--font-size-control);
-  background: var(--color-bg-control);
+  font-size: var(--font-size-small);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -40,23 +40,23 @@
 .markerDialog > div {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 
 .markerDialog button {
   min-height: var(--size-control-dense);
-  padding: 0 9px;
+  padding: 0 var(--space-2-5);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
-  background: var(--color-bg-control-raised);
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
 
 .markerDialog button[type='submit'] {
   color: var(--color-text-on-accent);
-  background: var(--color-accent-primary);
-  border-color: var(--color-accent-primary);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .pluginPickerOverlay {
@@ -65,7 +65,7 @@
   inset: 0;
   display: grid;
   place-content: center;
-  background: rgba(3, 5, 7, 0.65);
+  background: var(--color-bg-scrim);
   backdrop-filter: blur(3px);
 }
 
@@ -75,7 +75,7 @@
   max-height: calc(100vh - 80px);
   display: grid;
   grid-template-rows: auto auto 1fr;
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
@@ -86,7 +86,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: var(--space-2-5) var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -97,7 +97,7 @@
 }
 
 .pluginPickerCancel {
-  padding: 2px 5px;
+  padding: var(--space-0-5) var(--space-1-5);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   background: transparent;
@@ -108,15 +108,15 @@
 
 .pluginPickerCancel:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 
 .pluginPicker input {
-  padding: 9px 12px;
+  padding: var(--space-2-5) var(--space-3);
   color: var(--color-text-primary);
   font-size: var(--font-size-micro);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 0;
   border-bottom: 1px solid var(--color-border-subtle);
   outline: none;
@@ -129,7 +129,7 @@
 .pluginPickerList {
   max-height: 320px;
   overflow: auto;
-  padding: 4px;
+  padding: var(--space-1);
 }
 
 .pluginPickerItem {
@@ -137,8 +137,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  padding: 7px 10px;
+  gap: var(--space-0-5);
+  padding: var(--space-2) var(--space-2-5);
   text-align: left;
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
@@ -150,7 +150,7 @@
 
 .pluginPickerItem:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .pluginPickerItem small {
@@ -160,7 +160,7 @@
 
 .pluginPickerEmpty,
 .pluginPickerError {
-  padding: 18px 12px;
+  padding: var(--space-5) var(--space-3);
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   text-align: center;

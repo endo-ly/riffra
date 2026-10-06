@@ -831,6 +831,12 @@ impl Arrangement {
         Ok(())
     }
 
+    /// Snaps selected note starts to the Arrangement grid, bounded by the clip start.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a zero grid, an unknown clip, arithmetic overflow,
+    /// or note positions that cannot fit inside the clip.
     pub fn quantize_midi_notes(
         &mut self,
         clip_id: &str,
@@ -853,13 +859,14 @@ impl Arrangement {
                 let rounded_units = note
                     .start_tick
                     .0
-                    .checked_add(grid_ticks / 2)
+                    .checked_add(candidate.start_tick.0)
+                    .and_then(|tick| tick.checked_add(grid_ticks / 2))
                     .ok_or_else(|| DomainError::InvalidClip("MIDI quantize overflowed.".into()))?
                     / grid_ticks;
                 let rounded = rounded_units
                     .checked_mul(grid_ticks)
                     .ok_or_else(|| DomainError::InvalidClip("MIDI quantize overflowed.".into()))?;
-                note.start_tick = TimelineTick(rounded);
+                note.start_tick = TimelineTick(rounded.saturating_sub(candidate.start_tick.0));
             }
         }
         self.validate_midi_clip(&candidate)?;
@@ -1818,6 +1825,70 @@ mod tests {
     };
     use crate::domain::session::CreativeSession;
     use crate::domain::timeline::{ProjectTimebase, TIMELINE_PPQ, TimelineTick};
+
+    #[test]
+    fn quantize_notes_uses_arrangement_boundaries_and_preserves_unselected_notes() {
+        for (clip_start, grid, expected) in [
+            (0, 960, vec![0, 960, 960]),
+            (1920, 960, vec![0, 960, 960]),
+            (2160, 960, vec![0, 720, 720]),
+            (2160, 320, vec![80, 720, 1040]),
+        ] {
+            // Arrange
+            let mut session = CreativeSession::new(0);
+            session
+                .arrangement
+                .tracks
+                .push(Track::instrument("track:1".into(), "Instrument".into()));
+            let notes: Vec<_> = [100, 720, 1000, 123]
+                .into_iter()
+                .enumerate()
+                .map(|(index, tick)| MidiNote {
+                    id: format!("note:{index}"),
+                    note: 60,
+                    start_tick: TimelineTick(tick),
+                    duration_ticks: 120,
+                    velocity: 96,
+                    channel: 1,
+                })
+                .collect();
+            let unselected = notes[3].clone();
+            session.arrangement.midi_clips.push(MidiClip {
+                id: "clip:1".into(),
+                name: "Clip".into(),
+                track_id: "track:1".into(),
+                asset_id: None,
+                start_tick: TimelineTick(clip_start),
+                duration_ticks: 3840,
+                notes,
+                events: vec![],
+                muted: false,
+                loop_enabled: false,
+                recording_take_id: None,
+            });
+
+            // Act
+            session
+                .arrangement
+                .quantize_midi_notes(
+                    "clip:1",
+                    &["note:0".into(), "note:1".into(), "note:2".into()],
+                    grid,
+                )
+                .unwrap();
+
+            // Assert
+            let notes = &session.arrangement.midi_clips[0].notes;
+            assert_eq!(
+                notes[..3]
+                    .iter()
+                    .map(|note| note.start_tick.0)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(notes[3], unselected);
+        }
+    }
 
     fn session_with_recording_relations() -> CreativeSession {
         let mut session = CreativeSession::new(0);

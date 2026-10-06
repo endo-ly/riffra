@@ -1,4 +1,4 @@
-import type { MutableRefObject, ReactNode } from 'react';
+import type { MutableRefObject } from 'react';
 import type {
   ArrangementMutationResult,
   CreativeSession,
@@ -21,6 +21,7 @@ type ArrangeMidiApi = Pick<
 
 interface ArrangeMidiEditorProps {
   clip: MidiClip | null;
+  trackColor: string | null;
   timebase: ProjectTimebase;
   ghostNotes: MidiGhostNote[];
   playheadTick: number;
@@ -30,7 +31,6 @@ interface ArrangeMidiEditorProps {
   previewAvailable: boolean;
   onSendMidi: (trackId: string, bytes: number[]) => Promise<unknown>;
   onPanicMidi: (trackId: string) => Promise<unknown>;
-  toolbarTrailing?: ReactNode;
   api: ArrangeMidiApi;
   commit: (operation: Promise<ArrangementMutationResult | null>) => Promise<CreativeSession | null>;
 }
@@ -40,6 +40,7 @@ export function ArrangeMidiEditor(props: ArrangeMidiEditorProps) {
   return (
     <MidiEditorPanel
       clip={props.clip}
+      trackColor={props.trackColor}
       timebase={props.timebase}
       ghostNotes={props.ghostNotes}
       playheadTick={props.playheadTick}
@@ -49,7 +50,6 @@ export function ArrangeMidiEditor(props: ArrangeMidiEditorProps) {
       previewAvailable={props.previewAvailable}
       onSendMidi={props.onSendMidi}
       onPanicMidi={props.onPanicMidi}
-      toolbarTrailing={props.toolbarTrailing}
       onAddNote={(clipId, startTick, pitch, durationTicks, velocity, channel) =>
         commit(
           api.addMidiNote(

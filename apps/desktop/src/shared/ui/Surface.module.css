@@ -12,8 +12,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 14px;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-md);
   font-size: var(--font-size-small);
   font-weight: 600;
@@ -23,12 +23,12 @@
   color: var(--color-text-on-accent);
   background: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--color-accent-primary) 75%, white),
-    var(--color-accent-primary)
+    color-mix(in srgb, var(--color-accent) 75%, var(--color-highlight)),
+    var(--color-accent)
   );
   box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.45),
-    0 6px 20px rgba(53, 190, 207, 0.14);
+    inset 0 1px color-mix(in srgb, var(--color-highlight) 45%, transparent),
+    0 6px 20px color-mix(in srgb, var(--color-accent) 14%, transparent);
 }
 
 .primary:hover {
@@ -37,13 +37,13 @@
 
 .quiet {
   color: var(--color-text-secondary);
-  background: rgba(255, 255, 255, 0.035);
+  background: color-mix(in srgb, var(--color-highlight) 3.5%, transparent);
   border: 1px solid var(--color-border-default);
 }
 
 .sectionCard {
-  padding: 19px;
-  background: rgba(18, 23, 29, 0.92);
+  padding: var(--space-5);
+  background: color-mix(in srgb, var(--color-bg-surface) 92%, transparent);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-lg);
 }
@@ -52,18 +52,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .sectionCard h2 {
-  margin: 5px 0 0;
+  margin: var(--space-1-5) 0 0;
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-title);
   letter-spacing: -0.015em;
 }
 
 .statusTag {
-  padding: 4px 6px;
+  padding: var(--space-1) var(--space-1-5);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
@@ -77,8 +77,8 @@
 }
 
 .textButton {
-  padding: 5px;
-  color: var(--color-accent-primary);
+  padding: var(--space-1-5);
+  color: var(--color-accent);
   font-size: var(--font-size-micro);
   background: transparent;
 }

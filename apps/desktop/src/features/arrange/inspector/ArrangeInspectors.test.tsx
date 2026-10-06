@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
+import { MidiClipInspector } from './MidiClipInspector';
 import { TakeInspector } from './TakeInspector';
 import { TrackInspector } from './TrackInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
@@ -126,6 +127,120 @@ describe('Arrange Inspectors', () => {
     expect(screen.queryByText('MONITORING')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
+  });
+
+  it('edits MIDI Clip timing in bars and beats and shows the current value after editing', () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.midiClips.push({
+      id: 'midi:1',
+      name: 'Phrase',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 3_840,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateMidiClip = vi.fn().mockResolvedValue(null);
+    render(
+      <MidiClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['midi:1']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const start = screen.getByLabelText('Start');
+    const length = screen.getByLabelText('Length');
+
+    // Act
+    fireEvent.change(start, { target: { value: '3.2' } });
+    fireEvent.keyDown(start, { key: 'Enter' });
+    fireEvent.blur(start);
+    fireEvent.change(length, { target: { value: '9' } });
+    fireEvent.keyDown(length, { key: 'Escape' });
+    fireEvent.blur(length);
+
+    // Assert
+    expect(start).toHaveValue('1.1.000');
+    expect(length).toHaveValue('1.0.000');
+    expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
+    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
+  });
+
+  it('shows an Audio Clip length derived from its audio and moves it by bars', () => {
+    // Arrange
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateAudioClip = vi.fn().mockResolvedValue(null);
+    render(
+      <ArrangeClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['clip:a']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const start = screen.getByLabelText('Start');
+
+    // Act
+    fireEvent.change(start, { target: { value: '2' } });
+    fireEvent.blur(start);
+
+    // Assert
+    expect(screen.getByText('0.0.040')).toBeInTheDocument();
+    expect(api.updateAudioClip).toHaveBeenCalledWith('clip:a', { startTick: 3_840 });
+  });
+
+  it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', () => {
+    // Arrange
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateAudioClip = vi.fn().mockResolvedValue(null);
+    render(
+      <ArrangeClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['clip:a']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const slider = screen.getByLabelText('Clip gain');
+
+    // Act
+    fireEvent.change(slider, { target: { value: '-6' } });
+    fireEvent.keyUp(slider, { key: 'ArrowLeft' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+    const typed = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+    fireEvent.change(typed, { target: { value: '3.2' } });
+    fireEvent.blur(typed);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+    const cancelled = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+    fireEvent.change(cancelled, { target: { value: '9' } });
+    fireEvent.keyDown(cancelled, { key: 'Escape' });
+    fireEvent.blur(cancelled);
+    for (const value of ['30', '-70']) {
+      fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+      const input = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+      expect(input).toHaveAttribute('min', '-60');
+      expect(input).toHaveAttribute('max', '24');
+      fireEvent.change(input, { target: { value } });
+      fireEvent.blur(input);
+    }
+
+    // Assert
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(1, 'clip:a', { gainDb: -6 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(2, 'clip:a', { gainDb: 3.2 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: 24 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(4, 'clip:a', { gainDb: -60 });
+    expect(api.updateAudioClip).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole('button', { name: 'Edit clip gain' })).toHaveTextContent('+0.0 dB');
   });
 
   it('changes Raw/Processed source only on the selected Clip', async () => {

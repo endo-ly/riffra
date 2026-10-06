@@ -1,3 +1,4 @@
+import { formatGainDb } from '@/shared/audio/mix-format';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
@@ -99,7 +100,7 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
               }
             }}
           />
-          <output>{formatDb(master.draftDb)}</output>
+          <output>{formatGainDb(master.draftDb)}</output>
         </label>
       </div>
 
@@ -128,11 +129,6 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
       </section>
     </aside>
   );
-}
-
-function formatDb(value: number): string {
-  if (value <= -90) return '−∞ dB';
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)} dB`;
 }
 
 function formatMeterDb(value: number): string {

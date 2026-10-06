@@ -1,6 +1,17 @@
-import { useRef } from 'react';
-import { DRUM_PADS } from '@/features/arrange/play-surface/drum-map';
+import { useRef, type CSSProperties } from 'react';
+import { DRUM_PADS, type DrumCategory } from '@/features/arrange/play-surface/drum-map';
+import { TRACK_COLOR_PALETTE } from '@/features/arrange/model/track-colors';
 import styles from './DrumPadGrid.module.css';
+
+/** Pads glow in a category color drawn from the shared track palette. */
+const CATEGORY_ACCENTS: Record<DrumCategory, string> = {
+  kick: TRACK_COLOR_PALETTE[2],
+  snare: TRACK_COLOR_PALETTE[0],
+  hihat: TRACK_COLOR_PALETTE[6],
+  tom: TRACK_COLOR_PALETTE[3],
+  cymbal: TRACK_COLOR_PALETTE[4],
+  percussion: TRACK_COLOR_PALETTE[7],
+};
 
 interface DrumPadGridProps {
   activeNotes: ReadonlySet<number>;
@@ -21,11 +32,11 @@ export function DrumPadGrid({ activeNotes, onPadDown, onPadUp }: DrumPadGridProp
     <div className={styles.grid} role="grid">
       {DRUM_PADS.map((pad, index) => {
         const active = activeNotes.has(pad.note);
-        const categoryClass = styles[pad.category];
         return (
           <button
             type="button"
-            className={`${styles.pad}${categoryClass ? ` ${categoryClass}` : ''}${active ? ` ${styles.active}` : ''}`}
+            className={`${styles.pad}${active ? ` ${styles.active}` : ''}`}
+            style={{ '--pad-accent': CATEGORY_ACCENTS[pad.category] } as CSSProperties}
             key={pad.note}
             role="gridcell"
             aria-label={`${pad.name} (MIDI ${pad.note}, key ${pad.key.toUpperCase()})`}

@@ -18,6 +18,7 @@ import type { TransportStatus } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
+import { TRACK_COLOR_PALETTE } from '@/features/arrange/model/track-colors';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 const noopRetryRuntimeProjection = async (): Promise<void> => undefined;
@@ -125,6 +126,80 @@ describe('WorkspaceArrange', () => {
       expect(container.querySelector('[class*="playhead"]')?.getAttribute('style')).toContain(
         `translate3d(${TRACK_HEADER_WIDTH}px`,
       ),
+    );
+  });
+
+  it('marks inaudible tracks from canonical state while solo and mute edits are pending', async () => {
+    // Arrange
+    const session = defaultSession();
+    for (const [id, muted, solo] of [
+      ['track:muted', true, false],
+      ['track:soloed', false, true],
+      ['track:other', false, false],
+    ] as const) {
+      session.arrangement.tracks.push({
+        id,
+        name: id,
+        kind: 'instrument',
+        gainDb: 0,
+        pan: 0,
+        muted,
+        solo,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        effects: [],
+      });
+    }
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const updateTrack = vi.spyOn(api, 'updateTrack');
+
+    // Act
+    const { container } = render(<Harness api={api} initialSession={session} />);
+
+    // Assert
+    const inaudible = [...container.querySelectorAll('[data-arrange-track][data-inaudible]')].map(
+      (row) => row.getAttribute('data-track-id'),
+    );
+    expect(inaudible).toEqual(['track:muted', 'track:other']);
+
+    for (const solo of [false, true]) {
+      let resolveUpdate!: (result: ArrangementMutationResult) => void;
+      updateTrack.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveUpdate = resolve;
+          }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Solo track:soloed' }));
+
+      expect(screen.getByRole('button', { name: 'Solo track:soloed' })).toHaveAttribute(
+        'aria-pressed',
+        String(solo),
+      );
+      expect(container.querySelector('[data-track-id="track:soloed"]')).not.toHaveAttribute(
+        'data-inaudible',
+      );
+      expect(
+        container.querySelector('[data-track-id="track:other"]')?.hasAttribute('data-inaudible'),
+      ).toBe(!solo);
+
+      const next = structuredClone(session);
+      next.arrangement.tracks.find((track) => track.id === 'track:soloed')!.solo = solo;
+      await act(async () => resolveUpdate(mutationResult(next)));
+      expect(
+        container.querySelector('[data-track-id="track:other"]')?.hasAttribute('data-inaudible'),
+      ).toBe(solo);
+    }
+
+    updateTrack.mockImplementationOnce(() => new Promise(() => undefined));
+    fireEvent.click(screen.getByRole('button', { name: 'Mute track:soloed' }));
+    expect(screen.getByRole('button', { name: 'Mute track:soloed' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(container.querySelector('[data-track-id="track:soloed"]')).not.toHaveAttribute(
+      'data-inaudible',
     );
   });
 
@@ -316,13 +391,13 @@ describe('WorkspaceArrange', () => {
       id: 'clip:quantize',
       name: 'Quantize',
       trackId: 'track:instrument',
-      startTick: 0,
+      startTick: 2200,
       durationTicks: 1_920,
       notes: [
         {
           id: 'note:off-grid',
           note: 60,
-          startTick: 100,
+          startTick: 240,
           durationTicks: 240,
           velocity: 96,
           channel: 0,
@@ -883,7 +958,9 @@ describe('WorkspaceArrange', () => {
     const editor = await screen.findByLabelText('MIDI Editor');
 
     expect(editor.querySelector('[data-note-id]')).toBeNull();
-    expect(editor.querySelector('[data-ghost-note-id]')).not.toBeNull();
+    expect(editor.querySelector('[data-ghost-note-id]')?.getAttribute('style')).toContain(
+      `--ghost-color: ${TRACK_COLOR_PALETTE[1]}`,
+    );
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Reference notes' }));
     expect(editor.querySelector('[data-ghost-note-id]')).toBeNull();
@@ -909,13 +986,13 @@ describe('WorkspaceArrange', () => {
       id: 'clip:quantize-aligned',
       name: 'Quantize aligned',
       trackId: 'track:instrument',
-      startTick: 0,
+      startTick: 2200,
       durationTicks: 1_920,
       notes: [
         {
           id: 'note:on-grid',
           note: 60,
-          startTick: 240,
+          startTick: 200,
           durationTicks: 240,
           velocity: 96,
           channel: 0,

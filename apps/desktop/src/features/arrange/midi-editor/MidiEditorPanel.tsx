@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MutableRefObject, ReactNode } from 'react';
+import type { CSSProperties, MutableRefObject } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
 import {
   SNAP_GRID_OPTIONS,
@@ -8,6 +8,8 @@ import {
   ticksPerBar,
   ticksPerBeat,
   countOffGridNotes,
+  clipGridTicks,
+  snapClipTick,
 } from '@/features/arrange/model/arrange-timeline';
 import type { SnapGrid } from '@/features/arrange/model/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musical-typing';
@@ -48,6 +50,8 @@ export interface MidiGhostNote {
   pitch: number;
   startTick: number;
   durationTicks: number;
+  /** Color of the track the note comes from, so references stay attributable. */
+  trackColor: string;
 }
 
 const ZOOM_STEP = 1.25;
@@ -55,6 +59,8 @@ const LANE_LABEL_WIDTH = 48;
 
 interface MidiEditorPanelProps {
   clip: MidiClip | null;
+  /** Color of the track that owns the clip; notes are drawn in it. */
+  trackColor: string | null;
   timebase: ProjectTimebase;
   onUpdateNote?: (clipId: string, note: MidiNote) => void | PromiseLike<CreativeSession | null>;
   onUpdateNotes?: (
@@ -81,7 +87,6 @@ interface MidiEditorPanelProps {
   ghostNotes?: MidiGhostNote[];
   onSendMidi?: (trackId: string, bytes: number[]) => Promise<unknown>;
   onPanicMidi?: (trackId: string) => Promise<unknown>;
-  toolbarTrailing?: ReactNode;
 }
 
 const PITCH_HIGH = 128;
@@ -168,15 +173,18 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const beatTicks = ticksPerBeat(props.timebase);
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
+  const clipStartTick = clip?.startTick ?? 0;
+  const barLineTicks = clipGridTicks(clipStartTick, visibleTicks, barTicks);
+  const beatLineTicks = clipGridTicks(clipStartTick, visibleTicks, beatTicks);
   const subdivisionLineTicks = useMemo(() => {
     if (snapTicks <= 0) return [];
     const pixelsPerSubdivision = snapTicks * pixelsPerTick;
     const stride = Math.max(1, Math.ceil(8 / Math.max(1, pixelsPerSubdivision)));
     const step = snapTicks * stride;
-    return Array.from({ length: Math.ceil(visibleTicks / step) }, (_, index) => index * step)
-      .filter((tick) => tick > 0)
-      .filter((tick) => tick % beatTicks !== 0 && tick % barTicks !== 0);
-  }, [barTicks, beatTicks, pixelsPerTick, snapTicks, visibleTicks]);
+    return clipGridTicks(clipStartTick, visibleTicks, step).filter(
+      (tick) => (clipStartTick + tick) % beatTicks !== 0 && (clipStartTick + tick) % barTicks !== 0,
+    );
+  }, [barTicks, beatTicks, clipStartTick, pixelsPerTick, snapTicks, visibleTicks]);
 
   const notes = props.clip?.notes ?? EMPTY_NOTES;
   const ghostNotes = ghostsVisible ? (props.ghostNotes ?? EMPTY_GHOSTS) : EMPTY_GHOSTS;
@@ -317,7 +325,6 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   );
 
   const { playheadTick, playheadTickRef, playing } = props;
-  const clipStartTick = clip?.startTick ?? 0;
   const playheadTickInClip = playheadTick - clipStartTick;
 
   // The ruler and velocity lane sit outside the scrolling viewport, so their
@@ -460,7 +467,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
 
   const pasteNotes = (): MidiEditResult => {
     if (!clip || !clipboardRef.current || !props.onInsertNotes) return;
-    const anchor = Math.max(0, Math.round(props.playheadTickRef.current - clip.startTick));
+    const anchor = snapClipTick(
+      props.playheadTickRef.current - clip.startTick,
+      clip.startTick,
+      snapTicks,
+    );
     const beforeIds = new Set(clip.notes.map((note) => note.id));
     const inputs = clipboardRef.current.notes.map(({ relativeStartTick, ...note }) => ({
       ...note,
@@ -502,7 +513,14 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       requestedPitchDelta > 0
         ? Math.min(requestedPitchDelta, PITCH_HIGH - 1 - highestSelectedPitch)
         : Math.max(requestedPitchDelta, PITCH_LOW - lowestSelectedPitch);
-    const timeDelta = direction === 'left' ? -timeStep : direction === 'right' ? timeStep : 0;
+    let timeDelta = direction === 'left' ? -timeStep : direction === 'right' ? timeStep : 0;
+    if (timeDelta !== 0 && snapTicks > 0) {
+      const anchor = selectedNotes[0].startTick;
+      const units = (clip.startTick + anchor) / snapTicks;
+      const next = direction === 'left' ? Math.ceil(units) - 1 : Math.floor(units) + 1;
+      timeDelta = next * snapTicks - clip.startTick - anchor;
+    }
+    timeDelta = Math.max(-Math.min(...selectedNotes.map((note) => note.startTick)), timeDelta);
     if (pitchDelta === 0 && timeDelta === 0) return;
     if (pitchDelta !== 0 && selectedNotes.length > 0) {
       const first = selectedNotes[0];
@@ -531,9 +549,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     const rawTick = (clientX - bounds.left) / pixelsPerTick;
     const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
     if (rawPitch === null) return;
-    const requestedStartTick = snapTicks
-      ? Math.max(0, Math.round(rawTick / snapTicks) * snapTicks)
-      : Math.max(0, Math.round(rawTick));
+    const requestedStartTick = snapClipTick(rawTick, clip.startTick, snapTicks);
     const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
     const beforeIds = new Set(clip.notes.map((note) => note.id));
     const duration = Math.max(1, Math.round(durationTicks));
@@ -652,7 +668,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const runQuantize = () => {
     if (!props.clip) return;
     const selected = props.clip.notes.filter((note) => selectedNoteIds.includes(note.id));
-    const offGrid = countOffGridNotes(selected, snapTicks);
+    const offGrid = countOffGridNotes(selected, snapTicks, props.clip.startTick);
     if (offGrid === 0) {
       toast('Selected notes are already on the grid.');
       return;
@@ -711,7 +727,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
             setNoteContextMenu(null);
             const ids = selectedNoteIds.length ? selectedNoteIds : [contextNote.id];
             const selected = props.clip!.notes.filter((note) => ids.includes(note.id));
-            const offGrid = countOffGridNotes(selected, snapTicks);
+            const offGrid = countOffGridNotes(selected, snapTicks, props.clip!.startTick);
             if (offGrid === 0) {
               toast('Selected notes are already on the grid.');
               return;
@@ -768,9 +784,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     const updatePreview = (clientX: number, clientY: number) => {
       const deltaTicks = (clientX - originX) / pixelsPerTick;
       if (mode === 'move') {
-        const snappedStart = snapTicks
-          ? Math.round((note.startTick + deltaTicks) / snapTicks) * snapTicks
-          : Math.round(note.startTick + deltaTicks);
+        const snappedStart = snapClipTick(note.startTick + deltaTicks, clipStartTick, snapTicks);
         const minTickDelta = -Math.min(...originNotes.map((candidate) => candidate.startTick));
         const tickDelta = Math.max(minTickDelta, snappedStart - note.startTick);
         const rawPitchDelta = Math.round((originY - clientY) / rowHeight);
@@ -787,9 +801,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           note: note.note + pitchDelta,
         };
       }
-      const snappedDuration = snapTicks
-        ? Math.round((note.durationTicks + deltaTicks) / snapTicks) * snapTicks
-        : Math.round(note.durationTicks + deltaTicks);
+      const snappedDuration =
+        snapClipTick(note.startTick + note.durationTicks + deltaTicks, clipStartTick, snapTicks) -
+        note.startTick;
       const minDurationDelta = Math.max(
         ...originNotes.map((candidate) => 1 - candidate.durationTicks),
       );
@@ -895,6 +909,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     <div
       ref={editorRef}
       className={styles.editor}
+      style={
+        props.trackColor ? ({ '--track-color': props.trackColor } as CSSProperties) : undefined
+      }
       aria-label="MIDI Editor"
       data-midi-editor-clip-id={clipId}
       tabIndex={0}
@@ -921,12 +938,6 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               ariaLabel="MIDI Editor pitch zoom"
               onStep={(direction) => applyVerticalZoom(rowHeight + (direction > 0 ? 2 : -2))}
             />
-            {props.toolbarTrailing !== undefined && props.toolbarTrailing !== null ? (
-              <>
-                <ToolbarDivider />
-                {props.toolbarTrailing}
-              </>
-            ) : null}
           </>
         }
       >
@@ -998,7 +1009,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       </Toolbar>
       <div className={styles.editorSurface}>
         <div className={styles.rulerViewport}>
-          <div className={styles.laneLabel}>Ruler</div>
+          <div className={styles.laneLabel} />
           <div ref={rulerContentRef} className={styles.rulerContent} style={{ width: laneWidth }}>
             <MidiEditorRuler
               timebase={props.timebase}
@@ -1114,12 +1125,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     const right = Math.max(originX, pointer.clientX);
                     const rawStart = (left - bounds.left) / pixelsPerTick;
                     const rawEnd = (right - bounds.left) / pixelsPerTick;
-                    const startTick = snapTicks
-                      ? Math.max(0, Math.round(rawStart / snapTicks) * snapTicks)
-                      : Math.max(0, Math.round(rawStart));
-                    const endTick = snapTicks
-                      ? Math.max(startTick, Math.round(rawEnd / snapTicks) * snapTicks)
-                      : Math.max(startTick, Math.round(rawEnd));
+                    const startTick = snapClipTick(rawStart, clipStartTick, snapTicks);
+                    const endTick = Math.max(
+                      startTick,
+                      snapClipTick(rawEnd, clipStartTick, snapTicks),
+                    );
                     const durationTicks = Math.max(
                       1,
                       endTick - startTick || snapTicks || beatTicks,
@@ -1173,19 +1183,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 className={styles.editorPlayhead}
                 style={{ display: 'none' }}
               />
-              {Array.from({ length: Math.ceil(visibleTicks / barTicks) }, (_, bar) => (
-                <i
-                  key={bar}
-                  className={styles.barLine}
-                  style={{ left: bar * barTicks * pixelsPerTick }}
-                />
+              {barLineTicks.map((tick) => (
+                <i key={tick} className={styles.barLine} style={{ left: tick * pixelsPerTick }} />
               ))}
-              {Array.from({ length: Math.ceil(visibleTicks / beatTicks) }, (_, beat) => (
-                <i
-                  key={beat}
-                  className={styles.beatLine}
-                  style={{ left: beat * beatTicks * pixelsPerTick }}
-                />
+              {beatLineTicks.map((tick) => (
+                <i key={tick} className={styles.beatLine} style={{ left: tick * pixelsPerTick }} />
               ))}
               {subdivisionLineTicks.map((tick) => (
                 <i
@@ -1203,12 +1205,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     data-ghost-note-id={ghost.id}
                     aria-hidden="true"
                     className={styles.ghostNote}
-                    style={{
-                      left: ghost.startTick * pixelsPerTick,
-                      top: pitchRowTop(ghost.pitch, rowHeight),
-                      width: Math.max(4, ghost.durationTicks * pixelsPerTick),
-                      height: rowHeight - 1,
-                    }}
+                    style={
+                      {
+                        left: ghost.startTick * pixelsPerTick,
+                        top: pitchRowTop(ghost.pitch, rowHeight),
+                        width: Math.max(4, ghost.durationTicks * pixelsPerTick),
+                        height: rowHeight - 1,
+                        '--ghost-color': ghost.trackColor,
+                      } as CSSProperties
+                    }
                   />
                 ))}
               {pitchRows.map((pitch) => (
@@ -1274,7 +1279,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         </div>
         <div className={styles.velocityViewport} data-midi-velocity-viewport>
           <div className={styles.velocityRow} style={{ width: canvasWidth }}>
-            <div className={styles.laneLabel}>Velocity</div>
+            <div className={styles.laneLabel}>Vel</div>
             <div
               ref={velocityContentRef}
               className={styles.velocityContent}
@@ -1285,8 +1290,8 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 selectedNoteIds={selectedNoteIds}
                 visibleTicks={visibleTicks}
                 pixelsPerTick={pixelsPerTick}
-                barTicks={barTicks}
-                beatTicks={beatTicks}
+                barLineTicks={barLineTicks}
+                beatLineTicks={beatLineTicks}
                 height={velocityLaneHeight}
                 playheadRef={velocityPlayheadRef}
                 clipId={clip!.id}

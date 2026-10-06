@@ -25,7 +25,7 @@
 
 .transportGroup button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .transportGroup button:focus-visible {
@@ -44,13 +44,13 @@
 }
 
 .transportGroup .toggleActive {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .transportGroup .toggleActive:hover:not(:disabled) {
-  color: var(--color-accent-primary);
-  background: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .transportGroup .playButton {
@@ -113,7 +113,7 @@
 
 .position small {
   color: var(--color-text-muted);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
 }
 
 .timebase {
@@ -126,7 +126,7 @@
 .timebase select {
   height: var(--size-control-normal);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-control);
+  font-size: var(--font-size-small);
   background-color: var(--color-bg-surface);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -179,7 +179,7 @@
 
 .tempo:focus-within,
 .timebase select:focus-visible {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 60%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 
 @media (max-width: 1280px) {
