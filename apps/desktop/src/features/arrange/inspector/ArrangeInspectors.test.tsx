@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArrangeClipInspector } from './ArrangeClipInspector';
+import { MidiClipInspector } from './MidiClipInspector';
 import { TakeInspector } from './TakeInspector';
 import { TrackInspector } from './TrackInspector';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
@@ -126,6 +127,48 @@ describe('Arrange Inspectors', () => {
     expect(screen.queryByText('MONITORING')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
+  });
+
+  it('edits MIDI Clip timing in bars and beats and discards a cancelled edit', () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.midiClips.push({
+      id: 'midi:1',
+      name: 'Phrase',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 3_840,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateMidiClip = vi.fn().mockResolvedValue(null);
+    render(
+      <MidiClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['midi:1']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const start = screen.getByLabelText('Start');
+    const length = screen.getByLabelText('Length');
+
+    // Act
+    fireEvent.change(start, { target: { value: '3.2' } });
+    fireEvent.keyDown(start, { key: 'Enter' });
+    fireEvent.blur(start);
+    fireEvent.change(length, { target: { value: '9' } });
+    fireEvent.keyDown(length, { key: 'Escape' });
+    fireEvent.blur(length);
+
+    // Assert
+    expect(length).toHaveValue('1.0.000');
+    expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
+    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
   });
 
   it('changes Raw/Processed source only on the selected Clip', async () => {

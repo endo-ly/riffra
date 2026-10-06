@@ -16,7 +16,7 @@
  * GM by default, making this mapping work out of the box for most drum VSTs.
  */
 
-type DrumCategory = 'kick' | 'snare' | 'hihat' | 'tom' | 'cymbal' | 'percussion';
+export type DrumCategory = 'kick' | 'snare' | 'hihat' | 'tom' | 'cymbal' | 'percussion';
 
 export interface DrumPad {
   /** MIDI note number (GM percussion key). */

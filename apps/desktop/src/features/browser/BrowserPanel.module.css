@@ -24,7 +24,7 @@
   gap: var(--space-2);
   padding: 0 var(--space-2);
   color: var(--color-text-muted);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -67,7 +67,7 @@
 
 .toolButton:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .toolButton svg {
@@ -212,7 +212,7 @@
 
 .rowButton:hover:not([aria-disabled='true']) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .rowButton[aria-disabled='true'] {
@@ -250,7 +250,7 @@
   padding: 0 var(--space-2);
   color: var(--color-text-primary);
   font-size: var(--font-size-control);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
   border-radius: var(--radius-sm);
   outline: 0;

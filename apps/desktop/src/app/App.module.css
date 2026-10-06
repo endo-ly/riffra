@@ -163,7 +163,7 @@
 .commandPalette {
   width: min(560px, 80vw);
   overflow: hidden;
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
@@ -204,11 +204,11 @@
   border-radius: var(--radius-sm);
 }
 .commandPalette > button:hover {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .commandPalette > button[data-active='true'] {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 .commandPalette > button span {
   font-size: var(--font-size-small);

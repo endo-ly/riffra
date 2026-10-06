@@ -1,0 +1,7 @@
+/* Piano key colors shared by the MIDI Editor keyboard and the Play Surface. */
+.scope {
+  --key-white: #f1f5f3;
+  --key-black: #0b1115;
+  --key-black-sheen: #34424d;
+  --key-label: #25343a;
+}

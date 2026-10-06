@@ -329,17 +329,24 @@ export function TrackInspector(props: TrackInspectorProps) {
         </>
       )}
       <section className={styles.section} aria-label="Track devices">
-        {props.track.kind === 'instrument' && (
-          <>
-            <strong>INSTRUMENT</strong>
-            <p>{props.track.instrument?.name ?? 'None'}</p>
-          </>
-        )}
-        <strong>EFFECTS</strong>
-        <p>{props.track.effects.length} Effects</p>
-        <button type="button" className={styles.smallButton} onClick={props.onOpenDevices}>
-          Open Devices
-        </button>
+        <header className={styles.sectionHeader}>
+          <strong>DEVICES</strong>
+          <button type="button" className={styles.headerAction} onClick={props.onOpenDevices}>
+            Open Devices
+          </button>
+        </header>
+        <div className={styles.fieldColumn}>
+          {props.track.kind === 'instrument' && (
+            <div className={styles.summaryRow}>
+              <span>Instrument</span>
+              <strong>{props.track.instrument?.name ?? 'None'}</strong>
+            </div>
+          )}
+          <div className={styles.summaryRow}>
+            <span>Effects</span>
+            <strong>{props.track.effects.length}</strong>
+          </div>
+        </div>
       </section>
       {operationMessage && (
         <p className={styles.message} role="status">

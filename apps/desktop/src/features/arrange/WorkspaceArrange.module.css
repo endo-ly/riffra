@@ -40,13 +40,18 @@
 }
 
 .rulerCorner {
-  position: absolute;
-  /* Keep the fixed corner above both the scrolling ruler and track headers. */
+  /*
+   * Sticky on both axes so the corner stays over the track header column while
+   * the timeline scrolls; the negative margin seats it in the ruler band
+   * without taking layout space. It paints above the ruler and track headers.
+   */
+  position: sticky;
   z-index: 13;
   top: 0;
   left: 0;
   width: var(--header-width);
   height: 34px;
+  margin-top: -34px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -457,7 +462,7 @@
   padding: 1px 4px;
   color: var(--color-text-primary);
   font: 600 10px inherit;
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: 2px;
   outline: none;
@@ -494,7 +499,7 @@
 .trackMenu summary:hover,
 .trackMenu[open] summary {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 .trackMenu > div {
@@ -528,7 +533,7 @@
 }
 .trackMenu button:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 .trackMenu .menuSeparator {
   margin: 4px 2px;
@@ -548,7 +553,7 @@
   padding: 0;
   color: var(--color-text-muted);
   font: 700 var(--font-size-micro) var(--font-family-mono);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -692,7 +697,7 @@
   height: var(--size-control-dense);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
-  background-color: var(--color-bg-control);
+  background-color: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -752,7 +757,7 @@
   width: 10px;
   height: 10px;
   padding: 0;
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 2px solid var(--color-accent);
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
@@ -1076,7 +1081,7 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   white-space: nowrap;
-  background: color-mix(in srgb, var(--color-bg-control) 94%, transparent);
+  background: color-mix(in srgb, var(--color-bg-panel) 94%, transparent);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-popover);

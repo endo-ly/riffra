@@ -23,7 +23,7 @@
 
 .trigger:hover,
 .trigger[aria-expanded='true'] {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 
@@ -147,7 +147,7 @@
 }
 
 .nameInput:focus-visible {
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
@@ -166,7 +166,7 @@
 
 .ghostButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .meta {
@@ -182,7 +182,7 @@
   padding: 0 8px;
   margin: 2px 0;
   color: var(--color-text-muted);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -239,7 +239,7 @@
 }
 
 .item:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .item[aria-current='true'] {
@@ -313,7 +313,7 @@
 
 .footerButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .footerButton svg {
@@ -358,7 +358,7 @@
 }
 
 .hostItem:hover:not(:disabled) {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .hostItem[aria-current='true'] {

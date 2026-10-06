@@ -77,14 +77,14 @@
 .controls > button:hover:not(:disabled),
 .state button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-strong);
 }
 
 .mode .active,
 .computerKeysActive {
   color: var(--color-text-primary) !important;
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-control)) !important;
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-panel)) !important;
 }
 
 .velocity {
@@ -117,7 +117,7 @@
   align-items: center;
   gap: 4px;
   padding: 2px;
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -133,7 +133,7 @@
 
 .octave button:hover:not(:disabled) {
   color: var(--color-text-strong);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .octave strong {

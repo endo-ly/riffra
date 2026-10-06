@@ -156,6 +156,47 @@ export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
   return `${bar}.${beat}.${subdivision.toString().padStart(3, '0')}`;
 }
 
+/** Formats a tick span as zero-based `bars.beats.ticks`. */
+export function formatMusicalLength(ticks: number, timebase: ProjectTimebase) {
+  const barTicks = ticksPerBar(timebase);
+  const beatTicks = ticksPerBeat(timebase);
+  const safeTicks = Math.max(0, Math.round(ticks));
+  const bars = Math.floor(safeTicks / barTicks);
+  const beats = Math.floor((safeTicks % barTicks) / beatTicks);
+  const remainder = safeTicks % beatTicks;
+  return `${bars}.${beats}.${remainder.toString().padStart(3, '0')}`;
+}
+
+/** Splits `a[.b[.c]]` into whole numbers, or null when the text is not in that form. */
+function parseMusicalFields(text: string): number[] | null {
+  const parts = text.trim().split('.');
+  if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null;
+  return parts.map(Number);
+}
+
+/** Parses a one-based `bar.beat.tick` position; omitted fields start the bar or beat. */
+export function parseMusicalPosition(text: string, timebase: ProjectTimebase): number | null {
+  const fields = parseMusicalFields(text);
+  if (!fields) return null;
+  const [bar, beat = 1, tick = 0] = fields;
+  const beatTicks = ticksPerBeat(timebase);
+  if (bar < 1 || beat < 1 || beat > timebase.timeSignatureNumerator || tick >= beatTicks) {
+    return null;
+  }
+  return (bar - 1) * ticksPerBar(timebase) + (beat - 1) * beatTicks + tick;
+}
+
+/** Parses a zero-based `bars.beats.ticks` span; the result is always positive. */
+export function parseMusicalLength(text: string, timebase: ProjectTimebase): number | null {
+  const fields = parseMusicalFields(text);
+  if (!fields) return null;
+  const [bars, beats = 0, ticks = 0] = fields;
+  const beatTicks = ticksPerBeat(timebase);
+  if (beats >= timebase.timeSignatureNumerator || ticks >= beatTicks) return null;
+  const total = bars * ticksPerBar(timebase) + beats * beatTicks + ticks;
+  return total > 0 ? total : null;
+}
+
 export function formatClock(tick: number, timebase: ProjectTimebase) {
   const seconds = (Math.max(0, tick) * 60) / (timebase.bpm * timebase.ppq);
   const minutes = Math.floor(seconds / 60);

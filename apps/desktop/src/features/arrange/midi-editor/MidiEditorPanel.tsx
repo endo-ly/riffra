@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MutableRefObject, ReactNode } from 'react';
+import type { CSSProperties, MutableRefObject } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
 import {
   SNAP_GRID_OPTIONS,
@@ -83,7 +83,6 @@ interface MidiEditorPanelProps {
   ghostNotes?: MidiGhostNote[];
   onSendMidi?: (trackId: string, bytes: number[]) => Promise<unknown>;
   onPanicMidi?: (trackId: string) => Promise<unknown>;
-  toolbarTrailing?: ReactNode;
 }
 
 const PITCH_HIGH = 128;
@@ -926,12 +925,6 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               ariaLabel="MIDI Editor pitch zoom"
               onStep={(direction) => applyVerticalZoom(rowHeight + (direction > 0 ? 2 : -2))}
             />
-            {props.toolbarTrailing !== undefined && props.toolbarTrailing !== null ? (
-              <>
-                <ToolbarDivider />
-                {props.toolbarTrailing}
-              </>
-            ) : null}
           </>
         }
       >

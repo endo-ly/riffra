@@ -7,8 +7,9 @@ import type {
   CreativeSession,
 } from '@/model/domain';
 import type { ArrangeInspectorApi } from '../arrange-api';
-import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
+import { clipDurationTicks, formatMusicalLength } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
+import { MusicalTimeField } from './MusicalTimeField';
 import styles from './Inspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
@@ -24,7 +25,6 @@ interface ArrangeClipInspectorProps {
 
 interface Drafts {
   name: string;
-  startTick: string;
   gainDb: string;
   pan: string;
   fadeInMs: string;
@@ -36,7 +36,6 @@ function buildDrafts(clip: AudioClip): Drafts {
   const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
   return {
     name: clip.name,
-    startTick: String(clip.startTick),
     gainDb: clip.gainDb.toFixed(1),
     pan: clip.pan.toFixed(2),
     fadeInMs: String(Math.round(fadeInMs)),
@@ -114,9 +113,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
             if (name && name !== clip.name) patch({ name }, 'Rename');
           }}
         />
-        <span className={styles.identityMeta}>
-          {formatMusicalPosition(clip.startTick, props.session.arrangement.timebase)}
-        </span>
       </div>
 
       <section className={styles.section}>
@@ -128,24 +124,21 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
           </span>
         </header>
         <div className={styles.fieldPair}>
-          <label className={styles.field}>
-            <span>Start</span>
-            <input
-              className={clsx(styles.control, styles.mono)}
-              type="number"
-              min="0"
-              value={drafts.startTick}
-              onChange={(event) => setDrafts({ ...drafts, startTick: event.currentTarget.value })}
-              onBlur={() => {
-                const next = Number(drafts.startTick);
-                if (Number.isFinite(next) && next >= 0 && next !== clip.startTick)
-                  patch({ startTick: next }, 'Start tick');
-              }}
-            />
-          </label>
-          <div className={styles.readoutRow}>
-            <span>Ticks</span>
-            <strong>{drafts.startTick}</strong>
+          <MusicalTimeField
+            label="Start"
+            kind="position"
+            ticks={clip.startTick}
+            timebase={props.session.arrangement.timebase}
+            onCommit={(startTick) => patch({ startTick }, 'Start')}
+          />
+          <div className={styles.field}>
+            <span>Length</span>
+            <output className={clsx(styles.control, styles.mono, styles.readonly)}>
+              {formatMusicalLength(
+                clipDurationTicks(clip, props.session.arrangement.timebase),
+                props.session.arrangement.timebase,
+              )}
+            </output>
           </div>
         </div>
       </section>
@@ -344,29 +337,26 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
 
       <section className={styles.section}>
         <div className={styles.clipActions}>
-          <div className={styles.segmented} role="group" aria-label="Clip state">
-            <button
-              type="button"
-              aria-pressed={clip.muted}
-              onClick={() =>
-                commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
-              }
-            >
-              Mute
-            </button>
-            <button
-              type="button"
-              aria-pressed={clip.loopEnabled}
-              onClick={() =>
-                commit(
-                  props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }),
-                  'Loop',
-                )
-              }
-            >
-              Loop
-            </button>
-          </div>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.muted}
+            onClick={() =>
+              commit(props.api.updateAudioClip(clip.id, { muted: !clip.muted }), 'Mute')
+            }
+          >
+            Mute
+          </button>
+          <button
+            type="button"
+            className={styles.smallButton}
+            aria-pressed={clip.loopEnabled}
+            onClick={() =>
+              commit(props.api.updateAudioClip(clip.id, { loopEnabled: !clip.loopEnabled }), 'Loop')
+            }
+          >
+            Loop
+          </button>
           <button
             type="button"
             className={styles.smallButton}

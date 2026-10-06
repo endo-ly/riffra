@@ -9,7 +9,7 @@
   padding: 12px;
   transform: translateX(-50%);
   color: var(--color-text-primary);
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-popover);
@@ -32,7 +32,7 @@
   padding: 0 7px;
   color: var(--color-text-primary);
   font-size: var(--font-size-control);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -75,7 +75,7 @@
   max-height: calc(100vh - 80px);
   display: grid;
   grid-template-rows: auto auto 1fr;
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);
@@ -108,7 +108,7 @@
 
 .pluginPickerCancel:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
   border-color: var(--color-border-default);
 }
 
@@ -116,7 +116,7 @@
   padding: 9px 12px;
   color: var(--color-text-primary);
   font-size: var(--font-size-micro);
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 0;
   border-bottom: 1px solid var(--color-border-subtle);
   outline: none;
@@ -150,7 +150,7 @@
 
 .pluginPickerItem:hover {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .pluginPickerItem small {

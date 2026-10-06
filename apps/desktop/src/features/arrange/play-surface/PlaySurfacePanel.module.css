@@ -24,7 +24,7 @@
   align-items: center;
   gap: 12px;
   padding: 0 14px;
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border-bottom: 1px solid var(--color-border-default);
 }
 
@@ -89,7 +89,7 @@
 
 .actions button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .actions svg {

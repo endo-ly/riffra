@@ -15,7 +15,7 @@
   gap: 12px;
   padding: 18px;
   color: var(--color-text-primary);
-  background: var(--color-bg-overlay);
+  background: var(--color-bg-surface-raised);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dialog);

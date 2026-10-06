@@ -59,7 +59,7 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
     : [];
   return (
     <>
-      <div className={styles.rulerCorner} style={{ top: props.scrollTop }}>
+      <div className={styles.rulerCorner}>
         <div className={styles.rulerMode}>
           <span>TRACKS</span>
           <small>{props.mode === 'bars' ? 'BARS + BEATS' : 'MIN : SEC'}</small>

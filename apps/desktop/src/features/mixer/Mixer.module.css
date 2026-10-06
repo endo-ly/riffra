@@ -16,7 +16,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
+  padding: 8px var(--lower-actions-width) 8px 14px;
   border-bottom: 1px solid var(--color-border-default);
   background: var(--color-bg-panel);
 }
@@ -350,7 +350,7 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
   font-weight: 700;
-  background: var(--color-bg-control);
+  background: var(--color-bg-panel);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }
@@ -362,11 +362,7 @@
 
 .switchActive {
   color: var(--color-status-warning) !important;
-  background: color-mix(
-    in srgb,
-    var(--color-status-warning) 14%,
-    var(--color-bg-control)
-  ) !important;
+  background: color-mix(in srgb, var(--color-status-warning) 14%, var(--color-bg-panel)) !important;
   border-color: color-mix(
     in srgb,
     var(--color-status-warning) 60%,
@@ -435,7 +431,7 @@
   gap: 4px;
   padding: 5px;
   color: var(--color-text-secondary);
-  background: color-mix(in srgb, var(--color-bg-control) 70%, transparent);
+  background: color-mix(in srgb, var(--color-bg-panel) 70%, transparent);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
 }

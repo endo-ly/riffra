@@ -13,9 +13,7 @@
   --color-bg-panel: #0f1318;
   --color-bg-surface: #151a21;
   --color-bg-surface-raised: #1a2028;
-  --color-bg-control: #0d1216;
-  --color-bg-control-hover: #1c2b33;
-  --color-bg-overlay: #151f26;
+  --color-bg-hover: #1c2b33;
   --color-bg-scrim: rgba(3, 5, 7, 0.65);
 
   /* Border roles */

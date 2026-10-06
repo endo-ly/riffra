@@ -25,7 +25,7 @@
 
 .transportGroup button:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .transportGroup button:focus-visible {

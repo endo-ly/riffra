@@ -72,7 +72,7 @@
 .historyControls button:hover:not(:disabled),
 .commandTrigger:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .historyControls svg {
@@ -124,7 +124,7 @@
 
 .audioStatus:hover,
 .audioStatus.open {
-  background: var(--color-bg-control-hover);
+  background: var(--color-bg-hover);
 }
 
 .audioStatusDot {
