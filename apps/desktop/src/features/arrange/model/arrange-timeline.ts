@@ -140,9 +140,38 @@ export function snapGridTicks(grid: SnapGrid, timebase: ProjectTimebase) {
   return grid === 'off' ? 0 : values[grid];
 }
 
-export function countOffGridNotes(notes: { startTick: number }[], gridTicks: number): number {
+/** Arrangement grid boundaries within a clip's visible local range. */
+export function clipGridTicks(clipStartTick: number, visibleTicks: number, step: number): number[] {
+  const ticks: number[] = [];
+  for (
+    let tick = Math.ceil(clipStartTick / step) * step;
+    tick < clipStartTick + visibleTicks;
+    tick += step
+  ) {
+    ticks.push(tick - clipStartTick);
+  }
+  return ticks;
+}
+
+/** Snaps a clip-local position to the Arrangement grid, bounded by the clip start. */
+export function snapClipTick(tick: number, clipStartTick: number, gridTicks: number): number {
+  return Math.max(
+    0,
+    gridTicks > 0
+      ? Math.round((clipStartTick + tick) / gridTicks) * gridTicks - clipStartTick
+      : Math.round(tick),
+  );
+}
+
+export function countOffGridNotes(
+  notes: { startTick: number }[],
+  gridTicks: number,
+  clipStartTick: number,
+): number {
   if (gridTicks <= 0) return 0;
-  return notes.filter((note) => note.startTick % gridTicks !== 0).length;
+  return notes.filter(
+    (note) => snapClipTick(note.startTick, clipStartTick, gridTicks) !== note.startTick,
+  ).length;
 }
 
 export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {

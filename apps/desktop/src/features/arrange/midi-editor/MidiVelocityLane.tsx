@@ -11,8 +11,8 @@ interface MidiVelocityLaneProps {
   selectedNoteIds: string[];
   visibleTicks: number;
   pixelsPerTick: number;
-  barTicks: number;
-  beatTicks: number;
+  barLineTicks: number[];
+  beatLineTicks: number[];
   height: number;
   playheadRef: Ref<HTMLElement>;
   onSelectNoteIds: (noteIds: string[]) => void;
@@ -117,18 +117,18 @@ export function MidiVelocityLane(props: MidiVelocityLaneProps) {
         }
       }}
     >
-      {Array.from({ length: Math.ceil(props.visibleTicks / props.barTicks) }, (_, bar) => (
+      {props.barLineTicks.map((tick) => (
         <i
-          key={`bar-${bar}`}
+          key={`bar-${tick}`}
           className={styles.velocityBarLine}
-          style={{ left: bar * props.barTicks * props.pixelsPerTick }}
+          style={{ left: tick * props.pixelsPerTick }}
         />
       ))}
-      {Array.from({ length: Math.ceil(props.visibleTicks / props.beatTicks) }, (_, beat) => (
+      {props.beatLineTicks.map((tick) => (
         <i
-          key={`beat-${beat}`}
+          key={`beat-${tick}`}
           className={styles.velocityBeatLine}
-          style={{ left: beat * props.beatTicks * props.pixelsPerTick }}
+          style={{ left: tick * props.pixelsPerTick }}
         />
       ))}
       <i ref={props.playheadRef} className={styles.editorPlayhead} style={{ display: 'none' }} />

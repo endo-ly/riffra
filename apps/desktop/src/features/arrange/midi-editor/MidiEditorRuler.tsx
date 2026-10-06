@@ -4,6 +4,7 @@ import {
   formatMusicalPosition,
   ticksPerBar,
   ticksPerBeat,
+  clipGridTicks,
 } from '@/features/arrange/model/arrange-timeline';
 import styles from './MidiEditorPanel.module.css';
 
@@ -27,15 +28,15 @@ function barLabel(tick: number, timebase: ProjectTimebase): string {
 export function MidiEditorRuler(props: MidiEditorRulerProps) {
   const barTicks = ticksPerBar(props.timebase);
   const beatTicks = ticksPerBeat(props.timebase);
-  const endTick = props.clipStartTick + props.visibleTicks;
-  const barStarts = props.visibleTicks > 0 ? [props.clipStartTick] : [];
-  for (
-    let tick = (Math.floor(props.clipStartTick / barTicks) + 1) * barTicks;
-    tick < endTick;
-    tick += barTicks
-  ) {
-    barStarts.push(tick);
-  }
+  const barStarts =
+    props.visibleTicks > 0
+      ? [
+          0,
+          ...clipGridTicks(props.clipStartTick, props.visibleTicks, barTicks).filter(
+            (tick) => tick > 0,
+          ),
+        ]
+      : [];
 
   return (
     <div
@@ -53,21 +54,22 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
     >
       {barStarts.map((tick, index) => {
         const beatMarks = [];
-        const sectionEnd = barStarts[index + 1] ?? endTick;
-        for (
-          let beat = (Math.floor(tick / beatTicks) + 1) * beatTicks;
-          beat < sectionEnd;
-          beat += beatTicks
-        ) {
-          beatMarks.push(<span key={beat} style={{ left: (beat - tick) * props.pixelsPerTick }} />);
+        const sectionEnd = barStarts[index + 1] ?? props.visibleTicks;
+        for (const offset of clipGridTicks(
+          props.clipStartTick + tick,
+          sectionEnd - tick,
+          beatTicks,
+        )) {
+          if (offset === 0) continue;
+          beatMarks.push(<span key={offset} style={{ left: offset * props.pixelsPerTick }} />);
         }
         return (
           <i
             key={tick}
             className={styles.editorBarMark}
-            style={{ left: (tick - props.clipStartTick) * props.pixelsPerTick }}
+            style={{ left: tick * props.pixelsPerTick }}
           >
-            <strong>{barLabel(tick, props.timebase)}</strong>
+            <strong>{barLabel(props.clipStartTick + tick, props.timebase)}</strong>
             {beatMarks}
           </i>
         );

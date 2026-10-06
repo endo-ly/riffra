@@ -391,13 +391,13 @@ describe('WorkspaceArrange', () => {
       id: 'clip:quantize',
       name: 'Quantize',
       trackId: 'track:instrument',
-      startTick: 0,
+      startTick: 2200,
       durationTicks: 1_920,
       notes: [
         {
           id: 'note:off-grid',
           note: 60,
-          startTick: 100,
+          startTick: 240,
           durationTicks: 240,
           velocity: 96,
           channel: 0,
@@ -986,13 +986,13 @@ describe('WorkspaceArrange', () => {
       id: 'clip:quantize-aligned',
       name: 'Quantize aligned',
       trackId: 'track:instrument',
-      startTick: 0,
+      startTick: 2200,
       durationTicks: 1_920,
       notes: [
         {
           id: 'note:on-grid',
           note: 60,
-          startTick: 240,
+          startTick: 200,
           durationTicks: 240,
           velocity: 96,
           channel: 0,

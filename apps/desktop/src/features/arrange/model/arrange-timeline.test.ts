@@ -3,6 +3,8 @@ import type { AudioClip, MidiClip } from '@/model/domain';
 import {
   buildTrackTimeline,
   countOffGridNotes,
+  clipGridTicks,
+  snapClipTick,
   formatMusicalLength,
   formatMusicalPosition,
   layoutClipLanes,
@@ -75,9 +77,25 @@ describe('arrange timeline layout', () => {
 
   it('counts notes sitting off the target grid', () => {
     const notes = [{ startTick: 0 }, { startTick: 240 }, { startTick: 241 }, { startTick: 720 }];
-    expect(countOffGridNotes(notes, 240)).toBe(1);
-    expect(countOffGridNotes(notes, 0)).toBe(0);
-    expect(countOffGridNotes([], 240)).toBe(0);
+    expect(countOffGridNotes(notes, 240, 0)).toBe(1);
+    expect(countOffGridNotes(notes, 0, 0)).toBe(0);
+    expect(countOffGridNotes([], 240, 0)).toBe(0);
+    expect(countOffGridNotes([{ startTick: 140 }, { startTick: 240 }], 240, 100)).toBe(1);
+    expect(countOffGridNotes([{ startTick: 0 }], 240, 100)).toBe(0);
+  });
+
+  it('rebases Arrangement boundaries and snapping to clip-local ticks', () => {
+    // Arrange: clip begins at 1.3.240.
+    const startTick = 2160;
+
+    // Act / Assert
+    expect(clipGridTicks(startTick, 1920, 3840)).toEqual([1680]);
+    expect(clipGridTicks(startTick, 1920, 960)).toEqual([720, 1680]);
+    expect(clipGridTicks(startTick, 960, 320)).toEqual([80, 400, 720]);
+    expect(snapClipTick(350, startTick, 320)).toBe(400);
+    expect(snapClipTick(10, startTick, 960)).toBe(0);
+    expect(snapClipTick(720, startTick, 960)).toBe(720);
+    expect(snapClipTick(351.2, startTick, 0)).toBe(351);
   });
 
   it('uses one lane namespace for overlapping Audio and MIDI items', () => {

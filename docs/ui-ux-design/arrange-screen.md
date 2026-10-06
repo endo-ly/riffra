@@ -517,7 +517,7 @@ Note の作成・移動・長さ変更・Pitch 変更が確定したら、その
 
 #### Clipboard と Duplicate
 
-Copy は Note 群の相対時間、Pitch、Length、Velocity、Channel を保持する。Paste では先頭 Note を Playhead へ合わせ、新しい ID を割り当てたうえで貼り付けた Note 群を選択する。
+Copy は Note 群の相対時間、Pitch、Length、Velocity、Channel を保持する。Paste では先頭 Note を Playhead の位置へ Snap し、新しい ID を割り当てたうえで貼り付けた Note 群を選択する。
 
 Duplicate は選択フレーズの時間幅を基準に直後へ複製する。
 
@@ -547,7 +547,9 @@ Clip 切替や Editor 終了時には Held Note を解放し、Preview の発音
 
 Ruler の小節線と拍線は Arrangement 上の境界に揃える。小節頭には小節番号を表示し、小節途中から始まる Clip の先頭には拍も添える。たとえば 9.3 から始まる Clip では、先頭を「9.3」、次の小節頭を「10」と表示する。
 
-Snap Grid は Piano Roll の細分線へ反映し、Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
+Piano Roll と Velocity Lane の小節線・拍線は Ruler と同じ Arrangement 上の境界に揃える。Snap Grid の細分線も同じ時間軸を使い、Note の追加・移動・右端の Resize・Quantize はその境界へ吸着する。Clip より前へ吸着する場合は Clip 先頭に留める。Note 群を移動するときは操作対象の Note を基準に吸着し、Note 間の相対時間を保つ。
+
+Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
 
 ### 5.4 Devices
 
