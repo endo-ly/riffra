@@ -21,7 +21,7 @@ import {
 } from '@/features/arrange/model/arrange-timeline';
 import { isBrowserItemDrag } from '@/features/arrange/hooks/useArrangeDrop';
 import { resolveTrackColor } from '../model/track-colors';
-import { formatGainDb } from '@/shared/audio/gain';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { Icon } from '@/shared/ui/primitives';
 import controls from '@/shared/ui/controls.module.css';
 import styles from '../WorkspaceArrange.module.css';
@@ -413,11 +413,7 @@ export function ArrangeTrack(props: ArrangeTrackProps) {
                 )
               }
             />
-            <output>
-              {Math.abs(props.track.pan) < 0.01
-                ? 'C'
-                : `${props.track.pan < 0 ? 'L' : 'R'}${Math.round(Math.abs(props.track.pan) * 100)}`}
-            </output>
+            <output>{formatPan(props.track.pan)}</output>
           </label>
         )}
       </aside>

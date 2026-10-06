@@ -17,6 +17,9 @@
    */
   --note-fill: oklch(from var(--track-color) 0.62 calc(c * 0.9) h);
   --note-edge: oklch(from var(--track-color) 0.86 calc(c * 0.6) h);
+
+  /* The pitch keyboard is always on screen, so its white keys sit back from full white. */
+  --roll-key-white: color-mix(in oklch, var(--key-white) 64%, var(--color-bg-app));
 }
 
 /* Keep the toolbar's trailing controls clear of the overlaid lower-area controls. */
@@ -142,11 +145,11 @@
 }
 
 .pianoKey:hover .pianoWhiteKey {
-  background: color-mix(in srgb, var(--key-white) 72%, var(--color-accent));
+  background: color-mix(in srgb, var(--roll-key-white) 72%, var(--color-accent));
 }
 
 .pianoKey:active .pianoWhiteKey {
-  background: color-mix(in srgb, var(--key-white) 45%, var(--color-accent));
+  background: color-mix(in srgb, var(--roll-key-white) 45%, var(--color-accent));
 }
 
 .pianoKey:hover .pianoBlackKey {
@@ -168,7 +171,7 @@
   padding-left: var(--space-1-5);
   width: 100%;
   color: var(--key-label);
-  background: var(--key-white);
+  background: var(--roll-key-white);
   border-bottom: 1px solid color-mix(in srgb, var(--key-label) 24%, transparent);
 }
 
@@ -294,8 +297,8 @@
   z-index: 2;
   min-width: 4px;
   box-sizing: border-box;
-  background: color-mix(in srgb, var(--color-text-secondary) 26%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--color-text-secondary) 55%, transparent);
+  background: color-mix(in srgb, var(--ghost-color) 18%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--ghost-color) 55%, transparent);
   border-radius: var(--radius-sm);
   pointer-events: none;
 }
@@ -368,22 +371,56 @@
   background: var(--grid-beat);
 }
 
+/*
+ * Velocity reads as a lollipop at each note onset: a stem rising to a head.
+ * The button keeps the note's span as its drag target and shows it on hover.
+ */
 .velocityBar {
   position: absolute;
-  bottom: 4px;
+  bottom: var(--space-1);
   z-index: 3;
   min-width: 4px;
   padding: 0;
-  background: color-mix(in srgb, var(--note-fill) 70%, transparent);
-  border: 1px solid var(--note-edge);
-  border-radius: 2px 2px 0 0;
+  background: transparent;
+  border: 0;
   cursor: ns-resize;
+
+  --stem-color: var(--note-edge);
+  --head-fill: var(--note-fill);
 }
 
-.velocityBar:hover,
+.velocityBar::before,
+.velocityBar::after {
+  position: absolute;
+  content: '';
+  pointer-events: none;
+}
+
+.velocityBar::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--stem-color);
+}
+
+.velocityBar::after {
+  top: calc(var(--space-1) * -1);
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  background: var(--head-fill);
+  border: 1px solid var(--stem-color);
+  border-radius: 50%;
+}
+
+.velocityBar:hover {
+  background: color-mix(in srgb, var(--note-fill) 18%, transparent);
+}
+
 .velocityBar.velocitySelected {
-  background: var(--track-color);
-  border-color: var(--color-selection);
+  --stem-color: var(--color-selection);
+  --head-fill: var(--track-color);
 }
 
 .empty {

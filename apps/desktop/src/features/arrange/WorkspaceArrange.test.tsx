@@ -18,6 +18,7 @@ import type { TransportStatus } from '@/model/domain';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { TRACK_HEADER_WIDTH } from '@/features/arrange/model/arrange-timeline';
+import { TRACK_COLOR_PALETTE } from '@/features/arrange/model/track-colors';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
 const noopRetryRuntimeProjection = async (): Promise<void> => undefined;
@@ -917,7 +918,9 @@ describe('WorkspaceArrange', () => {
     const editor = await screen.findByLabelText('MIDI Editor');
 
     expect(editor.querySelector('[data-note-id]')).toBeNull();
-    expect(editor.querySelector('[data-ghost-note-id]')).not.toBeNull();
+    expect(editor.querySelector('[data-ghost-note-id]')?.getAttribute('style')).toContain(
+      `--ghost-color: ${TRACK_COLOR_PALETTE[1]}`,
+    );
 
     fireEvent.click(within(editor).getByRole('button', { name: 'Reference notes' }));
     expect(editor.querySelector('[data-ghost-note-id]')).toBeNull();

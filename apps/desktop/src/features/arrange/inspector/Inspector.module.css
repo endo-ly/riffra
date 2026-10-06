@@ -218,26 +218,21 @@
 
 .mixCluster {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-1) var(--space-4);
+  gap: var(--space-1);
   padding: var(--space-2) var(--space-3) var(--space-2-5);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
+/* Label, slider and value on one line, matching the track header and mixer. */
 .mixField {
   display: grid;
-  gap: var(--space-0-5);
+  grid-template-columns: 32px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.mixField > span {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+.mixLabel {
   color: var(--color-text-muted);
-  font-size: var(--font-size-micro);
-}
-
-.mixField > span .value {
   font-size: var(--font-size-micro);
 }
 
@@ -275,23 +270,21 @@ select.control {
   padding-right: var(--space-6);
 }
 
+/* A value that reads as text and turns into a number field when clicked. */
 .value {
-  min-width: 64px;
   height: 20px;
-  display: inline-grid;
-  place-items: center;
-  padding: 0 var(--space-1-5);
+  padding: 0 var(--space-1);
   color: var(--color-text-primary);
   font: var(--font-size-small) var(--font-family-mono);
   font-weight: 500;
   text-align: right;
-  background: var(--color-bg-panel);
-  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
 }
 
 .value:hover {
-  border-color: var(--color-border-strong);
+  border-color: var(--color-border-default);
 }
 
 .valueInput {

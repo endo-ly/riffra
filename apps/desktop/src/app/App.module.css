@@ -50,22 +50,25 @@
   pointer-events: auto;
 }
 
-/* Shell banners share one stack under the control bar so they never overlap. */
+/*
+ * Shell banners occupy their own row under the control bar, pushing the body
+ * down instead of covering its controls. The row collapses when empty.
+ */
 .bannerStack {
-  position: fixed;
-  top: calc(var(--size-global-control-bar) + var(--space-2));
-  left: 50%;
-  z-index: var(--z-banner);
-  width: min(760px, calc(100% - var(--space-4) * 2));
+  grid-area: banners;
   display: grid;
   justify-items: center;
   gap: var(--space-2);
-  transform: translateX(-50%);
-  pointer-events: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.bannerStack:empty {
+  display: none;
 }
 
 .bannerStack > * {
-  pointer-events: auto;
+  max-width: 760px;
 }
 
 .runtimeBanner {

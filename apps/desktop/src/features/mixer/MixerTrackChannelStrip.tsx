@@ -1,4 +1,4 @@
-import { formatGainDb } from '@/shared/audio/gain';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
 import { useState, type CSSProperties } from 'react';
 import type { AutomationLane, CanonicalState, Track } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
@@ -200,8 +200,4 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
 }
 function isMixAdjustmentKey(key: string): boolean {
   return ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key);
-}
-function formatPan(pan: number): string {
-  if (Math.abs(pan) < 0.005) return 'C';
-  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
 }

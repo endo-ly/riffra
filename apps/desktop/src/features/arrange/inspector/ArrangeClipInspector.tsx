@@ -9,6 +9,8 @@ import type {
 import type { ArrangeInspectorApi } from '../arrange-api';
 import { clipDurationTicks, formatMusicalLength } from '@/features/arrange/model/arrange-timeline';
 import { Icon } from '@/shared/ui/primitives';
+import { formatGainDb, formatPan } from '@/shared/audio/mix-format';
+import { MixValueField } from './MixValueField';
 import { MusicalTimeField } from './MusicalTimeField';
 import styles from './Inspector.module.css';
 import { useInspectorOperation } from './useInspectorOperation';
@@ -25,8 +27,6 @@ interface ArrangeClipInspectorProps {
 
 interface Drafts {
   name: string;
-  gainDb: string;
-  pan: string;
   fadeInMs: string;
   fadeOutMs: string;
 }
@@ -36,16 +36,9 @@ function buildDrafts(clip: AudioClip): Drafts {
   const fadeOutMs = (clip.fadeOut.frames * 1000) / clip.sourceSampleRate;
   return {
     name: clip.name,
-    gainDb: clip.gainDb.toFixed(1),
-    pan: clip.pan.toFixed(2),
     fadeInMs: String(Math.round(fadeInMs)),
     fadeOutMs: String(Math.round(fadeOutMs)),
   };
-}
-
-function formatPan(pan: number) {
-  if (Math.abs(pan) < 0.01) return 'C';
-  return `${pan < 0 ? 'L' : 'R'} ${Math.round(Math.abs(pan) * 100)}`;
 }
 
 export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
@@ -54,8 +47,6 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
   );
   const clip = selected.length === 1 ? selected[0] : null;
   const [drafts, setDrafts] = useState<Drafts | null>(clip ? buildDrafts(clip) : null);
-  const [gainEdit, setGainEdit] = useState(false);
-  const [panEdit, setPanEdit] = useState(false);
   const {
     operationMessage: message,
     runOperation,
@@ -170,107 +161,28 @@ export function ArrangeClipInspector(props: ArrangeClipInspectorProps) {
       )}
 
       <div className={styles.mixCluster} aria-label="Clip mix">
-        <label className={styles.mixField}>
-          <span>
-            Gain{' '}
-            {gainEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.1"
-                value={drafts.gainDb}
-                onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
-                onBlur={() => {
-                  setGainEdit(false);
-                  const next = Number(drafts.gainDb);
-                  if (Number.isFinite(next) && next !== clip.gainDb)
-                    patch({ gainDb: next }, 'Gain');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setDrafts({ ...drafts, gainDb: clip.gainDb.toFixed(1) });
-                    setGainEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit clip gain"
-                onClick={() => setGainEdit(true)}
-              >
-                {Number(drafts.gainDb).toFixed(1)} dB
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Clip gain"
-            type="range"
-            min="-60"
-            max="24"
-            step="0.5"
-            value={drafts.gainDb}
-            onChange={(event) => setDrafts({ ...drafts, gainDb: event.currentTarget.value })}
-            onPointerUp={() => {
-              const next = Number(drafts.gainDb);
-              if (Number.isFinite(next) && next !== clip.gainDb) patch({ gainDb: next }, 'Gain');
-            }}
-          />
-        </label>
-        <label className={styles.mixField}>
-          <span>
-            Pan{' '}
-            {panEdit ? (
-              <input
-                className={styles.valueInput}
-                autoFocus
-                type="number"
-                step="0.05"
-                value={drafts.pan}
-                onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
-                onBlur={() => {
-                  setPanEdit(false);
-                  const next = Number(drafts.pan);
-                  if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') (event.currentTarget as HTMLInputElement).blur();
-                  if (event.key === 'Escape') {
-                    setDrafts({ ...drafts, pan: clip.pan.toFixed(2) });
-                    setPanEdit(false);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.value}
-                aria-label="Edit clip pan"
-                onClick={() => setPanEdit(true)}
-              >
-                {formatPan(Number(drafts.pan))}
-              </button>
-            )}
-          </span>
-          <input
-            className={styles.range}
-            aria-label="Clip pan"
-            type="range"
-            min="-1"
-            max="1"
-            step="0.05"
-            value={drafts.pan}
-            onChange={(event) => setDrafts({ ...drafts, pan: event.currentTarget.value })}
-            onPointerUp={() => {
-              const next = Number(drafts.pan);
-              if (Number.isFinite(next) && next !== clip.pan) patch({ pan: next }, 'Pan');
-            }}
-          />
-        </label>
+        <MixValueField
+          label="Gain"
+          name="Clip gain"
+          value={clip.gainDb}
+          min={-60}
+          max={24}
+          step={0.5}
+          inputStep={0.1}
+          format={formatGainDb}
+          onCommit={(gainDb) => patch({ gainDb }, 'Gain')}
+        />
+        <MixValueField
+          label="Pan"
+          name="Clip pan"
+          value={clip.pan}
+          min={-1}
+          max={1}
+          step={0.05}
+          inputStep={0.05}
+          format={formatPan}
+          onCommit={(pan) => patch({ pan }, 'Pan')}
+        />
       </div>
 
       <section className={styles.section}>

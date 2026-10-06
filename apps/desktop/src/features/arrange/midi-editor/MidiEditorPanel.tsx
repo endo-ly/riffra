@@ -48,6 +48,8 @@ export interface MidiGhostNote {
   pitch: number;
   startTick: number;
   durationTicks: number;
+  /** Color of the track the note comes from, so references stay attributable. */
+  trackColor: string;
 }
 
 const ZOOM_STEP = 1.25;
@@ -996,7 +998,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       </Toolbar>
       <div className={styles.editorSurface}>
         <div className={styles.rulerViewport}>
-          <div className={styles.laneLabel}>Ruler</div>
+          <div className={styles.laneLabel} />
           <div ref={rulerContentRef} className={styles.rulerContent} style={{ width: laneWidth }}>
             <MidiEditorRuler
               timebase={props.timebase}
@@ -1201,12 +1203,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     data-ghost-note-id={ghost.id}
                     aria-hidden="true"
                     className={styles.ghostNote}
-                    style={{
-                      left: ghost.startTick * pixelsPerTick,
-                      top: pitchRowTop(ghost.pitch, rowHeight),
-                      width: Math.max(4, ghost.durationTicks * pixelsPerTick),
-                      height: rowHeight - 1,
-                    }}
+                    style={
+                      {
+                        left: ghost.startTick * pixelsPerTick,
+                        top: pitchRowTop(ghost.pitch, rowHeight),
+                        width: Math.max(4, ghost.durationTicks * pixelsPerTick),
+                        height: rowHeight - 1,
+                        '--ghost-color': ghost.trackColor,
+                      } as CSSProperties
+                    }
                   />
                 ))}
               {pitchRows.map((pitch) => (

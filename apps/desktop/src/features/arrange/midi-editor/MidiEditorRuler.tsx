@@ -16,6 +16,15 @@ interface MidiEditorRulerProps {
   onSeek?: (tick: number) => void;
 }
 
+/**
+ * Bars that start on a downbeat read as the bar number, matching the Arrange
+ * ruler; a clip that starts mid-bar labels its marks with the beat as well.
+ */
+function barLabel(position: string): string {
+  const [bar, beat] = position.split('.');
+  return beat === '1' ? bar : `${bar}.${beat}`;
+}
+
 export function MidiEditorRuler(props: MidiEditorRulerProps) {
   const barTicks = ticksPerBar(props.timebase);
   const beatTicks = ticksPerBeat(props.timebase);
@@ -44,7 +53,7 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
             className={styles.editorBarMark}
             style={{ left: tick * props.pixelsPerTick }}
           >
-            <strong>{position.split('.').slice(0, 2).join('.')}</strong>
+            <strong>{barLabel(position)}</strong>
             {Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
               <span key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
             ))}

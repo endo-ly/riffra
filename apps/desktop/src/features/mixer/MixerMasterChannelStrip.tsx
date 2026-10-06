@@ -1,4 +1,4 @@
-import { formatGainDb } from '@/shared/audio/gain';
+import { formatGainDb } from '@/shared/audio/mix-format';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';

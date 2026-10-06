@@ -197,6 +197,42 @@ describe('Arrange Inspectors', () => {
     expect(api.updateAudioClip).toHaveBeenCalledWith('clip:a', { startTick: 3_840 });
   });
 
+  it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', () => {
+    // Arrange
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateAudioClip = vi.fn().mockResolvedValue(null);
+    render(
+      <ArrangeClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['clip:a']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const slider = screen.getByLabelText('Clip gain');
+
+    // Act
+    fireEvent.change(slider, { target: { value: '-6' } });
+    fireEvent.keyUp(slider, { key: 'ArrowLeft' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+    const typed = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+    fireEvent.change(typed, { target: { value: '3.2' } });
+    fireEvent.blur(typed);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+    const cancelled = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+    fireEvent.change(cancelled, { target: { value: '9' } });
+    fireEvent.keyDown(cancelled, { key: 'Escape' });
+    fireEvent.blur(cancelled);
+
+    // Assert
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(1, 'clip:a', { gainDb: -6 });
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(2, 'clip:a', { gainDb: 3.2 });
+    expect(api.updateAudioClip).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Edit clip gain' })).toHaveTextContent('+0.0 dB');
+  });
+
   it('changes Raw/Processed source only on the selected Clip', async () => {
     const initial = recordingSession();
     const canonical = structuredClone(initial);
