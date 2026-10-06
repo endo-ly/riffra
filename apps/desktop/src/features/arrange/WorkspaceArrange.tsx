@@ -132,17 +132,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     const barWidth = barTicks * pixelsPerTick;
     const density = timelineGridDensity(timebase, pixelsPerTick);
     const layers = [
-      `repeating-linear-gradient(90deg, var(--grid-bar) 0 1px, transparent 1px ${barWidth}px)`,
+      `repeating-linear-gradient(90deg, var(--timeline-grid-bar) 0 1px, transparent 1px ${barWidth}px)`,
     ];
     if (density.showBeats) {
       layers.push(
-        `repeating-linear-gradient(90deg, var(--grid-beat) 0 1px, transparent 1px ${beatWidth}px)`,
+        `repeating-linear-gradient(90deg, var(--timeline-grid-beat) 0 1px, transparent 1px ${beatWidth}px)`,
       );
     }
     if (density.subdivisionTicks) {
       const subdivisionWidth = density.subdivisionTicks * pixelsPerTick;
       layers.push(
-        `repeating-linear-gradient(90deg, var(--grid-subdivision) 0 1px, transparent 1px ${subdivisionWidth}px)`,
+        `repeating-linear-gradient(90deg, var(--timeline-grid-subdivision) 0 1px, transparent 1px ${subdivisionWidth}px)`,
       );
     }
     return { width: timelineWidth, backgroundImage: layers.join(', ') } as CSSProperties;

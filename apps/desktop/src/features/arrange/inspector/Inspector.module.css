@@ -47,7 +47,7 @@
   height: 18px;
   padding: 0;
   background: var(--swatch);
-  border: 1px solid color-mix(in srgb, var(--swatch) 60%, black 10%);
+  border: 1px solid color-mix(in srgb, var(--swatch) 60%, var(--color-shadow) 10%);
   border-radius: 50%;
 }
 

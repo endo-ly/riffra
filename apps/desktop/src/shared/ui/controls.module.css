@@ -21,7 +21,7 @@
   height: var(--slider-thumb-height);
   margin-top: calc((var(--slider-track-height) - var(--slider-thumb-height)) / 2);
   background: var(--color-accent);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, black);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-shadow));
   border-radius: 2px;
 }
 

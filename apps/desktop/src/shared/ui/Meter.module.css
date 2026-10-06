@@ -1,8 +1,8 @@
 .meter {
   position: relative;
   display: block;
-  width: var(--size-level-meter);
-  height: var(--size-level-meter-thickness);
+  width: var(--meter-width);
+  height: var(--meter-thickness);
   overflow: hidden;
   background: linear-gradient(
     90deg,

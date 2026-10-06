@@ -12,12 +12,12 @@
   overflow: hidden;
 
   /* Gradient stops that give the keys their depth. */
-  --white-top: color-mix(in oklch, var(--key-white) 95%, black);
-  --white-mid: color-mix(in oklch, var(--key-white) 87%, black);
-  --white-bottom: color-mix(in oklch, var(--key-white) 79%, black);
-  --black-top: var(--key-black-sheen);
-  --black-mid: color-mix(in oklch, var(--key-black-sheen) 50%, var(--key-black));
-  --black-bottom: var(--key-black);
+  --white-top: color-mix(in oklch, var(--piano-key-white) 95%, var(--color-shadow));
+  --white-mid: color-mix(in oklch, var(--piano-key-white) 87%, var(--color-shadow));
+  --white-bottom: color-mix(in oklch, var(--piano-key-white) 79%, var(--color-shadow));
+  --black-top: var(--piano-key-black-sheen);
+  --black-mid: color-mix(in oklch, var(--piano-key-black-sheen) 50%, var(--piano-key-black));
+  --black-bottom: var(--piano-key-black);
 }
 .whiteRow {
   position: relative;
@@ -28,7 +28,7 @@
   margin: 0;
   padding: 0 1px 1px;
   height: 86px;
-  background: var(--key-black);
+  background: var(--piano-key-black);
 }
 .blackRow {
   position: absolute;
@@ -63,7 +63,7 @@
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--color-highlight) 50%, transparent),
     inset 0 -2px 3px color-mix(in srgb, var(--color-shadow) 8%, transparent);
-  color: var(--key-label);
+  color: var(--piano-key-label);
   transition:
     background 60ms ease-out,
     transform 60ms ease-out,
@@ -72,9 +72,9 @@
 .white:hover {
   background: linear-gradient(
     180deg,
-    var(--key-white) 0%,
-    color-mix(in oklch, var(--key-white) 91%, black) 60%,
-    color-mix(in oklch, var(--key-white) 83%, black) 100%
+    var(--piano-key-white) 0%,
+    color-mix(in oklch, var(--piano-key-white) 91%, var(--color-shadow)) 60%,
+    color-mix(in oklch, var(--piano-key-white) 83%, var(--color-shadow)) 100%
   );
 }
 .white.active {

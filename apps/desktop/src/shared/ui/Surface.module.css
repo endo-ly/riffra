@@ -23,7 +23,7 @@
   color: var(--color-text-on-accent);
   background: linear-gradient(
     135deg,
-    color-mix(in srgb, var(--color-accent) 75%, white),
+    color-mix(in srgb, var(--color-accent) 75%, var(--color-highlight)),
     var(--color-accent)
   );
   box-shadow:

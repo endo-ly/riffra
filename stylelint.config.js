@@ -4,6 +4,8 @@ const fontSizeScale = ['/^var\\(--font-size-/', 'inherit'];
 export default {
   ignoreFiles: ['**/dist/**', '**/node_modules/**'],
   rules: {
+    'color-no-hex': true,
+    'color-named': 'never',
     // Cross-panel layering and type sizes go through the scales in styles/tokens.css.
     'declaration-property-value-allowed-list': {
       'z-index': ['/^var\\(--z-/'],
@@ -17,6 +19,15 @@ export default {
     },
   },
   overrides: [
+    {
+      files: [
+        'apps/desktop/src/styles/tokens.css',
+        'apps/desktop/src/app/BrandTokens.module.css',
+        'apps/desktop/src/features/arrange/PianoKeyTokens.module.css',
+        'apps/desktop/src/features/arrange/TimelineTokens.module.css',
+      ],
+      rules: { 'color-no-hex': null, 'color-named': null },
+    },
     {
       /*
        * Canvas compositions (timeline lanes, piano keys, grid lines) own

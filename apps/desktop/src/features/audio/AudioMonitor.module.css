@@ -1,4 +1,7 @@
 .monitor {
+  --meter-width: 88px;
+  --meter-thickness: 4px;
+
   min-width: 0;
   display: flex;
   align-items: center;
@@ -16,7 +19,7 @@
 }
 
 .master {
-  width: var(--size-level-meter);
+  width: var(--meter-width);
   min-width: 0;
   display: grid;
   grid-template-columns: 1fr auto;
@@ -47,7 +50,7 @@
 }
 
 .master input::-webkit-slider-runnable-track {
-  height: var(--size-level-meter-thickness);
+  height: var(--meter-thickness);
   background: var(--color-bg-surface-raised);
   border-radius: var(--radius-pill);
 }
@@ -55,7 +58,7 @@
 .master input::-webkit-slider-thumb {
   width: var(--space-3);
   height: var(--space-3);
-  margin-top: calc((var(--size-level-meter-thickness) - var(--space-3)) / 2);
+  margin-top: calc((var(--meter-thickness) - var(--space-3)) / 2);
   appearance: none;
   background: var(--color-text-secondary);
   border: 0;
@@ -63,7 +66,7 @@
 }
 
 .master input::-moz-range-track {
-  height: var(--size-level-meter-thickness);
+  height: var(--meter-thickness);
   background: var(--color-bg-surface-raised);
   border-radius: var(--radius-pill);
 }

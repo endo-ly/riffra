@@ -1,4 +1,7 @@
 .panel {
+  --expanded-height: 220px;
+  --compact-height: 48px;
+
   min-width: 0;
   display: grid;
   overflow: hidden;
@@ -9,12 +12,12 @@
 }
 
 .expanded {
-  height: var(--size-play-surface-expanded);
+  height: var(--expanded-height);
   grid-template-rows: 40px minmax(0, 1fr);
 }
 
 .compact {
-  height: var(--size-play-surface-compact);
+  height: var(--compact-height);
   grid-template-rows: 1fr;
 }
 

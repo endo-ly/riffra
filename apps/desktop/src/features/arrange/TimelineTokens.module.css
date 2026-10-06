@@ -1,6 +1,6 @@
 /* Grid recipe shared by the Arrange timeline and the MIDI Editor. */
 .scope {
-  --grid-bar: color-mix(in srgb, var(--color-text-primary) 20%, transparent);
-  --grid-beat: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
-  --grid-subdivision: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+  --timeline-grid-bar: color-mix(in srgb, var(--color-text-primary) 20%, transparent);
+  --timeline-grid-beat: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+  --timeline-grid-subdivision: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 }

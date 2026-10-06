@@ -54,10 +54,7 @@
 }
 
 .logoMark {
-  /* Brand mark gradient. */
-  --logo-light: #9ff6ed;
-  --logo-mid: #49b8dd;
-  --logo-deep: #477ce1;
+  composes: scope from './BrandTokens.module.css';
 
   width: 28px;
   height: 28px;
@@ -67,7 +64,12 @@
   color: var(--color-text-on-accent);
   font-weight: 800;
   font-size: var(--font-size-title);
-  background: linear-gradient(145deg, var(--logo-light), var(--logo-mid) 65%, var(--logo-deep));
+  background: linear-gradient(
+    145deg,
+    var(--brand-logo-light),
+    var(--brand-logo-mid) 65%,
+    var(--brand-logo-deep)
+  );
   box-shadow:
     inset 0 1px color-mix(in srgb, var(--color-highlight) 55%, transparent),
     0 0 28px color-mix(in srgb, var(--color-accent) 18%, transparent);
