@@ -760,7 +760,7 @@
   background: var(--color-bg-panel);
   border: 2px solid var(--color-accent);
   border-radius: 50%;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-raised);
   cursor: grab;
   transform: translate(-50%, -50%);
 }
@@ -785,7 +785,7 @@
   border: 1px solid oklch(from var(--track-color) 0.55 calc(c * 0.7) h);
   border-radius: var(--radius-sm);
   cursor: grab;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-raised);
 
   --clip-content: oklch(from var(--track-color) 0.88 calc(c * 0.8) h);
 }
@@ -800,7 +800,7 @@
   border-color: var(--color-selection);
   box-shadow:
     0 0 0 1px var(--color-selection),
-    0 5px 16px rgba(0, 0, 0, 0.4);
+    0 5px 16px color-mix(in srgb, var(--color-shadow) 40%, transparent);
 }
 .clip.looped {
   background: oklch(from var(--track-color) 0.45 calc(c * 0.6) h);
@@ -964,7 +964,7 @@
   width: 1px;
   pointer-events: none;
   background: color-mix(in srgb, var(--color-selection) 48%, transparent);
-  box-shadow: 1px 0 rgba(0, 0, 0, 0.22);
+  box-shadow: 1px 0 color-mix(in srgb, var(--color-shadow) 22%, transparent);
 }
 
 .playhead,
@@ -1022,7 +1022,11 @@
   text-align: center;
   border: 1px dashed var(--color-border-default);
   border-radius: var(--radius-lg);
-  background: radial-gradient(circle at 50% 42%, rgba(54, 101, 113, 0.13), transparent 38%);
+  background: radial-gradient(
+    circle at 50% 42%,
+    color-mix(in srgb, var(--color-accent) 6%, transparent),
+    transparent 38%
+  );
 }
 .emptyIcon {
   width: 44px;

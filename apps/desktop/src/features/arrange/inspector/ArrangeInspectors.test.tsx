@@ -172,6 +172,31 @@ describe('Arrange Inspectors', () => {
     expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
   });
 
+  it('shows an Audio Clip length derived from its audio and moves it by bars', () => {
+    // Arrange
+    const session = recordingSession();
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateAudioClip = vi.fn().mockResolvedValue(null);
+    render(
+      <ArrangeClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['clip:a']}
+        setSelectedClipIds={() => undefined}
+        api={api}
+      />,
+    );
+    const start = screen.getByLabelText('Start');
+
+    // Act
+    fireEvent.change(start, { target: { value: '2' } });
+    fireEvent.blur(start);
+
+    // Assert
+    expect(screen.getByText('0.0.040')).toBeInTheDocument();
+    expect(api.updateAudioClip).toHaveBeenCalledWith('clip:a', { startTick: 3_840 });
+  });
+
   it('changes Raw/Processed source only on the selected Clip', async () => {
     const initial = recordingSession();
     const canonical = structuredClone(initial);

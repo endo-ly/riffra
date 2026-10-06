@@ -5,7 +5,7 @@
   color: var(--color-text-primary);
   background: var(--color-bg-surface);
   border-top: 1px solid var(--color-border-strong);
-  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 -8px 22px color-mix(in srgb, var(--color-shadow) 24%, transparent);
 }
 
 .expanded {

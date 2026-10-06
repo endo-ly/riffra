@@ -33,7 +33,7 @@
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: var(--z-detail-actions);
+  z-index: var(--z-lower-area-controls);
   display: flex;
   align-items: center;
   gap: 3px;

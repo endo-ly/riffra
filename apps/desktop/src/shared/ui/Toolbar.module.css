@@ -118,7 +118,7 @@ select.control {
 
 .segmentedButton:hover:not(:disabled) {
   color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-bg-hover);
 }
 
 .control.active,
