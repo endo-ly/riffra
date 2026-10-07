@@ -44,13 +44,14 @@ description: >-
 
 判断の内容に応じて参照する。各ファイルは必要になった時点で読む。
 
-| 観点                                                             | 参照                                                                           |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| メロディ：モチーフ、フレーズ、コードに対する旋律音               | [references/melody.md](references/melody.md)                                   |
-| 編曲・音作り・ミックス：構成、密度、音域、音色、空間、診断       | [references/arrangement-mix.md](references/arrangement-mix.md)                 |
-| コード進行の体系（機能・根音運動・声部進行・反復構造）           | [references/chord-progressions.md](references/chord-progressions.md)           |
-| J-POPの名前付きコード進行の辞典                                  | [references/jpop-chord-progressions.md](references/jpop-chord-progressions.md) |
-| リズムセクション：リズム構造、ドラム、ベース、パート間のグルーヴ | [references/rhythm-section.md](references/rhythm-section.md)                   |
+| 観点                                                             | 参照                                                                             |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| メロディ：モチーフ、フレーズ、コードに対する旋律音               | [references/melody.md](references/melody.md)                                     |
+| 編曲・音作り・ミックス：構成、密度、音域、音色、空間、診断       | [references/arrangement-mix.md](references/arrangement-mix.md)                   |
+| コード進行の体系（機能・根音運動・声部進行・反復構造）           | [references/chord-progressions.md](references/chord-progressions.md)             |
+| J-POPの名前付きコード進行の辞典                                  | [references/jpop-chord-progressions.md](references/jpop-chord-progressions.md)   |
+| リズムセクション：リズム構造、ドラム、ベース、パート間のグルーヴ | [references/rhythm-section.md](references/rhythm-section.md)                     |
+| Ample Sound Liteのベース・アコギ奏法とMIDI指定                   | [references/ample-lite-articulations.md](references/ample-lite-articulations.md) |
 
 作曲で特に重視する観点: メロディでは、音高とリズムに加えて、休符、フレーズ境界、音域、輪郭、頂点、反復と変化を同じ重要度で扱う。**休符は一種の音符である**。AIはどうしても休符の無い平易なメロディを作りがちなので注意する。和声との関係では、旋律音の評価軸をダイアトニックへの所属よりも、コードに対する音程・拍位置・持続時間・前後の動き・解決先に置く。曲全体では、モチーフの同一性を保ちながら変化を作り、セクションごとに音域・密度・休符量・頂点を配置する。
 
