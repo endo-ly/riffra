@@ -117,7 +117,7 @@ function publishBundle(version, tag) {
       installerPath,
       latestJsonPath,
       '--title',
-      `Riffra ${tag}`,
+      tag,
       '--generate-notes',
       '--verify-tag',
       '--latest',
