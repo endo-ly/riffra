@@ -32,7 +32,7 @@ TimelineSnapshotSpec makeTestSnapshot() {
     TimelineSnapshotSpec snapshot;
     snapshot.projectId = "test-project";
     snapshot.revision = 1;
-    snapshot.graph.timebase = {960, 120.0, 4, 4};
+    snapshot.graph.timebase = {960, {{0, 120.0}}, {{0, 4, 4}}};
     return snapshot;
 }
 

@@ -2,11 +2,26 @@
   "projectId": "project-minimal",
   "revision": 0,
   "graph": {
+    "mixdown": {
+      "musicalEndTick": 0,
+      "tailSeconds": 0.0,
+      "fadeOutSeconds": 0.0
+    },
     "timebase": {
       "ppq": 960,
-      "bpm": 120.0,
-      "timeSignatureNumerator": 4,
-      "timeSignatureDenominator": 4
+      "tempoChanges": [
+        {
+          "tick": 0,
+          "bpm": 120.0
+        }
+      ],
+      "timeSignatureChanges": [
+        {
+          "tick": 0,
+          "numerator": 4,
+          "denominator": 4
+        }
+      ]
     },
     "loopRange": {
       "enabled": false,

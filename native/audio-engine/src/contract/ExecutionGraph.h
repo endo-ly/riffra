@@ -14,11 +14,23 @@ enum class FadeShapeSpec { linear, equalPower, smooth };
 enum class TakeVariantSpec { raw, processed };
 enum class MidiEventKindSpec { controlChange, pitchBend, channelPressure };
 
+struct TempoChangeSpec final {
+    std::uint64_t tick = 0;
+    double bpm = 120.0;
+    bool operator==(const TempoChangeSpec&) const = default;
+};
+
+struct TimeSignatureChangeSpec final {
+    std::uint64_t tick = 0;
+    std::uint8_t numerator = 4;
+    std::uint8_t denominator = 4;
+    bool operator==(const TimeSignatureChangeSpec&) const = default;
+};
+
 struct TimebaseSpec final {
-    std::uint32_t ppq = 0;
-    double bpm = 0.0;
-    std::uint8_t timeSignatureNumerator = 0;
-    std::uint8_t timeSignatureDenominator = 0;
+    std::uint32_t ppq = 960;
+    std::vector<TempoChangeSpec> tempoChanges{{0, 120.0}};
+    std::vector<TimeSignatureChangeSpec> timeSignatureChanges{{0, 4, 4}};
     bool operator==(const TimebaseSpec&) const = default;
 };
 
@@ -147,6 +159,17 @@ struct MidiEventSpec final {
     bool operator==(const MidiEventSpec&) const = default;
 };
 
+struct InstrumentControlEventSpec final {
+    juce::String id;
+    std::uint64_t tick = 0;
+    std::uint32_t sourceOrder = 0;
+    juce::String type;
+    bool down = false;
+    float value = 0.0f;
+    juce::String parameter;
+    bool operator==(const InstrumentControlEventSpec&) const = default;
+};
+
 struct MidiClipSpec final {
     juce::String id;
     std::uint64_t startTick = 0;
@@ -155,6 +178,7 @@ struct MidiClipSpec final {
     bool muted = false;
     std::vector<MidiNoteSpec> notes;
     std::vector<MidiEventSpec> events;
+    std::vector<InstrumentControlEventSpec> instrumentControlEvents;
     bool operator==(const MidiClipSpec&) const = default;
 };
 
@@ -165,6 +189,8 @@ struct TrackSpec final {
     double pan = 0.0;
     bool muted = false;
     bool solo = false;
+    juce::String panLaw = "equalPower";
+    std::optional<juce::String> externalAudioSourceTrackId;
     bool armed = false;
     bool monitorInput = false;
     std::optional<AudioInputSpec> audioInput;
@@ -185,6 +211,9 @@ struct ExecutionGraph final {
     bool metronomeEnabled = false;
     double masterGainDb = 0.0;
     std::vector<TrackSpec> tracks;
+    std::uint64_t musicalEndTick = 0;
+    double tailSeconds = 0.0;
+    double fadeOutSeconds = 0.0;
     bool operator==(const ExecutionGraph&) const = default;
 };
 
@@ -203,6 +232,8 @@ struct OfflineRenderRequestSpec final {
     std::uint32_t sampleRate = 0;
     std::uint32_t blockSize = 0;
     bool normalize = false;
+    double tailSeconds = 0.0;
+    bool includeEndEvents = false;
     bool operator==(const OfflineRenderRequestSpec&) const = default;
 };
 

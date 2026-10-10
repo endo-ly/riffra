@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <vector>
 
 #include "timeline/MidiScheduler.h"
@@ -32,7 +33,8 @@ TEST(MidiSchedulerTest, CompilesAndSortsPreparedTimelineEvents) {
     CompiledMidiClip compiled;
     juce::String error;
 
-    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{10, 60.0}, 10.0, compiled, error));
+    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0,
+                                       compiled, error));
     ASSERT_EQ(compiled.lengthSamples, 4);
     ASSERT_EQ(compiled.events.size(), 5u);
     EXPECT_TRUE(compiled.events[0].message.isNoteOn());
@@ -46,8 +48,8 @@ TEST(MidiSchedulerTest, CompilesAndSortsPreparedTimelineEvents) {
 TEST(MidiSchedulerTest, EmitsClippedNoteOffAtClipBoundaryAfterSeek) {
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(
-        MidiScheduler::compile(makeClip(false), TimelineTimebase{10, 60.0}, 10.0, compiled, error));
+    ASSERT_TRUE(MidiScheduler::compile(
+        makeClip(false), TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
 
     const auto messages = scheduledMessages(compiled, 4, 1);
 
@@ -58,8 +60,8 @@ TEST(MidiSchedulerTest, EmitsClippedNoteOffAtClipBoundaryAfterSeek) {
 TEST(MidiSchedulerTest, EmitsLoopBoundaryOffBeforeTheNextLoopOn) {
     CompiledMidiClip compiled;
     juce::String error;
-    ASSERT_TRUE(
-        MidiScheduler::compile(makeClip(true), TimelineTimebase{10, 60.0}, 10.0, compiled, error));
+    ASSERT_TRUE(MidiScheduler::compile(
+        makeClip(true), TimelineTimebase{10, {{0, 60.0}}, {{0, 4, 4}}}, 10.0, compiled, error));
 
     const auto messages = scheduledMessages(compiled, 4, 1);
 
@@ -136,6 +138,65 @@ TEST(MidiSchedulerTest, PreservesDenseBlocksAfterPrepareCapacityIsCalculated) {
     std::size_t eventCount = 0;
     for (const auto metadata : buffer) ++eventCount;
     EXPECT_EQ(eventCount, 300u);
+}
+
+TEST(MidiSchedulerTest, PreservesOverlappingNoteIdsPreciseControlsAndClipEndpoint) {
+    MidiClip source;
+    source.durationTicks = 3840;
+    source.directInstrumentEvents = true;
+    source.notes = {{480, 1440, 60, 90, 2}, {960, 1440, 60, 100, 2}};
+    source.instrumentControlEvents = {{"bend", 1920, 2, "pitchBend", false, 0.12345f, {}},
+                                      {"sustain", 3840, 3, "sustainPedal", false, 0.0f, {}}};
+    TimelineTimebase timebase{960, {{0, 120.0}, {1920, 90.0}}, {{0, 4, 4}, {1920, 3, 4}}};
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, timebase, 48000.0, compiled, error)) << error;
+    std::array<SonalloyEvent, 8> events{};
+    std::array<InstrumentEventOrder, 8> ordering{};
+    const auto count = MidiScheduler::scheduleInstrumentEvents({compiled}, 0, 112001, events.data(),
+                                                               ordering.data(), events.size());
+    ASSERT_EQ(count, 6u);
+    EXPECT_EQ(events[0].note_id, 0u);
+    EXPECT_EQ(events[1].note_id, 1u);
+    EXPECT_EQ(events[2].event_type, SONALLOY_EVENT_NOTE_OFF);
+    EXPECT_EQ(events[2].note_id, 0u);
+    EXPECT_EQ(events[2].sample_offset, 48000u);
+    EXPECT_FLOAT_EQ(events[3].value, 0.12345f);
+    EXPECT_EQ(events[4].note_id, 1u);
+    EXPECT_EQ(events[4].sample_offset, 64000u);
+    EXPECT_EQ(events[5].event_type, SONALLOY_EVENT_SUSTAIN);
+    EXPECT_EQ(events[5].sample_offset, 112000u);
+}
+
+TEST(MidiSchedulerTest, OrdersAdjacentClipsAndAllocatesDifferentLoopNoteIds) {
+    MidiClip source;
+    source.durationTicks = 960;
+    source.directInstrumentEvents = true;
+    source.loop = true;
+    source.notes = {{0, 960, 60, 100, 1}};
+    CompiledMidiClip compiled;
+    juce::String error;
+    ASSERT_TRUE(MidiScheduler::compile(source, TimelineTimebase{}, 48000.0, compiled, error));
+    compiled.noteIdStride = 1;
+    std::array<SonalloyEvent, 8> events{};
+    std::array<InstrumentEventOrder, 8> ordering{};
+    auto count = MidiScheduler::scheduleInstrumentEvents({compiled}, 24000, 1, events.data(),
+                                                         ordering.data(), events.size());
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(events[0].event_type, SONALLOY_EVENT_NOTE_OFF);
+    EXPECT_EQ(events[0].note_id, 0u);
+    EXPECT_EQ(events[1].event_type, SONALLOY_EVENT_NOTE_ON);
+    EXPECT_EQ(events[1].note_id, 1u);
+    auto next = compiled;
+    next.loop = false;
+    next.startSample = 24000;
+    next.startTick = 960;
+    compiled.loop = false;
+    count = MidiScheduler::scheduleInstrumentEvents({next, compiled}, 24000, 1, events.data(),
+                                                    ordering.data(), events.size());
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(events[0].event_type, SONALLOY_EVENT_NOTE_OFF);
+    EXPECT_EQ(events[1].event_type, SONALLOY_EVENT_NOTE_ON);
 }
 
 }  // namespace

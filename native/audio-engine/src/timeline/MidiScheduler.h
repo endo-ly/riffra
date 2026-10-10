@@ -1,12 +1,14 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <sonalloy.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "TimelineTimebase.h"
+#include "contract/ExecutionGraph.h"
 
 namespace riffra {
 
@@ -34,20 +36,36 @@ struct MidiClip final {
     bool muted = false;
     std::vector<MidiNote> notes;
     std::vector<MidiEvent> events;
+    std::vector<InstrumentControlEventSpec> instrumentControlEvents;
+    bool directInstrumentEvents = false;
+    std::uint64_t noteIdBase = 0;
 };
 
 struct CompiledMidiEvent final {
     std::int64_t sampleOffset = 0;
     int ordering = 0;
     juce::MidiMessage message;
+    std::uint64_t originalTick = 0;
+    std::uint32_t sourceOrder = 0;
+    std::optional<SonalloyEvent> instrumentEvent;
+    juce::String parameter;
 };
 
 struct CompiledMidiClip final {
+    std::uint64_t startTick = 0;
+    std::uint64_t durationTicks = 0;
     std::int64_t startSample = 0;
     std::int64_t lengthSamples = 1;
     bool loop = false;
     bool muted = false;
     std::vector<CompiledMidiEvent> events;
+    std::uint64_t noteIdStride = 0;
+};
+
+struct InstrumentEventOrder final {
+    std::uint64_t tick = 0;
+    int priority = 0;
+    std::uint32_t sourceOrder = 0;
 };
 
 /// Compiles timeline MIDI once during graph preparation and schedules only the
@@ -75,6 +93,11 @@ public:
 
     static void schedule(const std::vector<CompiledMidiClip>& clips, std::int64_t rangeStart,
                          int sampleCount, juce::MidiBuffer& destination) noexcept;
+    static std::size_t scheduleInstrumentEvents(const std::vector<CompiledMidiClip>& clips,
+                                                std::int64_t rangeStart, int sampleCount,
+                                                SonalloyEvent* destination,
+                                                InstrumentEventOrder* ordering,
+                                                std::size_t capacity) noexcept;
 };
 
 }  // namespace riffra

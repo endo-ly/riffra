@@ -9,12 +9,27 @@
         },
         "masterGainDb": 0.0,
         "metronomeEnabled": false,
+        "mixdown": {
+          "fadeOutSeconds": 0.0,
+          "musicalEndTick": 0,
+          "tailSeconds": 0.0
+        },
         "punchRange": null,
         "timebase": {
-          "bpm": 120.0,
           "ppq": 960,
-          "timeSignatureDenominator": 4,
-          "timeSignatureNumerator": 4
+          "tempoChanges": [
+            {
+              "bpm": 120.0,
+              "tick": 0
+            }
+          ],
+          "timeSignatureChanges": [
+            {
+              "denominator": 4,
+              "numerator": 4,
+              "tick": 0
+            }
+          ]
         },
         "tracks": []
       },
