@@ -269,7 +269,9 @@ jobs:
         env:
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
-        run: cargo test -p riffra-runtime sonalloy_import::tests -- --include-ignored
+        run: |
+          sudo prlimit --pid "$$" --rtprio=99:99
+          cargo test -p riffra-runtime sonalloy_import::tests -- --include-ignored
 
       # ThreadSanitizer cannot map its shadow memory with the runner's default
       # address-space randomization. Clang's runtime also intercepts the
