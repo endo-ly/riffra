@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "name": "duck",
+  "ticks_per_beat": 480,
+  "length_ticks": 1920,
+  "tempo_changes": [
+    {
+      "tick": 0,
+      "bpm": 120
+    },
+    {
+      "tick": 960,
+      "bpm": 90
+    }
+  ],
+  "time_signature_changes": [
+    {
+      "tick": 0,
+      "numerator": 4,
+      "denominator": 4
+    },
+    {
+      "tick": 960,
+      "numerator": 3,
+      "denominator": 4
+    }
+  ],
+  "events": [
+    {
+      "type": "note",
+      "tick": 240,
+      "duration_ticks": 720,
+      "note": 60,
+      "velocity": 90
+    },
+    {
+      "type": "note",
+      "tick": 480,
+      "duration_ticks": 720,
+      "note": 60,
+      "velocity": 100
+    },
+    {
+      "type": "sustain_pedal",
+      "tick": 720,
+      "down": true
+    },
+    {
+      "type": "pitch_bend",
+      "tick": 960,
+      "value": 0.12345
+    },
+    {
+      "type": "mod_wheel",
+      "tick": 1200,
+      "value": 0.23456
+    },
+    {
+      "type": "aftertouch",
+      "tick": 1440,
+      "value": 0.34567
+    },
+    {
+      "type": "parameter_change",
+      "tick": 1680,
+      "parameter": "layer.body.gain",
+      "native_value": -12
+    },
+    {
+      "type": "sustain_pedal",
+      "tick": 1920,
+      "down": false
+    }
+  ]
+}

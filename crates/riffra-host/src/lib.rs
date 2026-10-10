@@ -10,6 +10,7 @@ mod data_root;
 mod midi_file;
 mod project;
 mod project_store;
+pub mod sonalloy_bundle;
 mod storage;
 
 pub use asset::{
