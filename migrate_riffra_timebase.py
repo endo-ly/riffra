@@ -626,13 +626,22 @@ def restore_backup(backup_dir: Path) -> None:
             "sha256",
         }:
             raise MigrationError(f"{plan_path}.files[{index}]: invalid restore entry")
+        if not all(
+            isinstance(record[field], str)
+            for field in ("original", "backup", "sha256")
+        ):
+            raise MigrationError(f"{plan_path}.files[{index}]: restore paths and hash must be strings")
         original = Path(record["original"])
         backup_relative = Path(record["backup"])
+        digest = record["sha256"]
+        if not original.is_absolute():
+            raise MigrationError(f"{plan_path}.files[{index}]: original path must be absolute")
         if backup_relative.is_absolute() or ".." in backup_relative.parts:
             raise MigrationError(f"{plan_path}.files[{index}]: unsafe backup path")
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise MigrationError(f"{plan_path}.files[{index}]: invalid SHA-256 digest")
         backup = require_regular_file(backup_root / backup_relative)
         original = require_regular_file(original)
-        digest = record["sha256"]
         if hash_file(backup) != digest:
             raise MigrationError(f"{backup}: backup hash does not match restore plan")
         items.append((original, backup, digest))
