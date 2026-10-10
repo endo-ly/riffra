@@ -131,6 +131,17 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
     for (const auto& definition : definitionFiles) {
         const auto directory = definition.getParentDirectory();
         stagedDefinitionPaths.push_back(definition.getRelativePathFrom(presetRoot()));
+        const auto parsedDefinition = juce::JSON::parse(definition.loadFileAsString());
+        ASSERT_TRUE(parsedDefinition.isObject()) << definition.getFullPathName().toStdString();
+        const auto recommendedRange =
+            parsedDefinition.getProperty("metadata", {}).getProperty("recommended_range", {});
+        ASSERT_TRUE(recommendedRange.isObject()) << definition.getFullPathName().toStdString();
+        const auto minimumMidi = recommendedRange.getProperty("min_midi", {});
+        ASSERT_TRUE(minimumMidi.isInt() || minimumMidi.isInt64())
+            << definition.getFullPathName().toStdString();
+        const auto note = static_cast<int>(minimumMidi);
+        ASSERT_GE(note, 0) << definition.getFullPathName().toStdString();
+        ASSERT_LE(note, 127) << definition.getFullPathName().toStdString();
         juce::String error;
         auto runtime = loadPreset(directory, error);
         ASSERT_NE(runtime, nullptr)
@@ -138,7 +149,7 @@ TEST(SonalloyInstrumentRuntimeTest, CompilesAndPlaysEveryReleasedPreset) {
 
         juce::AudioBuffer<float> output(2, 256);
         juce::MidiBuffer midi;
-        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 0);
+        midi.addEvent(juce::MidiMessage::noteOn(1, note, 0.8f), 0);
         runtime->process(output.getArrayOfWritePointers(), 2, 256, &midi, playingContext());
         expectFinite(output);
         ASSERT_GT(maximumMagnitude(output), 0.0f) << definition.getFullPathName().toStdString();

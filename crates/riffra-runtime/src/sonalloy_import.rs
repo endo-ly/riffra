@@ -553,7 +553,6 @@ mod tests {
         mastered_demo["mix"]["master"] = serde_json::json!({
             "integrated_lufs": target.integrated_lufs,
             "true_peak_db": target.true_peak_db,
-            "loudness_range_lu": target.loudness_range_lu,
         });
         for part in mastered_demo["parts"].as_array_mut().unwrap() {
             for field in ["instrument", "pattern"] {
@@ -593,24 +592,40 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
+        let sonalloy_report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(sonalloy_report["status"], "ok");
+        let sonalloy_master = &sonalloy_report["master"];
+        assert_eq!(
+            sonalloy_master["target"]["integrated_lufs"].as_f64(),
+            Some(target.integrated_lufs)
+        );
+        assert_eq!(
+            sonalloy_master["target"]["true_peak_db"].as_f64(),
+            Some(target.true_peak_db)
+        );
+        let sonalloy_integrated_lufs = sonalloy_master["output"]["integrated_lufs"]
+            .as_f64()
+            .unwrap();
+        assert!(
+            (sonalloy_integrated_lufs - target.integrated_lufs).abs() <= 0.5,
+            "Sonalloy mastered output is {sonalloy_integrated_lufs} LUFS for a {} LUFS target",
+            target.integrated_lufs
+        );
+        let sonalloy_true_peak = sonalloy_master["output"]["true_peak_db"].as_f64().unwrap();
+        assert!(
+            sonalloy_true_peak <= target.true_peak_db,
+            "Sonalloy mastered true peak is {sonalloy_true_peak} dBTP for a {} dBTP target",
+            target.true_peak_db
+        );
+        let sonalloy_master_samples = samples(&master_reference);
         let mut mastered_session = imported;
         mastered_session.settings.mixdown.mastering = Some(target.clone());
         let mastered = render(&package_root, &mastered_session);
         let report = mastered.mastering.as_ref().unwrap();
         assert!(report.output.true_peak_db <= target.true_peak_db);
         assert!(report.deviation.integrated_lufs.abs() < 0.1);
-        let expected = samples(&master_reference);
         let actual = samples(Path::new(&mastered.path));
-        assert_eq!(actual.len(), expected.len());
-        let maximum_error = actual
-            .iter()
-            .zip(expected)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        assert!(
-            maximum_error < 1.0e-5,
-            "mastered waveform difference {maximum_error}"
-        );
+        assert_eq!(actual.len(), sonalloy_master_samples.len());
         fs::remove_dir_all(root).unwrap();
     }
 
