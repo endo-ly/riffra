@@ -158,6 +158,12 @@ where
                     0.0
                 };
             }
+            if let Some(pan_law) = patch.pan_law {
+                track.pan_law = pan_law;
+            }
+            if let Some(source) = patch.external_audio_source_track_id {
+                track.external_audio_source_track_id = source;
+            }
             if let Some(muted) = patch.muted {
                 track.muted = muted;
             }
@@ -253,11 +259,10 @@ where
                 .audio_clips
                 .iter()
                 .map(|clip| {
-                    let duration = arrangement.timebase.milliseconds_to_ticks(
-                        clip.timeline_duration.frames as f64 * 1000.0
-                            / f64::from(clip.timeline_duration.sample_rate),
-                    );
-                    clip.start_tick.0.saturating_add(duration.0)
+                    let duration = arrangement
+                        .timebase
+                        .duration_to_ticks(clip.start_tick, clip.timeline_duration);
+                    clip.start_tick.0.saturating_add(duration)
                 })
                 .max()
                 .unwrap_or(0);
@@ -366,6 +371,7 @@ where
             let clip_id = next_id("midi-clip");
             record_created(created, "midiClips", clip_id.clone());
             let clip = MidiClip {
+                instrument_control_events: Vec::new(),
                 id: clip_id,
                 name: placement.name,
                 track_id,
@@ -1039,6 +1045,7 @@ pub(super) fn create_midi_clip_in_arrangement(
     let id = next_id("midi-clip");
     arrangement
         .add_midi_clip(MidiClip {
+            instrument_control_events: Vec::new(),
             id: id.clone(),
             name: normalize_midi_clip_name(name),
             track_id: track_id.to_owned(),

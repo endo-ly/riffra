@@ -130,10 +130,10 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     const auto full = fixture("timeline-snapshot-full.json");
     const std::vector<std::pair<JsonPath, juce::var>> invalidValues{
         {JsonPath{"graph", "timebase", "ppq"}, 1},
-        {JsonPath{"graph", "timebase", "bpm"}, 19.0},
-        {JsonPath{"graph", "timebase", "bpm"}, 401.0},
-        {JsonPath{"graph", "timebase", "timeSignatureNumerator"}, 0},
-        {JsonPath{"graph", "timebase", "timeSignatureDenominator"}, 0},
+        {JsonPath{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 0.0},
+        {JsonPath{"graph", "timebase", "tempoChanges", "#0", "bpm"}, -1.0},
+        {JsonPath{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 0},
+        {JsonPath{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 0},
         {JsonPath{"graph", "masterGainDb"}, -91.0},
         {JsonPath{"graph", "masterGainDb"}, 1.0},
         {JsonPath{"graph", "tracks", "#0", "gainDb"}, -91.0},
@@ -183,12 +183,12 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     expectTimelineSnapshotRejected(invalidMidiPosition);
 
     const std::vector<std::pair<JsonPath, juce::var>> validBoundaries{
-        {{"graph", "timebase", "bpm"}, 20.0},
-        {{"graph", "timebase", "bpm"}, 400.0},
-        {{"graph", "timebase", "timeSignatureNumerator"}, 1},
-        {{"graph", "timebase", "timeSignatureNumerator"}, 255},
-        {{"graph", "timebase", "timeSignatureDenominator"}, 1},
-        {{"graph", "timebase", "timeSignatureDenominator"}, 255},
+        {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 20.0},
+        {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 400.0},
+        {{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 1},
+        {{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 255},
+        {{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 1},
+        {{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 32},
         {{"graph", "masterGainDb"}, -90.0},
         {{"graph", "masterGainDb"}, 0.0},
         {{"graph", "tracks", "#0", "gainDb"}, -90.0},

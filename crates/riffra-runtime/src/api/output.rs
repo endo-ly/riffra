@@ -36,6 +36,9 @@ use ts_rs::TS;
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum ControlOutput {
     Session(CreativeSession),
+    Timebase(riffra_core::ProjectTimebase),
+    Mixdown(riffra_core::MixdownSettings),
+    InstrumentEvents(Vec<riffra_core::InstrumentControlEvent>),
     SessionInspection(SessionInspection),
     History(HistoryState),
     ArrangementMutation(ArrangementMutationResult),

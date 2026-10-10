@@ -1,11 +1,7 @@
+import { musicalGridTicks, tickToBarBeat } from '@/shared/session/timebase';
 import type { Ref } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
-import {
-  formatMusicalPosition,
-  ticksPerBar,
-  ticksPerBeat,
-  clipGridTicks,
-} from '@/features/arrange/model/arrange-timeline';
+import { formatMusicalPosition } from '@/features/arrange/model/arrange-timeline';
 import styles from './MidiEditorPanel.module.css';
 
 interface MidiEditorRulerProps {
@@ -22,19 +18,24 @@ interface MidiEditorRulerProps {
  */
 function barLabel(tick: number, timebase: ProjectTimebase): string {
   const [bar, beat] = formatMusicalPosition(tick, timebase).split('.');
-  return tick % ticksPerBar(timebase) === 0 ? bar : `${bar}.${beat}`;
+  return tickToBarBeat(tick, timebase).beat === 1 && tickToBarBeat(tick, timebase).offset === 0
+    ? bar
+    : `${bar}.${beat}`;
 }
 
 export function MidiEditorRuler(props: MidiEditorRulerProps) {
-  const barTicks = ticksPerBar(props.timebase);
-  const beatTicks = ticksPerBeat(props.timebase);
   const barStarts =
     props.visibleTicks > 0
       ? [
           0,
-          ...clipGridTicks(props.clipStartTick, props.visibleTicks, barTicks).filter(
-            (tick) => tick > 0,
-          ),
+          ...musicalGridTicks(
+            props.clipStartTick,
+            props.clipStartTick + props.visibleTicks,
+            'bar',
+            props.timebase,
+          )
+            .map((tick) => tick - props.clipStartTick)
+            .filter((tick) => tick > 0),
         ]
       : [];
 
@@ -55,11 +56,12 @@ export function MidiEditorRuler(props: MidiEditorRulerProps) {
       {barStarts.map((tick, index) => {
         const beatMarks = [];
         const sectionEnd = barStarts[index + 1] ?? props.visibleTicks;
-        for (const offset of clipGridTicks(
+        for (const offset of musicalGridTicks(
           props.clipStartTick + tick,
-          sectionEnd - tick,
-          beatTicks,
-        )) {
+          props.clipStartTick + sectionEnd,
+          'beat',
+          props.timebase,
+        ).map((absolute) => absolute - props.clipStartTick - tick)) {
           if (offset === 0) continue;
           beatMarks.push(<span key={offset} style={{ left: offset * props.pixelsPerTick }} />);
         }

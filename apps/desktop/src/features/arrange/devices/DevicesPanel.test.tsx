@@ -16,6 +16,7 @@ const effect = {
   plugin: { path: 'test.vst3', parameterValues: [0.5, 0], disabledPlaceholder: false },
 };
 const track: Track = {
+  panLaw: 'equalPower' as const,
   id: 'track:1',
   name: 'Audio',
   kind: 'audio',

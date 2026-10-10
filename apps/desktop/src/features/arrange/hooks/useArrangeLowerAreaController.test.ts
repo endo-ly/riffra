@@ -6,6 +6,7 @@ import type { MidiClip } from '@/model/domain';
 import { useArrangeLowerAreaController } from './useArrangeLowerAreaController';
 
 const clip: MidiClip = {
+  instrumentControlEvents: [],
   id: 'clip:lower-area',
   name: 'Lower Area Clip',
   trackId: 'track:instrument',

@@ -91,13 +91,12 @@ struct PreparedTimeline final {
     bool metronomeEnabled = false;
     float masterGainDb = 0.0f;
     bool hasSolo = false;
-    std::int64_t beatSamples = 0;
-    std::int64_t beatsPerBar = 4;
-    std::uint16_t timeSignatureNumerator = 4;
-    std::uint16_t timeSignatureDenominator = 4;
     GraphSummary summary;
     std::vector<std::unique_ptr<Track>> tracks;
-    std::vector<Track*> processingTracks;
+    std::vector<std::vector<Track*>> processingStages;
+    std::int64_t mixEndSample = 0;
+    std::int64_t fadeOutSamples = 0;
+    std::vector<std::int64_t> timebaseChangeSamples;
 
     [[nodiscard]] Track* findTrack(const juce::String& trackId) const noexcept {
         for (const auto& track : tracks)

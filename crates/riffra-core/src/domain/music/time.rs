@@ -388,51 +388,76 @@ impl ProjectTimebase {
     /// Returns an error when the timebase or position is invalid, or when the
     /// resulting tick cannot be represented.
     pub fn musical_position_to_tick(
-        self,
+        &self,
         position: MusicalPosition,
     ) -> Result<TimelineTick, DomainError> {
         let position = MusicalPosition::new(position.bar, position.beat, position.offset)?;
-        let ticks_per_beat = self.ticks_per_notated_beat()?;
-        if position.beat > u32::from(self.time_signature_numerator) {
+        let target_bar = u64::from(position.bar - 1);
+        let (start_tick, start_bar, signature, next_tick) =
+            self.signature_segment(None, Some(target_bar))?;
+        let ticks_per_beat = u64::from(self.ppq) * 4 / u64::from(signature.denominator);
+        if position.beat > u32::from(signature.numerator) {
             return Err(invalid_value("position beat is outside the time signature"));
         }
-        let beat_index = u128::from(position.bar - 1)
-            .checked_mul(u128::from(self.time_signature_numerator))
-            .and_then(|value| value.checked_add(u128::from(position.beat - 1)))
-            .ok_or_else(|| invalid_value("position is too large"))?;
-        let base_ticks = beat_index
-            .checked_mul(u128::from(ticks_per_beat))
-            .ok_or_else(|| invalid_value("position is too large"))?;
-        let offset_ticks = round_fraction(
+        let beats = u128::from(target_bar - start_bar) * u128::from(signature.numerator)
+            + u128::from(position.beat - 1);
+        let offset = round_fraction(
             u128::from(ticks_per_beat) * u128::from(position.offset.numerator),
             u128::from(position.offset.denominator),
         );
-        let ticks = base_ticks
-            .checked_add(offset_ticks)
-            .and_then(|value| u64::try_from(value).ok())
-            .ok_or_else(|| invalid_value("position is too large"))?;
-        Ok(TimelineTick(ticks))
+        let tick =
+            u64::try_from(u128::from(start_tick) + beats * u128::from(ticks_per_beat) + offset)
+                .map_err(|_| invalid_value("position is too large"))?;
+        if next_tick.is_some_and(|end| tick >= end) {
+            return Err(invalid_value(
+                "position lies in a bar truncated by a time signature change",
+            ));
+        }
+        Ok(TimelineTick(tick))
     }
 
-    /// Converts an absolute timeline tick to the nearest exact musical position.
-    pub fn tick_to_musical_position(self, tick: TimelineTick) -> MusicalPosition {
-        let ticks_per_beat = self.ticks_per_notated_beat().unwrap_or(1);
-        let total_beats = tick.0 / ticks_per_beat;
-        let beat_offset = tick.0 % ticks_per_beat;
-        let beats_per_bar = u64::from(self.time_signature_numerator.max(1));
-        let bar = total_beats / beats_per_bar;
-        let beat = total_beats % beats_per_bar;
-        let bar = u32::try_from(bar.saturating_add(1)).unwrap_or(u32::MAX);
-        let beat = u32::try_from(beat.saturating_add(1)).unwrap_or(u32::MAX);
-        let numerator = u32::try_from(beat_offset).unwrap_or(u32::MAX);
-        let denominator = u32::try_from(ticks_per_beat).unwrap_or(u32::MAX);
+    /// Converts an absolute tick using the meter effective at that position.
+    pub fn tick_to_musical_position(&self, tick: TimelineTick) -> MusicalPosition {
+        let (start_tick, start_bar, signature, _) = self
+            .signature_segment(Some(tick.0), None)
+            .expect("validated project timebase");
+        let ticks_per_beat = u64::from(self.ppq) * 4 / u64::from(signature.denominator);
+        let delta = tick.0 - start_tick;
+        let beats = delta / ticks_per_beat;
+        let bar = start_bar + beats / u64::from(signature.numerator);
         MusicalPosition::new(
-            bar,
-            beat,
-            MusicalFraction::new(numerator, denominator)
-                .expect("a valid timebase produces a valid musical fraction"),
+            u32::try_from(bar.saturating_add(1)).unwrap_or(u32::MAX),
+            (beats % u64::from(signature.numerator)) as u32 + 1,
+            MusicalFraction::new((delta % ticks_per_beat) as u32, ticks_per_beat as u32)
+                .expect("valid meter fraction"),
         )
-        .expect("a valid timebase produces a valid musical position")
+        .expect("valid meter position")
+    }
+
+    fn signature_segment(
+        &self,
+        tick: Option<u64>,
+        bar: Option<u64>,
+    ) -> Result<(u64, u64, crate::TimeSignatureChange, Option<u64>), DomainError> {
+        self.ticks_per_notated_beat()?;
+        let mut signature = self.time_signature_changes[0];
+        let mut start_tick = 0;
+        let mut start_bar = 0;
+        for next in self.time_signature_changes.iter().skip(1) {
+            if next.numerator == signature.numerator && next.denominator == signature.denominator {
+                continue;
+            }
+            let bar_ticks = u64::from(self.ppq) * 4 * u64::from(signature.numerator)
+                / u64::from(signature.denominator);
+            let next_bar = start_bar + (next.tick - start_tick).div_ceil(bar_ticks);
+            if tick.is_some_and(|t| t < next.tick) || bar.is_some_and(|b| b < next_bar) {
+                return Ok((start_tick, start_bar, signature, Some(next.tick)));
+            }
+            signature = *next;
+            start_tick = next.tick;
+            start_bar = next_bar;
+        }
+        Ok((start_tick, start_bar, signature, None))
     }
 
     /// Converts a whole-note fraction to the nearest positive timeline duration.
@@ -441,7 +466,7 @@ impl ProjectTimebase {
     ///
     /// Returns an error when the timebase or duration is invalid, when the
     /// result rounds to zero, or when it cannot be represented.
-    pub fn musical_duration_to_ticks(self, duration: MusicalDuration) -> Result<u64, DomainError> {
+    pub fn musical_duration_to_ticks(&self, duration: MusicalDuration) -> Result<u64, DomainError> {
         let duration = MusicalDuration::new(duration.numerator, duration.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
             .checked_mul(4)
@@ -464,7 +489,7 @@ impl ProjectTimebase {
     /// Returns an error when the timebase is invalid, the duration is zero, or
     /// the reduced fraction cannot be represented by [`MusicalDuration`].
     pub fn ticks_to_musical_duration(
-        self,
+        &self,
         duration_ticks: u64,
     ) -> Result<MusicalDuration, DomainError> {
         self.ticks_per_notated_beat()?;
@@ -489,7 +514,7 @@ impl ProjectTimebase {
     ///
     /// Returns an error when the timebase or offset is invalid, or when the
     /// result cannot be represented.
-    pub fn musical_offset_to_ticks(self, offset: MusicalOffset) -> Result<u64, DomainError> {
+    pub fn musical_offset_to_ticks(&self, offset: MusicalOffset) -> Result<u64, DomainError> {
         let offset = MusicalOffset::new(offset.numerator, offset.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
             .checked_mul(4)
@@ -507,7 +532,7 @@ impl ProjectTimebase {
     ///
     /// Returns an error when the timebase or delta is invalid, or when the
     /// result cannot be represented by an `i64`.
-    pub fn musical_time_delta_to_ticks(self, delta: MusicalTimeDelta) -> Result<i64, DomainError> {
+    pub fn musical_time_delta_to_ticks(&self, delta: MusicalTimeDelta) -> Result<i64, DomainError> {
         self.ticks_per_notated_beat()?;
         let delta = MusicalTimeDelta::new(delta.numerator, delta.denominator)?;
         let whole_note_ticks = u128::from(self.ppq)
@@ -525,17 +550,21 @@ impl ProjectTimebase {
         })
     }
 
-    fn ticks_per_notated_beat(self) -> Result<u64, DomainError> {
+    fn ticks_per_notated_beat(&self) -> Result<u64, DomainError> {
         if self.ppq == 0
-            || self.time_signature_numerator == 0
-            || !matches!(self.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
+            || self.time_signature_changes.is_empty()
+            || self.time_signature_changes[0].numerator == 0
+            || !matches!(
+                self.time_signature_changes[0].denominator,
+                1 | 2 | 4 | 8 | 16 | 32
+            )
         {
             return Err(invalid_value("project timebase is invalid"));
         }
         let quarter_ticks = u64::from(self.ppq)
             .checked_mul(4)
             .ok_or_else(|| invalid_value("project timebase is too large"))?;
-        let denominator = u64::from(self.time_signature_denominator);
+        let denominator = u64::from(self.time_signature_changes[0].denominator);
         if !quarter_ticks.is_multiple_of(denominator) {
             return Err(invalid_value(
                 "time signature denominator cannot be represented by the project PPQ",
@@ -659,9 +688,12 @@ mod tests {
         );
 
         let three_four = ProjectTimebase {
-            time_signature_numerator: 3,
-            time_signature_denominator: 4,
-            ..timebase
+            time_signature_changes: vec![crate::TimeSignatureChange {
+                tick: 0,
+                numerator: 3,
+                denominator: 4,
+            }],
+            ..timebase.clone()
         };
         assert_eq!(
             three_four
@@ -671,8 +703,12 @@ mod tests {
         );
 
         let five_four = ProjectTimebase {
-            time_signature_numerator: 5,
-            ..timebase
+            time_signature_changes: vec![crate::TimeSignatureChange {
+                tick: 0,
+                numerator: 5,
+                denominator: 4,
+            }],
+            ..timebase.clone()
         };
         assert_eq!(
             five_four
@@ -682,9 +718,12 @@ mod tests {
         );
 
         let seven_eight = ProjectTimebase {
-            time_signature_numerator: 7,
-            time_signature_denominator: 8,
-            ..timebase
+            time_signature_changes: vec![crate::TimeSignatureChange {
+                tick: 0,
+                numerator: 7,
+                denominator: 8,
+            }],
+            ..timebase.clone()
         };
         assert_eq!(
             seven_eight

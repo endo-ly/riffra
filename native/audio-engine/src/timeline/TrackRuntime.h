@@ -205,6 +205,13 @@ public:
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> processedBuffer;
     juce::AudioBuffer<float> trackOutputBuffer;
+    juce::AudioBuffer<float> routedOutputBuffer;
+    juce::AudioBuffer<float> masterDelayBuffer;
+    std::int64_t masterDelaySamples = 0;
+    std::int64_t masterDelayWritePosition = 0;
+    std::int64_t routeLatencySamples = 0;
+    TrackRuntime* externalAudioSource = nullptr;
+    bool unityCenterStereo = false;
     std::uint64_t windowProcessingTotalUs = 0;
     std::uint64_t windowProcessingMaximumUs = 0;
     std::uint32_t windowProcessingCount = 0;
@@ -242,6 +249,9 @@ public:
     std::uint16_t midiSourceIndex = 0;
     int midiChannel = 0;
     juce::MidiBuffer midiBuffer;
+    std::vector<SonalloyEvent> instrumentEvents;
+    std::vector<InstrumentEventOrder> instrumentEventOrdering;
+    std::size_t instrumentEventCount = 0;
 
 private:
     void updateLiveActivity(const juce::MidiMessage& message) noexcept {

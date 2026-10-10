@@ -6,6 +6,7 @@
 mod clips;
 mod device;
 mod instrument;
+mod instrument_event;
 mod library;
 mod music;
 mod project;
@@ -17,6 +18,7 @@ mod track;
 pub use clips::*;
 pub use device::*;
 pub use instrument::*;
+pub use instrument_event::*;
 pub use library::*;
 pub use music::*;
 pub use project::*;

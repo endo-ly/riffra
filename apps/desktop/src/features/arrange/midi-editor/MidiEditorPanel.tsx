@@ -1,6 +1,8 @@
+import { musicalGridTicks, snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MutableRefObject } from 'react';
 import type { CreativeSession, MidiClip, MidiNote, ProjectTimebase } from '@/model/domain';
+import { ticksToSeconds } from '@/shared/session/timebase';
 import {
   SNAP_GRID_OPTIONS,
   snapGridLabel,
@@ -174,8 +176,22 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const barTicks = ticksPerBar(props.timebase);
   const snapTicks = snapGridTicks(snap, props.timebase);
   const clipStartTick = clip?.startTick ?? 0;
-  const barLineTicks = clipGridTicks(clipStartTick, visibleTicks, barTicks);
-  const beatLineTicks = clipGridTicks(clipStartTick, visibleTicks, beatTicks);
+  const snapLocalTick = (tick: number, start: number, gridTicks: number) =>
+    snap === 'bar'
+      ? Math.max(0, snapToBar(start + tick, props.timebase) - start)
+      : snapClipTick(tick, start, gridTicks);
+  const barLineTicks = musicalGridTicks(
+    clipStartTick,
+    clipStartTick + visibleTicks,
+    'bar',
+    props.timebase,
+  ).map((tick) => tick - clipStartTick);
+  const beatLineTicks = musicalGridTicks(
+    clipStartTick,
+    clipStartTick + visibleTicks,
+    'beat',
+    props.timebase,
+  ).map((tick) => tick - clipStartTick);
   const subdivisionLineTicks = useMemo(() => {
     if (snapTicks <= 0) return [];
     const pixelsPerSubdivision = snapTicks * pixelsPerTick;
@@ -237,10 +253,13 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   );
   const auditionMsForTicks = useCallback(
     (durationTicks: number) => {
-      const ms = (durationTicks * 60_000) / (props.timebase.bpm * props.timebase.ppq);
+      const ms =
+        (ticksToSeconds(clipStartTick + durationTicks, props.timebase) -
+          ticksToSeconds(clipStartTick, props.timebase)) *
+        1000;
       return Math.max(150, Math.min(700, Math.round(ms)));
     },
-    [props.timebase],
+    [props.timebase, clipStartTick],
   );
   const auditionNote = useCallback(
     (pitch: number, velocity: number, durationTicks?: number) => {
@@ -467,7 +486,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
 
   const pasteNotes = (): MidiEditResult => {
     if (!clip || !clipboardRef.current || !props.onInsertNotes) return;
-    const anchor = snapClipTick(
+    const anchor = snapLocalTick(
       props.playheadTickRef.current - clip.startTick,
       clip.startTick,
       snapTicks,
@@ -549,7 +568,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     const rawTick = (clientX - bounds.left) / pixelsPerTick;
     const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
     if (rawPitch === null) return;
-    const requestedStartTick = snapClipTick(rawTick, clip.startTick, snapTicks);
+    const requestedStartTick = snapLocalTick(rawTick, clip.startTick, snapTicks);
     const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
     const beforeIds = new Set(clip.notes.map((note) => note.id));
     const duration = Math.max(1, Math.round(durationTicks));
@@ -784,7 +803,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     const updatePreview = (clientX: number, clientY: number) => {
       const deltaTicks = (clientX - originX) / pixelsPerTick;
       if (mode === 'move') {
-        const snappedStart = snapClipTick(note.startTick + deltaTicks, clipStartTick, snapTicks);
+        const snappedStart = snapLocalTick(note.startTick + deltaTicks, clipStartTick, snapTicks);
         const minTickDelta = -Math.min(...originNotes.map((candidate) => candidate.startTick));
         const tickDelta = Math.max(minTickDelta, snappedStart - note.startTick);
         const rawPitchDelta = Math.round((originY - clientY) / rowHeight);
@@ -802,7 +821,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         };
       }
       const snappedDuration =
-        snapClipTick(note.startTick + note.durationTicks + deltaTicks, clipStartTick, snapTicks) -
+        snapLocalTick(note.startTick + note.durationTicks + deltaTicks, clipStartTick, snapTicks) -
         note.startTick;
       const minDurationDelta = Math.max(
         ...originNotes.map((candidate) => 1 - candidate.durationTicks),
@@ -1125,10 +1144,10 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     const right = Math.max(originX, pointer.clientX);
                     const rawStart = (left - bounds.left) / pixelsPerTick;
                     const rawEnd = (right - bounds.left) / pixelsPerTick;
-                    const startTick = snapClipTick(rawStart, clipStartTick, snapTicks);
+                    const startTick = snapLocalTick(rawStart, clipStartTick, snapTicks);
                     const endTick = Math.max(
                       startTick,
-                      snapClipTick(rawEnd, clipStartTick, snapTicks),
+                      snapLocalTick(rawEnd, clipStartTick, snapTicks),
                     );
                     const durationTicks = Math.max(
                       1,

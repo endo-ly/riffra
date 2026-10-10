@@ -3,6 +3,7 @@ import type { AudioInputRoute } from "./AudioInputRoute";
 import type { EffectDevice } from "./EffectDevice";
 import type { MidiInputRoute } from "./MidiInputRoute";
 import type { MonitoringState } from "./MonitoringState";
+import type { PanLaw } from "./PanLaw";
 import type { TrackInstrument } from "./TrackInstrument";
 import type { TrackKind } from "./TrackKind";
 
@@ -14,4 +15,4 @@ export type Track = { id: string, name: string, kind: TrackKind, gainDb: number,
  * Presentation color as `#rrggbb`. `None` delegates automatic coloring
  * to the presentation layer.
  */
-color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrument, effects: Array<EffectDevice>, };
+color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrument, effects: Array<EffectDevice>, panLaw: PanLaw, externalAudioSourceTrackId?: string, };

@@ -395,11 +395,10 @@ export async function updateArrangementTimebase(
   timebase: ProjectTimebase,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
-    command: 'timebase.update',
+    command: 'timebase.set-map',
     params: {
-      bpm: timebase.bpm,
-      timeSignatureNumerator: timebase.timeSignatureNumerator,
-      timeSignatureDenominator: timebase.timeSignatureDenominator,
+      tempoChanges: timebase.tempoChanges,
+      timeSignatureChanges: timebase.timeSignatureChanges,
     },
   });
 }

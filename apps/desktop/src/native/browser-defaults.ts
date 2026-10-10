@@ -20,9 +20,8 @@ export function defaultSession(): CreativeSession {
       revision: 0,
       timebase: {
         ppq: 960,
-        bpm: 120,
-        timeSignatureNumerator: 4,
-        timeSignatureDenominator: 4,
+        tempoChanges: [{ tick: 0, bpm: 120 }],
+        timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
       },
       loopRange: { enabled: false, startTick: 0, endTick: 0 },
       tracks: [],
@@ -38,6 +37,14 @@ export function defaultSession(): CreativeSession {
     },
     settings: {
       masterDb: 0,
+      mixdown: {
+        musicalEndTick: 0,
+        tailSeconds: 0,
+        fadeOutSeconds: 0,
+        mastering: null,
+        sampleRate: null,
+        blockSize: null,
+      },
       loopEnabled: false,
       countInBeats: 0,
       metronomeEnabled: false,

@@ -13,7 +13,7 @@ riffra::TimelineSnapshotSpec makeSnapshot(const juce::String& effectPath,
     riffra::TimelineSnapshotSpec snapshot;
     snapshot.projectId = "real-vst-runtime-test";
     snapshot.revision = 1;
-    snapshot.graph.timebase = {960, 120.0, 4, 4};
+    snapshot.graph.timebase = {960, {{0, 120.0}}, {{0, 4, 4}}};
 
     riffra::TrackSpec instrumentTrack;
     instrumentTrack.id = "track:instrument";

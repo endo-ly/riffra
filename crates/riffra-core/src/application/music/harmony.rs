@@ -108,7 +108,7 @@ where
         }
         let mut created_entity_ids = super::CreatedEntityIds::new();
         let session = self.commit_arrangement(|arrangement| {
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             let events = inputs
                 .into_iter()
                 .map(|input| {
@@ -187,7 +187,7 @@ where
                     current.chord.clone()
                 }
             };
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             let event = HarmonyEvent {
                 id: event_id.to_owned(),
                 start_tick: start
@@ -231,7 +231,7 @@ where
         &mut self,
     ) -> Result<Vec<MusicalHarmonyEventView>, ApplicationError> {
         let session = self.get_session()?;
-        let timebase = session.arrangement.timebase;
+        let timebase = session.arrangement.timebase.clone();
         Ok(session
             .arrangement
             .harmony_events
@@ -287,7 +287,7 @@ where
                 || crate::DomainError::InvalidHarmony("clip range is too large".into()),
             )?);
             let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             let start_tick = selection
                 .start
                 .map(|position| timebase.musical_position_to_tick(position))
@@ -337,7 +337,7 @@ where
                         let mut added_step = false;
                         for step in &pattern.steps {
                             let offset = repeated_offset_to_ticks(
-                                timebase,
+                                &timebase,
                                 pattern.length,
                                 repeat,
                                 step.offset,

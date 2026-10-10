@@ -7,7 +7,7 @@ use riffra_core::ProjectTimebase;
 impl HostDispatcher<'_> {
     pub(super) fn timebase_update(
         &self,
-        current: ProjectTimebase,
+        mut current: ProjectTimebase,
         params: TimebaseUpdateParams,
     ) -> Result<ProjectTimebase, DispatchError> {
         if params.bpm.is_none()
@@ -18,16 +18,16 @@ impl HostDispatcher<'_> {
                 "timebase update requires at least one field",
             ));
         }
-        Ok(ProjectTimebase {
-            ppq: current.ppq,
-            bpm: params.bpm.unwrap_or(current.bpm),
-            time_signature_numerator: params
-                .time_signature_numerator
-                .unwrap_or(current.time_signature_numerator),
-            time_signature_denominator: params
-                .time_signature_denominator
-                .unwrap_or(current.time_signature_denominator),
-        })
+        if let Some(bpm) = params.bpm {
+            current.tempo_changes[0].bpm = bpm;
+        }
+        if let Some(numerator) = params.time_signature_numerator {
+            current.time_signature_changes[0].numerator = numerator;
+        }
+        if let Some(denominator) = params.time_signature_denominator {
+            current.time_signature_changes[0].denominator = denominator;
+        }
+        Ok(current)
     }
 }
 
@@ -124,9 +124,15 @@ mod tests {
             .unwrap();
         let session = mutated_session(&updated);
         assert_eq!(session.arrangement.timebase.ppq, 960);
-        assert_eq!(session.arrangement.timebase.bpm, 140.0);
-        assert_eq!(session.arrangement.timebase.time_signature_numerator, 4);
-        assert_eq!(session.arrangement.timebase.time_signature_denominator, 4);
+        assert_eq!(session.arrangement.timebase.tempo_changes[0].bpm, 140.0);
+        assert_eq!(
+            session.arrangement.timebase.time_signature_changes[0].numerator,
+            4
+        );
+        assert_eq!(
+            session.arrangement.timebase.time_signature_changes[0].denominator,
+            4
+        );
 
         let updated = dispatcher
             .dispatch(
@@ -145,9 +151,15 @@ mod tests {
             mutated_session(&updated).arrangement.timebase,
             riffra_core::ProjectTimebase {
                 ppq: 960,
-                bpm: 100.0,
-                time_signature_numerator: 7,
-                time_signature_denominator: 8,
+                tempo_changes: vec![riffra_core::TempoChange {
+                    tick: 0,
+                    bpm: 100.0
+                }],
+                time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                    tick: 0,
+                    numerator: 7,
+                    denominator: 8
+                }]
             }
         );
         let _ = fs::remove_dir_all(root);

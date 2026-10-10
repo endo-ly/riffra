@@ -288,21 +288,27 @@ riffra --data-root ./riffra-data --interactive
 | `session settings update` | `--project-name` `--master-db` `--loop-enabled` `--count-in-beats` `--metronome-enabled` `--note` | 指定した項目だけ更新                                                                                                                                                                          |
 | `history get`             | -                                                                                                 | 履歴状態                                                                                                                                                                                      |
 | `undo` / `redo`           | -                                                                                                 | `--interactive` 限定                                                                                                                                                                          |
-| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | 指定した項目だけ更新。PPQは固定値で外部から変更しない                                                                                                                                         |
+| `timebase update`         | [`--bpm`] [`--time-signature-numerator`] [`--time-signature-denominator`]                         | Tick 0の指定項目だけ更新。後続の変更点を保持する。PPQは固定                                                                                                                                   |
+
+変更点全体は`timebase get-map`で取得し、`timebase set-map --map-json <JSON|@file>`で置き換える。入力は`tempoChanges`と`timeSignatureChanges`の配列で、どちらもTick 0から重複のない昇順とする。
+
+`mixdown get`と`mixdown set --settings-json <JSON|@file>`で楽曲終端Tick、Tail、Fade、Mastering目標、比較用のSample Rate・Block Sizeを参照・設定する。
 
 ### Track と入力 Routing
 
-| コマンド                     | 主要引数                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `track list`                 | -                                                                                                 |
-| `track add`                  | `--name` `--kind audio\|instrument`                                                               |
-| `track update`               | `--track-id` + `--name` `--gain-db` `--pan` `--muted` `--solo` `--armed` `--monitoring` `--color` |
-| `track remove` / `duplicate` | `--track-id`                                                                                      |
-| `track reorder`              | `--track-id` `--target-index`                                                                     |
-| `track audio-input set`      | `--track-id` `--channel-index`                                                                    |
-| `track midi-input set`       | `--track-id` [`--device-id`] [`--channel`] (1〜16)                                                |
+| コマンド                     | 主要引数                                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `track list`                 | -                                                                                                             |
+| `track add`                  | `--name` `--kind audio\|instrument`                                                                           |
+| `track update`               | `--track-id` + `--name` `--gain-db` `--pan` `--pan-law` `--muted` `--solo` `--armed` `--monitoring` `--color` |
+| `track remove` / `duplicate` | `--track-id`                                                                                                  |
+| `track reorder`              | `--track-id` `--target-index`                                                                                 |
+| `track audio-input set`      | `--track-id` `--channel-index`                                                                                |
+| `track midi-input set`       | `--track-id` [`--device-id`] [`--channel`] (1〜16)                                                            |
 
 `audio-input clear` / `midi-input clear --track-id` で解除する。
+
+`track external-audio-input set --track-id <consumer> --source-track-id <source>`でTrack間を接続し、`clear --track-id <consumer>`で解除する。循環と自身の参照は禁止する。
 
 ### Clip
 
@@ -370,6 +376,8 @@ riffra --attach automation clear --track-id track:01j... --parameter volume
 - レーンIDは`automation:{trackId}:{volume|pan}`で採番され、新規作成時は`createdEntityIds.automationLanes`に入る
 - 非空のレーンがある区間では、volumeとpanはTrackの静的な`--gain-db`/`--pan`を置き換える。点の範囲外では静的な値へ戻る。Mute/SoloはAutomationと独立にTrack出力の可否を決める
 
+音源制御は`instrument-event list --clip-id <id>`で参照する。`add --clip-id <id> --tick <tick> --kind-json <JSON|@file>`、`set --clip-id <id> --events-json <JSON|@file>`、`update --clip-id <id> --event-json <JSON|@file>`、`remove --clip-id <id> --event-id <id>`で編集する。TickはClip相対で終端を含む。種類は`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`。Parameter Changeは`parameter`と`nativeValue`を保持する。
+
 ### 低レベル MIDI Note
 
 | コマンド                           | 主要引数                                                                                                   |
@@ -411,6 +419,8 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 | `project import`    | `<path>`            | Project package からセッションを置き換える         |
 
 取り込んだ Asset の配置は `audio-clip add-asset` / `midi-clip add-asset` で行う。
+
+Sonalloy Bundleは`riffra --attach project import-sonalloy <BUNDLE_DIRECTORY>`で新しいProjectへ取り込む。Standaloneでも同じProjectコマンドを使う。InstrumentとアセットはProject専用Snapshotとして保存され、元Bundleを移動しても再生・Export/Importできる。不正なManifest、Hash、参照、未知イベント、960 PPQで正確に表現できないTickはインポート失敗として返す。
 
 ### Track Device (Instrument / Effect)
 

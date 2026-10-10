@@ -92,6 +92,14 @@ mod tests {
         // Assert
         let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(value["schemaVersion"], SESSION_SCHEMA_VERSION);
+        assert_eq!(
+            value["session"]["arrangement"]["timebase"],
+            serde_json::json!({
+                "ppq": 960,
+                "tempoChanges": [{ "tick": 0, "bpm": 120.0 }],
+                "timeSignatureChanges": [{ "tick": 0, "numerator": 4, "denominator": 4 }],
+            })
+        );
         assert_eq!(deserialize_session_document(&payload).unwrap(), session);
     }
 

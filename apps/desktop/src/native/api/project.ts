@@ -79,6 +79,10 @@ export async function importProject(path: string): Promise<ProjectActivationResu
   return dispatchControlOrFallback({ command: 'project.import', params: { path } }, null);
 }
 
+export async function importSonalloyBundle(path: string): Promise<ProjectActivationResult | null> {
+  return dispatchControlOrFallback({ command: 'project.import-sonalloy', params: { path } }, null);
+}
+
 function defaultProjectActivationResult(): ProjectActivationResult {
   return {
     projectState: defaultProjectState(),

@@ -49,17 +49,21 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     prepared->projectId = snapshot.projectId;
     prepared->revision = snapshot.revision;
     prepared->timebase.ppq = graph.timebase.ppq;
-    prepared->timebase.bpm = graph.timebase.bpm;
+    prepared->timebase.tempoChanges = graph.timebase.tempoChanges;
+    prepared->timebase.timeSignatureChanges = graph.timebase.timeSignatureChanges;
     prepared->outputSampleRate = outputSampleRate;
+    for (const auto& change : graph.timebase.tempoChanges)
+        prepared->timebaseChangeSamples.push_back(
+            prepared->timebase.tickToSample(change.tick, outputSampleRate));
+    for (const auto& change : graph.timebase.timeSignatureChanges)
+        prepared->timebaseChangeSamples.push_back(
+            prepared->timebase.tickToSample(change.tick, outputSampleRate));
+    std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
+    prepared->timebaseChangeSamples.erase(
+        std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
+        prepared->timebaseChangeSamples.end());
     prepared->preparedBlockSize = maximumBlockSize;
     prepared->masterGainDb = static_cast<float>(graph.masterGainDb);
-    const auto beatTicks =
-        static_cast<double>(prepared->timebase.ppq) * 4.0 / graph.timebase.timeSignatureDenominator;
-    prepared->beatSamples = prepared->timebase.tickToSample(
-        static_cast<std::uint64_t>(std::llround(beatTicks)), outputSampleRate);
-    prepared->beatsPerBar = graph.timebase.timeSignatureNumerator;
-    prepared->timeSignatureNumerator = graph.timebase.timeSignatureNumerator;
-    prepared->timeSignatureDenominator = graph.timebase.timeSignatureDenominator;
     prepared->metronomeEnabled = graph.metronomeEnabled;
     prepared->loopEnabled = graph.loopRange.enabled;
     prepared->loopStartSample =
@@ -74,7 +78,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         prepared->punchEnabled = true;
     }
 
-    std::int64_t maximumPluginDelay = 0;
     for (const auto& trackSpec : graph.tracks) {
         auto track = std::make_unique<Track>();
         track->runtime = std::make_unique<TrackRuntime>();
@@ -121,12 +124,21 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->instrument = trackSpec.instrument;
         track->instrumentDeviceId = instrumentId(track->instrument);
 
+        std::uint64_t nextTimelineNoteId = 0;
+        std::uint64_t noteIdStride = 0;
+        for (const auto& clip : trackSpec.midiClips) noteIdStride += clip.notes.size();
         for (const auto& clipSpec : trackSpec.midiClips) {
             MidiClip midiClip;
             midiClip.startTick = clipSpec.startTick;
             midiClip.durationTicks = clipSpec.durationTicks;
             midiClip.loop = clipSpec.loopEnabled;
             midiClip.muted = clipSpec.muted;
+            midiClip.directInstrumentEvents =
+                trackSpec.instrument.has_value() &&
+                std::holds_alternative<InternalInstrumentSpec>(*trackSpec.instrument);
+            midiClip.noteIdBase = nextTimelineNoteId;
+            nextTimelineNoteId += clipSpec.notes.size();
+            midiClip.instrumentControlEvents = clipSpec.instrumentControlEvents;
             midiClip.notes.reserve(clipSpec.notes.size());
             for (const auto& noteSpec : clipSpec.notes)
                 midiClip.notes.push_back({noteSpec.startTick, noteSpec.durationTicks, noteSpec.note,
@@ -140,14 +152,33 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 midiClip.events.push_back(
                     {kind, eventSpec.tick, eventSpec.channel, eventSpec.data1, eventSpec.data2});
             }
-            MidiScheduler::CompiledMidiClip compiled;
-            if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate, compiled,
-                                        error))
-                return false;
-            track->runtime->midiClips.push_back(std::move(compiled));
+            const auto originalStart = midiClip.startTick;
+            const auto originalNoteBase = midiClip.noteIdBase;
+            std::uint64_t iteration = 0;
+            do {
+                const auto lastTempoTick = prepared->timebase.tempoChanges.back().tick;
+                midiClip.loop = clipSpec.loopEnabled && midiClip.startTick >= lastTempoTick;
+                midiClip.noteIdBase = originalNoteBase + iteration * noteIdStride;
+                MidiScheduler::CompiledMidiClip compiled;
+                if (!MidiScheduler::compile(midiClip, prepared->timebase, outputSampleRate,
+                                            compiled, error))
+                    return false;
+                compiled.noteIdStride = noteIdStride;
+                track->runtime->midiClips.push_back(std::move(compiled));
+                if (!clipSpec.loopEnabled || midiClip.loop) break;
+                if (++iteration > 100'000 ||
+                    iteration > (std::numeric_limits<std::uint64_t>::max() - originalStart) /
+                                    midiClip.durationTicks) {
+                    error = "Timeline loop preparation exceeds the supported event range.";
+                    return false;
+                }
+                midiClip.startTick = originalStart + iteration * midiClip.durationTicks;
+            } while (true);
         }
         track->runtime->midiEventCapacity =
             MidiScheduler::maximumEventsPerBlock(track->runtime->midiClips, maximumBlockSize);
+        track->runtime->instrumentEvents.resize(track->runtime->midiEventCapacity);
+        track->runtime->instrumentEventOrdering.resize(track->runtime->midiEventCapacity);
         if (!MidiScheduler::prepareBuffer(track->runtime->midiBuffer,
                                           track->runtime->midiEventCapacity)) {
             error = "Timeline MIDI requires an audio buffer larger than the native runtime allows.";
@@ -207,11 +238,24 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             !track->runtime->prepareTimelineMidiCapacity(
                 std::max(track->runtime->midiEventCapacity, kSharedDeviceMidiCapacity), error))
             return false;
+        if (auto* sonalloy =
+                dynamic_cast<SonalloyInstrumentRuntime*>(track->runtime->instrument())) {
+            for (auto& clip : track->runtime->midiClips) {
+                for (auto& event : clip.events) {
+                    if (event.instrumentEvent &&
+                        event.instrumentEvent->event_type == SONALLOY_EVENT_PARAMETER_CHANGE &&
+                        !sonalloy->prepareParameterEvent(*event.instrumentEvent, event.parameter,
+                                                         error)) {
+                        error = track->id + ": " + error;
+                        return false;
+                    }
+                }
+            }
+        }
         if (!sameRuntimeTopology) {
             track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
             track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
         }
-        maximumPluginDelay = std::max(maximumPluginDelay, track->runtime->pluginDelaySamples);
 
         for (const auto& clipSpec : trackSpec.audioClips) {
             const auto path = clipSpec.path;
@@ -273,10 +317,75 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->mixBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->trackOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->routedOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->unityCenterStereo = trackSpec.panLaw == "unityCenterStereo";
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
-        prepared->processingTracks.push_back(track.get());
         prepared->tracks.push_back(std::move(track));
+    }
+
+    std::vector<int> levels(prepared->tracks.size(), -1);
+    for (std::size_t index = 0; index < prepared->tracks.size(); ++index) {
+        auto& runtime = *prepared->tracks[index]->runtime;
+        auto* sonalloy = dynamic_cast<SonalloyInstrumentRuntime*>(runtime.instrument());
+        const auto& sourceId = snapshot.graph.tracks[index].externalAudioSourceTrackId;
+        if ((sonalloy != nullptr && sonalloy->requiredInputChannels() > 0) !=
+            sourceId.has_value()) {
+            error = prepared->tracks[index]->id +
+                    ": instrument external audio input does not match the route.";
+            return false;
+        }
+        if (sourceId) {
+            auto* source = prepared->findTrack(*sourceId);
+            if (source == nullptr || source == prepared->tracks[index].get()) {
+                error = prepared->tracks[index]->id +
+                        ": external audio source is missing or refers to itself.";
+                return false;
+            }
+            runtime.externalAudioSource = source->runtime.get();
+        }
+    }
+    std::size_t remaining = levels.size();
+    for (int level = 0; remaining > 0; ++level) {
+        std::vector<Track*> stage;
+        for (std::size_t index = 0; index < levels.size(); ++index) {
+            if (levels[index] >= 0) continue;
+            const auto* source = prepared->tracks[index]->runtime->externalAudioSource;
+            auto sourceReady = source == nullptr;
+            if (source != nullptr) {
+                for (std::size_t candidate = 0; candidate < levels.size(); ++candidate)
+                    if (prepared->tracks[candidate]->runtime.get() == source)
+                        sourceReady = levels[candidate] >= 0 && levels[candidate] < level;
+            }
+            if (!sourceReady) continue;
+            stage.push_back(prepared->tracks[index].get());
+            levels[index] = level;
+            --remaining;
+        }
+        if (stage.empty()) {
+            error = "External audio routes contain a cycle.";
+            return false;
+        }
+        const auto previousLatency =
+            prepared->processingStages.empty()
+                ? 0
+                : prepared->processingStages.back().front()->runtime->routeLatencySamples;
+        std::int64_t stageLatency = previousLatency;
+        for (const auto* track : stage)
+            stageLatency =
+                std::max(stageLatency, previousLatency + track->runtime->pluginDelaySamples);
+        for (auto* track : stage) {
+            auto& runtime = *track->runtime;
+            runtime.routeLatencySamples = stageLatency;
+            const auto sourceLatency = runtime.externalAudioSource == nullptr
+                                           ? 0
+                                           : runtime.externalAudioSource->routeLatencySamples;
+            runtime.compensationDelaySamples =
+                stageLatency - sourceLatency - runtime.pluginDelaySamples;
+            runtime.postEffectCompensationDelaySamples = stageLatency;
+            for (auto& clip : runtime.midiClips) clip.startSample += sourceLatency;
+        }
+        prepared->processingStages.push_back(std::move(stage));
     }
 
     auto& summary = prepared->summary;
@@ -284,9 +393,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     for (const auto& track : prepared->tracks) {
         const auto& runtime = *track->runtime;
         summary.pluginCount += static_cast<std::uint64_t>(runtime.effects().size());
-        summary.maximumLatencySamples =
-            std::max<std::uint64_t>(summary.maximumLatencySamples,
-                                    static_cast<std::uint64_t>(runtime.pluginLatencySamples()));
+        summary.maximumLatencySamples = std::max<std::uint64_t>(
+            summary.maximumLatencySamples, static_cast<std::uint64_t>(runtime.routeLatencySamples));
         if (runtime.armed) summary.armedTrackIds.push_back(track->id);
         if (runtime.instrument() != nullptr) ++summary.instrumentRuntimeCount;
         summary.armedInstrumentTrack |= runtime.instrumentTrack && runtime.armed;
@@ -296,20 +404,60 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                                << static_cast<unsigned>(runtime.audioInputChannel);
     }
 
+    const auto originalTimebaseChanges = prepared->timebaseChangeSamples;
     for (auto& track : prepared->tracks) {
-        track->runtime->compensationDelaySamples = ArrangementGraph::compensationDelay(
-            maximumPluginDelay, track->runtime->pluginDelaySamples);
+        if (track->runtime->externalAudioSource != nullptr)
+            for (const auto change : originalTimebaseChanges)
+                prepared->timebaseChangeSamples.push_back(
+                    change + track->runtime->externalAudioSource->routeLatencySamples);
+        const auto maximumLatency =
+            prepared->processingStages.back().front()->runtime->routeLatencySamples;
+        track->runtime->masterDelaySamples = maximumLatency - track->runtime->routeLatencySamples;
+        track->runtime->masterDelayBuffer.setSize(
+            2, static_cast<int>(track->runtime->masterDelaySamples + maximumBlockSize + 1), false,
+            true, false);
+        track->runtime->masterDelayBuffer.clear();
         track->runtime->delayBuffer.setSize(
             2, static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
             false, true, false);
         track->runtime->delayBuffer.clear();
-        track->runtime->postEffectCompensationDelaySamples = maximumPluginDelay;
         track->runtime->postEffectDelayBuffer.setSize(
             2,
             static_cast<int>(track->runtime->postEffectCompensationDelaySamples + maximumBlockSize +
                              1),
             false, true, false);
         track->runtime->postEffectDelayBuffer.clear();
+    }
+    std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
+    prepared->timebaseChangeSamples.erase(
+        std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
+        prepared->timebaseChangeSamples.end());
+    prepared->mixEndSample =
+        prepared->timebase.tickToSample(graph.musicalEndTick, outputSampleRate);
+    for (const auto& track : prepared->tracks) {
+        for (const auto& clip : track->clips)
+            prepared->mixEndSample =
+                std::max(prepared->mixEndSample, clip->startSample + clip->durationSamples);
+    }
+    for (const auto& track : graph.tracks)
+        for (const auto& clip : track.midiClips) {
+            const auto end = prepared->timebase.tickToSample(clip.startTick + clip.durationTicks,
+                                                             outputSampleRate);
+            prepared->mixEndSample = std::max(prepared->mixEndSample, end);
+            for (const auto& event : clip.instrumentControlEvents)
+                if (event.tick == clip.durationTicks)
+                    prepared->mixEndSample = std::max(prepared->mixEndSample, end + 1);
+            for (const auto& note : clip.notes)
+                if (note.startTick + note.durationTicks == clip.durationTicks)
+                    prepared->mixEndSample = std::max(prepared->mixEndSample, end + 1);
+        }
+    prepared->mixEndSample +=
+        static_cast<std::int64_t>(std::llround(graph.tailSeconds * outputSampleRate));
+    prepared->fadeOutSamples =
+        static_cast<std::int64_t>(std::llround(graph.fadeOutSeconds * outputSampleRate));
+    if (prepared->fadeOutSamples > prepared->mixEndSample) {
+        error = "Mix fade duration exceeds the final mix duration.";
+        return false;
     }
     return true;
 }

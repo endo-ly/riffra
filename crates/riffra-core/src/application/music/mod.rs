@@ -282,12 +282,12 @@ where
             if inputs.len() > available_notes {
                 return Err(too_many_midi_notes().into());
             }
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             let notes = inputs
                 .into_iter()
                 .enumerate()
                 .map(|(index, input)| {
-                    resolve_musical_note(timebase, input).map_err(|error| {
+                    resolve_musical_note(&timebase, input).map_err(|error| {
                         ApplicationError::InvalidInput {
                             location: InputLocation {
                                 collection: "notes".into(),
@@ -314,7 +314,7 @@ where
         request: MusicalNoteListRequest,
     ) -> Result<MusicalNoteListView, ApplicationError> {
         let session = self.get_session()?;
-        let timebase = session.arrangement.timebase;
+        let timebase = session.arrangement.timebase.clone();
         if let Some(track_id) = request.scope.track_id.as_deref()
             && !session
                 .arrangement
@@ -326,7 +326,7 @@ where
                 "track '{track_id}' is not registered"
             )));
         }
-        let query = resolve_note_range(timebase, request.start, request.end)?;
+        let query = resolve_note_range(&timebase, request.start, request.end)?;
         let clips = select_note_clips(&session.arrangement.midi_clips, &request.scope)?;
         if request.scope.track_id.is_some() && query.is_none() {
             return Err(ApplicationError::InvalidCommand(
@@ -360,7 +360,7 @@ where
                                 }))
                             } else {
                                 Ok(MusicalNoteListNoteView::Musical(musical_note_view(
-                                    timebase,
+                                    &timebase,
                                     clip.start_tick,
                                     note,
                                     request.include_ids,
@@ -399,8 +399,8 @@ where
             count,
             timebase: request.raw.then_some(MusicalNoteTimebaseView {
                 ppq: timebase.ppq,
-                time_signature_numerator: timebase.time_signature_numerator,
-                time_signature_denominator: timebase.time_signature_denominator,
+                time_signature_numerator: timebase.time_signature_changes[0].numerator,
+                time_signature_denominator: timebase.time_signature_changes[0].denominator,
             }),
             clips: clip_views,
         })
@@ -434,7 +434,7 @@ where
         }
         let mut matched = false;
         let mutation = self.commit_arrangement_with_created_ids(|arrangement, _| {
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             if let Some(track_id) = request.scope.track_id.as_deref()
                 && !arrangement.tracks.iter().any(|track| track.id == track_id)
             {
@@ -442,7 +442,7 @@ where
                     "track '{track_id}' is not registered"
                 )));
             }
-            let query = resolve_note_range(timebase, request.start, request.end)?;
+            let query = resolve_note_range(&timebase, request.start, request.end)?;
             if request.scope.track_id.is_some() && query.is_none() {
                 return Err(ApplicationError::InvalidCommand(
                     "track note transform requires both start and end".into(),
@@ -543,7 +543,7 @@ where
         note_id: &str,
     ) -> Result<MusicalMidiNoteView, ApplicationError> {
         let session = self.get_session()?;
-        let timebase = session.arrangement.timebase;
+        let timebase = session.arrangement.timebase.clone();
         let clip = session
             .arrangement
             .midi_clips
@@ -559,7 +559,7 @@ where
             .ok_or_else(|| {
                 ApplicationError::InvalidCommand(format!("midi note '{note_id}' is not registered"))
             })?;
-        musical_note_view(timebase, clip.start_tick, note, true)
+        musical_note_view(&timebase, clip.start_tick, note, true)
     }
 
     /// Updates one MIDI note using only the supplied musical fields.
@@ -580,7 +580,7 @@ where
             ));
         }
         let session = self.get_session()?;
-        let timebase = session.arrangement.timebase;
+        let timebase = session.arrangement.timebase.clone();
         let clip_start = session
             .arrangement
             .midi_clips
@@ -643,7 +643,7 @@ where
             ));
         }
         self.commit_arrangement(|arrangement| {
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             arrangement
                 .resize_midi_clip(
                     clip_id,
@@ -664,7 +664,7 @@ where
     /// Returns an error when the canonical session cannot be read.
     pub fn list_regions(&mut self) -> Result<Vec<MusicalRegionView>, ApplicationError> {
         let session = self.get_session()?;
-        let timebase = session.arrangement.timebase;
+        let timebase = session.arrangement.timebase.clone();
         Ok(session
             .arrangement
             .regions
@@ -723,7 +723,7 @@ where
     ) -> Result<CreativeSession, ApplicationError> {
         let name = name.map(normalize_region_name).transpose()?;
         self.commit_arrangement(|arrangement| {
-            let timebase = arrangement.timebase;
+            let timebase = arrangement.timebase.clone();
             arrangement
                 .update_region(
                     region_id,
@@ -752,7 +752,7 @@ where
 }
 
 fn resolve_musical_note(
-    timebase: crate::domain::ProjectTimebase,
+    timebase: &crate::domain::ProjectTimebase,
     input: MusicalMidiNoteInput,
 ) -> Result<ResolvedMidiNoteInput, DomainError> {
     let velocity = input.velocity.unwrap_or(100);
@@ -777,7 +777,7 @@ fn resolve_musical_note(
 }
 
 fn musical_note_view(
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     clip_start: TimelineTick,
     note: &MidiNote,
     include_id: bool,
@@ -796,7 +796,7 @@ fn musical_note_view(
 }
 
 fn resolve_note_range(
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     start: Option<MusicalPosition>,
     end: Option<MusicalPosition>,
 ) -> Result<Option<(TimelineTick, TimelineTick)>, ApplicationError> {
@@ -956,7 +956,7 @@ fn too_many_midi_notes() -> DomainError {
 }
 
 fn repeated_offset_to_ticks(
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     pattern_length: MusicalDuration,
     repeat: u64,
     step_offset: MusicalOffset,
@@ -985,7 +985,7 @@ fn repeated_offset_to_ticks(
 }
 
 fn rational_to_ticks(
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     mut numerator: u128,
     mut denominator: u128,
 ) -> Result<u64, DomainError> {

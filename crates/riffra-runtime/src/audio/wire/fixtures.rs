@@ -36,11 +36,18 @@ fn snapshot() -> TimelineSnapshot {
         project_id: "project-1".into(),
         revision: 3,
         graph: ExecutionGraph {
+            mixdown: crate::execution::GraphMixdown::default(),
             timebase: GraphTimebase {
                 ppq: 960,
-                bpm: 120.0,
-                time_signature_numerator: 4,
-                time_signature_denominator: 4,
+                tempo_changes: vec![riffra_core::TempoChange {
+                    tick: 0,
+                    bpm: 120.0,
+                }],
+                time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                    tick: 0,
+                    numerator: 4,
+                    denominator: 4,
+                }],
             },
             loop_range: GraphLoopRange {
                 enabled: false,

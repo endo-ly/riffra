@@ -501,11 +501,18 @@ mod tests {
                 project_id: "project:test".into(),
                 revision,
                 graph: crate::execution::ExecutionGraph {
+                    mixdown: crate::execution::GraphMixdown::default(),
                     timebase: crate::execution::GraphTimebase {
                         ppq: 960,
-                        bpm: 120.0,
-                        time_signature_numerator: 4,
-                        time_signature_denominator: 4,
+                        tempo_changes: vec![riffra_core::TempoChange {
+                            tick: 0,
+                            bpm: 120.0,
+                        }],
+                        time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                            tick: 0,
+                            numerator: 4,
+                            denominator: 4,
+                        }],
                     },
                     loop_range: crate::execution::GraphLoopRange {
                         enabled: false,

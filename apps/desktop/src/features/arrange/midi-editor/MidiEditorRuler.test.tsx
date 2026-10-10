@@ -8,7 +8,11 @@ import { MidiEditorRuler } from './MidiEditorRuler';
 
 afterEach(cleanup);
 
-const timebase = { ppq: 960, bpm: 120, timeSignatureNumerator: 4, timeSignatureDenominator: 4 };
+const timebase = {
+  ppq: 960,
+  tempoChanges: [{ tick: 0, bpm: 120 }],
+  timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
+};
 
 function barLabels(clipStartTick: number): string[] {
   render(

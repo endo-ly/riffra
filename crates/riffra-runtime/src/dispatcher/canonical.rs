@@ -17,13 +17,126 @@ impl HostDispatcher<'_> {
         command: CanonicalCommand,
         canonical: CanonicalState,
     ) -> Result<ControlOutput, DispatchError> {
-        let timebase = canonical.session.arrangement.timebase;
+        let timebase = canonical.session.arrangement.timebase.clone();
         let tick = |position| {
             timebase
                 .musical_position_to_tick(position)
                 .map_err(|error| DispatchError::invalid_request(error.to_string()))
         };
         match command {
+            CanonicalCommand::MixdownGet(_) => {
+                Ok(ControlOutput::Mixdown(canonical.session.settings.mixdown))
+            }
+            CanonicalCommand::MixdownSet(mixdown) => self.edited(
+                application.update_session_settings(SessionSettingsPatch {
+                    mixdown: Some(mixdown),
+                    ..Default::default()
+                })?,
+                application,
+            ),
+            CanonicalCommand::TrackExternalAudioInputSet(params) => self.edited(
+                application.update_track(
+                    &params.track_id,
+                    TrackPatch {
+                        external_audio_source_track_id: Some(Some(params.source_track_id)),
+                        ..Default::default()
+                    },
+                )?,
+                application,
+            ),
+            CanonicalCommand::TrackExternalAudioInputClear(params) => self.edited(
+                application.update_track(
+                    &params.track_id,
+                    TrackPatch {
+                        external_audio_source_track_id: Some(None),
+                        ..Default::default()
+                    },
+                )?,
+                application,
+            ),
+            CanonicalCommand::InstrumentEventList(params) => {
+                let clip = canonical
+                    .session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.id == params.clip_id)
+                    .ok_or_else(|| DispatchError::invalid_request("midi clip was not found"))?;
+                Ok(ControlOutput::InstrumentEvents(
+                    clip.instrument_control_events.clone(),
+                ))
+            }
+            command @ (CanonicalCommand::InstrumentEventAdd(_)
+            | CanonicalCommand::InstrumentEventSet(_)
+            | CanonicalCommand::InstrumentEventUpdate(_)
+            | CanonicalCommand::InstrumentEventRemove(_)) => {
+                let clip_id = match &command {
+                    CanonicalCommand::InstrumentEventAdd(params) => &params.clip_id,
+                    CanonicalCommand::InstrumentEventSet(params) => &params.clip_id,
+                    CanonicalCommand::InstrumentEventUpdate(params) => &params.clip_id,
+                    CanonicalCommand::InstrumentEventRemove(params) => &params.clip_id,
+                    _ => unreachable!(),
+                }
+                .clone();
+                let mut events = canonical
+                    .session
+                    .arrangement
+                    .midi_clips
+                    .iter()
+                    .find(|clip| clip.id == clip_id)
+                    .ok_or_else(|| DispatchError::invalid_request("midi clip was not found"))?
+                    .instrument_control_events
+                    .clone();
+                match command {
+                    CanonicalCommand::InstrumentEventAdd(params) => {
+                        let source_order = events
+                            .iter()
+                            .map(|event| event.source_order)
+                            .max()
+                            .map(|order| order.checked_add(1))
+                            .unwrap_or(Some(0))
+                            .ok_or_else(|| {
+                                DispatchError::invalid_request("instrument event order overflow")
+                            })?;
+                        events.push(riffra_core::InstrumentControlEvent {
+                            id: riffra_control::new_instance_id(),
+                            tick: TimelineTick(params.tick),
+                            source_order,
+                            kind: params.kind,
+                        });
+                    }
+                    CanonicalCommand::InstrumentEventSet(params) => events = params.events,
+                    CanonicalCommand::InstrumentEventUpdate(params) => {
+                        let event = events
+                            .iter_mut()
+                            .find(|event| event.id == params.event.id)
+                            .ok_or_else(|| {
+                                DispatchError::invalid_request("instrument event was not found")
+                            })?;
+                        *event = params.event;
+                    }
+                    CanonicalCommand::InstrumentEventRemove(params) => {
+                        let index = events
+                            .iter()
+                            .position(|event| event.id == params.event_id)
+                            .ok_or_else(|| {
+                                DispatchError::invalid_request("instrument event was not found")
+                            })?;
+                        events.remove(index);
+                    }
+                    _ => unreachable!(),
+                }
+                self.edited(
+                    application.update_midi_clip(
+                        &clip_id,
+                        riffra_core::MidiClipPatch {
+                            instrument_control_events: Some(events),
+                            ..Default::default()
+                        },
+                    )?,
+                    application,
+                )
+            }
             CanonicalCommand::SessionGet(_) => Ok(ControlOutput::Session(canonical.session)),
             CanonicalCommand::SessionInspect(query) => Ok(ControlOutput::SessionInspection(
                 inspect_canonical_state(&canonical, query)
@@ -68,6 +181,8 @@ impl HostDispatcher<'_> {
                 application.update_track(
                     &params.track_id,
                     TrackPatch {
+                        pan_law: params.pan_law,
+                        external_audio_source_track_id: None,
                         name: params.name,
                         gain_db: params.gain_db,
                         pan: params.pan,
@@ -132,6 +247,15 @@ impl HostDispatcher<'_> {
             }
             CanonicalCommand::TimebaseUpdate(params) => self.edited(
                 application.update_timebase(self.timebase_update(timebase, params)?)?,
+                application,
+            ),
+            CanonicalCommand::TimebaseGetMap(_) => Ok(ControlOutput::Timebase(timebase)),
+            CanonicalCommand::TimebaseSetMap(params) => self.edited(
+                application.update_timebase(riffra_core::ProjectTimebase {
+                    ppq: riffra_core::TIMELINE_PPQ,
+                    tempo_changes: params.tempo_changes,
+                    time_signature_changes: params.time_signature_changes,
+                })?,
                 application,
             ),
             CanonicalCommand::LoopRangeSet(params) => self.edited(

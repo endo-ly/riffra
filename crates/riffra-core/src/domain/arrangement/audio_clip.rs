@@ -516,6 +516,7 @@ mod tests {
             .duplicate_audio_clip("clip:1", "clip:2".into())
             .unwrap();
         arrangement.midi_clips.push(MidiClip {
+            instrument_control_events: Vec::new(),
             id: "midi:1".into(),
             name: "MIDI".into(),
             track_id: "main".into(),

@@ -1,0 +1,36 @@
+{
+  "format_version": 1,
+  "demo": "demo.json",
+  "render_settings": {
+    "sample_rate": 48000,
+    "block_size": 256,
+    "tail_seconds": 0.5
+  },
+  "render": null,
+  "files": [
+    {
+      "path": "demo.json",
+      "sha256": "e7330db48626f6005cfc7132e6e9be4b020930aa748ed35d153c5fa9e2a59d16"
+    },
+    {
+      "path": "instruments/duck/definition.json",
+      "sha256": "aa7fceaa37cd6b6c6b2abae0f70c5a39b4d6a1f09824cced308dacc308982f7b"
+    },
+    {
+      "path": "instruments/lead/assets/13baa325a60e8ecc3a6282e4b8ff7daf7c2f97ffd1fa4dbfde8e7a1db596eb96.wav",
+      "sha256": "13baa325a60e8ecc3a6282e4b8ff7daf7c2f97ffd1fa4dbfde8e7a1db596eb96"
+    },
+    {
+      "path": "instruments/lead/definition.json",
+      "sha256": "3330f2b98fb2aa7233eff370b2c6c417e59b39bf0c4e2382731fc99a4273b12a"
+    },
+    {
+      "path": "patterns/duck.json",
+      "sha256": "e229db0679b00fac56a3e5860eb54257c266fe7a6042d322aa5b35c6e3e5093e"
+    },
+    {
+      "path": "patterns/lead.json",
+      "sha256": "de271ad50bfc51b363759b6030b4eb98b81a3367cd8520b4d509c4b47a4de9e1"
+    }
+  ]
+}

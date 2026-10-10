@@ -291,6 +291,41 @@ pub fn register_derived(
     Ok(asset.id)
 }
 
+/// Discards a job output registration before that output is published.
+///
+/// # Errors
+/// Returns an error if the location changed, another Asset depends on the output,
+/// or the metadata transaction fails. This operation never removes content files.
+pub fn discard_output_registration(
+    data_root: &Path,
+    id: &AssetId,
+    content_location: &str,
+) -> Result<(), String> {
+    let mut connection = open(data_root)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let removed = transaction
+        .execute(
+            "DELETE FROM assets WHERE id = ?1 AND content_location = ?2
+         AND NOT EXISTS (SELECT 1 FROM asset_relations WHERE related_asset_id = ?1)",
+            params![id.as_str(), content_location],
+        )
+        .map_err(|error| format!("output registration could not be discarded: {error}"))?;
+    if removed != 1 {
+        return Err("output registration changed or has dependent assets".into());
+    }
+    transaction
+        .execute(
+            "DELETE FROM asset_relations WHERE asset_id = ?1",
+            params![id.as_str()],
+        )
+        .map_err(|error| format!("output relations could not be discarded: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("output discard could not be committed: {error}"))
+}
+
 /// Updates management metadata without changing the production content or id.
 pub fn update_metadata(
     data_root: &Path,
@@ -866,6 +901,7 @@ mod tests {
             .tracks
             .push(Track::instrument("instrument".into(), "Instrument".into()));
         session.arrangement.midi_clips.push(MidiClip {
+            instrument_control_events: Vec::new(),
             id: "midi-clip:unknown".into(),
             name: "unknown".into(),
             track_id: "instrument".into(),

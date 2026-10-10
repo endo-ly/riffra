@@ -56,6 +56,24 @@ impl HostDispatcher<'_> {
                     .map_err(|error| error.to_string())?;
                 return self.activate_project(writer, &summary.project_id);
             }
+            ProjectCommand::ProjectImportSonalloy(params) => {
+                let writer = writer.expect("project mutation holds the writer");
+                let import = crate::sonalloy_import::ImportedProject::prepare(
+                    self.project_store.as_ref(),
+                    &self.data_root,
+                    &self.sonalloy,
+                    &params.path,
+                )?;
+                let result = self.activate_project(
+                    writer,
+                    import
+                        .project_id
+                        .as_deref()
+                        .expect("import saved a project"),
+                )?;
+                import.commit();
+                return Ok(result);
+            }
             ProjectCommand::ProjectExport(params) => {
                 ControlOutput::ProjectExport(crate::projects::export(
                     &self.data_root,

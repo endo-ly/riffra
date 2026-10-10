@@ -37,20 +37,45 @@ bool readEnum(const juce::String& value, const juce::String& path,
 
 bool decodeTimebase(const juce::var& value, const juce::String& path, TimebaseSpec& output,
                     juce::String& error) {
-    ContractReader reader(
-        value, path, {"ppq", "bpm", "timeSignatureNumerator", "timeSignatureDenominator"}, error);
-    if (!reader.unsigned32("ppq", output.ppq) || !reader.number("bpm", output.bpm) ||
-        !reader.unsigned8("timeSignatureNumerator", output.timeSignatureNumerator) ||
-        !reader.unsigned8("timeSignatureDenominator", output.timeSignatureDenominator) ||
-        !reader.finish())
+    ContractReader reader(value, path, {"ppq", "tempoChanges", "timeSignatureChanges"}, error);
+    juce::Array<juce::var> tempos, signatures;
+    if (!reader.unsigned32("ppq", output.ppq) || !reader.array("tempoChanges", tempos) ||
+        !reader.array("timeSignatureChanges", signatures) || !reader.finish())
         return false;
     if (output.ppq != 960) return fail(error, child(path, "ppq"), "must equal 960");
-    if (output.bpm < 20.0 || output.bpm > 400.0)
-        return fail(error, child(path, "bpm"), "must be between 20 and 400");
-    if (output.timeSignatureNumerator == 0)
-        return fail(error, child(path, "timeSignatureNumerator"), "must be at least 1");
-    if (output.timeSignatureDenominator == 0)
-        return fail(error, child(path, "timeSignatureDenominator"), "must be at least 1");
+    output.tempoChanges.clear();
+    output.timeSignatureChanges.clear();
+    for (int i = 0; i < tempos.size(); ++i) {
+        const auto location = element(child(path, "tempoChanges"), i);
+        ContractReader point(tempos[i], location, {"tick", "bpm"}, error);
+        TempoChangeSpec change;
+        if (!point.unsignedInteger("tick", change.tick) || !point.number("bpm", change.bpm) ||
+            !point.finish())
+            return false;
+        if (change.bpm <= 0.0 ||
+            (i == 0 ? change.tick != 0 : change.tick <= output.tempoChanges.back().tick))
+            return fail(error, location,
+                        "expected positive tempo and strictly sorted changes starting at zero");
+        output.tempoChanges.push_back(change);
+    }
+    for (int i = 0; i < signatures.size(); ++i) {
+        const auto location = element(child(path, "timeSignatureChanges"), i);
+        ContractReader point(signatures[i], location, {"tick", "numerator", "denominator"}, error);
+        TimeSignatureChangeSpec change;
+        if (!point.unsignedInteger("tick", change.tick) ||
+            !point.unsigned8("numerator", change.numerator) ||
+            !point.unsigned8("denominator", change.denominator) || !point.finish())
+            return false;
+        if (change.numerator == 0 ||
+            (change.denominator != 1 && change.denominator != 2 && change.denominator != 4 &&
+             change.denominator != 8 && change.denominator != 16 && change.denominator != 32) ||
+            (i == 0 ? change.tick != 0 : change.tick <= output.timeSignatureChanges.back().tick))
+            return fail(error, location,
+                        "expected valid meter and strictly sorted changes starting at zero");
+        output.timeSignatureChanges.push_back(change);
+    }
+    if (output.tempoChanges.empty() || output.timeSignatureChanges.empty())
+        return fail(error, path, "timebase maps must not be empty");
     return true;
 }
 
@@ -264,18 +289,59 @@ bool decodeMidiEvent(const juce::var& value, const juce::String& path, MidiEvent
     return true;
 }
 
+bool decodeInstrumentControlEvent(const juce::var& value, const juce::String& path,
+                                  InstrumentControlEventSpec& output, juce::String& error) {
+    ContractReader reader(value, path, {"id", "tick", "sourceOrder", "kind"}, error);
+    juce::var kind;
+    if (!reader.string("id", output.id) || !reader.unsignedInteger("tick", output.tick) ||
+        !reader.unsigned32("sourceOrder", output.sourceOrder) || !reader.object("kind", kind) ||
+        !reader.finish())
+        return false;
+    output.type = kind["type"].toString();
+    const auto kindPath = child(path, "kind");
+    juce::String type;
+    double number = 0.0;
+    if (output.type == "sustainPedal") {
+        ContractReader control(kind, kindPath, {"type", "down"}, error);
+        return control.string("type", type) && control.boolean("down", output.down) &&
+               control.finish();
+    }
+    if (output.type == "parameterChange") {
+        ContractReader control(kind, kindPath, {"type", "parameter", "nativeValue"}, error);
+        if (!control.string("type", type) || !control.string("parameter", output.parameter) ||
+            !control.number("nativeValue", number) || !control.finish())
+            return false;
+        if (output.parameter.isEmpty()) return fail(error, kindPath, "parameter must not be empty");
+    } else {
+        if (output.type != "pitchBend" && output.type != "modWheel" && output.type != "aftertouch")
+            return fail(error, kindPath, "unknown instrument control type");
+        ContractReader control(kind, kindPath, {"type", "value"}, error);
+        if (!control.string("type", type) || !control.number("value", number) || !control.finish())
+            return false;
+        if (number < (output.type == "pitchBend" ? -1.0 : 0.0) || number > 1.0)
+            return fail(error, kindPath, "control value is out of range");
+    }
+    output.value = static_cast<float>(number);
+    if (!std::isfinite(output.value))
+        return fail(error, kindPath, "value cannot be represented as f32");
+    return true;
+}
+
 bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSpec& output,
                     juce::String& error) {
-    ContractReader reader(
-        value, path,
-        {"id", "startTick", "durationTicks", "loopEnabled", "muted", "notes", "events"}, error);
+    ContractReader reader(value, path,
+                          {"id", "startTick", "durationTicks", "loopEnabled", "muted", "notes",
+                           "events", "instrumentControlEvents"},
+                          error);
     juce::Array<juce::var> notes;
     juce::Array<juce::var> events;
+    juce::Array<juce::var> controls;
     if (!reader.string("id", output.id) || !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("durationTicks", output.durationTicks) ||
         !reader.boolean("loopEnabled", output.loopEnabled) ||
         !reader.boolean("muted", output.muted) || !reader.array("notes", notes) ||
-        !reader.array("events", events) || !reader.finish())
+        !reader.array("events", events) || !reader.array("instrumentControlEvents", controls) ||
+        !reader.finish())
         return false;
     if (output.durationTicks == 0)
         return fail(error, child(path, "durationTicks"), "must be greater than 0");
@@ -287,6 +353,15 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
             return fail(error, child(notePath, "startTick"),
                         "must be less than clip durationTicks");
         output.notes.push_back(note);
+    }
+    for (int index = 0; index < controls.size(); ++index) {
+        InstrumentControlEventSpec control;
+        const auto eventPath = element(child(path, "instrumentControlEvents"), index);
+        if (!decodeInstrumentControlEvent(controls.getReference(index), eventPath, control, error))
+            return false;
+        if (control.tick > output.durationTicks)
+            return fail(error, child(eventPath, "tick"), "exceeds clip durationTicks");
+        output.instrumentControlEvents.push_back(std::move(control));
     }
     for (int index = 0; index < events.size(); ++index) {
         MidiEventSpec event;
@@ -301,11 +376,12 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
 
 bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& output,
                  juce::String& error) {
-    ContractReader reader(value, path,
-                          {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput",
-                           "audioInput", "midiInput", "volumeAutomation", "panAutomation",
-                           "effects", "instrument", "audioClips", "midiClips"},
-                          error);
+    ContractReader reader(
+        value, path,
+        {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput", "audioInput",
+         "midiInput", "volumeAutomation", "panAutomation", "effects", "instrument", "audioClips",
+         "midiClips", "panLaw", "externalAudioSourceTrackId"},
+        error);
     juce::String kind;
     juce::var audioInput;
     juce::var midiInput;
@@ -316,6 +392,8 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     juce::Array<juce::var> audioClips;
     juce::Array<juce::var> midiClips;
     if (!reader.string("id", output.id) || !reader.string("kind", kind) ||
+        !reader.string("panLaw", output.panLaw) ||
+        !reader.optionalString("externalAudioSourceTrackId", output.externalAudioSourceTrackId) ||
         !reader.number("gainDb", output.gainDb) || !reader.number("pan", output.pan) ||
         !reader.boolean("muted", output.muted) || !reader.boolean("solo", output.solo) ||
         !reader.boolean("armed", output.armed) ||
@@ -330,6 +408,8 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     if (!readEnum(kind, child(path, "kind"), {{"audio", 0}, {"instrument", 1}}, trackKind, error))
         return false;
     output.kind = static_cast<TrackKindSpec>(trackKind);
+    if (output.panLaw != "equalPower" && output.panLaw != "unityCenterStereo")
+        return fail(error, child(path, "panLaw"), "unknown pan law");
     if (output.gainDb < -90.0 || output.gainDb > 24.0)
         return fail(error, child(path, "gainDb"), "must be between -90 and 24");
     if (output.pan < -1.0 || output.pan > 1.0)
@@ -390,20 +470,29 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
 
 bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGraph& output,
                  juce::String& error) {
-    ContractReader reader(
-        value, path,
-        {"timebase", "loopRange", "punchRange", "metronomeEnabled", "masterGainDb", "tracks"},
-        error);
+    ContractReader reader(value, path,
+                          {"timebase", "loopRange", "punchRange", "metronomeEnabled",
+                           "masterGainDb", "tracks", "mixdown"},
+                          error);
     juce::var timebase;
     juce::var loopRange;
     juce::var punchRange;
+    juce::var mixdown;
     juce::Array<juce::var> tracks;
     if (!reader.object("timebase", timebase) || !reader.object("loopRange", loopRange) ||
         !reader.value("punchRange", punchRange) ||
         !reader.boolean("metronomeEnabled", output.metronomeEnabled) ||
         !reader.number("masterGainDb", output.masterGainDb) || !reader.array("tracks", tracks) ||
-        !reader.finish())
+        !reader.object("mixdown", mixdown) || !reader.finish())
         return false;
+    ContractReader mixReader(mixdown, child(path, "mixdown"),
+                             {"musicalEndTick", "tailSeconds", "fadeOutSeconds"}, error);
+    if (!mixReader.unsignedInteger("musicalEndTick", output.musicalEndTick) ||
+        !mixReader.number("tailSeconds", output.tailSeconds) ||
+        !mixReader.number("fadeOutSeconds", output.fadeOutSeconds) || !mixReader.finish())
+        return false;
+    if (output.tailSeconds < 0.0 || output.fadeOutSeconds < 0.0)
+        return fail(error, child(path, "mixdown"), "durations must be nonnegative");
     if (!decodeTimebase(timebase, child(path, "timebase"), output.timebase, error) ||
         !decodeLoopRange(loopRange, child(path, "loopRange"), output.loopRange, error))
         return false;
@@ -444,19 +533,22 @@ bool decodeTimelineSnapshot(const juce::var& value, TimelineSnapshotSpec& output
 
 bool decodeOfflineRenderRequest(const juce::var& value, OfflineRenderRequestSpec& output,
                                 juce::String& error) {
-    ContractReader reader(
-        value, "request",
-        {"graph", "destination", "startTick", "endTick", "sampleRate", "blockSize", "normalize"},
-        error);
+    ContractReader reader(value, "request",
+                          {"graph", "destination", "startTick", "endTick", "sampleRate",
+                           "blockSize", "normalize", "tailSeconds", "includeEndEvents"},
+                          error);
     juce::var graph;
     if (!reader.object("graph", graph) || !reader.string("destination", output.destination) ||
         !reader.unsignedInteger("startTick", output.startTick) ||
         !reader.unsignedInteger("endTick", output.endTick) ||
         !reader.unsigned32("sampleRate", output.sampleRate) ||
         !reader.unsigned32("blockSize", output.blockSize) ||
+        !reader.number("tailSeconds", output.tailSeconds) ||
+        !reader.boolean("includeEndEvents", output.includeEndEvents) ||
         !reader.boolean("normalize", output.normalize) || !reader.finish())
         return false;
     if (!decodeGraph(graph, "request.graph", output.graph, error)) return false;
+    if (output.tailSeconds < 0.0) return fail(error, "request.tailSeconds", "must be nonnegative");
     if (output.endTick <= output.startTick)
         return fail(error, "request.endTick", "must be greater than startTick");
     if (output.destination.isEmpty())

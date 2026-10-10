@@ -714,6 +714,7 @@ mod tests {
         let midi_track_id = with_midi_track.session.arrangement.tracks[1].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id: midi_track_id,
@@ -800,6 +801,7 @@ mod tests {
         let track_id = track.session.arrangement.tracks[0].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id,
@@ -1111,6 +1113,7 @@ mod tests {
         let track_id = track.session.arrangement.tracks[0].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id,
@@ -1166,6 +1169,7 @@ mod tests {
         let track_id = track.session.arrangement.tracks[0].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id,
@@ -1207,6 +1211,7 @@ mod tests {
         let track_id = track.session.arrangement.tracks[0].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id,
@@ -1245,6 +1250,7 @@ mod tests {
         let track_id = track.session.arrangement.tracks[0].id.clone();
         core.application(&storage)
             .add_midi_clip(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "midi:1".into(),
                 name: "Pattern".into(),
                 track_id,

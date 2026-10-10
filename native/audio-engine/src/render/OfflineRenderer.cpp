@@ -115,9 +115,30 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
         error = "Offline Render request is invalid.";
         return nullptr;
     }
-    const TimelineTimebase timelineTimebase{request.graph.timebase.ppq, request.graph.timebase.bpm};
+    TimelineTimebase timelineTimebase;
+    timelineTimebase.ppq = request.graph.timebase.ppq;
+    timelineTimebase.tempoChanges = request.graph.timebase.tempoChanges;
+    timelineTimebase.timeSignatureChanges = request.graph.timebase.timeSignatureChanges;
     const auto startSample = timelineTimebase.tickToSample(request.startTick, sampleRate);
-    const auto endSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
+    auto musicalEndSample = timelineTimebase.tickToSample(request.endTick, sampleRate);
+    if (request.includeEndEvents) {
+        for (const auto& track : request.graph.tracks) {
+            for (const auto& clip : track.midiClips) {
+                for (const auto& control : clip.instrumentControlEvents)
+                    if (clip.startTick + control.tick == request.endTick)
+                        musicalEndSample = std::max(
+                            musicalEndSample,
+                            timelineTimebase.tickToSample(request.endTick, sampleRate) + 1);
+                for (const auto& note : clip.notes)
+                    if (clip.startTick + note.startTick + note.durationTicks == request.endTick)
+                        musicalEndSample = std::max(
+                            musicalEndSample,
+                            timelineTimebase.tickToSample(request.endTick, sampleRate) + 1);
+            }
+        }
+    }
+    const auto endSample = musicalEndSample + static_cast<std::int64_t>(
+                                                  std::llround(request.tailSeconds * sampleRate));
     if (startSample < 0 || endSample <= startSample) {
         error = "Offline Render range has no samples.";
         return nullptr;
@@ -135,6 +156,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     auto timelineEngine = std::make_unique<TimelineEngine>(true);
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
+    const auto status = timelineEngine->status();
+    const auto latencySamples = status.graph.has_value()
+                                    ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
+                                    : 0;
     Plan renderPlan{destination,
                     sampleRate,
                     blockSize,
@@ -142,7 +167,8 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
                     endSample,
                     juce::Decibels::decibelsToGain(static_cast<float>(request.graph.masterGainDb)),
                     request.normalize,
-                    hostsPlugins(request.graph)};
+                    hostsPlugins(request.graph),
+                    latencySamples};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
 }
@@ -175,14 +201,15 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
     juce::AudioBuffer<float> buffer(2, plan.blockSize);
     std::int64_t position = 0;
     float peak = 0.0f;
-    while (position < plan.endSample) {
+    const auto processingEnd = plan.endSample + plan.latencySamples;
+    while (position < processingEnd) {
         const auto count =
-            static_cast<int>(std::min<std::int64_t>(plan.blockSize, plan.endSample - position));
+            static_cast<int>(std::min<std::int64_t>(plan.blockSize, processingEnd - position));
         buffer.clear();
         engine->mix(buffer.getArrayOfWritePointers(), 2, count);
         buffer.applyGain(0, count, plan.masterGain);
-        const auto writeStart =
-            static_cast<int>(std::max<std::int64_t>(0, plan.startSample - position));
+        const auto writeStart = static_cast<int>(std::min<std::int64_t>(
+            count, std::max<std::int64_t>(0, plan.startSample + plan.latencySamples - position)));
         const auto writeCount = count - writeStart;
         if (writeCount > 0) {
             for (int channel = 0; channel < 2; ++channel)

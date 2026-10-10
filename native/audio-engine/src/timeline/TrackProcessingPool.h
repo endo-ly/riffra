@@ -15,7 +15,7 @@ namespace riffra {
 
 using Track = PreparedTimeline::Track;
 
-enum class TrackStageKind { playback, liveInstrument, liveAudioMonitor };
+enum class TrackStageKind { playback, live };
 
 struct TrackStageJob final {
     TrackStageKind kind;

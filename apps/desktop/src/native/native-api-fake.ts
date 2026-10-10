@@ -281,6 +281,9 @@ export class FakeNativeApi implements NativeApi {
   importProject(...args: Parameters<NativeApi['importProject']>) {
     return this.command('importProject', args);
   }
+  importSonalloyBundle(...args: Parameters<NativeApi['importSonalloyBundle']>) {
+    return this.command('importSonalloyBundle', args);
+  }
   importMidiFile(...args: Parameters<NativeApi['importMidiFile']>) {
     return this.command('importMidiFile', args);
   }
@@ -973,6 +976,7 @@ export class FakeNativeApi implements NativeApi {
       case 'createProject':
       case 'openProject':
       case 'importProject':
+      case 'importSonalloyBundle':
         return Promise.resolve({
           projectState: this.bootstrapState.projectState,
           canonical: this.bootstrapState.canonical,
@@ -1025,6 +1029,7 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve({ plugins: this.plugins, issues: [] });
       case 'renderTimeline': {
         const result: RenderResult = {
+          mastering: null,
           assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
           path: 'C:\\Riffra\\render.wav',
           sampleRate: 48_000,

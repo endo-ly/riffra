@@ -36,6 +36,8 @@ pub enum ArrangementProjectionOutcome {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackSummary {
+    pub pan_law: riffra_core::PanLaw,
+    pub external_audio_source_track_id: Option<String>,
     pub id: String,
     pub name: String,
     pub kind: TrackKind,
@@ -97,6 +99,8 @@ impl TrackSummary {
     pub(crate) fn from_track(track: &Track) -> Self {
         Self {
             id: track.id.clone(),
+            pan_law: track.pan_law,
+            external_audio_source_track_id: track.external_audio_source_track_id.clone(),
             name: track.name.clone(),
             kind: track.kind,
             gain_db: track.gain_db,

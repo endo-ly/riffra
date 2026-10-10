@@ -67,6 +67,7 @@ impl ApplicationMutation {
 #[ts(optional_fields = nullable)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionSettingsPatch {
+    pub mixdown: Option<crate::MixdownSettings>,
     pub project_name: Option<Option<String>>,
     pub master_db: Option<f64>,
     pub loop_enabled: Option<bool>,

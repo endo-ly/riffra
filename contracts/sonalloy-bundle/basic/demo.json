@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "Bundle reference",
+  "parts": [
+    {
+      "id": "lead",
+      "instrument": "instruments/lead/definition.json",
+      "pattern": "patterns/lead.json",
+      "gain_db": -3,
+      "midi_channel": 2
+    },
+    {
+      "id": "duck",
+      "instrument": "instruments/duck/definition.json",
+      "pattern": "patterns/duck.json",
+      "gain_db": -6,
+      "audio_input": {
+        "part": "lead"
+      }
+    }
+  ],
+  "mix": {
+    "fade_out_seconds": 0.25
+  }
+}

@@ -51,12 +51,13 @@ void SonalloyInstrumentRuntime::RuntimeDeleter::operator()(
 }
 
 SonalloyInstrumentRuntime::SonalloyInstrumentRuntime(CompiledPtr compiled, RuntimePtr runtime,
-                                                     const int blockSize,
-                                                     const int latencySamples) noexcept
+                                                     const int blockSize, const int latencySamples)
     : compiled(std::move(compiled)),
       runtime(std::move(runtime)),
       blockSize(blockSize),
-      reportedLatencySamples(latencySamples) {}
+      reportedLatencySamples(latencySamples) {
+    inputBuffer.setSize(2, blockSize);
+}
 
 std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
     const juce::String& definitionJson, const juce::String& definitionBaseDir,
@@ -85,7 +86,7 @@ std::unique_ptr<SonalloyInstrumentRuntime> SonalloyInstrumentRuntime::create(
     const SonalloyProcessSpec spec{
         sampleRate,
         static_cast<std::uint32_t>(blockSize),
-        0,
+        definitionInfo.required_input_channels,
         2,
     };
     SonalloyCompiledInstrument* compiledRaw = nullptr;
@@ -190,7 +191,7 @@ void SonalloyInstrumentRuntime::clearActiveNotes() noexcept {
 bool SonalloyInstrumentRuntime::resetRuntimeInCallback() noexcept {
     clearActiveNotes();
     absoluteFrame = 0;
-    nextNoteId = 1;
+    nextNoteId = std::uint64_t{1} << 63;
     if (runtime == nullptr) return false;
     const auto result = sonalloy_runtime_reset(runtime.get());
     if (result != SONALLOY_OK) {
@@ -216,13 +217,17 @@ int SonalloyInstrumentRuntime::eventPriority(const SonalloyEvent& event) noexcep
         case SONALLOY_EVENT_NOTE_OFF:
             return 1;
         case SONALLOY_EVENT_PITCH_BEND:
+            return 3;
         case SONALLOY_EVENT_MOD_WHEEL:
+            return 4;
         case SONALLOY_EVENT_AFTERTOUCH:
+            return 5;
+        case SONALLOY_EVENT_PARAMETER_CHANGE:
             return 2;
         case SONALLOY_EVENT_NOTE_ON:
-            return 3;
+            return 6;
         default:
-            return 4;
+            return 7;
     }
 }
 
@@ -276,7 +281,7 @@ bool SonalloyInstrumentRuntime::appendNoteOn(const std::uint8_t channel,
                                              std::uint32_t& eventCount) noexcept {
     auto* active = allocateActiveNote();
     if (active == nullptr) return false;
-    if (nextNoteId == 0) nextNoteId = 1;
+    if (nextNoteId == 0) return false;
     const auto noteId = nextNoteId++;
     active->active = true;
     active->channel = channel;
@@ -441,6 +446,48 @@ void SonalloyInstrumentRuntime::process(float* const* outputChannels, const int 
         }
     }
 
+    if (context.timelineEventCount > kMaximumTimelineEventsPerBlock ||
+        (context.timelineEventCount > 0 && context.timelineEvents == nullptr)) {
+        failBlock(SONALLOY_INVALID_ARGUMENT, outputChannels, outputChannelCount, numSamples);
+        return;
+    }
+    for (std::size_t index = 0; index < context.timelineEventCount; ++index) {
+        const auto& event = context.timelineEvents[index];
+        if (event.sample_offset >= static_cast<std::uint32_t>(numSamples) ||
+            eventCount >= kMaximumEventsPerBlock ||
+            (event.event_type == SONALLOY_EVENT_PARAMETER_CHANGE &&
+             event.parameter_catalog_revision !=
+                 sonalloy_compiled_parameter_catalog_revision(compiled.get()))) {
+            failBlock(SONALLOY_INVALID_ARGUMENT, outputChannels, outputChannelCount, numSamples);
+            return;
+        }
+        auto position = eventCount++;
+        while (position > 0 && events[position - 1].sample_offset > event.sample_offset) {
+            events[position] = events[position - 1];
+            --position;
+        }
+        events[position] = event;
+    }
+    if (eventCount - liveEventCount > kMaximumTimelineEventsPerBlock) {
+        failBlock(SONALLOY_INVALID_ARGUMENT, outputChannels, outputChannelCount, numSamples);
+        return;
+    }
+    const auto inputChannels = requiredInputChannels();
+    if (inputChannels > 0) {
+        if (context.externalInput == nullptr || context.externalInputChannelCount != 2) {
+            failBlock(SONALLOY_INVALID_ARGUMENT, outputChannels, outputChannelCount, numSamples);
+            return;
+        }
+        for (int sample = 0; sample < numSamples; ++sample) {
+            inputBuffer.setSample(
+                0, sample,
+                inputChannels == 1
+                    ? (context.externalInput[0][sample] + context.externalInput[1][sample]) * 0.5f
+                    : context.externalInput[0][sample]);
+            if (inputChannels == 2)
+                inputBuffer.setSample(1, sample, context.externalInput[1][sample]);
+        }
+    }
     SonalloyProcessContext processContext{
         absoluteFrame,
         context.tempoBpm,
@@ -450,9 +497,10 @@ void SonalloyInstrumentRuntime::process(float* const* outputChannels, const int 
         context.timeSignatureDenominator,
         context.playing ? SONALLOY_TRANSPORT_PLAYING : SONALLOY_TRANSPORT_STOPPED,
     };
-    const auto result =
-        sonalloy_runtime_process(runtime.get(), &processContext, events.data(), eventCount, nullptr,
-                                 0, outputChannels, 2, static_cast<std::uint32_t>(numSamples));
+    const auto result = sonalloy_runtime_process(
+        runtime.get(), &processContext, events.data(), eventCount,
+        inputChannels == 0 ? nullptr : inputBuffer.getArrayOfReadPointers(), inputChannels,
+        outputChannels, 2, static_cast<std::uint32_t>(numSamples));
     if (result != SONALLOY_OK) {
         failBlock(static_cast<std::uint32_t>(result), outputChannels, outputChannelCount,
                   numSamples);
@@ -469,6 +517,29 @@ std::uint32_t SonalloyInstrumentRuntime::faultCode() const noexcept {
 
 std::uint64_t SonalloyInstrumentRuntime::droppedMidiEvents() const noexcept {
     return droppedMidi.load(std::memory_order_acquire) + pendingMidi.droppedPushes();
+}
+
+std::uint32_t SonalloyInstrumentRuntime::requiredInputChannels() const noexcept {
+    return sonalloy_compiled_required_input_channels(compiled.get());
+}
+
+bool SonalloyInstrumentRuntime::prepareParameterEvent(SonalloyEvent& event,
+                                                      const juce::String& parameter,
+                                                      juce::String& error) const {
+    const auto handleResult = sonalloy_compiled_parameter_handle(
+        compiled.get(), stringView(parameter), &event.parameter_handle);
+    if (handleResult != SONALLOY_OK) {
+        error = "Unknown instrument parameter: " + parameter;
+        return false;
+    }
+    const auto normalized = sonalloy_compiled_parameter_normalize(
+        compiled.get(), event.parameter_handle, event.value, &event.value);
+    if (normalized != SONALLOY_OK) {
+        error = "Instrument parameter value is out of range: " + parameter;
+        return false;
+    }
+    event.parameter_catalog_revision = sonalloy_compiled_parameter_catalog_revision(compiled.get());
+    return true;
 }
 
 }  // namespace riffra

@@ -51,6 +51,7 @@ private:
         float masterGain = 1.0f;
         bool normalize = false;
         bool hostsPlugins = false;
+        std::int64_t latencySamples = 0;
     };
 
     OfflineRenderer(Plan renderPlan, std::unique_ptr<TimelineEngine> timelineEngine) noexcept;

@@ -5,8 +5,7 @@ use crate::domain::asset::AssetId;
 use crate::domain::music::HarmonyEvent;
 use crate::domain::recording::*;
 use crate::domain::timeline::{
-    FrameDuration, FrameRange, ProjectTimebase, TIMELINE_PPQ, TimelineLoopRange,
-    TimelinePunchRange, TimelineTick,
+    FrameDuration, FrameRange, ProjectTimebase, TimelineLoopRange, TimelinePunchRange, TimelineTick,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -21,8 +20,13 @@ mod track;
 
 pub use audio_clip::{AudioClip, AudioClipMove, AudioClipPatch, FadeShape};
 pub use automation::{AutomationLane, AutomationParameter, AutomationPoint};
-pub use midi_clip::{MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiEventKind, MidiNote};
-pub use track::{AudioInputRoute, MidiInputRoute, MonitoringState, Track, TrackKind, TrackPatch};
+pub use midi_clip::{
+    InstrumentControlEvent, InstrumentControlEventKind, MidiClip, MidiClipMove, MidiClipPatch,
+    MidiEvent, MidiEventKind, MidiNote,
+};
+pub use track::{
+    AudioInputRoute, MidiInputRoute, MonitoringState, PanLaw, Track, TrackKind, TrackPatch,
+};
 
 /// The Arrange workspace's production state.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
@@ -73,12 +77,7 @@ impl Arrangement {
     /// Audio clip frame durations remain unchanged; only their musical display
     /// positions are recalculated by consumers of the timebase.
     pub fn update_timebase(&mut self, timebase: ProjectTimebase) -> Result<(), DomainError> {
-        if timebase.ppq != TIMELINE_PPQ
-            || !timebase.bpm.is_finite()
-            || !(20.0..=400.0).contains(&timebase.bpm)
-            || timebase.time_signature_numerator == 0
-            || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
-        {
+        if timebase.validate().is_err() {
             return Err(DomainError::InvalidClip(
                 "Arrangement timebase is invalid.".into(),
             ));
@@ -280,6 +279,11 @@ impl Arrangement {
             .position(|track| track.id == track_id)
             .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
         self.tracks.remove(index);
+        for consumer in &mut self.tracks {
+            if consumer.external_audio_source_track_id.as_deref() == Some(track_id) {
+                consumer.external_audio_source_track_id = None;
+            }
+        }
         self.audio_clips.retain(|clip| clip.track_id != track_id);
         self.midi_clips.retain(|clip| clip.track_id != track_id);
         self.automation_lanes
@@ -563,6 +567,9 @@ impl Arrangement {
         if let Some(events) = patch.events {
             clip.events = events;
         }
+        if let Some(events) = patch.instrument_control_events {
+            clip.instrument_control_events = events;
+        }
         if let Some(muted) = patch.muted {
             clip.muted = muted;
         }
@@ -729,6 +736,8 @@ impl Arrangement {
         });
         clip.events
             .retain(|event| event.tick.0 >= relative_start && event.tick.0 < relative_end);
+        clip.instrument_control_events
+            .retain(|event| event.tick.0 >= relative_start && event.tick.0 <= relative_end);
         for note in &mut clip.notes {
             note.start_tick = TimelineTick(note.start_tick.0.saturating_sub(relative_start));
             note.duration_ticks = note
@@ -738,6 +747,9 @@ impl Arrangement {
         }
         for event in &mut clip.events {
             event.tick = TimelineTick(event.tick.0.saturating_sub(relative_start));
+        }
+        for event in &mut clip.instrument_control_events {
+            event.tick = TimelineTick(event.tick.0 - relative_start);
         }
         self.validate_midi_clip(&clip)?;
         self.midi_clips[index] = clip;
@@ -777,6 +789,8 @@ impl Arrangement {
         left.duration_ticks = relative;
         left.notes.retain(|note| note.start_tick.0 < relative);
         left.events.retain(|event| event.tick.0 < relative);
+        left.instrument_control_events
+            .retain(|event| event.tick.0 < relative);
         for note in &mut left.notes {
             note.duration_ticks = note.duration_ticks.min(relative - note.start_tick.0).max(1);
         }
@@ -793,6 +807,12 @@ impl Arrangement {
                 .max(1);
         }
         right.events.retain(|event| event.tick.0 >= relative);
+        right
+            .instrument_control_events
+            .retain(|event| event.tick.0 >= relative);
+        for event in &mut right.instrument_control_events {
+            event.tick = TimelineTick(event.tick.0 - relative);
+        }
         for event in &mut right.events {
             event.tick = TimelineTick(event.tick.0 - relative);
         }
@@ -1330,11 +1350,7 @@ impl Arrangement {
         duplicate.start_tick = TimelineTick(
             duplicate.start_tick.0.saturating_add(
                 self.timebase
-                    .frames_to_ticks(
-                        duplicate.timeline_duration.frames,
-                        duplicate.timeline_duration.sample_rate,
-                    )
-                    .0,
+                    .duration_to_ticks(duplicate.start_tick, duplicate.timeline_duration),
             ),
         );
         self.audio_clips.push(duplicate);
@@ -1494,13 +1510,11 @@ impl Arrangement {
         }
         let first_end = first.start_tick.0.saturating_add(
             self.timebase
-                .frames_to_ticks(first.timeline_duration.frames, first.source_sample_rate)
-                .0,
+                .duration_to_ticks(first.start_tick, first.timeline_duration),
         );
         let second_end = second.start_tick.0.saturating_add(
             self.timebase
-                .frames_to_ticks(second.timeline_duration.frames, second.source_sample_rate)
-                .0,
+                .duration_to_ticks(second.start_tick, second.timeline_duration),
         );
         let overlap_start = first.start_tick.0.max(second.start_tick.0);
         let overlap_end = first_end.min(second_end);
@@ -1537,12 +1551,7 @@ impl Arrangement {
             return Err("An arrangement cannot contain more than 512 audio clips.".into());
         }
         let timebase = &arrangement.timebase;
-        if timebase.ppq != TIMELINE_PPQ
-            || !timebase.bpm.is_finite()
-            || !(20.0..=400.0).contains(&timebase.bpm)
-            || timebase.time_signature_numerator == 0
-            || !matches!(timebase.time_signature_denominator, 1 | 2 | 4 | 8 | 16 | 32)
-        {
+        if timebase.validate().is_err() {
             return Err("Arrangement timebase is invalid.".into());
         }
         if arrangement.loop_range.enabled
@@ -1565,6 +1574,23 @@ impl Arrangement {
             }
             track.validate_and_normalize()?;
         }
+        for track in &arrangement.tracks {
+            let mut visited = HashSet::new();
+            let mut current = track;
+            while let Some(source) = &current.external_audio_source_track_id {
+                if current.kind != TrackKind::Instrument || !visited.insert(&current.id) {
+                    return Err(format!(
+                        "invalid external audio route for track '{}'",
+                        track.name
+                    ));
+                }
+                current = arrangement
+                    .tracks
+                    .iter()
+                    .find(|candidate| candidate.id == *source)
+                    .ok_or_else(|| format!("external audio source '{source}' does not exist"))?;
+            }
+        }
         let audio_clips = std::mem::take(&mut arrangement.audio_clips);
         let mut normalized_clips = Vec::with_capacity(audio_clips.len());
         let mut audio_clip_ids = std::collections::HashSet::new();
@@ -1575,7 +1601,7 @@ impl Arrangement {
             clip.validate_and_normalize()?;
             let mut candidate = Arrangement {
                 revision: arrangement.revision,
-                timebase: arrangement.timebase,
+                timebase: arrangement.timebase.clone(),
                 loop_range: arrangement.loop_range,
                 punch_range: arrangement.punch_range,
                 tracks: arrangement.tracks.clone(),
@@ -1854,6 +1880,7 @@ mod tests {
                 .collect();
             let unselected = notes[3].clone();
             session.arrangement.midi_clips.push(MidiClip {
+                instrument_control_events: Vec::new(),
                 id: "clip:1".into(),
                 name: "Clip".into(),
                 track_id: "track:1".into(),
@@ -1888,6 +1915,63 @@ mod tests {
             );
             assert_eq!(notes[3], unselected);
         }
+    }
+
+    #[test]
+    fn split_and_trim_preserve_control_order_precision_and_terminal_events() {
+        // Arrange
+        let mut arrangement = Arrangement::default();
+        arrangement
+            .tracks
+            .push(Track::instrument("track".into(), "Instrument".into()));
+        arrangement.midi_clips.push(MidiClip {
+            id: "clip".into(),
+            name: "Clip".into(),
+            track_id: "track".into(),
+            asset_id: None,
+            start_tick: TimelineTick(960),
+            duration_ticks: 1920,
+            notes: vec![],
+            events: vec![],
+            instrument_control_events: [0, 960, 1920]
+                .into_iter()
+                .enumerate()
+                .map(|(order, tick)| super::midi_clip::InstrumentControlEvent {
+                    id: format!("event:{order}"),
+                    tick: TimelineTick(tick),
+                    source_order: order as u32,
+                    kind: super::midi_clip::InstrumentControlEventKind::PitchBend {
+                        value: 0.12345,
+                    },
+                })
+                .collect(),
+            muted: false,
+            loop_enabled: false,
+            recording_take_id: None,
+        });
+        let mut trimmed = arrangement.clone();
+
+        // Act
+        arrangement
+            .split_midi_clip("clip", TimelineTick(1920), "right".into())
+            .unwrap();
+        trimmed
+            .trim_midi_clip("clip", TimelineTick(1920), 960)
+            .unwrap();
+
+        // Assert
+        assert_eq!(arrangement.midi_clips[0].instrument_control_events.len(), 1);
+        let right = &arrangement.midi_clips[1].instrument_control_events;
+        assert_eq!(
+            right
+                .iter()
+                .map(|event| (event.tick.0, event.source_order))
+                .collect::<Vec<_>>(),
+            [(0, 1), (960, 2)]
+        );
+        assert_eq!(trimmed.midi_clips[0].instrument_control_events, *right);
+        assert!(right.iter().all(|event| event.kind
+            == super::midi_clip::InstrumentControlEventKind::PitchBend { value: 0.12345 }));
     }
 
     fn session_with_recording_relations() -> CreativeSession {
@@ -1962,22 +2046,25 @@ mod tests {
         let mut arrangement = Arrangement::default();
         let revision = arrangement.revision;
         arrangement
-            .update_timebase(ProjectTimebase {
+            .update_timebase(crate::ProjectTimebase {
                 ppq: TIMELINE_PPQ,
-                bpm: 98.5,
-                time_signature_numerator: 7,
-                time_signature_denominator: 8,
+                tempo_changes: vec![crate::TempoChange { tick: 0, bpm: 98.5 }],
+                time_signature_changes: vec![crate::TimeSignatureChange {
+                    tick: 0,
+                    numerator: 7,
+                    denominator: 8,
+                }],
             })
             .unwrap();
 
-        assert_eq!(arrangement.timebase.bpm, 98.5);
-        assert_eq!(arrangement.timebase.time_signature_numerator, 7);
+        assert_eq!(arrangement.timebase.tempo_changes[0].bpm, 98.5);
+        assert_eq!(arrangement.timebase.time_signature_changes[0].numerator, 7);
         assert_eq!(arrangement.revision, revision + 1);
         assert!(
             arrangement
                 .update_timebase(ProjectTimebase {
-                    bpm: 10.0,
-                    ..arrangement.timebase
+                    tempo_changes: vec![crate::TempoChange { tick: 0, bpm: 0.0 }],
+                    ..arrangement.timebase.clone()
                 })
                 .is_err()
         );

@@ -68,17 +68,15 @@ InstrumentProcessContext TimelineEngine::instrumentProcessContext(const Prepared
                                                                   const bool playing) noexcept {
     const auto sample = std::max<std::int64_t>(0, rangeStart);
     const auto tick = prepared.timebase.sampleToTick(sample, prepared.outputSampleRate);
-    const auto beatPosition =
-        static_cast<double>(tick) / static_cast<double>(prepared.timebase.ppq);
-    const auto beatsPerBar = static_cast<double>(prepared.timeSignatureNumerator) * 4.0 /
-                             static_cast<double>(prepared.timeSignatureDenominator);
+    const auto exactTick = prepared.timebase.sampleToExactTick(sample, prepared.outputSampleRate);
+    const auto meter = prepared.timebase.meterAt(exactTick);
     return {
         static_cast<std::uint64_t>(sample),
-        prepared.timebase.bpm,
-        beatPosition,
-        beatsPerBar > 0.0 ? beatPosition / beatsPerBar : 0.0,
-        prepared.timeSignatureNumerator,
-        prepared.timeSignatureDenominator,
+        prepared.timebase.tempoAt(tick),
+        exactTick / static_cast<double>(prepared.timebase.ppq),
+        meter.bar,
+        meter.numerator,
+        meter.denominator,
         playing,
     };
 }

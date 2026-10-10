@@ -457,7 +457,7 @@ fn preflight_track_outputs(
     directory: &Path,
     manifest: &NativeArrangeManifest,
     segments: &[NativeCaptureSegment],
-    timebase: riffra_core::ProjectTimebase,
+    timebase: &riffra_core::ProjectTimebase,
     start_tick: TimelineTick,
 ) -> Result<Vec<TrackOutputPreflight>, String> {
     manifest
@@ -634,10 +634,11 @@ fn prepare_arrange_finalization(
     let segments = capture_segments_for_manifest(&manifest)?;
     let session = context.host.project.read().canonical.session.clone();
     let base_session = session.clone();
-    let timebase = session.arrangement.timebase;
+    let timebase = session.arrangement.timebase.clone();
     let sample_to_ticks = |samples: u64| {
-        ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
-            .round() as u64
+        timebase
+            .seconds_to_ticks(samples as f64 / manifest.sample_rate)
+            .0
     };
     let effective_start_tick = manifest
         .record_start_timeline_sample
@@ -688,7 +689,7 @@ fn prepare_arrange_finalization(
         directory,
         &manifest,
         &segments,
-        timebase,
+        &timebase,
         TimelineTick(effective_start_tick),
     )?;
     if !files.iter().any(|file| {
@@ -833,8 +834,9 @@ fn materialize_arrange_candidate(
         ..
     } = prepared;
     let sample_to_ticks = |samples: u64| {
-        ((samples as f64 / manifest.sample_rate) * (timebase.bpm / 60.0) * f64::from(timebase.ppq))
-            .round() as u64
+        timebase
+            .seconds_to_ticks(samples as f64 / manifest.sample_rate)
+            .0
     };
     let next_pass_ordinal = next_recording_pass_ordinal(&session.arrangement, &recording_id);
     let mut pass_ids = Vec::new();
@@ -1351,7 +1353,7 @@ fn place_recording_on_timeline(
     let mut take_ids = Vec::new();
     let mut pass_ids = Vec::new();
     let mut end_tick = start_tick.0;
-    let timebase = session.arrangement.timebase;
+    let timebase = session.arrangement.timebase.clone();
     let midi_path = directory.join("midi.json");
     let audio_path = processed_asset_id
         .as_ref()
@@ -1364,16 +1366,20 @@ fn place_recording_on_timeline(
         .transpose()?;
     let midi_source = if midi_asset_id.is_some() && midi_path.is_file() {
         Some(materialize::parse_recorded_midi(
-            &midi_path, "", start_tick, timebase,
+            &midi_path, "", start_tick, &timebase,
         )?)
     } else {
         None
     };
     let total_duration_ticks = audio_source
         .map(|(sample_rate, frames)| {
-            timebase
-                .milliseconds_to_ticks(frames as f64 * 1000.0 / f64::from(sample_rate))
-                .0
+            timebase.duration_to_ticks(
+                start_tick,
+                riffra_core::FrameDuration {
+                    frames,
+                    sample_rate,
+                },
+            )
         })
         .or_else(|| midi_source.as_ref().map(|clip| clip.duration_ticks))
         .unwrap_or(0)
@@ -2036,6 +2042,7 @@ mod tests {
     #[test]
     fn recorded_midi_segment_preserves_controller_events_and_truncates_notes() {
         let source = MidiClip {
+            instrument_control_events: Vec::new(),
             id: "source".into(),
             name: "MIDI".into(),
             track_id: "instrument".into(),
@@ -2121,7 +2128,7 @@ mod tests {
         let clip = materialize::midi_clip_for_take(
             &root,
             &take,
-            riffra_core::ProjectTimebase::default(),
+            &riffra_core::ProjectTimebase::default(),
             "midi-clip:slot".into(),
         )
         .unwrap();

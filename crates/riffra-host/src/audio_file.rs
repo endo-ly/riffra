@@ -1,5 +1,9 @@
 //! Pure WAV structure parsing used by timeline placement and analysis.
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+
 /// Structural metadata for a RIFF/WAVE file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WavMetadata {
@@ -94,6 +98,93 @@ fn read_u32(bytes: &[u8]) -> Result<u32, String> {
                 .map(u32::from_le_bytes)
                 .map_err(|_| "WAV value is truncated.".into())
         })
+}
+
+/// Reads the sample rate and frame count without loading sample data.
+///
+/// # Errors
+/// Returns an error for unreadable files, malformed chunks, or incomplete frames.
+pub fn read_wav_metadata(path: &Path) -> Result<(u32, u64), String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("audio could not be opened: {error}"))?;
+    let file_len = file
+        .metadata()
+        .map_err(|error| format!("audio size could not be read: {error}"))?
+        .len();
+    let mut header = [0_u8; 12];
+    file.read_exact(&mut header)
+        .map_err(|error| format!("audio header could not be read: {error}"))?;
+    if &header[..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err("audio is not a RIFF/WAVE file.".into());
+    }
+    let mut channels = None;
+    let mut sample_rate = None;
+    let mut bits_per_sample = None;
+    let mut data_len = None;
+    let mut chunk_header = [0_u8; 8];
+    loop {
+        let chunk_start = file
+            .stream_position()
+            .map_err(|error| format!("audio position could not be read: {error}"))?;
+        if chunk_start == file_len {
+            break;
+        }
+        if file_len.saturating_sub(chunk_start) < 8 {
+            return Err("audio has a truncated chunk header.".into());
+        }
+        file.read_exact(&mut chunk_header)
+            .map_err(|error| format!("audio chunk header could not be read: {error}"))?;
+        let chunk_len = u64::from(u32::from_le_bytes([
+            chunk_header[4],
+            chunk_header[5],
+            chunk_header[6],
+            chunk_header[7],
+        ]));
+        let payload_end = chunk_start
+            .checked_add(8)
+            .and_then(|position| position.checked_add(chunk_len))
+            .and_then(|position| position.checked_add(chunk_len % 2))
+            .ok_or_else(|| "audio chunk length overflows the file range.".to_string())?;
+        if payload_end > file_len {
+            return Err("audio chunk extends past the end of the file.".into());
+        }
+        match &chunk_header[..4] {
+            b"fmt " if chunk_len >= 16 => {
+                let mut fmt = [0_u8; 16];
+                file.read_exact(&mut fmt)
+                    .map_err(|error| format!("audio format could not be read: {error}"))?;
+                channels = Some(u16::from_le_bytes([fmt[2], fmt[3]]));
+                sample_rate = Some(u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]));
+                bits_per_sample = Some(u16::from_le_bytes([fmt[14], fmt[15]]));
+            }
+            b"data" => data_len = Some(chunk_len),
+            _ => {}
+        }
+        file.seek(SeekFrom::Start(payload_end))
+            .map_err(|error| format!("audio chunk could not be skipped: {error}"))?;
+        if channels.is_some()
+            && sample_rate.is_some()
+            && bits_per_sample.is_some()
+            && data_len.is_some()
+        {
+            break;
+        }
+    }
+    let channels = channels.unwrap_or_default();
+    let sample_rate = sample_rate.unwrap_or_default();
+    let bits_per_sample = bits_per_sample.unwrap_or_default();
+    let data_len = data_len.ok_or_else(|| "audio has no data chunk.".to_string())?;
+    let frame_bytes = u64::from(channels)
+        .checked_mul(u64::from(bits_per_sample / 8))
+        .filter(|_| channels > 0 && bits_per_sample > 0 && bits_per_sample % 8 == 0)
+        .ok_or_else(|| "audio has an invalid frame format.".to_string())?;
+    if sample_rate == 0 {
+        return Err("audio has no sample rate.".into());
+    }
+    if data_len % frame_bytes != 0 {
+        return Err("audio data does not contain complete frames.".into());
+    }
+    Ok((sample_rate, data_len / frame_bytes))
 }
 
 #[cfg(test)]

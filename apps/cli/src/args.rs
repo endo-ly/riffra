@@ -95,6 +95,16 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: MidiClipCommand,
     },
+    /// Inspect and edit native precision instrument controls within MIDI Clips.
+    InstrumentEvent {
+        #[command(subcommand)]
+        command: InstrumentEventCommand,
+    },
+    /// Inspect or replace the Project's mixdown settings.
+    Mixdown {
+        #[command(subcommand)]
+        command: MixdownCommand,
+    },
     /// Edit individual MIDI Notes by note ID using raw MIDI pitch and Clip-relative ticks.
     MidiNote {
         #[command(subcommand)]
@@ -273,7 +283,8 @@ pub enum SessionCommand {
     ///
     /// Only these commands may appear in a batch: session.settings.update; track.add, track.update,
     /// track.remove, track.duplicate, track.reorder, track.audio-input.set, track.audio-input.clear,
-    /// track.midi-input.set, track.midi-input.clear; audio-clip.update, audio-clip.move,
+    /// track.midi-input.set, track.midi-input.clear, track.external-audio-input.set,
+    /// track.external-audio-input.clear; audio-clip.update, audio-clip.move,
     /// audio-clip.trim, audio-clip.split, audio-clip.duplicate, audio-clip.crossfade;
     /// midi-clip.create, midi-clip.update, midi-clip.move, midi-clip.trim, midi-clip.split,
     /// midi-clip.duplicate; midi-note.add, midi-note.insert, midi-note.update, midi-note.update-many,
@@ -282,7 +293,9 @@ pub enum SessionCommand {
     /// music.note.insert, music.note.update, music.note.remove, music.note.transform,
     /// music.harmony.insert, music.harmony.update, music.harmony.remove, music.harmony.realize,
     /// music.phrase.insert, music.region.add, music.region.update, music.region.remove;
-    /// clip.remove, clip.paste; marker.add, marker.update, marker.remove; timebase.update;
+    /// clip.remove, clip.paste; marker.add, marker.update, marker.remove; timebase.update,
+    /// timebase.set-map; mixdown.set; instrument-event.add, instrument-event.set,
+    /// instrument-event.update, instrument-event.remove;
     /// loop-range.set, punch-range.set; automation.set, automation.clear; instrument.apply,
     /// instrument.clear; effect.add, effect.remove, effect.reorder; device.bypass,
     /// device.parameter.set. instrument.apply accepts only `builtin:` instruments in a batch;
@@ -354,6 +367,11 @@ pub enum HistoryCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TrackCommand {
+    /// Connect or disconnect another Track's processed audio as instrument input.
+    ExternalAudioInput {
+        #[command(subcommand)]
+        command: ExternalAudioInputCommand,
+    },
     /// List all Tracks with their mix state, inputs, and instrument assignment.
     List,
     /// Add a new audio or instrument Track.
@@ -406,6 +424,9 @@ pub struct TrackUpdateArgs {
     /// Track stereo pan; non-finite values are rejected and values are clamped to -1.0 (left) through 1.0 (right).
     #[arg(long, value_parser = finite_f64, allow_hyphen_values = true)]
     pub pan: Option<f64>,
+    /// Stereo pan law: equalPower or unityCenterStereo.
+    #[arg(long, value_parser = ["equalPower", "unityCenterStereo"])]
+    pub pan_law: Option<String>,
     /// Mute or unmute this Track; a muted Track is silent regardless of automation.
     #[arg(long)]
     pub muted: Option<bool>,
@@ -431,6 +452,82 @@ pub struct ReorderTrackArgs {
     /// Zero-based destination index in the Track list.
     #[arg(long)]
     pub target_index: usize,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExternalAudioInputCommand {
+    /// Set one source Track for an instrument requiring External Audio.
+    Set {
+        /// Consumer Instrument Track ID.
+        #[arg(long)]
+        track_id: String,
+        /// Source Track ID whose processed audio supplies the input.
+        #[arg(long)]
+        source_track_id: String,
+    },
+    /// Disconnect the instrument input; missing required input is diagnosed.
+    Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MixdownCommand {
+    /// Read the current settings.
+    Get,
+    /// Replace settings with a JSON object or @file.
+    Set {
+        /// Complete Mixdown settings object, inline JSON or @file.
+        #[arg(long)]
+        settings_json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstrumentEventCommand {
+    /// List controls in their canonical definition order.
+    List {
+        /// MIDI Clip ID containing the controls.
+        #[arg(long)]
+        clip_id: String,
+    },
+    /// Add a control from a tagged JSON kind object or @file.
+    Add {
+        /// MIDI Clip ID containing the controls.
+        #[arg(long)]
+        clip_id: String,
+        /// Clip-relative tick, including the Clip endpoint.
+        #[arg(long)]
+        tick: u64,
+        /// Tagged control kind object, inline JSON or @file.
+        #[arg(long)]
+        kind_json: String,
+    },
+    /// Set the complete array of controls from JSON or @file.
+    Set {
+        /// MIDI Clip ID containing the controls.
+        #[arg(long)]
+        clip_id: String,
+        /// Complete control event array, inline JSON or @file.
+        #[arg(long)]
+        events_json: String,
+    },
+    /// Replace one identified control from JSON or @file.
+    Update {
+        /// MIDI Clip ID containing the controls.
+        #[arg(long)]
+        clip_id: String,
+        /// Complete control event with its existing ID, inline JSON or @file.
+        #[arg(long)]
+        event_json: String,
+    },
+    /// Remove an identified control.
+    Remove {
+        /// MIDI Clip ID containing the controls.
+        #[arg(long)]
+        clip_id: String,
+        /// ID of the control event to remove.
+        #[arg(long)]
+        event_id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1342,13 +1439,21 @@ pub struct MarkerIdArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum TimebaseCommand {
+    /// Read all tempo and meter changes.
+    GetMap,
+    /// Replace tempo and meter changes with a JSON object.
+    SetMap {
+        /// Tempo and time-signature change arrays, inline JSON or @file.
+        #[arg(long)]
+        map_json: String,
+    },
     /// Update the project tempo and time signature; only the supplied fields change.
     Update(TimebaseArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct TimebaseArgs {
-    /// Tempo in beats per minute; non-finite values are rejected and the value must be within 20.0..=400.0.
+    /// Tempo at tick zero in beats per minute; must be finite and positive.
     #[arg(long, value_parser = finite_f64)]
     pub bpm: Option<f64>,
     /// Time signature numerator, such as 4 in 4/4; must be within 1..=255.
@@ -1469,6 +1574,8 @@ pub enum ProjectCommand {
     Export(ProjectExportArgs),
     /// Import a project file from disk and make it active.
     Import(ProjectImportArgs),
+    /// Import a Sonalloy Bundle v1 directory as a new editable project.
+    ImportSonalloy(ProjectImportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2260,6 +2367,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             SessionCommand::Settings { command } => match command {
                 SessionSettingsCommand::Update(args) => {
                     Canonical::SessionSettingsUpdate(SessionSettingsPatch {
+                        mixdown: None,
                         project_name: args.project_name.map(Some),
                         master_db: args.master_db,
                         loop_enabled: args.loop_enabled,
@@ -2275,6 +2383,19 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             HistoryCommand::Get => Canonical::HistoryGet(empty).into(),
         },
         CliCommand::Track { command } => match command {
+            TrackCommand::ExternalAudioInput { command } => match command {
+                ExternalAudioInputCommand::Set {
+                    track_id,
+                    source_track_id,
+                } => Canonical::TrackExternalAudioInputSet(TrackExternalAudioInputSetParams {
+                    track_id,
+                    source_track_id,
+                })
+                .into(),
+                ExternalAudioInputCommand::Clear(args) => {
+                    Canonical::TrackExternalAudioInputClear(track_id(args)).into()
+                }
+            },
             TrackCommand::List => Canonical::TrackList(empty).into(),
             TrackCommand::Add(args) => Canonical::TrackAdd(TrackAddParams {
                 name: args.name,
@@ -2282,6 +2403,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             })
             .into(),
             TrackCommand::Update(args) => Canonical::TrackUpdate(TrackUpdateParams {
+                pan_law: optional_text("/panLaw", args.pan_law)?,
                 track_id: args.track_id,
                 name: args.name,
                 gain_db: args.gain_db,
@@ -2363,6 +2485,48 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     second_clip_id: args.second_clip_id,
                 })
                 .into()
+            }
+        },
+        CliCommand::Mixdown { command } => match command {
+            MixdownCommand::Get => Canonical::MixdownGet(empty).into(),
+            MixdownCommand::Set { settings_json } => Canonical::MixdownSet(decode_params(
+                json_argument("settings-json", &settings_json)?,
+            )?)
+            .into(),
+        },
+        CliCommand::InstrumentEvent { command } => match command {
+            InstrumentEventCommand::List { clip_id } => {
+                Canonical::InstrumentEventList(InstrumentEventClipParams { clip_id }).into()
+            }
+            InstrumentEventCommand::Add {
+                clip_id,
+                tick,
+                kind_json,
+            } => Canonical::InstrumentEventAdd(InstrumentEventAddParams {
+                clip_id,
+                tick,
+                kind: decode_params(json_argument("kind-json", &kind_json)?)?,
+            })
+            .into(),
+            InstrumentEventCommand::Set {
+                clip_id,
+                events_json,
+            } => Canonical::InstrumentEventSet(InstrumentEventSetParams {
+                clip_id,
+                events: decode_params(json_argument("events-json", &events_json)?)?,
+            })
+            .into(),
+            InstrumentEventCommand::Update {
+                clip_id,
+                event_json,
+            } => Canonical::InstrumentEventUpdate(InstrumentEventUpdateParams {
+                clip_id,
+                event: decode_params(json_argument("event-json", &event_json)?)?,
+            })
+            .into(),
+            InstrumentEventCommand::Remove { clip_id, event_id } => {
+                Canonical::InstrumentEventRemove(InstrumentEventRemoveParams { clip_id, event_id })
+                    .into()
             }
         },
         CliCommand::MidiClip { command } => match command {
@@ -2656,6 +2820,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
         },
         CliCommand::Timebase { command } => match command {
+            TimebaseCommand::GetMap => Canonical::TimebaseGetMap(EmptyParams {}).into(),
+            TimebaseCommand::SetMap { map_json } => {
+                Canonical::TimebaseSetMap(decode_params(json_argument("map-json", &map_json)?)?)
+                    .into()
+            }
             TimebaseCommand::Update(args) => Canonical::TimebaseUpdate(TimebaseUpdateParams {
                 bpm: args.bpm,
                 time_signature_numerator: args.time_signature_numerator,
@@ -2716,6 +2885,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             .into(),
             ProjectCommand::Import(args) => {
                 Project::ProjectImport(ProjectImportParams { path: args.path }).into()
+            }
+            ProjectCommand::ImportSonalloy(args) => {
+                Project::ProjectImportSonalloy(ProjectImportSonalloyParams { path: args.path })
+                    .into()
             }
         },
         CliCommand::Instrument { command } => match command {

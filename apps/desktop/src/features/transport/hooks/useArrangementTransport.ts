@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProjectTimebase } from '@/model/domain';
 import type { TransportStatus } from '@/model/domain';
 import type { AudioApi, NativeEventApi } from '@/native/native-api';
+import { secondsToTicks, ticksToSeconds } from '@/shared/session/timebase';
 /** Arrangement Transport state shared by the Global Control Bar and the Arrange editors. */
 export type ArrangementTransport = ReturnType<typeof useArrangementTransport>;
 
@@ -81,16 +82,17 @@ export function useArrangementTransport(
       .catch(() => undefined);
   }, [api, hostGeneration, projectId]);
 
-  const bpm = timebase?.bpm;
-  const ppq = timebase?.ppq;
   useEffect(() => {
-    if (bpm === undefined || ppq === undefined) return;
+    if (timebase == null) return;
     let frame = 0;
     let lastUiUpdate = 0;
     const update = (now: number) => {
       const current = anchor.current;
       const elapsed = current.playing ? performance.now() - current.at : 0;
-      const tick = current.tick + (elapsed * bpm * ppq) / 60000;
+      const tick = secondsToTicks(
+        ticksToSeconds(current.tick, timebase) + elapsed / 1000,
+        timebase,
+      );
       // The playhead itself is animated by a tiny DOM-only component. The
       // editor needs a React snapshot only for the toolbar clock and editing
       // actions; rebuilding every ArrangeTrack on every animation frame made
@@ -104,7 +106,7 @@ export function useArrangementTransport(
     };
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
-  }, [bpm, ppq]);
+  }, [timebase]);
 
   const seekLocally = (tick: number) => {
     anchor.current = {

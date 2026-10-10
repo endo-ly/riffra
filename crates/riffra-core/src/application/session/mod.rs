@@ -49,6 +49,12 @@ where
         patch: SessionSettingsPatch,
     ) -> Result<CreativeSession, ApplicationError> {
         self.core.commit(self.storage, |session| {
+            if let Some(mixdown) = patch.mixdown {
+                mixdown
+                    .validate()
+                    .map_err(ApplicationError::InvalidCommand)?;
+                session.settings.mixdown = mixdown;
+            }
             if let Some(project_name) = patch.project_name {
                 session.project_name = project_name
                     .map(|value| value.trim().chars().take(160).collect::<String>())

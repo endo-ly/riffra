@@ -1,4 +1,5 @@
 import type { MusicalPosition, ProjectTimebase } from '@/model/domain';
+import { tickToBarBeat } from './timebase';
 
 function greatestCommonDivisor(left: number, right: number): number {
   return right === 0 ? left : greatestCommonDivisor(right, left % right);
@@ -9,12 +10,7 @@ function greatestCommonDivisor(left: number, right: number): number {
  * the Host accepts, using the project meter.
  */
 export function tickToMusicalPosition(tick: number, timebase: ProjectTimebase): MusicalPosition {
-  const beatTicks = (timebase.ppq * 4) / timebase.timeSignatureDenominator;
-  const safeTick = Math.max(0, Math.round(tick));
-  const totalBeats = Math.floor(safeTick / beatTicks);
-  const offsetTicks = safeTick % beatTicks;
-  const bar = Math.floor(totalBeats / timebase.timeSignatureNumerator) + 1;
-  const beat = (totalBeats % timebase.timeSignatureNumerator) + 1;
+  const { bar, beat, offset: offsetTicks, beatTicks } = tickToBarBeat(tick, timebase);
   if (offsetTicks === 0) return `${bar}:${beat}`;
   const divisor = greatestCommonDivisor(offsetTicks, beatTicks);
   return `${bar}:${beat}+${offsetTicks / divisor}/${beatTicks / divisor}`;
