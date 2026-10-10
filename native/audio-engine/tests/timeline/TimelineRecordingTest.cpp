@@ -8,6 +8,31 @@
 
 namespace riffra {
 
+TEST(TimelineEngineTest, UsesTempoAndMeterAtTheRecordingPositionForCountIn) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, false, true);
+    snapshot.graph.timebase.tempoChanges.push_back({1920, 90.0});
+    snapshot.graph.timebase.timeSignatureChanges.push_back({1920, 3, 8});
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 256, error));
+    ASSERT_TRUE(engine.seekToTick(1920));
+    ASSERT_EQ(engine.startRecording(1, error), RealtimeRequest::accepted);
+
+    // Act / Assert: one eighth-note at 90 BPM is 16,000 samples.
+    int captureOffset = 0;
+    int captureSamples = 0;
+    EXPECT_FALSE(
+        TimelineEngineTestPeer::recordingWindow(engine, 15'999, captureOffset, captureSamples));
+    EXPECT_EQ(captureSamples, 0);
+    ASSERT_TRUE(
+        TimelineEngineTestPeer::recordingWindow(engine, 257, captureOffset, captureSamples));
+    EXPECT_EQ(captureOffset, 1);
+    EXPECT_EQ(captureSamples, 256);
+}
+
 TEST(TimelineEngineTest, KeepsAudioCaptureOpenForTheWholeAudioCallback) {
     // Arrange
     juce::AudioFormatManager formats;

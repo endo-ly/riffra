@@ -8,6 +8,7 @@ namespace riffra {
 TEST(TrackProcessingPoolTest, ProcessesEveryTrackOnceForEachWorkerCount) {
     // Arrange
     PreparedTimeline graph;
+    std::vector<Track*> processingTracks;
     for (int index = 0; index < 31; ++index) {
         auto track = std::make_unique<Track>();
         track->runtime = std::make_unique<TrackRuntime>();
@@ -20,17 +21,18 @@ TEST(TrackProcessingPoolTest, ProcessesEveryTrackOnceForEachWorkerCount) {
         runtime.postEffectClipBuffer.setSize(2, 32);
         runtime.postEffectClipBuffer.clear();
         runtime.trackOutputBuffer.setSize(2, 32);
-        graph.processingTracks.push_back(track.get());
+        runtime.routedOutputBuffer.setSize(2, 32);
+        processingTracks.push_back(track.get());
         graph.tracks.push_back(std::move(track));
     }
-    const TrackStageJob job{TrackStageKind::liveAudioMonitor, &graph, 0, 0, 32, 1.0f, 0.0f, false};
+    const TrackStageJob job{TrackStageKind::live, &graph, 0, 0, 32, 1.0f, 0.0f, false};
 
     for (const int workerCount : {0, 1, 7}) {
         TrackProcessingPool pool(workerCount);
         for (auto& track : graph.tracks) track->runtime->windowProcessingCount = 0;
 
         // Act
-        for (int block = 0; block < 100; ++block) pool.run(graph.processingTracks, job);
+        for (int block = 0; block < 100; ++block) pool.run(processingTracks, job);
 
         // Assert
         for (const auto& track : graph.tracks)

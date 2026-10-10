@@ -54,7 +54,15 @@ void TimelineEngine::startRecordingNow(RealtimeState& state, const int countInBe
             graph.timebase.sampleToTick(requestedSample, graph.outputSampleRate);
         if (!alreadyPlaying) state.transport = TransportState::playing;
     } else {
-        state.countInRemainingSamples = graph.beatSamples * std::max(0, countInBeats);
+        const auto requestedSample =
+            state.seekPending ? state.pendingSeekSample : state.timelineSample;
+        const auto tick = graph.timebase.sampleToTick(requestedSample, graph.outputSampleRate);
+        const auto meter = graph.timebase.meterAt(static_cast<double>(tick));
+        state.countInBeatSamples = std::max<std::int64_t>(
+            1, static_cast<std::int64_t>(
+                   std::llround(graph.outputSampleRate * 60.0 * 4.0 /
+                                (graph.timebase.tempoAt(tick) * meter.denominator))));
+        state.countInRemainingSamples = state.countInBeatSamples * std::max(0, countInBeats);
         state.recordingPhase = RecordingPhase::countingIn;
     }
 }

@@ -352,4 +352,71 @@ TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
                             [](const int id) { return id == 1; }));
 }
 
+TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles) {
+    // Arrange: put Consumers before their Source in presentation order.
+    test::TemporaryDirectory directory;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeBuiltInInstrumentSnapshot("source");
+    auto source = snapshot.graph.tracks.front();
+    source.muted = true;
+    source.panLaw = "unityCenterStereo";
+    const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
+                                         .getSiblingFile("sonalloy-bundle")
+                                         .getChildFile("basic/instruments/duck");
+    auto consumer = makeInstrumentTrack("consumer-a");
+    consumer.panLaw = "unityCenterStereo";
+    consumer.externalAudioSourceTrackId = "source";
+    consumer.instrument = InternalInstrumentSpec{
+        "instrument:a", false,
+        instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
+        instrumentDirectory.getFullPathName()};
+    consumer.midiClips = source.midiClips;
+    auto second = consumer;
+    second.id = "consumer-b";
+    std::get<InternalInstrumentSpec>(*second.instrument).id = "instrument:b";
+    snapshot.graph.tracks = {consumer, second, source};
+    const auto render = [&](const ExecutionGraph& graph, const juce::String& name) {
+        const auto output = directory.get().getChildFile(name + ".wav");
+        OfflineRenderer::Result result;
+        juce::String error;
+        EXPECT_TRUE(
+            renderTestSnapshot(graph, formats, output, 0, 960, 48'000, 256, false, result, error))
+            << error;
+        auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(output));
+        juce::AudioBuffer<float> samples(2, 24'000);
+        samples.clear();
+        if (reader != nullptr) reader->read(&samples, 0, samples.getNumSamples(), 0, true, true);
+        return samples;
+    };
+
+    // Act: render the same dependency with one and two audible Consumers.
+    auto singleGraph = snapshot.graph;
+    singleGraph.tracks[1].muted = true;
+    const auto single = render(singleGraph, "single");
+    const auto parallel = render(snapshot.graph, "parallel");
+    auto silentSourceGraph = singleGraph;
+    silentSourceGraph.tracks[2].midiClips.clear();
+    const auto silentSource = render(silentSourceGraph, "silent-source");
+
+    // Assert: muting a Source affects Master only; its signal is shared once.
+    EXPECT_GT(single.getMagnitude(0, single.getNumSamples()), 0.001f);
+    float inputDifference = 0.0f;
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < single.getNumSamples(); ++sample) {
+            EXPECT_NEAR(parallel.getSample(channel, sample),
+                        2.0f * single.getSample(channel, sample), 1.0e-6f);
+            inputDifference =
+                std::max(inputDifference, std::abs(single.getSample(channel, sample) -
+                                                   silentSource.getSample(channel, sample)));
+        }
+    EXPECT_GT(inputDifference, 0.001f);
+    snapshot.graph.tracks[0].externalAudioSourceTrackId = "consumer-b";
+    snapshot.graph.tracks[1].externalAudioSourceTrackId = "consumer-a";
+    TimelineEngine engine(true);
+    juce::String error;
+    EXPECT_FALSE(loadTestSnapshot(engine, snapshot, formats, 48'000, 256, error));
+    EXPECT_TRUE(error.containsIgnoreCase("cycle")) << error;
+}
+
 }  // namespace riffra

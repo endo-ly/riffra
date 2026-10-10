@@ -261,6 +261,7 @@ private:
         std::int64_t pendingSeekSample = 0;
         bool resetPlaybackPending = false;
         std::int64_t countInRemainingSamples = 0;
+        std::int64_t countInBeatSamples = 1;
         std::int64_t countInBlockStartRemainingSamples = 0;
         int captureBlockOffset = 0;
         int captureBlockSamples = 0;
@@ -340,9 +341,8 @@ private:
                                      int channelCount, std::int64_t rangeStart,
                                      int destinationStart, int sampleCount) noexcept;
     void processLiveAudioTracks(PreparedTimeline& timeline, const float* const* inputChannels,
-                                int inputChannelCount, float* const* outputChannels,
-                                int channelCount, std::int64_t rangeStart, int destinationStart,
-                                int sampleCount, bool renderOutput = false) noexcept;
+                                int inputChannelCount, std::int64_t rangeStart,
+                                int destinationStart, int sampleCount) noexcept;
     static void mergeTimelineAndLiveInput(Track& track, int sampleCount) noexcept;
     static void processInstrumentTrack(const PreparedTimeline& timeline, Track& track,
                                        int sampleCount, const juce::MidiBuffer* timelineMidi,

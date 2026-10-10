@@ -18,7 +18,7 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                                   const int sampleCount) noexcept {
     if (sampleCount <= 0) return;
     const auto* active = realtime.graph;
-    if (active == nullptr || !active->metronomeEnabled || active->beatSamples <= 0) return;
+    if (active == nullptr || !active->metronomeEnabled) return;
     const auto loopLength = active->loopEndSample - active->loopStartSample;
     const auto playbackOffset = juce::jlimit(0, sampleCount, realtime.lastMixPlaybackOffset);
     const auto countInRemaining = realtime.countInBlockStartRemainingSamples;
@@ -47,7 +47,8 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
         if (countInRemaining > 0 && sample < (countingIn ? sampleCount : playbackOffset)) {
             const auto remaining = countInRemaining - sample;
             const auto offset =
-                (active->beatSamples - remaining % active->beatSamples) % active->beatSamples;
+                (realtime.countInBeatSamples - remaining % realtime.countInBeatSamples) %
+                realtime.countInBeatSamples;
             if (offset >= 0 && offset < clickSamples) {
                 const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
                 value = 0.11f * envelope;
@@ -65,11 +66,21 @@ void TimelineEngine::mixMetronome(float* const* outputChannels, const int channe
                 position =
                     active->loopStartSample + (position - active->loopEndSample) % loopLength;
             if (position >= 0) {
-                const auto beat = position / active->beatSamples;
-                const auto offset = position % active->beatSamples;
+                const auto tick =
+                    active->timebase.sampleToExactTick(position, active->outputSampleRate);
+                const auto meter = active->timebase.meterAt(tick);
+                const auto beatPosition = (meter.bar - std::floor(meter.bar)) * meter.numerator;
+                const auto beat = static_cast<int>(std::floor(beatPosition + 1.0e-9));
+                const auto beatTicks =
+                    static_cast<double>(active->timebase.ppq) * 4.0 / meter.denominator;
+                const auto beatTick = tick - (beatPosition - beat) * beatTicks;
+                const auto offset =
+                    position - active->timebase.tickToSample(
+                                   static_cast<std::uint64_t>(std::llround(beatTick)),
+                                   active->outputSampleRate);
                 if (offset >= 0 && offset < clickSamples) {
                     const auto envelope = 1.0f - static_cast<float>(offset) / clickSamples;
-                    const auto amplitude = beat % active->beatsPerBar == 0 ? 0.18f : 0.11f;
+                    const auto amplitude = beat == 0 ? 0.18f : 0.11f;
                     value = amplitude * envelope * metronomeGain;
                 }
             }
@@ -162,6 +173,9 @@ void TimelineEngine::scheduleMidi(const PreparedTimeline& prepared, Track& track
     auto& runtime = *track.runtime;
     runtime.midiBuffer.clear();
     MidiScheduler::schedule(runtime.midiClips, rangeStart, sampleCount, runtime.midiBuffer);
+    runtime.instrumentEventCount = MidiScheduler::scheduleInstrumentEvents(
+        runtime.midiClips, rangeStart, sampleCount, runtime.instrumentEvents.data(),
+        runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size());
 }
 
 void TimelineEngine::processTracks(PreparedTimeline& prepared,
@@ -171,22 +185,36 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                                    const std::int64_t rangeStart, const int destinationStart,
                                    const int sampleCount, const float transportGainStart,
                                    const float transportGainStep) noexcept {
-    processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount,
-                           outputChannels, channelCount, rangeStart, destinationStart, sampleCount,
-                           false);
-    pool->run(prepared.processingTracks,
-              {TrackStageKind::playback, &prepared, rangeStart, destinationStart, sampleCount,
-               transportGainStart, transportGainStep, true});
+    processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount, rangeStart,
+                           destinationStart, sampleCount);
+    for (auto& stage : prepared.processingStages)
+        pool->run(stage, {TrackStageKind::playback, &prepared, rangeStart, destinationStart,
+                          sampleCount, transportGainStart, transportGainStep, true});
     addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    if (prepared.fadeOutSamples > 0) {
+        const auto fadeStart = prepared.mixEndSample - prepared.fadeOutSamples;
+        for (int sample = 0; sample < sampleCount; ++sample) {
+            const auto position = rangeStart + sample -
+                                  static_cast<std::int64_t>(prepared.summary.maximumLatencySamples);
+            if (position < fadeStart) continue;
+            const auto gain =
+                prepared.fadeOutSamples == 1
+                    ? 0.0f
+                    : std::max(0.0f, 1.0f - static_cast<float>(position - fadeStart) /
+                                                static_cast<float>(prepared.fadeOutSamples - 1));
+            for (int channel = 0; channel < channelCount; ++channel)
+                if (outputChannels[channel] != nullptr)
+                    outputChannels[channel][destinationStart + sample] *= gain;
+        }
+    }
 }
 
 void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
                                             const float* const* physicalInputChannels,
                                             const int physicalInputChannelCount,
-                                            float* const* outputChannels, const int channelCount,
                                             const std::int64_t rangeStart,
-                                            const int destinationStart, const int sampleCount,
-                                            const bool renderOutput) noexcept {
+                                            const int destinationStart,
+                                            const int sampleCount) noexcept {
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
         auto& runtime = *track.runtime;
@@ -246,12 +274,6 @@ void TimelineEngine::processLiveAudioTracks(PreparedTimeline& prepared,
             }
         }
     }
-    if (renderOutput) {
-        pool->run(prepared.processingTracks,
-                  {TrackStageKind::liveAudioMonitor, &prepared, rangeStart, destinationStart,
-                   sampleCount, 1.0f, 0.0f, false});
-        addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
-    }
 }
 
 void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCount) noexcept {
@@ -267,9 +289,10 @@ void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCou
 void TimelineEngine::processLiveInstrumentTracks(
     PreparedTimeline& prepared, float* const* outputChannels, const int channelCount,
     const std::int64_t rangeStart, const int destinationStart, const int sampleCount) noexcept {
-    juce::ignoreUnused(outputChannels, channelCount);
-    pool->run(prepared.processingTracks, {TrackStageKind::liveInstrument, &prepared, rangeStart,
-                                          destinationStart, sampleCount, 1.0f, 0.0f, false});
+    for (auto& stage : prepared.processingStages)
+        pool->run(stage, {TrackStageKind::live, &prepared, rangeStart, destinationStart,
+                          sampleCount, 1.0f, 0.0f, false});
+    addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
 }
 
 void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -278,9 +301,19 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
                                             const std::int64_t rangeStart) noexcept {
     auto& runtime = *track.runtime;
     if (runtime.instrument() != nullptr) {
+        const auto inputLatency = runtime.externalAudioSource == nullptr
+                                      ? 0
+                                      : runtime.externalAudioSource->routeLatencySamples;
+        auto context = instrumentProcessContext(prepared, rangeStart - inputLatency, true);
+        context.timelineEvents = runtime.instrumentEvents.data();
+        context.timelineEventCount = runtime.instrumentEventCount;
+        if (runtime.externalAudioSource != nullptr) {
+            context.externalInput =
+                runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
+            context.externalInputChannelCount = 2;
+        }
         runtime.instrument()->process(runtime.mixBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                                      timelineMidi,
-                                      instrumentProcessContext(prepared, rangeStart, true));
+                                      timelineMidi, context);
     } else {
         runtime.mixBuffer.clear(0, sampleCount);
     }
@@ -294,12 +327,19 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
                                                 const bool playing) noexcept {
     auto& runtime = *track.runtime;
     runtime.liveInputBuffer.clear(0, sampleCount);
-    if (runtime.instrument() == nullptr || !runtime.liveMidiActive()) {
+    if (runtime.instrument() == nullptr ||
+        (!runtime.liveMidiActive() && runtime.externalAudioSource == nullptr)) {
         runtime.processedBuffer.clear(0, sampleCount);
         return;
     }
+    auto context = instrumentProcessContext(prepared, rangeStart, playing);
+    if (runtime.externalAudioSource != nullptr) {
+        context.externalInput =
+            runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
+        context.externalInputChannelCount = 2;
+    }
     runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                                  nullptr, instrumentProcessContext(prepared, rangeStart, playing));
+                                  nullptr, context);
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                               runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
     runtime.markLiveMidiProcessed(sampleCount);
@@ -341,8 +381,9 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
     const auto staticPan = runtime.pan.load(std::memory_order_acquire);
     const auto fixedPanAngle = (staticPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
     const auto fixedGain = juce::Decibels::decibelsToGain(staticGainDb);
-    const auto fixedLeftGain = fixedGain * std::cos(fixedPanAngle);
-    const auto fixedRightGain = fixedGain * std::sin(fixedPanAngle);
+    const auto panScale = runtime.unityCenterStereo ? std::sqrt(2.0f) : 1.0f;
+    const auto fixedLeftGain = fixedGain * std::min(1.0f, std::cos(fixedPanAngle) * panScale);
+    const auto fixedRightGain = fixedGain * std::min(1.0f, std::sin(fixedPanAngle) * panScale);
     const auto blockEnd = rangeStart + sampleCount;
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
@@ -393,8 +434,8 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
             auto leftGain = fixedLeftGain;
             auto rightGain = fixedRightGain;
             if (volumeAutomated || panAutomated) {
-                leftGain = currentGain * currentCos;
-                rightGain = currentGain * currentSin;
+                leftGain = currentGain * std::min(1.0f, currentCos * panScale);
+                rightGain = currentGain * std::min(1.0f, currentSin * panScale);
             }
             float left = runtime.processedBuffer.getSample(0, processed);
             float right = runtime.processedBuffer.getSample(1, processed);
@@ -431,8 +472,22 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
             right += postEffectRight;
             const auto sampleGain =
                 juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
-            auto contributionLeft = audible ? left * leftGain * sampleGain : 0.0f;
-            auto contributionRight = audible ? right * rightGain * sampleGain : 0.0f;
+            runtime.routedOutputBuffer.setSample(0, processed, left * leftGain);
+            runtime.routedOutputBuffer.setSample(1, processed, right * rightGain);
+            auto masterLeft = left * leftGain;
+            auto masterRight = right * rightGain;
+            if (runtime.masterDelaySamples > 0) {
+                const auto size = runtime.masterDelayBuffer.getNumSamples();
+                const auto write = runtime.masterDelayWritePosition;
+                runtime.masterDelayBuffer.setSample(0, static_cast<int>(write), masterLeft);
+                runtime.masterDelayBuffer.setSample(1, static_cast<int>(write), masterRight);
+                const auto read = (write - runtime.masterDelaySamples + size) % size;
+                masterLeft = runtime.masterDelayBuffer.getSample(0, static_cast<int>(read));
+                masterRight = runtime.masterDelayBuffer.getSample(1, static_cast<int>(read));
+                runtime.masterDelayWritePosition = (write + 1) % size;
+            }
+            auto contributionLeft = audible ? masterLeft * sampleGain : 0.0f;
+            auto contributionRight = audible ? masterRight * sampleGain : 0.0f;
             runtime.trackOutputBuffer.setSample(0, processed, contributionLeft);
             runtime.trackOutputBuffer.setSample(1, processed, contributionRight);
             peakLeft = std::max(peakLeft, std::abs(contributionLeft));
@@ -482,6 +537,10 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.processedBuffer.clear();
         runtime.postEffectClipBuffer.clear();
         runtime.midiBuffer.clear();
+        runtime.instrumentEventCount = 0;
+        runtime.routedOutputBuffer.clear();
+        runtime.masterDelayBuffer.clear();
+        runtime.masterDelayWritePosition = 0;
         runtime.delayBuffer.clear();
         runtime.delayWritePosition = 0;
         runtime.postEffectDelayBuffer.clear();
@@ -607,10 +666,10 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         if (rangeSamples <= 0) return;
         for (auto& trackPtr : active->tracks)
             trackPtr->runtime->postEffectClipBuffer.clear(0, rangeSamples);
+        processLiveAudioTracks(*active, inputChannels, inputChannelCount, rangeStart,
+                               destinationStart, rangeSamples);
         processLiveInstrumentTracks(*active, outputChannels, channelCount, rangeStart,
                                     destinationStart, rangeSamples);
-        processLiveAudioTracks(*active, inputChannels, inputChannelCount, outputChannels,
-                               channelCount, rangeStart, destinationStart, rangeSamples, true);
     };
 
     const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
@@ -661,6 +720,10 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         }
         if (active->loopEnabled && position < active->loopEndSample)
             chunk = std::min<int>(chunk, static_cast<int>(active->loopEndSample - position));
+        const auto nextTimebaseChange = std::upper_bound(
+            active->timebaseChangeSamples.begin(), active->timebaseChangeSamples.end(), position);
+        if (nextTimebaseChange != active->timebaseChangeSamples.end())
+            chunk = std::min<std::int64_t>(chunk, *nextTimebaseChange - position);
         if (chunk <= 0) break;
         appendMetronomeSegment(consumed, chunk, position, true, realtime.transportGain,
                                fadingIn    ? realtime.transportFadeStep

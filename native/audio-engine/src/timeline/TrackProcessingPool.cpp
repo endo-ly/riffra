@@ -91,10 +91,9 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
 
 void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
     auto& runtime = *track.runtime;
-    if (job.kind == TrackStageKind::liveInstrument && !runtime.instrumentTrack) return;
-    if (job.kind == TrackStageKind::liveAudioMonitor && runtime.instrumentTrack) return;
     const auto started = std::chrono::steady_clock::now();
     runtime.trackOutputBuffer.clear(0, job.sampleCount);
+    runtime.routedOutputBuffer.clear(0, job.sampleCount);
     if (job.kind == TrackStageKind::playback) {
         TimelineEngine::mixRange(track, job.rangeStart, 0, job.sampleCount);
         TimelineEngine::scheduleMidi(*job.graph, track, job.rangeStart, job.sampleCount);
@@ -108,7 +107,7 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
             runtime.effects().process(runtime.mixBuffer.getArrayOfReadPointers(), 2,
                                       runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                       job.sampleCount);
-    } else if (job.kind == TrackStageKind::liveInstrument) {
+    } else if (runtime.instrumentTrack) {
         TimelineEngine::processLiveInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    job.rangeStart, job.playing);
     } else {
