@@ -446,7 +446,7 @@ def write_json_replacement(candidate: Candidate, data: bytes, backup: Path) -> N
         state, converted = inspect_document(candidate.path.read_bytes(), str(candidate.path))
         if state != "new" or converted is not None:
             raise MigrationError(f"{candidate.path}: replacement did not reload as new format")
-    except Exception:
+    except BaseException:
         if temporary.exists():
             temporary.unlink()
         if replaced:
@@ -489,7 +489,7 @@ def write_archive_replacement(candidate: Candidate, data: bytes, backup: Path) -
         os.replace(temporary, candidate.path)
         replaced = True
         verify_rewritten_archive(candidate, candidate.path, data)
-    except Exception:
+    except BaseException:
         if temporary.exists():
             temporary.unlink()
         if replaced:
@@ -578,32 +578,39 @@ def apply_candidates(
                 }
             )
         write_backup_plan(backup_path, records)
-    except Exception:
+    except BaseException:
         print(f"Backup preparation failed; inspect and keep {backup_path}", file=sys.stderr)
         raise
 
     changed: list[str] = []
-    for candidate in old_candidates:
-        backup = backups[candidate.path]
-        try:
+    current: Candidate | None = None
+    try:
+        for candidate in old_candidates:
+            current = candidate
+            backup = backups[candidate.path]
             assert candidate.converted_document is not None
             if candidate.kind == "json":
                 write_json_replacement(candidate, candidate.converted_document, backup)
             else:
                 write_archive_replacement(candidate, candidate.converted_document, backup)
             changed.append(str(candidate.path))
-        except Exception as exc:
-            print(f"Stopped at {candidate.path}: {exc}", file=sys.stderr)
-            if changed:
-                print("Already converted files:", file=sys.stderr)
-                for path in changed:
-                    print(f"  {path}", file=sys.stderr)
-            print(
-                f"Backups are retained at {backup_path}. To restore all originals, run:\n"
-                f'  python "{Path(__file__).resolve()}" --restore-from "{backup_path}"',
-                file=sys.stderr,
-            )
-            raise MigrationError("conversion stopped after a file operation failed") from exc
+    except BaseException as exc:
+        if current is not None:
+            print(f"Stopped at {current.path}: {exc}", file=sys.stderr)
+        if changed:
+            print("Already converted files:", file=sys.stderr)
+            for path in changed:
+                print(f"  {path}", file=sys.stderr)
+        print(
+            f"Backups are retained at {backup_path}. To restore all originals, run:\n"
+            f'  python "{Path(__file__).resolve()}" --restore-from "{backup_path}"',
+            file=sys.stderr,
+        )
+        if isinstance(exc, KeyboardInterrupt):
+            raise MigrationError("conversion was interrupted; restore instructions are above") from exc
+        if isinstance(exc, MigrationError):
+            raise
+        raise MigrationError("conversion stopped after a file operation failed") from exc
     return changed, backup_path
 
 
