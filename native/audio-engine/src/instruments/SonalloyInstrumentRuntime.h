@@ -23,7 +23,7 @@ public:
     /// Returns whether Riffra can execute a Sonalloy definition's required input route.
     [[nodiscard]] static constexpr bool acceptsRequiredInputChannels(
         std::uint32_t requiredInputChannels) noexcept {
-        return requiredInputChannels == 0;
+        return requiredInputChannels <= 2;
     }
 
     ~SonalloyInstrumentRuntime() override = default;
@@ -44,6 +44,9 @@ public:
 
     [[nodiscard]] std::uint32_t faultCode() const noexcept override;
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept override;
+    [[nodiscard]] bool prepareParameterEvent(SonalloyEvent& event, const juce::String& parameter,
+                                             juce::String& error) const;
+    [[nodiscard]] std::uint32_t requiredInputChannels() const noexcept;
 
 private:
     struct CompiledDeleter final {
@@ -84,7 +87,7 @@ private:
         kMaximumEventsPerBlock - kMaximumPendingMidi;
 
     SonalloyInstrumentRuntime(CompiledPtr compiled, RuntimePtr runtime, int blockSize,
-                              int latencySamples) noexcept;
+                              int latencySamples);
 
     [[nodiscard]] static juce::String diagnosticsSummary(const SonalloyDiagnostics* diagnostics,
                                                          SonalloyResult result);
@@ -123,10 +126,11 @@ private:
     std::atomic<std::uint32_t> lastFaultCode{0};
     std::atomic<std::uint64_t> droppedMidi{0};
     std::uint64_t absoluteFrame = 0;
-    std::uint64_t nextNoteId = 1;
+    std::uint64_t nextNoteId = std::uint64_t{1} << 63;
     std::uint64_t processBlockSerial = 0;
     int blockSize = 0;
     int reportedLatencySamples = 0;
+    juce::AudioBuffer<float> inputBuffer;
 };
 
 }  // namespace riffra

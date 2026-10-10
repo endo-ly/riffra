@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <sonalloy.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,10 @@ struct InstrumentProcessContext final {
     std::uint16_t timeSignatureNumerator = 4;
     std::uint16_t timeSignatureDenominator = 4;
     bool playing = false;
+    const SonalloyEvent* timelineEvents = nullptr;
+    std::size_t timelineEventCount = 0;
+    const float* const* externalInput = nullptr;
+    int externalInputChannelCount = 0;
 };
 
 /// Runtime interface shared by VST3 and Riffra Sonalloy instruments.

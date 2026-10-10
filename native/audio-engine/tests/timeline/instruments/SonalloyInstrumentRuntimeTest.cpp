@@ -387,10 +387,11 @@ TEST(SonalloyInstrumentRuntimeTest, ProcessContextRemainsContinuousAcrossBlocks)
     }
 }
 
-TEST(SonalloyInstrumentRuntimeTest, AcceptsOnlyDefinitionsWithoutRequiredAudioInput) {
+TEST(SonalloyInstrumentRuntimeTest, AcceptsMonoAndStereoExternalInput) {
     EXPECT_TRUE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(0));
-    EXPECT_FALSE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(1));
-    EXPECT_FALSE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(2));
+    EXPECT_TRUE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(1));
+    EXPECT_TRUE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(2));
+    EXPECT_FALSE(SonalloyInstrumentRuntime::acceptsRequiredInputChannels(3));
 }
 
 TEST(SonalloyInstrumentRuntimeTest, MalformedDefinitionsReturnReadableErrors) {
@@ -477,6 +478,92 @@ TEST(SonalloyInstrumentRuntimeTest, IgnoresMaximumSizedSysExWithoutCallbackAlloc
     EXPECT_EQ(allocationCounter.count(), 0u);
 #endif
     EXPECT_EQ(runtime->faultCode(), 0u);
+}
+
+TEST(SonalloyInstrumentRuntimeTest, ResolvesNativeParameterValuesAndRejectsStaleCatalogEvents) {
+    juce::String error;
+    auto runtime = loadPreset(test::builtInPresetDirectory("BASS-001"), error);
+    ASSERT_NE(runtime, nullptr) << error;
+    SonalloyEvent event{};
+    event.event_type = SONALLOY_EVENT_PARAMETER_CHANGE;
+    event.value = -12.0f;
+    EXPECT_FALSE(runtime->prepareParameterEvent(event, "missing.parameter", error));
+    event.value = -100.0f;
+    EXPECT_FALSE(runtime->prepareParameterEvent(event, "layer.sub.gain", error));
+    event.value = -12.0f;
+    ASSERT_TRUE(runtime->prepareParameterEvent(event, "layer.sub.gain", error)) << error;
+    EXPECT_GE(event.value, 0.0f);
+    EXPECT_LE(event.value, 1.0f);
+    juce::AudioBuffer<float> output(2, 256);
+    auto context = playingContext();
+    context.timelineEvents = &event;
+    context.timelineEventCount = 1;
+    processBlock(*runtime, output, nullptr, context);
+    EXPECT_EQ(runtime->faultCode(), 0u);
+    ++event.parameter_catalog_revision;
+    processBlock(*runtime, output, nullptr, context);
+    EXPECT_NE(runtime->faultCode(), 0u);
+    EXPECT_FLOAT_EQ(maximumMagnitude(output), 0.0f);
+}
+
+TEST(SonalloyInstrumentRuntimeTest, AveragesStereoExternalInputForMonoWithoutOutputAliasing) {
+    // Arrange
+    const auto directory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
+                               .getSiblingFile("sonalloy-bundle")
+                               .getChildFile("basic/instruments/duck");
+    auto definition =
+        juce::JSON::parse(directory.getChildFile("definition.json").loadFileAsString());
+    auto* external = definition.getProperty("external_audio", {}).getDynamicObject();
+    ASSERT_NE(external, nullptr);
+    external->setProperty("channels", "mono");
+    juce::String error;
+    const auto text = juce::JSON::toString(definition);
+    auto averaged =
+        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
+    auto silent =
+        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
+    auto driven =
+        SonalloyInstrumentRuntime::create(text, directory.getFullPathName(), 48'000, 256, error);
+    ASSERT_NE(averaged, nullptr) << error;
+    ASSERT_NE(silent, nullptr) << error;
+    ASSERT_NE(driven, nullptr) << error;
+    ASSERT_EQ(averaged->requiredInputChannels(), 1u);
+    juce::AudioBuffer<float> input(2, 256), zero(2, 256), coherent(2, 256);
+    for (int sample = 0; sample < 256; ++sample) {
+        input.setSample(0, sample, 0.25f);
+        input.setSample(1, sample, -0.25f);
+        coherent.setSample(0, sample, 0.25f);
+        coherent.setSample(1, sample, 0.25f);
+    }
+    zero.clear();
+    juce::AudioBuffer<float> actual(2, 256), expected(2, 256), compressed(2, 256);
+    juce::MidiBuffer midi;
+    midi.addEvent(juce::MidiMessage::noteOn(1, 60, static_cast<juce::uint8>(100)), 0);
+    auto context = playingContext();
+    context.externalInputChannelCount = 2;
+    float difference = 0.0f;
+
+    // Act / Assert: opposite inputs average to silence, rather than either channel.
+    for (int block = 0; block < 32; ++block) {
+        const auto* events = block == 0 ? &midi : nullptr;
+        context.externalInput = input.getArrayOfReadPointers();
+        processBlock(*averaged, actual, events, context);
+        context.externalInput = zero.getArrayOfReadPointers();
+        processBlock(*silent, expected, events, context);
+        context.externalInput = coherent.getArrayOfReadPointers();
+        processBlock(*driven, compressed, events, context);
+        for (int channel = 0; channel < 2; ++channel)
+            for (int sample = 0; sample < 256; ++sample) {
+                EXPECT_FLOAT_EQ(actual.getSample(channel, sample),
+                                expected.getSample(channel, sample));
+                difference = std::max(difference, std::abs(actual.getSample(channel, sample) -
+                                                           compressed.getSample(channel, sample)));
+            }
+    }
+    EXPECT_EQ(averaged->faultCode(), 0u);
+    EXPECT_GT(difference, 0.001f);
+    EXPECT_FLOAT_EQ(input.getSample(0, 0), 0.25f);
+    EXPECT_FLOAT_EQ(input.getSample(1, 0), -0.25f);
 }
 
 }  // namespace riffra
