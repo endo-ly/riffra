@@ -202,8 +202,8 @@ pub fn inspect_canonical_state(
     query: SessionInspectionQuery,
 ) -> Result<SessionInspection, ApplicationError> {
     let arrangement = &canonical.session.arrangement;
-    let timebase = arrangement.timebase;
-    let selection_ticks = resolve_selection_ticks(timebase, &query)?;
+    let timebase = arrangement.timebase.clone();
+    let selection_ticks = resolve_selection_ticks(&timebase, &query)?;
     if let Some(track_id) = query.track_id.as_deref()
         && !arrangement.tracks.iter().any(|track| track.id == track_id)
     {
@@ -265,7 +265,7 @@ pub fn inspect_canonical_state(
         .tracks
         .iter()
         .filter(|track| query.track_id.as_deref().is_none_or(|id| track.id == id))
-        .map(|track| inspect_track(arrangement, track, timebase, selection_ticks))
+        .map(|track| inspect_track(arrangement, track, &timebase, selection_ticks))
         .collect::<Vec<_>>();
 
     let counts = InspectionCounts {
@@ -287,17 +287,17 @@ pub fn inspect_canonical_state(
     Ok(SessionInspection {
         project: ProjectInspection {
             project_name: canonical.session.project_name.clone(),
-            bpm: timebase.bpm,
+            bpm: timebase.tempo_changes[0].bpm,
             ppq: timebase.ppq,
-            time_signature_numerator: timebase.time_signature_numerator,
-            time_signature_denominator: timebase.time_signature_denominator,
-            content_end: content_end(arrangement, timebase),
+            time_signature_numerator: timebase.time_signature_changes[0].numerator,
+            time_signature_denominator: timebase.time_signature_changes[0].denominator,
+            content_end: content_end(arrangement, &timebase),
             master_db: canonical.session.settings.master_db,
             metronome_enabled: canonical.session.settings.metronome_enabled,
             count_in_beats: canonical.session.settings.count_in_beats,
-            loop_range: musical_loop_range(arrangement.loop_range, timebase),
+            loop_range: musical_loop_range(arrangement.loop_range, &timebase),
             punch_range: arrangement.punch_range.map_or_else(empty_range, |range| {
-                musical_range(true, range.start_tick, range.end_tick, timebase)
+                musical_range(true, range.start_tick, range.end_tick, &timebase)
             }),
         },
         selection: InspectionSelection {
@@ -315,7 +315,7 @@ pub fn inspect_canonical_state(
 }
 
 fn resolve_selection_ticks(
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     query: &SessionInspectionQuery,
 ) -> Result<Option<SelectionTicks>, ApplicationError> {
     match (query.start, query.end) {
@@ -338,16 +338,11 @@ fn resolve_selection_ticks(
 
 fn content_end(
     arrangement: &crate::Arrangement,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
 ) -> Option<MusicalPosition> {
     let mut end = None;
     for clip in &arrangement.audio_clips {
-        let duration = timebase
-            .frames_to_ticks(
-                clip.timeline_duration.frames,
-                clip.timeline_duration.sample_rate,
-            )
-            .0;
+        let duration = timebase.duration_to_ticks(clip.start_tick, clip.timeline_duration);
         update_max(&mut end, clip.start_tick.0.saturating_add(duration));
     }
     for clip in &arrangement.midi_clips {
@@ -379,7 +374,7 @@ fn update_max(current: &mut Option<u64>, candidate: u64) {
 
 fn musical_loop_range(
     range: crate::TimelineLoopRange,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
 ) -> MusicalRangeInspection {
     musical_range(range.enabled, range.start_tick, range.end_tick, timebase)
 }
@@ -388,7 +383,7 @@ fn musical_range(
     enabled: bool,
     start_tick: TimelineTick,
     end_tick: TimelineTick,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
 ) -> MusicalRangeInspection {
     MusicalRangeInspection {
         enabled,
@@ -408,7 +403,7 @@ fn empty_range() -> MusicalRangeInspection {
 fn inspect_track(
     arrangement: &crate::Arrangement,
     track: &crate::Track,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     selection: Option<SelectionTicks>,
 ) -> TrackInspection {
     let mut clips = arrangement
@@ -527,17 +522,13 @@ impl InstrumentInspection {
 
 fn inspect_audio_clip(
     clip: &AudioClip,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     selection: Option<SelectionTicks>,
 ) -> Option<ClipInspection> {
-    let end_tick = clip.start_tick.0.saturating_add(
-        timebase
-            .frames_to_ticks(
-                clip.timeline_duration.frames,
-                clip.timeline_duration.sample_rate,
-            )
-            .0,
-    );
+    let end_tick = clip
+        .start_tick
+        .0
+        .saturating_add(timebase.duration_to_ticks(clip.start_tick, clip.timeline_duration));
     if !includes_range(selection, clip.start_tick.0, end_tick) {
         return None;
     }
@@ -555,7 +546,7 @@ fn inspect_audio_clip(
 
 fn inspect_midi_clip(
     clip: &MidiClip,
-    timebase: ProjectTimebase,
+    timebase: &ProjectTimebase,
     selection: Option<SelectionTicks>,
 ) -> Option<ClipInspection> {
     let end_tick = clip.start_tick.0.saturating_add(clip.duration_ticks);
@@ -673,6 +664,7 @@ mod tests {
             .tracks
             .push(Track::instrument("track:keys".into(), "Keys".into()));
         session.arrangement.midi_clips.push(MidiClip {
+            instrument_control_events: Vec::new(),
             id: "clip:keys".into(),
             name: "Keys".into(),
             track_id: "track:keys".into(),
@@ -864,6 +856,7 @@ mod tests {
         session.arrangement.tracks.push(track);
         session.arrangement.midi_clips = (0..129)
             .map(|index| MidiClip {
+                instrument_control_events: Vec::new(),
                 id: format!("clip:{index}"),
                 name: format!("Clip {index}"),
                 track_id: "track:keys".into(),

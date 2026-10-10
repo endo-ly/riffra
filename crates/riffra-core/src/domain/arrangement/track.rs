@@ -56,12 +56,19 @@ pub struct Track {
     #[ts(optional)]
     pub instrument: Option<TrackInstrument>,
     pub effects: Vec<EffectDevice>,
+    #[serde(default)]
+    pub pan_law: PanLaw,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub external_audio_source_track_id: Option<String>,
 }
 
 /// A partial update for a timeline Track.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackPatch {
+    pub pan_law: Option<PanLaw>,
+    pub external_audio_source_track_id: Option<Option<String>>,
     pub name: Option<String>,
     pub gain_db: Option<f64>,
     pub pan: Option<f64>,
@@ -88,6 +95,8 @@ impl Track {
     /// Creates a neutral audio track.
     pub fn audio(id: String, name: String) -> Self {
         Self {
+            pan_law: PanLaw::default(),
+            external_audio_source_track_id: None,
             id,
             name,
             kind: TrackKind::Audio,
@@ -154,6 +163,15 @@ impl Track {
         plugin::validate_and_normalize_effects(&mut self.effects)?;
         Ok(())
     }
+}
+
+/// Stereo panning gain convention for a Track's output.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum PanLaw {
+    #[default]
+    EqualPower,
+    UnityCenterStereo,
 }
 #[cfg(test)]
 mod tests {

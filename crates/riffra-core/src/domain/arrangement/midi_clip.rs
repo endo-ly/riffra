@@ -42,6 +42,41 @@ pub struct MidiEvent {
     pub data2: u8,
 }
 
+/// A lossless instrument performance control at a clip-relative tick.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InstrumentControlEvent {
+    pub id: String,
+    #[ts(type = "number")]
+    pub tick: TimelineTick,
+    pub source_order: u32,
+    pub kind: InstrumentControlEventKind,
+}
+
+/// Native precision values used by the Instrument, independent of MIDI encoding.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", deny_unknown_fields, rename_all = "camelCase")]
+pub enum InstrumentControlEventKind {
+    SustainPedal {
+        down: bool,
+    },
+    PitchBend {
+        value: f32,
+    },
+    ModWheel {
+        value: f32,
+    },
+    Aftertouch {
+        value: f32,
+    },
+    ParameterChange {
+        parameter: String,
+        #[serde(rename = "nativeValue")]
+        #[ts(rename = "nativeValue")]
+        native_value: f32,
+    },
+}
+
 /// A non-destructive MIDI clip on the arrangement.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -57,6 +92,8 @@ pub struct MidiClip {
     pub duration_ticks: u64,
     pub notes: Vec<MidiNote>,
     pub events: Vec<MidiEvent>,
+    #[serde(default)]
+    pub instrument_control_events: Vec<InstrumentControlEvent>,
     pub muted: bool,
     pub loop_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,6 +164,36 @@ impl MidiClip {
                 ));
             }
         }
+        if self.instrument_control_events.len() > 200_000 {
+            return Err("too many instrument control events".into());
+        }
+        let mut ids = std::collections::HashSet::new();
+        for event in &self.instrument_control_events {
+            let valid = match &event.kind {
+                InstrumentControlEventKind::SustainPedal { .. } => true,
+                InstrumentControlEventKind::PitchBend { value } => {
+                    value.is_finite() && (-1.0..=1.0).contains(value)
+                }
+                InstrumentControlEventKind::ModWheel { value }
+                | InstrumentControlEventKind::Aftertouch { value } => {
+                    value.is_finite() && (0.0..=1.0).contains(value)
+                }
+                InstrumentControlEventKind::ParameterChange {
+                    parameter,
+                    native_value,
+                } => !parameter.trim().is_empty() && native_value.is_finite(),
+            };
+            if event.id.trim().is_empty()
+                || !ids.insert(&event.id)
+                || event.tick.0 > self.duration_ticks
+                || !valid
+            {
+                return Err(format!(
+                    "midi clip '{}' contains an invalid instrument control event",
+                    self.name
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -143,6 +210,9 @@ pub struct MidiClipMove {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MidiClipPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub instrument_control_events: Option<Vec<InstrumentControlEvent>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub name: Option<String>,
@@ -177,6 +247,7 @@ mod tests {
 
     fn midi_clip(track_id: &str) -> MidiClip {
         MidiClip {
+            instrument_control_events: Vec::new(),
             id: "midi-clip:1".into(),
             name: "MIDI".into(),
             track_id: track_id.into(),

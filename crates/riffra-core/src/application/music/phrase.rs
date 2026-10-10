@@ -139,7 +139,7 @@ fn resolve_phrase_pattern_in_arrangement(
             crate::DomainError::InvalidClip(format!("midi clip '{clip_id}' is not registered"))
         })?;
     let available_notes = available_midi_note_capacity(arrangement, clip_id)?;
-    let timebase = arrangement.timebase;
+    let timebase = arrangement.timebase.clone();
     let mut notes = Vec::new();
     let mut start_tick: Option<u64> = None;
     let mut end_tick: Option<u64> = None;
@@ -148,7 +148,7 @@ fn resolve_phrase_pattern_in_arrangement(
         for repeat in 0..placement.repeats {
             for phrase_note in &pattern.notes {
                 let note_offset = repeated_offset_to_ticks(
-                    timebase,
+                    &timebase,
                     pattern.length,
                     u64::from(repeat),
                     phrase_note.offset,
