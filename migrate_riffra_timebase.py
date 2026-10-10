@@ -28,6 +28,13 @@ OLD_TIMEBASE_FIELDS = {
     "timeSignatureDenominator",
 }
 NEW_TIMEBASE_FIELDS = {"ppq", "tempoChanges", "timeSignatureChanges"}
+RAW_GENERATION_FIELDS = {
+    "arrangement",
+    "projectName",
+    "sessionId",
+    "settings",
+    "updatedAtMs",
+}
 BACKUP_PLAN_NAME = "restore-plan.json"
 BACKUP_PLAN_VERSION = 1
 COPY_BUFFER_SIZE = 1024 * 1024
@@ -148,6 +155,43 @@ def validate_new_timebase(timebase: dict[str, Any], source: str) -> None:
         previous_tick = tick
 
 
+def inspect_timebase(
+    timebase: Any, location: str
+) -> tuple[str, dict[str, Any] | None]:
+    if not isinstance(timebase, dict):
+        raise MigrationError(f"{location}: expected an object")
+    fields = set(timebase)
+    if fields == OLD_TIMEBASE_FIELDS:
+        ppq = require_integer(timebase["ppq"], f"{location}.ppq", 0, 2**32 - 1)
+        if ppq != TIMEBASE_PPQ:
+            raise MigrationError(f"{location}.ppq: expected {TIMEBASE_PPQ}")
+        require_tempo(timebase["bpm"], f"{location}.bpm")
+        validate_signature(
+            timebase["timeSignatureNumerator"],
+            timebase["timeSignatureDenominator"],
+            location,
+        )
+        return "old", {
+            "ppq": ppq,
+            "tempoChanges": [{"tick": 0, "bpm": timebase["bpm"]}],
+            "timeSignatureChanges": [
+                {
+                    "tick": 0,
+                    "numerator": timebase["timeSignatureNumerator"],
+                    "denominator": timebase["timeSignatureDenominator"],
+                }
+            ],
+        }
+
+    if fields == NEW_TIMEBASE_FIELDS:
+        validate_new_timebase(timebase, location)
+        return "new", None
+
+    if fields & OLD_TIMEBASE_FIELDS and fields & NEW_TIMEBASE_FIELDS:
+        raise MigrationError(f"{location}: old and new timebase fields are mixed")
+    raise MigrationError(f"{location}: unknown, incomplete, or invalid timebase fields")
+
+
 def inspect_document(data: bytes, source: str) -> tuple[str, bytes | None]:
     document = parse_json(data, source)
     if not isinstance(document, dict):
@@ -167,52 +211,47 @@ def inspect_document(data: bytes, source: str) -> tuple[str, bytes | None]:
     arrangement = session.get("arrangement")
     if not isinstance(arrangement, dict):
         raise MigrationError(f"{source}.session.arrangement: expected an object")
-    timebase = arrangement.get("timebase")
-    if not isinstance(timebase, dict):
-        raise MigrationError(
-            f"{source}.session.arrangement.timebase: expected an object"
-        )
 
     location = f"{source}.session.arrangement.timebase"
-    fields = set(timebase)
-    if fields == OLD_TIMEBASE_FIELDS:
-        ppq = require_integer(timebase["ppq"], f"{location}.ppq", 0, 2**32 - 1)
-        if ppq != TIMEBASE_PPQ:
-            raise MigrationError(f"{location}.ppq: expected {TIMEBASE_PPQ}")
-        require_tempo(timebase["bpm"], f"{location}.bpm")
-        validate_signature(
-            timebase["timeSignatureNumerator"],
-            timebase["timeSignatureDenominator"],
-            location,
-        )
+    state, converted_timebase = inspect_timebase(arrangement.get("timebase"), location)
+    if state == "new":
+        return state, None
 
-        migrated = copy.deepcopy(document)
-        migrated["session"]["arrangement"]["timebase"] = {
-            "ppq": ppq,
-            "tempoChanges": [{"tick": 0, "bpm": timebase["bpm"]}],
-            "timeSignatureChanges": [
-                {
-                    "tick": 0,
-                    "numerator": timebase["timeSignatureNumerator"],
-                    "denominator": timebase["timeSignatureDenominator"],
-                }
-            ],
-        }
-        encoded = json.dumps(
-            migrated, ensure_ascii=False, allow_nan=False, indent=2
-        ).encode("utf-8")
-        validate_state, no_change = inspect_document(encoded, source)
-        if validate_state != "new" or no_change is not None:
-            raise MigrationError(f"{source}: converted document did not validate")
-        return "old", encoded
+    migrated = copy.deepcopy(document)
+    migrated["session"]["arrangement"]["timebase"] = converted_timebase
+    encoded = json.dumps(migrated, ensure_ascii=False, allow_nan=False, indent=2).encode(
+        "utf-8"
+    )
+    validate_state, no_change = inspect_document(encoded, source)
+    if validate_state != "new" or no_change is not None:
+        raise MigrationError(f"{source}: converted document did not validate")
+    return "old", encoded
 
-    if fields == NEW_TIMEBASE_FIELDS:
-        validate_new_timebase(timebase, location)
-        return "new", None
 
-    if fields & OLD_TIMEBASE_FIELDS and fields & NEW_TIMEBASE_FIELDS:
-        raise MigrationError(f"{location}: old and new timebase fields are mixed")
-    raise MigrationError(f"{location}: unknown, incomplete, or invalid timebase fields")
+def inspect_generation(data: bytes, source: str) -> tuple[str, bytes | None]:
+    generation = parse_json(data, source)
+    if not isinstance(generation, dict):
+        raise MigrationError(f"{source}: expected a Recovery Generation object")
+    if set(generation) != RAW_GENERATION_FIELDS:
+        return inspect_document(data, source)
+    arrangement = generation.get("arrangement")
+    if not isinstance(arrangement, dict):
+        raise MigrationError(f"{source}.arrangement: expected an object")
+
+    location = f"{source}.arrangement.timebase"
+    state, converted_timebase = inspect_timebase(arrangement.get("timebase"), location)
+    if state == "new":
+        return state, None
+
+    migrated = copy.deepcopy(generation)
+    migrated["arrangement"]["timebase"] = converted_timebase
+    encoded = json.dumps(migrated, ensure_ascii=False, allow_nan=False, indent=2).encode(
+        "utf-8"
+    )
+    validate_state, no_change = inspect_generation(encoded, source)
+    if validate_state != "new" or no_change is not None:
+        raise MigrationError(f"{source}: converted generation did not validate")
+    return "old", encoded
 
 
 def hash_bytes(data: bytes) -> str:
@@ -284,7 +323,7 @@ def collect_project_directory(path: Path, output: list[tuple[Path, str]]) -> Non
         generation_dir = require_directory(generations)
         for candidate in sorted(generation_dir.iterdir()):
             if candidate.suffix.lower() == ".json":
-                output.append((require_regular_file(candidate), "json"))
+                output.append((require_regular_file(candidate), "generation"))
 
 
 def collect_target(target: Path) -> tuple[list[tuple[Path, str]], list[Path]]:
@@ -294,7 +333,9 @@ def collect_target(target: Path) -> tuple[list[tuple[Path, str]], list[Path]]:
         resolved = require_regular_file(target)
         if resolved.suffix.lower() == ".riffra":
             return [(resolved, "archive")], [protected_root_for_file(resolved)]
-        if resolved.name == "session.json" or resolved.parent.name == "generations":
+        if resolved.parent.name == "generations":
+            return [(resolved, "generation")], [protected_root_for_file(resolved)]
+        if resolved.name == "session.json":
             return [(resolved, "json")], [protected_root_for_file(resolved)]
         raise MigrationError(
             f"{target}: specify a DataRoot, Project directory, session.json, "
@@ -365,11 +406,12 @@ def inspect_archive(path: Path) -> tuple[bytes, list[tuple[str, str]]]:
 
 def prepare_candidate(path: Path, kind: str) -> Candidate:
     source_digest = hash_file(path)
-    if kind == "json":
+    if kind in {"json", "generation"}:
         data = path.read_bytes()
         if hash_bytes(data) != source_digest:
             raise MigrationError(f"{path}: changed while it was being validated")
-        state, converted = inspect_document(data, str(path))
+        inspect = inspect_generation if kind == "generation" else inspect_document
+        state, converted = inspect(data, str(path))
         return Candidate(path, kind, None, source_digest, converted, state)
 
     data, entries = inspect_archive(path)
@@ -464,7 +506,12 @@ def write_json_replacement(candidate: Candidate, data: bytes, backup: Path) -> N
         replaced = True
         if hash_file(candidate.path) != hash_bytes(data):
             raise MigrationError(f"{candidate.path}: replacement verification failed")
-        state, converted = inspect_document(candidate.path.read_bytes(), str(candidate.path))
+        inspect = (
+            inspect_generation
+            if candidate.kind == "generation"
+            else inspect_document
+        )
+        state, converted = inspect(candidate.path.read_bytes(), str(candidate.path))
         if state != "new" or converted is not None:
             raise MigrationError(f"{candidate.path}: replacement did not reload as new format")
     except BaseException:
@@ -617,7 +664,7 @@ def apply_candidates(
             current = candidate
             backup = backups[candidate.path]
             assert candidate.converted_document is not None
-            if candidate.kind == "json":
+            if candidate.kind in {"json", "generation"}:
                 write_json_replacement(candidate, candidate.converted_document, backup)
             else:
                 write_archive_replacement(candidate, candidate.converted_document, backup)
