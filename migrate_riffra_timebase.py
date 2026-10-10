@@ -297,7 +297,8 @@ def collect_target(target: Path) -> tuple[list[tuple[Path, str]], list[Path]]:
         if resolved.name == "session.json" or resolved.parent.name == "generations":
             return [(resolved, "json")], [protected_root_for_file(resolved)]
         raise MigrationError(
-            f"{target}: specify a DataRoot, Project directory, session.json, or .riffra file"
+            f"{target}: specify a DataRoot, Project directory, session.json, "
+            "a .riffra file, or a directory containing .riffra files"
         )
     if not target.is_dir():
         raise MigrationError(f"{target}: target does not exist or is not a file or directory")
@@ -314,13 +315,33 @@ def collect_target(target: Path) -> tuple[list[tuple[Path, str]], list[Path]]:
                 collect_project_directory(project, candidates)
         return candidates, [directory]
 
+    session = directory / "session.json"
+    generations = directory / "generations"
+    is_project_directory = (
+        session.exists()
+        or session.is_symlink()
+        or generations.exists()
+        or generations.is_symlink()
+    )
+    if is_project_directory:
+        candidates: list[tuple[Path, str]] = []
+        collect_project_directory(directory, candidates)
+        if not candidates:
+            raise MigrationError(
+                f"{target}: no session.json or Recovery Generation JSON files found"
+            )
+        return candidates, [protected_root_for_directory(directory)]
+
     candidates = []
-    collect_project_directory(directory, candidates)
+    for candidate in sorted(directory.iterdir()):
+        if candidate.suffix.lower() != ".riffra":
+            continue
+        if candidate.is_symlink():
+            raise MigrationError(f"{candidate}: symbolic link targets are not accepted")
+        candidates.append((require_regular_file(candidate), "archive"))
     if not candidates:
-        raise MigrationError(
-            f"{target}: no session.json or Recovery Generation JSON files found"
-        )
-    return candidates, [protected_root_for_directory(directory)]
+        raise MigrationError(f"{target}: no Project files or .riffra archives found")
+    return candidates, [directory]
 
 
 def inspect_archive(path: Path) -> tuple[bytes, list[tuple[str, str]]]:
@@ -450,7 +471,7 @@ def write_json_replacement(candidate: Candidate, data: bytes, backup: Path) -> N
         if temporary.exists():
             temporary.unlink()
         if replaced:
-            restore_one(candidate.path, backup)
+            restore_one(candidate.path, backup, candidate.source_digest)
         raise
     finally:
         if temporary.exists():
@@ -493,7 +514,7 @@ def write_archive_replacement(candidate: Candidate, data: bytes, backup: Path) -
         if temporary.exists():
             temporary.unlink()
         if replaced:
-            restore_one(candidate.path, backup)
+            restore_one(candidate.path, backup, candidate.source_digest)
         raise
     finally:
         if temporary.exists():
@@ -524,14 +545,21 @@ def verify_rewritten_archive(candidate: Candidate, path: Path, expected_session:
             raise MigrationError(f"{path}: non-session archive data changed")
 
 
-def restore_one(original: Path, backup: Path) -> None:
+def restore_one(original: Path, backup: Path, expected_digest: str) -> None:
+    parent = require_directory(original.parent)
+    if parent != original.parent:
+        raise MigrationError(f"{original.parent}: restore directory changed unexpectedly")
     temporary = temporary_path(original.parent, f".{original.name}.restore.")
     try:
         shutil.copyfile(backup, temporary)
         with temporary.open("r+b") as restored:
             os.fsync(restored.fileno())
         shutil.copystat(backup, temporary)
+        if hash_file(temporary) != expected_digest:
+            raise MigrationError(f"{backup}: backup hash changed during restoration")
         os.replace(temporary, original)
+        if hash_file(original) != expected_digest:
+            raise MigrationError(f"{original}: restored file failed hash verification")
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -648,16 +676,26 @@ def restore_backup(backup_dir: Path) -> None:
         if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise MigrationError(f"{plan_path}.files[{index}]: invalid SHA-256 digest")
         backup = require_regular_file(backup_root / backup_relative)
-        original = require_regular_file(original)
+        parent = require_directory(original.parent)
+        original = parent / original.name
+        try:
+            metadata = original.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise MigrationError(f"{original}: cannot inspect restore target: {exc}") from exc
+        else:
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise MigrationError(
+                    f"{original}: expected a regular file, not a link or special file"
+                )
         if hash_file(backup) != digest:
             raise MigrationError(f"{backup}: backup hash does not match restore plan")
         items.append((original, backup, digest))
 
     restored: list[str] = []
     for original, backup, digest in items:
-        restore_one(original, backup)
-        if hash_file(original) != digest:
-            raise MigrationError(f"{original}: restored file failed hash verification")
+        restore_one(original, backup, digest)
         restored.append(str(original))
     print(f"Restored {len(restored)} file(s) from {backup_root}.")
     for path in restored:
@@ -671,7 +709,10 @@ def run(args: argparse.Namespace) -> int:
         restore_backup(args.restore_from)
         return 0
     if not args.targets:
-        raise MigrationError("specify at least one DataRoot, Project directory, or .riffra file")
+        raise MigrationError(
+            "specify a DataRoot, Project directory, Session Document, .riffra file, "
+            "or directory containing .riffra files"
+        )
     if args.apply and args.backup_dir is None:
         raise MigrationError("--apply requires --backup-dir")
     if not args.apply and args.backup_dir is not None:
@@ -722,7 +763,10 @@ def build_parser() -> argparse.ArgumentParser:
         "targets",
         nargs="*",
         type=Path,
-        help="explicit DataRoot, Project directory, session.json, or .riffra file paths",
+        help=(
+            "explicit DataRoot, Project directory, session.json, .riffra file, "
+            "or directory containing .riffra files"
+        ),
     )
     return parser
 
