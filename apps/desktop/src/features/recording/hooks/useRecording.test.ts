@@ -13,6 +13,7 @@ function sessionWithTrack(armed: boolean): CreativeSession {
   const session = defaultSession();
   session.arrangement.tracks = [
     {
+      panLaw: 'equalPower' as const,
       id: 'track:microphone',
       name: 'Microphone',
       kind: 'audio',

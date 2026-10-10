@@ -3,7 +3,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as nativeDialog from '@/native/dialog';
 import App from '@/app/App';
 import { useRuntimeRestartNotification } from '@/app/runtime/useRuntimeRestartNotification';
 import { useAppUpdater } from '@/app/runtime/useAppUpdater';
@@ -12,7 +13,11 @@ import { FakeNativeApi, fakeAudioStatus } from '@/native/native-api-fake';
 import { defaultSession } from '@/native/browser-defaults';
 import { ToastStack } from '@/shared/ui/ToastStack';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
+});
 
 async function renderApp(api: FakeNativeApi) {
   render(<App api={api} />);
@@ -20,6 +25,32 @@ async function renderApp(api: FakeNativeApi) {
 }
 
 describe('App native boundary', () => {
+  it('imports a chosen Sonalloy directory and reports import failures in the Project menu', async () => {
+    const api = new FakeNativeApi({ hostConnection: { mode: 'embedded' } });
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
+    const folder = vi
+      .spyOn(nativeDialog, 'openSonalloyBundle')
+      .mockResolvedValue('C:\\Bundles\\demo');
+    await renderApp(api);
+    await userEvent.click(screen.getByRole('button', { name: /^Project:/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' }));
+    expect(folder).toHaveBeenCalledOnce();
+    await waitFor(() => expect(api.calls).toContain('importSonalloyBundle'));
+    api.setFailure(
+      'importSonalloyBundle',
+      new Error('parts[1].pattern.events[2]: unsupported event'),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^Project:/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/parts\[1\].pattern.events\[2\]: unsupported event/),
+      ).toBeInTheDocument(),
+    );
+  });
   it('boots once and delegates emergency mute to the native host', async () => {
     const api = new FakeNativeApi();
 
@@ -172,6 +203,7 @@ describe('App native boundary', () => {
     await renderApp(api);
     const newer = { ...defaultSession(), projectName: 'Newest' };
     newer.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:newest',
       name: 'Newest Track',
       kind: 'audio',
@@ -186,6 +218,7 @@ describe('App native boundary', () => {
     });
     const older = { ...defaultSession(), projectName: 'Older' };
     older.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:older',
       name: 'Older Track',
       kind: 'audio',

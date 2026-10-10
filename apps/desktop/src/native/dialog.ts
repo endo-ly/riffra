@@ -21,6 +21,11 @@ export async function openProjectPackage(): Promise<string | null> {
   return typeof result === 'string' ? result : null;
 }
 
+export async function openSonalloyBundle(): Promise<string | null> {
+  const result = await open({ directory: true, multiple: false, title: 'Import Sonalloy Bundle' });
+  return typeof result === 'string' ? result : null;
+}
+
 export async function saveProjectPackage(defaultName: string): Promise<string | null> {
   const result = await save({
     defaultPath: `${sanitizeProjectFileName(defaultName)}.riffra`,

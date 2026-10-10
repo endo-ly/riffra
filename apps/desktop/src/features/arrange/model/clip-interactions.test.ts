@@ -10,9 +10,8 @@ import {
 
 const timebase: ProjectTimebase = {
   ppq: 960,
-  bpm: 120,
-  timeSignatureNumerator: 4,
-  timeSignatureDenominator: 4,
+  tempoChanges: [{ tick: 0, bpm: 120 }],
+  timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
 };
 
 function audioClip(): AudioClip {
@@ -38,6 +37,7 @@ function audioClip(): AudioClip {
 
 function midiClip(): MidiClip {
   return {
+    instrumentControlEvents: [],
     id: 'midi-clip:1',
     name: 'MIDI',
     trackId: 'instrument:1',

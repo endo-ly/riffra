@@ -3,10 +3,11 @@ import type { EmptyParams } from "./EmptyParams";
 import type { ProjectCreateParams } from "./ProjectCreateParams";
 import type { ProjectExportParams } from "./ProjectExportParams";
 import type { ProjectImportParams } from "./ProjectImportParams";
+import type { ProjectImportSonalloyParams } from "./ProjectImportSonalloyParams";
 import type { ProjectOpenParams } from "./ProjectOpenParams";
 import type { ProjectRenameParams } from "./ProjectRenameParams";
 
 /**
  * A command that selects or exchanges Project containers.
  */
-export type ProjectCommand = { "command": "project.list", "params": EmptyParams } | { "command": "project.create", "params": ProjectCreateParams } | { "command": "project.open", "params": ProjectOpenParams } | { "command": "project.rename", "params": ProjectRenameParams } | { "command": "project.import", "params": ProjectImportParams } | { "command": "project.export", "params": ProjectExportParams };
+export type ProjectCommand = { "command": "project.list", "params": EmptyParams } | { "command": "project.create", "params": ProjectCreateParams } | { "command": "project.open", "params": ProjectOpenParams } | { "command": "project.rename", "params": ProjectRenameParams } | { "command": "project.import", "params": ProjectImportParams } | { "command": "project.import-sonalloy", "params": ProjectImportSonalloyParams } | { "command": "project.export", "params": ProjectExportParams };

@@ -142,6 +142,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     recoverAudio,
     exportProject,
     importProject,
+    importSonalloyBundle,
     restoreRecovery,
     dismissRecovery,
     selectAudioDriver,
@@ -238,6 +239,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
       onCreateProject={createProject}
       onOpenProject={openProject}
       onRenameProject={renameProject}
+      onImportSonalloyBundle={importSonalloyBundle}
       onImportProject={() => void importProject()}
       onExportProject={() => void exportProject()}
     />
@@ -322,6 +324,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         onRedo={() => void redo()}
         onExportProject={() => void exportProject()}
         onImportProject={() => void importProject()}
+        onImportSonalloyBundle={importSonalloyBundle}
         projectState={projectState}
         projectSwitching={projectSwitching}
         projectError={projectError}

@@ -17,9 +17,8 @@ import { toAssetId } from '@/native/contracts';
 
 const timebase = {
   ppq: 960,
-  bpm: 120,
-  timeSignatureNumerator: 4,
-  timeSignatureDenominator: 4,
+  tempoChanges: [{ tick: 0, bpm: 120 }],
+  timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
 };
 
 describe('arrange timeline layout', () => {
@@ -118,6 +117,7 @@ describe('arrange timeline layout', () => {
       takeVariant: 'raw',
     };
     const midiClip: MidiClip = {
+      instrumentControlEvents: [],
       id: 'clip:midi',
       name: 'MIDI',
       trackId: 'track:shared',

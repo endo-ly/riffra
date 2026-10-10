@@ -361,6 +361,10 @@ Meter frame は最新値で十分な通知として既存の coalescing event �
 
 MIDI 入力コールバックは、入力元の index と 3 バイトまでのメッセージを固定容量（1024）のキューへ送るだけである。音声スレッドがブロックの先頭で現役グラフのルーティングに従い各 Track へ振り分け、録音中は同じ時刻で記録する。キューに入らなかったメッセージは `liveMidiDrops` に数える。Play Surface の送信とパニックは命令キューを通る。
 
+Tempo・拍子変更点はRustの正準時間軸からExecution Graphへ渡す。Nativeは同じ区間契約からイベントのSample位置とTransportの音楽的位置を準備する。Sonalloyの音源制御イベントはNote ID、精度を保った値、パラメータHandleとCatalog Revisionを準備して実行し、音声コールバックで文字列解決や正規化を行わない。
+
+Track間のExternal Audioは依存段階をグラフ準備時に確定し、同じ段階の独立Trackを既存Worker Poolで処理する。Sourceのエフェクト・レイテンシ補正・Gainを適用した信号をConsumerへ渡し、MuteによるMasterへの加算と入力信号の供給を分ける。
+
 ---
 
 ## 6. 永続化と回復
@@ -424,6 +428,8 @@ Active Project の `session.json` と世代がすべて読めない場合（版�
 
 保存・ロードの両方で `asset::validate_session_references` が実行され、セッションが参照する全アセットIDが登録済みであることを保証する。コンテンツファイルの欠落は MissingDependency として UI に列挙して継続するが、未登録のアセットIDを含むセッションの保存・ロードは拒否する。
 
+Sonalloy Bundleのインポートでは、HostがManifest・ファイル一覧・SHA-256・参照先を検証し、同梱CLIがDemoとInstrumentを検証する。Runtimeが通常のCreativeSessionへ変換し、音源とアセットをProject専用Snapshotへ所有させる。新規Projectとリソースの保存、Runtimeの準備・確定を終えてから既存Activation経路で切り替える。失敗時は新規所有物を除去し、既存Projectと履歴を維持する。
+
 ### 6.5 DataRootの所有
 
 - Desktop Embedded Host の既定 DataRoot はユーザーの `Music/Riffra` 配下である。Standalone CLI と `riffra serve` は指定された DataRoot を使う。Attached mode の Desktop と Attached CLI は接続先 Host の DataRoot を利用する（直接開かない）
@@ -457,12 +463,14 @@ Active Project の `session.json` と世代がすべて読めない場合（版�
 
 ## 9. バックグラウンドジョブ
 
-時間のかかる処理（VST3スキャン）は JobRegistry（`jobs.rs`）のジョブとして実行される。
+VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/jobs/`）のジョブとして実行される。
 
-- **種類**: `Scan`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
+- **種類**: `Scan`、`Render`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
 - **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態は確定し、`Running` への復帰はない
 - ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
-- レンダリングは別経路: `OfflineRenderRequest`（riffra-core のポート）を `riffra-runtime::render` が受け取り、`riffra-render` executableを子プロセスとして起動・制御する
+- Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
+
+Offline RenderはNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
 
 ---
 

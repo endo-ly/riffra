@@ -22,6 +22,7 @@ interface ProjectHostSelectorProps {
   onReconnect: () => Promise<unknown>;
   onExportProject?: () => void;
   onImportProject?: () => void;
+  onImportSonalloyBundle?: () => Promise<ProjectActivationResult | null>;
   projectState?: ProjectState | null;
   projectSwitching?: boolean;
   projectError?: string | null;
@@ -289,6 +290,15 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         {visibleProjects.length === 0 && <p className={styles.empty}>No matching Projects</p>}
       </div>
       <div className={styles.footer}>
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.ghostButton}
+          disabled={projectActionsDisabled}
+          onClick={() => closeOnSuccess(props.onImportSonalloyBundle?.())}
+        >
+          Import Sonalloy Bundle…
+        </button>
         <button
           type="button"
           role="menuitem"

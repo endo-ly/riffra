@@ -138,6 +138,7 @@ describe('WorkspaceArrange', () => {
       ['track:other', false, false],
     ] as const) {
       session.arrangement.tracks.push({
+        panLaw: 'equalPower' as const,
         id,
         name: id,
         kind: 'instrument',
@@ -260,6 +261,7 @@ describe('WorkspaceArrange', () => {
   it('keeps the MIDI editor view following the playhead during playback', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -273,6 +275,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:follow',
       name: 'Follow',
       trackId: 'track:instrument',
@@ -312,6 +315,7 @@ describe('WorkspaceArrange', () => {
   it('keeps the full MIDI pitch range and uses a context menu for note deletion', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -325,6 +329,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi-range',
       name: 'MIDI Range',
       trackId: 'track:instrument',
@@ -375,6 +380,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -388,6 +394,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:quantize',
       name: 'Quantize',
       trackId: 'track:instrument',
@@ -435,6 +442,7 @@ describe('WorkspaceArrange', () => {
   it('keeps MIDI editor shortcuts inside the focused editor', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-shortcuts',
       name: 'Instrument Shortcuts',
       kind: 'instrument',
@@ -448,6 +456,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:shortcuts',
       name: 'Shortcuts',
       trackId: 'track:instrument-shortcuts',
@@ -497,6 +506,7 @@ describe('WorkspaceArrange', () => {
   it('creates an empty MIDI clip from an instrument lane and opens its editor', async () => {
     const session = defaultSession();
     const track = {
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-empty',
       name: 'Instrument Empty',
       kind: 'instrument' as const,
@@ -516,6 +526,7 @@ describe('WorkspaceArrange', () => {
         ...session.arrangement,
         midiClips: [
           {
+            instrumentControlEvents: [],
             id: 'clip:created-empty',
             name: 'MIDI Clip',
             trackId: track.id,
@@ -557,6 +568,7 @@ describe('WorkspaceArrange', () => {
   it('uses the active Time Selection for an empty MIDI clip', async () => {
     const session = defaultSession();
     const track = {
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-selection',
       name: 'Instrument Selection',
       kind: 'instrument' as const,
@@ -576,6 +588,7 @@ describe('WorkspaceArrange', () => {
         ...session.arrangement,
         midiClips: [
           {
+            instrumentControlEvents: [],
             id: 'clip:selection-created',
             name: 'Selection Clip',
             trackId: track.id,
@@ -621,6 +634,7 @@ describe('WorkspaceArrange', () => {
   it('moves selected MIDI notes by semitones and octaves with the arrow shortcuts', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-arrows',
       name: 'Instrument Arrows',
       kind: 'instrument',
@@ -634,6 +648,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:arrows',
       name: 'Arrows',
       trackId: 'track:instrument-arrows',
@@ -686,6 +701,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
       {
+        panLaw: 'equalPower' as const,
         id: 'track:audio-selection',
         name: 'Audio Selection',
         kind: 'audio',
@@ -699,6 +715,7 @@ describe('WorkspaceArrange', () => {
         effects: [],
       },
       {
+        panLaw: 'equalPower' as const,
         id: 'track:midi-selection',
         name: 'MIDI Selection',
         kind: 'instrument',
@@ -732,6 +749,7 @@ describe('WorkspaceArrange', () => {
     });
     session.arrangement.midiClips.push(
       {
+        instrumentControlEvents: [],
         id: 'clip:midi-selection-a',
         name: 'MIDI Selection A',
         trackId: 'track:midi-selection',
@@ -743,6 +761,7 @@ describe('WorkspaceArrange', () => {
         loopEnabled: false,
       },
       {
+        instrumentControlEvents: [],
         id: 'clip:midi-selection-b',
         name: 'MIDI Selection B',
         trackId: 'track:midi-selection',
@@ -784,6 +803,7 @@ describe('WorkspaceArrange', () => {
   it('uses Pointer blank clicks for selection and Draw drags for note creation', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-draw',
       name: 'Instrument Draw',
       kind: 'instrument',
@@ -797,6 +817,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:draw',
       name: 'Draw',
       trackId: 'track:instrument-draw',
@@ -842,6 +863,7 @@ describe('WorkspaceArrange', () => {
   it('auditions a newly placed note on the active instrument', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:audition',
       name: 'Audition Track',
       kind: 'instrument',
@@ -866,6 +888,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:audition',
       name: 'Audition Clip',
       trackId: 'track:audition',
@@ -906,6 +929,7 @@ describe('WorkspaceArrange', () => {
       ['track:chords', 'Chords'],
     ] as const) {
       session.arrangement.tracks.push({
+        panLaw: 'equalPower' as const,
         id: trackId,
         name,
         kind: 'instrument',
@@ -921,6 +945,7 @@ describe('WorkspaceArrange', () => {
     }
     session.arrangement.midiClips.push(
       {
+        instrumentControlEvents: [],
         id: 'clip:melody',
         name: 'Melody Clip',
         trackId: 'track:melody',
@@ -932,6 +957,7 @@ describe('WorkspaceArrange', () => {
         loopEnabled: false,
       },
       {
+        instrumentControlEvents: [],
         id: 'clip:chords',
         name: 'Chords Clip',
         trackId: 'track:chords',
@@ -970,6 +996,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -983,6 +1010,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:quantize-aligned',
       name: 'Quantize aligned',
       trackId: 'track:instrument',
@@ -1019,6 +1047,7 @@ describe('WorkspaceArrange', () => {
   it('clears a MIDI preview when the canonical response uses an effective value', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -1032,6 +1061,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi-move',
       name: 'MIDI Move',
       trackId: 'track:instrument',
@@ -1105,6 +1135,7 @@ describe('WorkspaceArrange', () => {
   it('previews a selected MIDI note group until the canonical update arrives', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -1118,6 +1149,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi-group',
       name: 'MIDI Group',
       trackId: 'track:instrument',
@@ -1188,6 +1220,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument-delete',
       name: 'Instrument Delete',
       kind: 'instrument',
@@ -1201,6 +1234,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi-delete',
       name: 'MIDI Delete',
       trackId: 'track:instrument-delete',
@@ -1243,6 +1277,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:guitar',
       name: 'Guitar',
       kind: 'audio',
@@ -1296,6 +1331,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     const assetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:audio',
       name: 'Audio',
       kind: 'audio',
@@ -1485,6 +1521,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.tracks.push(
       {
+        panLaw: 'equalPower' as const,
         id: 'track:audio',
         name: 'Audio',
         kind: 'audio',
@@ -1498,6 +1535,7 @@ describe('WorkspaceArrange', () => {
         effects: [],
       },
       {
+        panLaw: 'equalPower' as const,
         id: 'track:instrument',
         name: 'Instrument',
         kind: 'instrument',
@@ -1549,6 +1587,7 @@ describe('WorkspaceArrange', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Instrument',
       kind: 'instrument',
@@ -1756,6 +1795,7 @@ describe('WorkspaceArrange', () => {
     const session = defaultSession();
     session.arrangement.midiClips.push(
       {
+        instrumentControlEvents: [],
         id: 'clip:fit-start',
         name: 'Fit start',
         trackId: 'track:unused',
@@ -1767,6 +1807,7 @@ describe('WorkspaceArrange', () => {
         loopEnabled: false,
       },
       {
+        instrumentControlEvents: [],
         id: 'clip:fit-end',
         name: 'Fit end',
         trackId: 'track:unused',
@@ -1863,6 +1904,7 @@ describe('WorkspaceArrange', () => {
   it('closes the track menu when clicking outside', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:audio',
       name: 'Audio 1',
       kind: 'audio',
@@ -1890,6 +1932,7 @@ describe('WorkspaceArrange', () => {
   it('commits a velocity lane drag once and previews the active instrument', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:velocity',
       name: 'Velocity Track',
       kind: 'instrument',
@@ -1914,6 +1957,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:velocity',
       name: 'Velocity Clip',
       trackId: 'track:velocity',
@@ -2021,6 +2065,7 @@ describe('WorkspaceArrange', () => {
   it('seeks from the MIDI ruler and supports lower area resize, collapse, maximize, and close', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:navigation',
       name: 'Navigation Track',
       kind: 'instrument',
@@ -2034,6 +2079,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:navigation',
       name: 'Navigation Clip',
       trackId: 'track:navigation',
@@ -2085,6 +2131,7 @@ describe('WorkspaceArrange', () => {
   it('collapses the lower area when the resize handle is dragged below its minimum height', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:drag-collapse',
       name: 'Drag Collapse Track',
       kind: 'instrument',
@@ -2098,6 +2145,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:drag-collapse',
       name: 'Drag Collapse Clip',
       trackId: 'track:drag-collapse',
@@ -2131,6 +2179,7 @@ describe('WorkspaceArrange', () => {
   it('opens the Mixer in the shared lower area with track and master channels', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:focused',
       name: 'Focused Instrument',
       kind: 'instrument',
@@ -2144,6 +2193,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:mixer',
       name: 'Mix Track',
       kind: 'audio',
@@ -2186,6 +2236,7 @@ describe('WorkspaceArrange', () => {
   it('keeps the Play Surface independent from the MIDI lower area', async () => {
     const session = defaultSession();
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:play-surface',
       name: 'Play Surface Instrument',
       kind: 'instrument',
@@ -2199,6 +2250,7 @@ describe('WorkspaceArrange', () => {
       effects: [],
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:play-surface',
       name: 'Play Surface Clip',
       trackId: 'track:play-surface',

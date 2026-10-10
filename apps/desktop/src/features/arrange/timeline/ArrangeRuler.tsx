@@ -6,11 +6,10 @@ import type {
 } from '@/model/domain';
 import {
   formatClock,
-  ticksPerBar,
-  ticksPerBeat,
   timelineGridDensity,
   TRACK_HEADER_WIDTH,
 } from '@/features/arrange/model/arrange-timeline';
+import { meterSegment } from '@/shared/session/timebase';
 import styles from '../WorkspaceArrange.module.css';
 
 type ArrangeRange = 'loop' | 'punch';
@@ -43,20 +42,27 @@ interface ArrangeRulerProps {
 }
 
 export function ArrangeRuler(props: ArrangeRulerProps) {
-  const barTicks = ticksPerBar(props.timebase);
-  const beatTicks = ticksPerBeat(props.timebase);
-  const bars = Array.from(
-    { length: Math.ceil(props.timelineTicks / barTicks) },
-    (_, index) => index,
-  );
+  const bars: { tick: number; bar: number; end: number; beatTicks: number; numerator: number }[] =
+    [];
+  for (let tick = 0; tick < props.timelineTicks;) {
+    const meter = meterSegment(props.timebase, { tick });
+    const length = meter.beatTicks * meter.numerator;
+    const nextChange = props.timebase.timeSignatureChanges.find(
+      (change) =>
+        change.tick > tick &&
+        (change.numerator !== meter.numerator || change.denominator !== meter.denominator),
+    );
+    const end = Math.min(tick + length, nextChange?.tick ?? Infinity, props.timelineTicks);
+    bars.push({
+      tick,
+      bar: meter.firstBar + Math.floor((tick - meter.tick) / length),
+      end,
+      beatTicks: meter.beatTicks,
+      numerator: meter.numerator,
+    });
+    tick = end;
+  }
   const density = timelineGridDensity(props.timebase, props.pixelsPerTick);
-  const beatTicksInBar = barTicks / props.timebase.timeSignatureNumerator;
-  const subdivisionOffsets = density.subdivisionTicks
-    ? Array.from(
-        { length: Math.floor((barTicks - 1) / density.subdivisionTicks) },
-        (_, index) => (index + 1) * density.subdivisionTicks!,
-      ).filter((offset) => offset % beatTicksInBar !== 0)
-    : [];
   return (
     <>
       <div className={styles.rulerCorner}>
@@ -198,21 +204,30 @@ export function ArrangeRuler(props: ArrangeRulerProps) {
             />
           </div>
         )}
-        {bars.map((bar) => {
-          const tick = bar * barTicks;
+        {bars.map(({ tick, bar, end, beatTicks, numerator }) => {
+          const subdivisionOffsets: number[] = [];
+          if (density.subdivisionTicks)
+            for (
+              let offset = density.subdivisionTicks;
+              tick + offset < end;
+              offset += density.subdivisionTicks
+            )
+              if (offset % beatTicks !== 0) subdivisionOffsets.push(offset);
           return (
             <div className={styles.barMark} key={bar} style={{ left: tick * props.pixelsPerTick }}>
               <strong>
-                {bar % density.labelEveryBars === 0
+                {(bar - 1) % density.labelEveryBars === 0
                   ? props.mode === 'bars'
-                    ? bar + 1
+                    ? bar
                     : formatClock(tick, props.timebase)
                   : null}
               </strong>
               {density.showBeats &&
-                Array.from({ length: props.timebase.timeSignatureNumerator - 1 }, (_, beat) => (
-                  <i key={beat} style={{ left: (beat + 1) * beatTicks * props.pixelsPerTick }} />
-                ))}
+                Array.from({ length: numerator - 1 }, (_, beat) => (beat + 1) * beatTicks)
+                  .filter((offset) => tick + offset < end)
+                  .map((offset) => (
+                    <i key={offset} style={{ left: offset * props.pixelsPerTick }} />
+                  ))}
               {subdivisionOffsets.map((offset) =>
                 tick + offset < props.timelineTicks ? (
                   <i

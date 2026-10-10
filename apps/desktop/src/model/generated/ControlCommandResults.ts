@@ -26,6 +26,17 @@ export type ControlCommandResults = {
   'marker.update': OutputValue<'arrangementMutation'>;
   'marker.remove': OutputValue<'arrangementMutation'>;
   'timebase.update': OutputValue<'arrangementMutation'>;
+  'timebase.get-map': OutputValue<'timebase'>;
+  'mixdown.get': OutputValue<'mixdown'>;
+  'mixdown.set': OutputValue<'arrangementMutation'>;
+  'track.external-audio-input.set': OutputValue<'arrangementMutation'>;
+  'track.external-audio-input.clear': OutputValue<'arrangementMutation'>;
+  'instrument-event.list': OutputValue<'instrumentEvents'>;
+  'instrument-event.add': OutputValue<'arrangementMutation'>;
+  'instrument-event.set': OutputValue<'arrangementMutation'>;
+  'instrument-event.update': OutputValue<'arrangementMutation'>;
+  'instrument-event.remove': OutputValue<'arrangementMutation'>;
+  'timebase.set-map': OutputValue<'arrangementMutation'>;
   'loop-range.set': OutputValue<'arrangementMutation'>;
   'punch-range.set': OutputValue<'arrangementMutation'>;
   'automation.set': OutputValue<'arrangementMutation'>;
@@ -98,6 +109,7 @@ export type ControlCommandResults = {
   'project.open': OutputValue<'projectActivation'>;
   'project.rename': OutputValue<'projectState'>;
   'project.import': OutputValue<'projectActivation'>;
+  'project.import-sonalloy': OutputValue<'projectActivation'>;
   'project.export': OutputValue<'projectExport'>;
   'host.status': OutputValue<'hostStatus'>;
   'host.info': OutputValue<'hostInfo'>;

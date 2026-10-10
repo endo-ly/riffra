@@ -1,3 +1,4 @@
+import { snapToBar } from '@/shared/session/timebase';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioAnalysis, CanonicalState, CreativeSession } from '@/model/domain';
 import type { ArrangeApi } from '@/native/native-api';
@@ -96,7 +97,7 @@ export function useArrangeEditor(options: UseArrangeEditorOptions) {
     (raw: number, temporaryOff = false) => {
       if (temporaryOff || snap === 'off') return Math.max(0, Math.round(raw));
       const step = snapGridTicks(snap, timebase);
-      let result = Math.round(raw / step) * step;
+      let result = snap === 'bar' ? snapToBar(raw, timebase) : Math.round(raw / step) * step;
       const threshold = 8 / pixelsPerTick;
       for (const edge of edgeTicks) {
         if (Math.abs(edge - raw) < threshold && Math.abs(edge - raw) < Math.abs(result - raw)) {

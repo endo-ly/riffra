@@ -17,6 +17,7 @@ function renderPanel(
 ) {
   const session = initialSession;
   session.arrangement.tracks.push({
+    panLaw: 'equalPower' as const,
     id: 'track:audio',
     name: 'Audio',
     kind: 'audio',
@@ -82,6 +83,7 @@ describe('PropertiesPanel', () => {
       takeVariant: 'raw',
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi',
       name: 'MIDI Clip',
       trackId: 'track:instrument',
@@ -128,6 +130,7 @@ describe('PropertiesPanel', () => {
       startTick: 1_000,
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi',
       name: 'MIDI Clip',
       trackId: 'track:instrument',

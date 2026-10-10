@@ -42,52 +42,48 @@ export function TransportControls(props: TransportControlsProps) {
     positionTick,
     api,
   } = props;
-  const [tempoDraft, setTempoDraft] = useState(String(session.arrangement.timebase.bpm));
-  const [signatureDraft, setSignatureDraft] = useState(
-    `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
-  );
+  const initialBpm = session.arrangement.timebase.tempoChanges[0].bpm;
+  const initialNumerator = session.arrangement.timebase.timeSignatureChanges[0].numerator;
+  const initialDenominator = session.arrangement.timebase.timeSignatureChanges[0].denominator;
+  const [tempoDraft, setTempoDraft] = useState(String(initialBpm));
+  const [signatureDraft, setSignatureDraft] = useState(`${initialNumerator}/${initialDenominator}`);
   useEffect(() => {
-    setTempoDraft(String(session.arrangement.timebase.bpm));
-    setSignatureDraft(
-      `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
-    );
-  }, [
-    session.arrangement.timebase.bpm,
-    session.arrangement.timebase.timeSignatureDenominator,
-    session.arrangement.timebase.timeSignatureNumerator,
-  ]);
+    setTempoDraft(String(initialBpm));
+    setSignatureDraft(`${initialNumerator}/${initialDenominator}`);
+  }, [initialBpm, initialNumerator, initialDenominator]);
 
   const commitTimebase = (nextSignature = signatureDraft) => {
     const bpm = Number(tempoDraft);
     const [numerator, denominator] = nextSignature.split('/').map(Number);
     if (
       !Number.isFinite(bpm) ||
-      bpm < 20 ||
-      bpm > 400 ||
+      bpm <= 0 ||
       !Number.isInteger(numerator) ||
       numerator <= 0 ||
       !Number.isInteger(denominator) ||
       denominator <= 0
     ) {
-      setTempoDraft(String(session.arrangement.timebase.bpm));
+      setTempoDraft(String(session.arrangement.timebase.tempoChanges[0].bpm));
       setSignatureDraft(
-        `${session.arrangement.timebase.timeSignatureNumerator}/${session.arrangement.timebase.timeSignatureDenominator}`,
+        `${session.arrangement.timebase.timeSignatureChanges[0].numerator}/${session.arrangement.timebase.timeSignatureChanges[0].denominator}`,
       );
       return;
     }
     const current = session.arrangement.timebase;
     if (
-      bpm === current.bpm &&
-      numerator === current.timeSignatureNumerator &&
-      denominator === current.timeSignatureDenominator
+      bpm === current.tempoChanges[0].bpm &&
+      numerator === current.timeSignatureChanges[0].numerator &&
+      denominator === current.timeSignatureChanges[0].denominator
     )
       return;
     void api
       .updateArrangementTimebase({
         ...current,
-        bpm,
-        timeSignatureNumerator: numerator,
-        timeSignatureDenominator: denominator,
+        tempoChanges: [{ tick: 0, bpm }, ...current.tempoChanges.slice(1)],
+        timeSignatureChanges: [
+          { tick: 0, numerator, denominator },
+          ...current.timeSignatureChanges.slice(1),
+        ],
       })
       .then((result) =>
         applyArrangementMutation(result, applyCanonicalState, (message) =>
@@ -95,8 +91,10 @@ export function TransportControls(props: TransportControlsProps) {
         ),
       )
       .catch(() => {
-        setTempoDraft(String(current.bpm));
-        setSignatureDraft(`${current.timeSignatureNumerator}/${current.timeSignatureDenominator}`);
+        setTempoDraft(String(current.tempoChanges[0].bpm));
+        setSignatureDraft(
+          `${current.timeSignatureChanges[0].numerator}/${current.timeSignatureChanges[0].denominator}`,
+        );
       });
   };
 
@@ -149,8 +147,7 @@ export function TransportControls(props: TransportControlsProps) {
             aria-label="Project BPM"
             title="Project BPM"
             type="number"
-            min="20"
-            max="400"
+            min="0"
             step="0.1"
             value={tempoDraft}
             onChange={(event) => setTempoDraft(event.currentTarget.value)}
@@ -190,8 +187,8 @@ export function TransportControls(props: TransportControlsProps) {
             const barTicks =
               (session.arrangement.timebase.ppq *
                 4 *
-                session.arrangement.timebase.timeSignatureNumerator) /
-              session.arrangement.timebase.timeSignatureDenominator;
+                session.arrangement.timebase.timeSignatureChanges[0].numerator) /
+              session.arrangement.timebase.timeSignatureChanges[0].denominator;
             void api
               .updateTimelineLoopRange(
                 !range.enabled,
@@ -267,7 +264,7 @@ export function TransportControls(props: TransportControlsProps) {
 function describeCountIn(session: CreativeSession): string {
   const beats = session.settings.countInBeats;
   if (!beats) return 'Off';
-  const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
+  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
   if (beats >= beatsPerBar * 2) return '2 Bars';
   if (beats >= beatsPerBar) return '1 Bar';
   return String(beats);
@@ -275,12 +272,12 @@ function describeCountIn(session: CreativeSession): string {
 
 function countInBadge(session: CreativeSession): string {
   const beats = session.settings.countInBeats;
-  const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
+  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
   return beats % beatsPerBar === 0 ? String(beats / beatsPerBar) : `${beats}b`;
 }
 
 function nextCountInBeats(session: CreativeSession): number {
-  const beatsPerBar = session.arrangement.timebase.timeSignatureNumerator;
+  const beatsPerBar = session.arrangement.timebase.timeSignatureChanges[0].numerator;
   const current = session.settings.countInBeats;
   if (current === 0) return beatsPerBar;
   if (current < beatsPerBar * 2) return beatsPerBar * 2;

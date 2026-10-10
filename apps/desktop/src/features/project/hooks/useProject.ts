@@ -8,7 +8,7 @@ import type {
   ProjectActivationResult,
 } from '@/model/domain';
 import type { ProjectApi, ProjectSettingsApi } from '@/native/native-api';
-import { openProjectPackage, saveProjectPackage } from '@/native/dialog';
+import { openProjectPackage, openSonalloyBundle, saveProjectPackage } from '@/native/dialog';
 import { isNativeRuntime, logNativeError, NativeCommandError } from '@/native/invoke';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 interface UseProjectOptions {
@@ -27,6 +27,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     renameProject: renameProjectApi,
     exportProject: exportProjectApi,
     importProject: importProjectApi,
+    importSonalloyBundle: importSonalloyBundleApi,
     restoreRecoveryGeneration,
   } = api;
   const { boot, setBoot, hostGeneration } = options;
@@ -314,6 +315,23 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
       );
     }
   }, [importProjectApi, performProjectOperation]);
+  const importSonalloyBundle = useCallback(async () => {
+    if (!isNativeRuntime()) return null;
+    try {
+      const path = await openSonalloyBundle();
+      if (!path) return null;
+      return await performProjectOperation(async () => {
+        const activation = await importSonalloyBundleApi(path);
+        if (!activation) throw new Error('Sonalloy Bundle import returned no state');
+        return activation;
+      }, 'Sonalloy Bundle import');
+    } catch (error) {
+      setProjectError(
+        `Sonalloy Bundle import failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }, [importSonalloyBundleApi, performProjectOperation]);
   const restoreRecovery = useCallback(
     async (fileName: string) => {
       try {
@@ -378,6 +396,7 @@ export function useProject(api: ProjectApi & ProjectSettingsApi, options: UsePro
     openProject,
     exportProject,
     importProject,
+    importSonalloyBundle,
     restoreRecovery,
     dismissRecovery,
   };

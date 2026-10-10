@@ -60,6 +60,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     openProject,
     exportProject,
     importProject,
+    importSonalloyBundle,
     restoreRecovery,
     dismissRecovery,
   } = runtime;
@@ -315,6 +316,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     openProject,
     exportProject,
     importProject,
+    importSonalloyBundle,
     restoreRecovery,
     dismissRecovery,
     updateLibraryAsset,

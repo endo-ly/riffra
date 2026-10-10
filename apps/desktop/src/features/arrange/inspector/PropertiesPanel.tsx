@@ -6,6 +6,7 @@ import { MidiClipInspector } from './MidiClipInspector';
 import { TrackInspector } from './TrackInspector';
 import { TakeInspector } from './TakeInspector';
 import { tickToMusicalPosition } from '@/shared/session/musical-position';
+import { clipDurationTicks } from '@/features/arrange/model/arrange-timeline';
 import type { ArrangeSelection } from '@/features/arrange/hooks/useArrangeEditor';
 import { Icon } from '@/shared/ui/primitives';
 import styles from './PropertiesPanel.module.css';
@@ -104,14 +105,7 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
               api={props.api}
               onSetLoopToClip={(clip) => {
                 const timebase = props.session.arrangement.timebase;
-                const endTicks = Math.max(
-                  1,
-                  Math.round(
-                    (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-                      (timebase.bpm / 60) *
-                      timebase.ppq,
-                  ),
-                );
+                const endTicks = clipDurationTicks(clip, timebase);
                 return props.api.updateTimelineLoopRange(
                   true,
                   tickToMusicalPosition(clip.startTick, timebase),

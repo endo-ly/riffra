@@ -14,10 +14,9 @@ describe('useArrangementTransport', () => {
     const api = new FakeNativeApi();
     const { result } = renderHook(() =>
       useArrangementTransport(api, {
-        bpm: 120,
+        tempoChanges: [{ tick: 0, bpm: 120 }],
         ppq: 960,
-        timeSignatureNumerator: 4,
-        timeSignatureDenominator: 4,
+        timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
       }),
     );
 
@@ -37,10 +36,9 @@ describe('useArrangementTransport', () => {
   it('restarts the playhead when the Active Project changes', async () => {
     const api = new FakeNativeApi();
     const timebase = {
-      bpm: 120,
+      tempoChanges: [{ tick: 0, bpm: 120 }],
       ppq: 960,
-      timeSignatureNumerator: 4,
-      timeSignatureDenominator: 4,
+      timeSignatureChanges: [{ tick: 0, numerator: 4, denominator: 4 }],
     };
     const { result, rerender } = renderHook(
       ({ projectId }) => useArrangementTransport(api, timebase, 0, projectId),

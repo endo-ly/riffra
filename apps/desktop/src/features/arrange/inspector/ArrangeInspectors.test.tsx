@@ -21,6 +21,7 @@ function recordingSession(): CreativeSession {
   const rawId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a');
   const processedId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41b');
   session.arrangement.tracks.push({
+    panLaw: 'equalPower' as const,
     id: 'track:audio',
     name: 'Audio',
     kind: 'audio',
@@ -97,6 +98,7 @@ describe('Arrange Inspectors', () => {
   it('does not show Audio Monitoring for an Instrument Track and surfaces operation errors', async () => {
     const session = defaultSession();
     const track = {
+      panLaw: 'equalPower' as const,
       id: 'track:instrument',
       name: 'Keys',
       kind: 'instrument' as const,
@@ -133,6 +135,7 @@ describe('Arrange Inspectors', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'midi:1',
       name: 'Phrase',
       trackId: 'track:instrument',
@@ -434,6 +437,7 @@ describe('Arrange Inspectors', () => {
     const midiSessionId = 'recording:midi';
     const midiAssetId = toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41c');
     session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
       id: 'track:midi-take',
       name: 'MIDI Take',
       kind: 'instrument',
@@ -458,6 +462,7 @@ describe('Arrange Inspectors', () => {
       midiAssetId,
     });
     session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
       id: 'clip:midi-take',
       name: 'MIDI Take',
       trackId: 'track:midi-take',

@@ -1,4 +1,10 @@
 import type { AudioClip, MidiClip, ProjectTimebase } from '@/model/domain';
+import {
+  barBeatToTick,
+  secondsToTicks,
+  ticksToSeconds,
+  tickToBarBeat,
+} from '@/shared/session/timebase';
 
 /** Header column width, shared between the timeline geometry math and the CSS layout. */
 export const TRACK_HEADER_WIDTH = 224;
@@ -73,11 +79,11 @@ export interface TrackTimeline {
 export function clipDurationTicks(clip: AudioClip, timebase: ProjectTimebase) {
   return Math.max(
     1,
-    Math.round(
-      (clip.timelineDuration.frames / clip.timelineDuration.sampleRate) *
-        (timebase.bpm / 60) *
-        timebase.ppq,
-    ),
+    secondsToTicks(
+      ticksToSeconds(clip.startTick, timebase) +
+        clip.timelineDuration.frames / clip.timelineDuration.sampleRate,
+      timebase,
+    ) - clip.startTick,
   );
 }
 
@@ -93,19 +99,19 @@ export function timelineObjectEndTick(clip: AudioClip | MidiClip, timebase: Proj
 }
 
 export function ticksToFrames(ticks: number, sampleRate: number, timebase: ProjectTimebase) {
-  return Math.round((ticks * sampleRate * 60) / (timebase.bpm * timebase.ppq));
+  return Math.round(ticksToSeconds(ticks, timebase) * sampleRate);
 }
 
 export function framesToTicks(frames: number, sampleRate: number, timebase: ProjectTimebase) {
-  return Math.round((frames * timebase.bpm * timebase.ppq) / (sampleRate * 60));
+  return secondsToTicks(frames / sampleRate, timebase);
 }
 
 export function ticksPerBeat(timebase: ProjectTimebase) {
-  return (timebase.ppq * 4) / timebase.timeSignatureDenominator;
+  return (timebase.ppq * 4) / timebase.timeSignatureChanges[0].denominator;
 }
 
 export function ticksPerBar(timebase: ProjectTimebase) {
-  return ticksPerBeat(timebase) * timebase.timeSignatureNumerator;
+  return ticksPerBeat(timebase) * timebase.timeSignatureChanges[0].numerator;
 }
 
 export function timelineGridDensity(
@@ -175,13 +181,7 @@ export function countOffGridNotes(
 }
 
 export function formatMusicalPosition(tick: number, timebase: ProjectTimebase) {
-  const barTicks = ticksPerBar(timebase);
-  const beatTicks = ticksPerBeat(timebase);
-  const safeTick = Math.max(0, Math.round(tick));
-  const bar = Math.floor(safeTick / barTicks) + 1;
-  const withinBar = safeTick % barTicks;
-  const beat = Math.floor(withinBar / beatTicks) + 1;
-  const subdivision = Math.floor(withinBar % beatTicks);
+  const { bar, beat, offset: subdivision } = tickToBarBeat(tick, timebase);
   return `${bar}.${beat}.${subdivision.toString().padStart(3, '0')}`;
 }
 
@@ -208,11 +208,7 @@ export function parseMusicalPosition(text: string, timebase: ProjectTimebase): n
   const fields = parseMusicalFields(text);
   if (!fields) return null;
   const [bar, beat = 1, tick = 0] = fields;
-  const beatTicks = ticksPerBeat(timebase);
-  if (bar < 1 || beat < 1 || beat > timebase.timeSignatureNumerator || tick >= beatTicks) {
-    return null;
-  }
-  return (bar - 1) * ticksPerBar(timebase) + (beat - 1) * beatTicks + tick;
+  return barBeatToTick(bar, beat, tick, timebase);
 }
 
 /** Parses a zero-based `bars.beats.ticks` span; the result is always positive. */
@@ -221,13 +217,13 @@ export function parseMusicalLength(text: string, timebase: ProjectTimebase): num
   if (!fields) return null;
   const [bars, beats = 0, ticks = 0] = fields;
   const beatTicks = ticksPerBeat(timebase);
-  if (beats >= timebase.timeSignatureNumerator || ticks >= beatTicks) return null;
+  if (beats >= timebase.timeSignatureChanges[0].numerator || ticks >= beatTicks) return null;
   const total = bars * ticksPerBar(timebase) + beats * beatTicks + ticks;
   return total > 0 ? total : null;
 }
 
 export function formatClock(tick: number, timebase: ProjectTimebase) {
-  const seconds = (Math.max(0, tick) * 60) / (timebase.bpm * timebase.ppq);
+  const seconds = ticksToSeconds(Math.max(0, tick), timebase);
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${(seconds % 60).toFixed(2).padStart(5, '0')}`;
 }
