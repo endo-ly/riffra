@@ -84,6 +84,8 @@ impl RenderWorker {
         let payload = OfflineRenderEnvelope::RenderTimelineOffline {
             protocol_version: SIDECAR_PROTOCOL_VERSION,
             request: OfflineRenderRequestSpec {
+                include_end_events: request.include_end_events,
+                tail_seconds: request.tail_seconds,
                 graph: request.graph,
                 destination: request.destination.to_string_lossy().into_owned(),
                 start_tick: request.start_tick,
@@ -209,11 +211,18 @@ mod tests {
 
     fn empty_graph() -> ExecutionGraph {
         ExecutionGraph {
+            mixdown: crate::execution::GraphMixdown::default(),
             timebase: GraphTimebase {
                 ppq: 960,
-                bpm: 120.0,
-                time_signature_numerator: 4,
-                time_signature_denominator: 4,
+                tempo_changes: vec![riffra_core::TempoChange {
+                    tick: 0,
+                    bpm: 120.0,
+                }],
+                time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                    tick: 0,
+                    numerator: 4,
+                    denominator: 4,
+                }],
             },
             loop_range: GraphLoopRange {
                 enabled: false,
@@ -229,6 +238,8 @@ mod tests {
 
     fn offline_request(destination: PathBuf) -> OfflineRenderRequest {
         OfflineRenderRequest {
+            include_end_events: false,
+            tail_seconds: 0.0,
             graph: empty_graph(),
             destination,
             start_tick: 0,

@@ -11,12 +11,15 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+mod mastering;
 mod worker;
 
 pub(crate) use worker::RenderWorker;
 
 /// Platform-independent request for rendering a prepared Execution Graph.
 pub(crate) struct OfflineRenderRequest {
+    pub(crate) include_end_events: bool,
+    pub(crate) tail_seconds: f64,
     pub(crate) graph: ExecutionGraph,
     pub(crate) destination: PathBuf,
     pub(crate) start_tick: u64,
@@ -31,6 +34,8 @@ const DEFAULT_OFFLINE_SAMPLE_RATE: u32 = 48_000;
 const DEFAULT_OFFLINE_BLOCK_SIZE: u32 = 512;
 
 struct RenderPlan {
+    tail_seconds: f64,
+    block_size: u32,
     graph: ExecutionGraph,
     start_tick: u64,
     end_tick: u64,
@@ -38,6 +43,33 @@ struct RenderPlan {
     clip_count: usize,
     source_ids: Vec<AssetId>,
     output_path: PathBuf,
+}
+
+struct PendingOutput<'a> {
+    data_root: &'a Path,
+    path: &'a Path,
+    asset_id: Option<AssetId>,
+    committed: bool,
+}
+
+impl Drop for PendingOutput<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        if let Some(id) = &self.asset_id
+            && let Err(error) =
+                asset::discard_output_registration(self.data_root, id, &self.path.to_string_lossy())
+        {
+            tracing::error!(%error, "render output registration cleanup failed");
+            return;
+        }
+        let _ = fs::remove_file(self.path);
+        if let Some(directory) = self.path.parent() {
+            let _ = fs::remove_file(directory.join("render.json"));
+        }
+        remove_empty_render_directory(self.path);
+    }
 }
 
 /// Renders one timeline while allowing the owning background job to cancel
@@ -82,60 +114,53 @@ fn render_timeline_with_renderer(
         created_at_ms,
         &options,
     )?;
-    if let Some(parent) = plan.output_path.parent()
-        && let Err(error) = fs::create_dir_all(parent)
-    {
-        remove_empty_render_directory(&plan.output_path);
-        return Err(format!(
-            "Render output folder could not be created: {error}"
-        ));
-    }
+    let directory = plan
+        .output_path
+        .parent()
+        .expect("render output has a parent");
+    fs::create_dir_all(directory.parent().expect("render folder has a parent"))
+        .and_then(|()| fs::create_dir(directory))
+        .map_err(|error| format!("render output folder could not be created: {error}"))?;
+    let mut pending = PendingOutput {
+        data_root,
+        path: &plan.output_path,
+        asset_id: None,
+        committed: false,
+    };
 
-    if let Err(error) = render(OfflineRenderRequest {
+    render(OfflineRenderRequest {
+        include_end_events: matches!(options.range, RenderRange::EntireArrangement),
+        tail_seconds: plan.tail_seconds,
         graph: plan.graph,
         destination: plan.output_path.clone(),
         start_tick: plan.start_tick,
         end_tick: plan.end_tick,
         sample_rate: plan.sample_rate,
-        block_size: DEFAULT_OFFLINE_BLOCK_SIZE,
-        normalize: options.normalize,
-    }) {
-        let _ = fs::remove_file(&plan.output_path);
-        remove_empty_render_directory(&plan.output_path);
-        return Err(error);
-    }
+        block_size: plan.block_size,
+        normalize: options.normalize && session.settings.mixdown.mastering.is_none(),
+    })?;
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
-        let _ = fs::remove_file(&plan.output_path);
-        remove_empty_render_directory(&plan.output_path);
         return Err("Timeline render was cancelled.".into());
     }
     if !plan.output_path.is_file() {
-        remove_empty_render_directory(&plan.output_path);
         return Err("Native Offline Render completed without producing its WAV output.".into());
     }
+    let mastering = if let Some(target) = &session.settings.mixdown.mastering {
+        Some(Box::new(mastering::master(
+            &plan.output_path,
+            target,
+            plan.sample_rate,
+            cancelled,
+        )?))
+    } else {
+        None
+    };
 
-    let range_start_ms = tick_to_milliseconds(
-        plan.start_tick,
-        session.arrangement.timebase.bpm,
-        session.arrangement.timebase.ppq,
-    );
-    let range_end_ms = tick_to_milliseconds(
-        plan.end_tick,
-        session.arrangement.timebase.bpm,
-        session.arrangement.timebase.ppq,
-    );
-    let frames = tick_to_frames(
-        plan.end_tick,
-        session.arrangement.timebase.bpm,
-        session.arrangement.timebase.ppq,
-        plan.sample_rate,
-    )
-    .saturating_sub(tick_to_frames(
-        plan.start_tick,
-        session.arrangement.timebase.bpm,
-        session.arrangement.timebase.ppq,
-        plan.sample_rate,
-    ));
+    let timebase = &session.arrangement.timebase;
+    let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
+    let range_end_ms =
+        ((timebase.ticks_to_seconds(plan.end_tick) + plan.tail_seconds) * 1000.0).round() as u64;
+    let (_, frames) = riffra_host::read_wav_metadata(&plan.output_path)?;
     let range_kind = match &options.range {
         RenderRange::EntireArrangement => "entireArrangement",
         RenderRange::LoopRange => "loopRange",
@@ -171,8 +196,10 @@ fn render_timeline_with_renderer(
             provenance_parameters,
         )?
     };
+    pending.asset_id = Some(rendered_asset_id.clone());
 
     let result = RenderResult {
+        mastering,
         asset_id: rendered_asset_id,
         path: plan.output_path.to_string_lossy().into_owned(),
         sample_rate: plan.sample_rate,
@@ -181,7 +208,7 @@ fn render_timeline_with_renderer(
         clip_count: plan.clip_count,
         range_start_ms,
         range_end_ms,
-        normalized: options.normalize,
+        normalized: options.normalize && session.settings.mixdown.mastering.is_none(),
         track_id: options.track_id,
         state: "completed".into(),
         message: "Timeline rendered through the same Arrangement Graph used for playback.".into(),
@@ -197,6 +224,10 @@ fn render_timeline_with_renderer(
             .map_err(|error| format!("Render manifest could not be encoded: {error}"))?,
     )
     .map_err(|error| format!("Render manifest could not be saved: {error}"))?;
+    if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("timeline render was cancelled".into());
+    }
+    pending.committed = true;
     Ok(result)
 }
 
@@ -223,21 +254,36 @@ fn build_render_plan(
         {
             return Err(format!("Track is not registered: {track_id}"));
         }
+        let mut required_tracks = BTreeSet::from([track_id.to_owned()]);
+        let mut current = track_id;
+        while let Some(source) = render_session
+            .arrangement
+            .tracks
+            .iter()
+            .find(|track| track.id == current)
+            .and_then(|track| track.external_audio_source_track_id.as_deref())
+        {
+            if !required_tracks.insert(source.to_owned()) {
+                return Err("external audio route contains a cycle".into());
+            }
+            current = source;
+        }
         render_session
             .arrangement
             .audio_clips
-            .retain(|clip| clip.track_id == track_id);
+            .retain(|clip| required_tracks.contains(&clip.track_id));
         render_session
             .arrangement
             .midi_clips
-            .retain(|clip| clip.track_id == track_id);
+            .retain(|clip| required_tracks.contains(&clip.track_id));
         render_session
             .arrangement
             .automation_lanes
-            .retain(|lane| lane.track_id == track_id);
+            .retain(|lane| required_tracks.contains(&lane.track_id));
         // Keep every Track's plugin graph so all independently rendered stems
         // use the same project-wide PDC baseline. Only the selected Track owns
-        // renderable content and reaches the final mix.
+        // renderable content and reaches the final mix. Input dependencies retain
+        // their performance while remaining muted in the final mix.
         for track in &mut render_session.arrangement.tracks {
             track.muted = track.id != track_id;
             track.solo = false;
@@ -245,11 +291,20 @@ fn build_render_plan(
     }
 
     let (start_tick, end_tick) = resolve_range(&render_session, &options.range)?;
-    let duration_minutes = ticks_to_minutes(
-        end_tick.saturating_sub(start_tick),
-        render_session.arrangement.timebase.bpm,
-        render_session.arrangement.timebase.ppq,
-    );
+    let duration_minutes = (render_session
+        .arrangement
+        .timebase
+        .ticks_to_seconds(end_tick)
+        - render_session
+            .arrangement
+            .timebase
+            .ticks_to_seconds(start_tick)
+        + if matches!(options.range, RenderRange::EntireArrangement) {
+            session.settings.mixdown.tail_seconds
+        } else {
+            0.0
+        })
+        / 60.0;
     if !duration_minutes.is_finite()
         || duration_minutes <= 0.0
         || duration_minutes > MAX_RENDER_MINUTES
@@ -311,15 +366,28 @@ fn build_render_plan(
     fail_for_missing_dependencies(&diagnostics)?;
 
     Ok(RenderPlan {
+        tail_seconds: if matches!(options.range, RenderRange::EntireArrangement) {
+            session.settings.mixdown.tail_seconds
+        } else {
+            0.0
+        },
+        block_size: session
+            .settings
+            .mixdown
+            .block_size
+            .unwrap_or(DEFAULT_OFFLINE_BLOCK_SIZE),
         graph,
         start_tick,
         end_tick,
-        sample_rate,
+        sample_rate: session.settings.mixdown.sample_rate.unwrap_or(sample_rate),
         clip_count,
         source_ids,
         output_path: data_root
             .join("renders")
-            .join(format!("render-{created_at_ms}"))
+            .join(format!(
+                "render-{created_at_ms}-{}",
+                riffra_control::new_instance_id()
+            ))
             .join("timeline.wav"),
     })
 }
@@ -332,16 +400,14 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
                 .audio_clips
                 .iter()
                 .map(|clip| {
-                    clip.start_tick.0.saturating_add(
-                        session
-                            .arrangement
-                            .timebase
-                            .frames_to_ticks(
-                                clip.timeline_duration.frames,
-                                clip.timeline_duration.sample_rate,
-                            )
-                            .0,
-                    )
+                    let timebase = &session.arrangement.timebase;
+                    timebase
+                        .seconds_to_ticks(
+                            timebase.ticks_to_seconds(clip.start_tick.0)
+                                + clip.timeline_duration.frames as f64
+                                    / f64::from(clip.timeline_duration.sample_rate),
+                        )
+                        .0
                 })
                 .max()
                 .unwrap_or(0);
@@ -352,7 +418,9 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
                 .map(|clip| clip.start_tick.0.saturating_add(clip.duration_ticks))
                 .max()
                 .unwrap_or(0);
-            let end_tick = audio_end.max(midi_end);
+            let end_tick = audio_end
+                .max(midi_end)
+                .max(session.settings.mixdown.musical_end_tick);
             if end_tick == 0 {
                 return Err("Entire Arrangement has no positive-duration clips.".into());
             }
@@ -402,22 +470,6 @@ fn fail_for_missing_dependencies(diagnostics: &ProjectionDiagnostics) -> Result<
     Ok(())
 }
 
-fn ticks_to_minutes(ticks: u64, bpm: f64, ppq: u32) -> f64 {
-    ticks as f64 / (bpm * f64::from(ppq))
-}
-
-fn tick_to_milliseconds(tick: u64, bpm: f64, ppq: u32) -> u64 {
-    (ticks_to_minutes(tick, bpm, ppq) * 60_000.0)
-        .round()
-        .max(0.0) as u64
-}
-
-fn tick_to_frames(tick: u64, bpm: f64, ppq: u32, sample_rate: u32) -> u64 {
-    (ticks_to_minutes(tick, bpm, ppq) * 60.0 * f64::from(sample_rate))
-        .round()
-        .max(0.0) as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +482,7 @@ mod tests {
             .tracks
             .push(Track::instrument("instrument".into(), "Instrument".into()));
         session.arrangement.midi_clips.push(MidiClip {
+            instrument_control_events: Vec::new(),
             id: "clip".into(),
             name: "Clip".into(),
             track_id: "instrument".into(),
@@ -531,7 +584,7 @@ mod tests {
     #[test]
     fn time_selection_uses_the_project_time_signature() {
         let mut session = session_with_clips();
-        session.arrangement.timebase.time_signature_numerator = 3;
+        session.arrangement.timebase.time_signature_changes[0].numerator = 3;
         assert_eq!(
             resolve_range(
                 &session,
@@ -559,9 +612,15 @@ mod tests {
         .unwrap();
         assert!(plan.source_ids.is_empty());
         assert_eq!(plan.sample_rate, DEFAULT_OFFLINE_SAMPLE_RATE);
-        assert_eq!(
-            plan.output_path,
-            root.join("renders").join("render-1").join("timeline.wav")
+        assert_eq!(plan.output_path.file_name().unwrap(), "timeline.wav");
+        assert!(
+            plan.output_path
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("render-1-")
         );
     }
 
@@ -596,22 +655,35 @@ mod tests {
 
     #[test]
     fn failed_render_removes_empty_output_directory() {
-        let root =
-            std::env::temp_dir().join(format!("riffra-failed-render-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "riffra-failed-render-{}",
+            riffra_control::new_instance_id()
+        ));
         let catalog = empty_catalog();
-        let result = render_timeline_with_renderer(
-            &root,
-            catalog,
-            &session_with_clips(),
-            1,
-            RenderOptions::default(),
-            |_request| Err("render failed".into()),
-            None,
-        );
-
-        assert_eq!(result.unwrap_err(), "render failed");
-        assert!(!root.join("renders").join("render-1").exists());
-        assert!(!root.join("exports").exists());
+        for failure in 0..3 {
+            let cancelled = AtomicBool::new(false);
+            let result = render_timeline_with_renderer(
+                &root,
+                catalog,
+                &session_with_clips(),
+                1,
+                RenderOptions::default(),
+                |request| {
+                    fs::write(request.destination, b"incomplete wav").unwrap();
+                    if failure == 0 {
+                        return Err("render failed".into());
+                    }
+                    if failure == 1 {
+                        cancelled.store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    Ok(())
+                },
+                Some(&cancelled),
+            );
+            assert!(result.is_err());
+            assert_eq!(fs::read_dir(root.join("renders")).unwrap().count(), 0);
+            assert!(!root.join("exports").exists());
+        }
         let _ = fs::remove_dir_all(root);
     }
 }
