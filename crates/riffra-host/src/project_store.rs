@@ -152,8 +152,33 @@ impl ProjectStore {
     pub fn create_from_session(&self, session: &CreativeSession) -> io::Result<ProjectSummary> {
         let project_id = new_project_id();
         let storage = self.session_store(&project_id).map_err(invalid_data)?;
-        storage.save(session)?;
-        storage.summary()
+        let result = storage.save(session).and_then(|()| storage.summary());
+        if result.is_err() {
+            let directory = self.projects_dir.join(&project_id);
+            if directory.exists() {
+                fs::remove_dir_all(directory)?;
+            }
+        }
+        result
+    }
+
+    /// Removes a newly saved Project that has not become the active Project.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid id, an active Project, or a failed removal.
+    pub fn discard_unactivated_project(&self, project_id: &str) -> io::Result<()> {
+        validate_project_id(project_id).map_err(invalid_data)?;
+        let workspace = match fs::read(self.data_root.join(WORKSPACE_FILE)) {
+            Ok(bytes) => {
+                Some(serde_json::from_slice::<WorkspaceState>(&bytes).map_err(invalid_data)?)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if workspace.is_some_and(|workspace| workspace.active_project_id == project_id) {
+            return Err(invalid_data("cannot discard the active project"));
+        }
+        fs::remove_dir_all(self.projects_dir.join(project_id))
     }
 
     /// Loads one existing Project and its recovery candidates.

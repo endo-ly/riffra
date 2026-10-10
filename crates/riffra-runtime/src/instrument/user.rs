@@ -191,7 +191,38 @@ impl UserInstrumentStore {
         instrument_id: &str,
     ) -> Result<ProjectInstrumentSnapshot, String> {
         let resolved = self.resolve(instrument_id)?;
-        let snapshot_id = new_instance_id();
+        self.snapshot_package(&resolved.package_root, new_instance_id())
+    }
+
+    /// Copies an Instrument directory directly into a Project-owned snapshot.
+    ///
+    /// # Errors
+    /// Returns an error for unsafe package paths, copy failures, or a definition
+    /// that cannot be compiled using only the copied snapshot resources.
+    pub(crate) fn create_project_snapshot_from_directory(
+        &self,
+        source: &Path,
+        snapshot_id: &str,
+    ) -> Result<ProjectInstrumentSnapshot, String> {
+        let metadata = fs::symlink_metadata(source)
+            .map_err(|error| format!("instrument package could not be read: {error}"))?;
+        if package_path_is_link(&metadata) || !metadata.is_dir() {
+            return Err("instrument package must be a regular directory".into());
+        }
+        let snapshot = self.snapshot_package(source, snapshot_id.to_owned())?;
+        if let Err(error) = self.inspect(&snapshot.package_root.join(DEFINITION_FILE_NAME)) {
+            fs::remove_dir_all(&snapshot.package_root)
+                .map_err(|cleanup| format!("{error}; snapshot cleanup failed: {cleanup}"))?;
+            return Err(error);
+        }
+        Ok(snapshot)
+    }
+
+    fn snapshot_package(
+        &self,
+        source: &Path,
+        snapshot_id: String,
+    ) -> Result<ProjectInstrumentSnapshot, String> {
         let destination = self
             .data_root
             .join(PROJECT_INSTRUMENTS_DIRECTORY)
@@ -203,11 +234,7 @@ impl UserInstrumentStore {
             format!("project instrument snapshot could not be created: {error}")
         })?;
         let result = (|| {
-            copy_package(
-                &resolved.package_root,
-                &resolved.package_root.join(DEFINITION_FILE_NAME),
-                &destination,
-            )?;
+            copy_package(source, &source.join(DEFINITION_FILE_NAME), &destination)?;
             let definition_json = fs::read_to_string(destination.join(DEFINITION_FILE_NAME))
                 .map_err(|error| {
                     format!("project instrument definition could not be read: {error}")
@@ -434,7 +461,7 @@ fn copy_directory(
         let metadata = fs::symlink_metadata(&source)
             .map_err(|error| format!("instrument package metadata could not be read: {error}"))?;
         let file_type = metadata.file_type();
-        if file_type.is_symlink() {
+        if package_path_is_link(&metadata) {
             return Err(format!(
                 "instrument package contains a symlink: {}",
                 source.display()
@@ -456,6 +483,18 @@ fn copy_directory(
         }
     }
     Ok(())
+}
+
+fn package_path_is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
 }
 
 fn install_directory(temporary: &Path, destination: &Path) -> io::Result<()> {

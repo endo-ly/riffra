@@ -919,6 +919,7 @@ mod tests {
             .tracks
             .push(Track::instrument("instrument".into(), "Instrument".into()));
         session.arrangement.midi_clips.push(MidiClip {
+            instrument_control_events: Vec::new(),
             id: "midi-clip:1".into(),
             name: "bass".into(),
             track_id: "instrument".into(),

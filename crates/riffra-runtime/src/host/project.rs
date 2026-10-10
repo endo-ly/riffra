@@ -82,6 +82,28 @@ pub(super) fn dispatch(
                 .map_err(|error| command_error(error.to_string()))?;
             activate_project(state, writer, &summary.project_id, ProjectOperation::Import)
         }
+        ProjectCommand::ProjectImportSonalloy(params) => {
+            let writer = writer.as_mut().expect("project mutation holds the writer");
+            ensure_switch_allowed(state)?;
+            let import = crate::sonalloy_import::ImportedProject::prepare(
+                &state.project_store,
+                &state.data_root,
+                &state.binaries.sonalloy,
+                &params.path,
+            )
+            .map_err(command_error)?;
+            let result = activate_project(
+                state,
+                writer,
+                import
+                    .project_id
+                    .as_deref()
+                    .expect("import saved a project"),
+                ProjectOperation::ImportSonalloy,
+            )?;
+            import.commit();
+            Ok(result)
+        }
     }
 }
 
@@ -90,6 +112,7 @@ enum ProjectOperation {
     Create,
     Open,
     Import,
+    ImportSonalloy,
 }
 
 impl ProjectOperation {
@@ -98,6 +121,7 @@ impl ProjectOperation {
             Self::Create => "Project creation",
             Self::Open => "Project opening",
             Self::Import => "Project import",
+            Self::ImportSonalloy => "Sonalloy Bundle import",
         }
     }
 
@@ -106,6 +130,7 @@ impl ProjectOperation {
             Self::Create => "project.create",
             Self::Open => "project.open",
             Self::Import => "project.import",
+            Self::ImportSonalloy => "project.import-sonalloy",
         }
     }
 }
@@ -171,6 +196,21 @@ fn activate_project_inner(
         Some(candidate_key)
     };
 
+    if let Some(candidate_key) = candidate_key
+        && let Err(error) = state.runtime.commit_candidate_as_canonical(candidate_key)
+    {
+        return Err(project_switch_failure(
+            state,
+            &previous_project_id,
+            &previous_canonical,
+            project_id,
+            super::audio::graph_failed(format!(
+                "Project runtime candidate could not be committed: {error}"
+            )),
+            operation,
+        ));
+    }
+
     let next = super::open_project::OpenProject {
         storage: prepared.storage,
         core: riffra_core::AppCore::new(
@@ -207,46 +247,6 @@ fn activate_project_inner(
     state
         .events
         .emit(crate::HostEvent::ProjectActivated(activation.clone()));
-    if let Some(candidate_key) = candidate_key {
-        debug_assert_eq!(activation.canonical.sequence, candidate_key.sequence);
-        debug_assert_eq!(
-            activation.canonical.session.arrangement.revision,
-            candidate_key.session_revision
-        );
-        if let Err(error) = state
-            .runtime
-            .commit_candidate_as_canonical(candidate_key)
-            .map_err(|error| {
-                super::audio::graph_failed(format!(
-                    "Project runtime candidate could not be committed: {error}"
-                ))
-            })
-            && let Err(restore_error) =
-                apply_project_runtime_transition(state, &activation.canonical, project_id)
-        {
-            let message = format!(
-                "{} failed: {}; active Project audio could not be restored: {}",
-                operation.label(),
-                error.message,
-                restore_error.message
-            );
-            return Err(super::audio::graph_failed(message.clone()).with_details(
-                serde_json::json!({
-                    "domain": "audioRuntime",
-                    "kind": "graphFailed",
-                    "message": message,
-                    "operation": operation.command(),
-                    "projectSwitch": {
-                        "projectId": project_id,
-                        "canonicalProjectId": project_id,
-                    },
-                    "cause": serde_json::to_value(error).unwrap_or(Value::Null),
-                    "restoreError": serde_json::to_value(restore_error)
-                        .unwrap_or(Value::Null),
-                }),
-            ));
-        }
-    }
     let sequence = activation.canonical.sequence;
     Ok((ControlOutput::ProjectActivation(activation), sequence))
 }
