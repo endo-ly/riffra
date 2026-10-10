@@ -88,7 +88,7 @@ pub fn activate_take(
             crate::recording::midi_clip_for_take(
                 context.data_root,
                 &target_take,
-                session.arrangement.timebase,
+                &session.arrangement.timebase,
                 String::new(),
             )
         })
@@ -116,7 +116,7 @@ pub fn place_take_as_separate_clip(
             crate::recording::midi_clip_for_take(
                 context.data_root,
                 &take,
-                session.arrangement.timebase,
+                &session.arrangement.timebase,
                 String::new(),
             )
         })

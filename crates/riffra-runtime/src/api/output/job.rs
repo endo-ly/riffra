@@ -51,6 +51,7 @@ pub enum BackgroundJobStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
+    pub mastering: Option<Box<MasteringReport>>,
     pub asset_id: AssetId,
     pub path: String,
     pub sample_rate: u32,
@@ -63,4 +64,25 @@ pub struct RenderResult {
     pub track_id: Option<String>,
     pub state: String,
     pub message: String,
+}
+
+/// Measured loudness of the completed WAV, with deviations from the requested target.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MasteringReport {
+    pub target: riffra_core::LoudnessMastering,
+    pub input: LoudnessMeasurement,
+    pub output: LoudnessMeasurement,
+    pub deviation: LoudnessMeasurement,
+    pub normalization_type: String,
+    pub true_peak_correction_db: f64,
+}
+
+/// Integrated loudness, intersample peak, and loudness range measured by FFmpeg.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LoudnessMeasurement {
+    pub integrated_lufs: f64,
+    pub true_peak_db: f64,
+    pub loudness_range_lu: f64,
 }

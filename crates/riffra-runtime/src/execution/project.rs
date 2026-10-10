@@ -145,6 +145,7 @@ pub(crate) fn project_graph(
                 .iter()
                 .filter(|clip| clip.track_id == track.id)
                 .map(|clip| GraphMidiClip {
+                    instrument_control_events: clip.instrument_control_events.clone(),
                     id: clip.id.clone(),
                     start_tick: clip.start_tick.0,
                     duration_ticks: clip.duration_ticks,
@@ -199,6 +200,8 @@ pub(crate) fn project_graph(
             }
 
             GraphTrack {
+                pan_law: track.pan_law,
+                external_audio_source_track_id: track.external_audio_source_track_id.clone(),
                 id: track.id.clone(),
                 kind: match track.kind {
                     TrackKind::Audio => GraphTrackKind::Audio,
@@ -229,12 +232,12 @@ pub(crate) fn project_graph(
 
     (
         ExecutionGraph {
-            timebase: GraphTimebase {
-                ppq: arrangement.timebase.ppq,
-                bpm: arrangement.timebase.bpm,
-                time_signature_numerator: arrangement.timebase.time_signature_numerator,
-                time_signature_denominator: arrangement.timebase.time_signature_denominator,
+            mixdown: GraphMixdown {
+                musical_end_tick: session.settings.mixdown.musical_end_tick,
+                tail_seconds: session.settings.mixdown.tail_seconds,
+                fade_out_seconds: session.settings.mixdown.fade_out_seconds,
             },
+            timebase: arrangement.timebase.clone(),
             loop_range: GraphLoopRange {
                 enabled: arrangement.loop_range.enabled,
                 start_tick: arrangement.loop_range.start_tick.0,
@@ -318,9 +321,15 @@ mod tests {
         session.arrangement.revision = 23;
         session.arrangement.timebase = riffra_core::ProjectTimebase {
             ppq: 960,
-            bpm: 123.5,
-            time_signature_numerator: 7,
-            time_signature_denominator: 8,
+            tempo_changes: vec![riffra_core::TempoChange {
+                tick: 0,
+                bpm: 123.5,
+            }],
+            time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                tick: 0,
+                numerator: 7,
+                denominator: 8,
+            }],
         };
         session.arrangement.loop_range = riffra_core::TimelineLoopRange {
             enabled: true,
@@ -409,6 +418,7 @@ mod tests {
         audio_clip.muted = true;
         session.arrangement.audio_clips.push(audio_clip);
         let mut midi = MidiClip {
+            instrument_control_events: Vec::new(),
             id: "clip:midi".into(),
             name: "MIDI".into(),
             track_id: "track:instrument".into(),
@@ -494,7 +504,7 @@ mod tests {
         assert_eq!(first, second);
         let (graph, diagnostics) = first;
         assert_eq!(diagnostics, ProjectionDiagnostics::default());
-        assert_eq!(graph.timebase.bpm, 123.5);
+        assert_eq!(graph.timebase.tempo_changes[0].bpm, 123.5);
         assert_eq!(graph.loop_range.start_tick, 120);
         assert_eq!(graph.loop_range.end_tick, 3_840);
         assert_eq!(

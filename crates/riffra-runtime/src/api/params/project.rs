@@ -30,6 +30,13 @@ pub struct ProjectImportParams {
     pub path: PathBuf,
 }
 
+/// Imports a complete Sonalloy Bundle v1 directory as a new Project.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProjectImportSonalloyParams {
+    pub path: PathBuf,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProjectExportParams {

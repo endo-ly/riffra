@@ -238,6 +238,17 @@ control_commands! {
         MarkerUpdate = "marker.update" (MarkerUpdateParams) -> ArrangementMutation, mutation(batch), project;
         MarkerRemove = "marker.remove" (MarkerIdParams) -> ArrangementMutation, mutation(batch), project;
         TimebaseUpdate = "timebase.update" (TimebaseUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        TimebaseGetMap = "timebase.get-map" (EmptyParams) -> Timebase, read, project;
+        MixdownGet = "mixdown.get" (EmptyParams) -> Mixdown, read, project;
+        MixdownSet = "mixdown.set" (riffra_core::MixdownSettings) -> ArrangementMutation, mutation(batch), project;
+        TrackExternalAudioInputSet = "track.external-audio-input.set" (TrackExternalAudioInputSetParams) -> ArrangementMutation, mutation(batch), project;
+        TrackExternalAudioInputClear = "track.external-audio-input.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventList = "instrument-event.list" (InstrumentEventClipParams) -> InstrumentEvents, read, project;
+        InstrumentEventAdd = "instrument-event.add" (InstrumentEventAddParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventSet = "instrument-event.set" (InstrumentEventSetParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventUpdate = "instrument-event.update" (InstrumentEventUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        InstrumentEventRemove = "instrument-event.remove" (InstrumentEventRemoveParams) -> ArrangementMutation, mutation(batch), project;
+        TimebaseSetMap = "timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
         LoopRangeSet = "loop-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         PunchRangeSet = "punch-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
@@ -315,6 +326,7 @@ control_commands! {
         ProjectOpen = "project.open" (ProjectOpenParams) -> ProjectActivation, project;
         ProjectRename = "project.rename" (ProjectRenameParams) -> ProjectState, project;
         ProjectImport = "project.import" (ProjectImportParams) -> ProjectActivation, project;
+        ProjectImportSonalloy = "project.import-sonalloy" (ProjectImportSonalloyParams) -> ProjectActivation, project;
         ProjectExport = "project.export" (ProjectExportParams) -> ProjectExport, project;
     }
     runtime {

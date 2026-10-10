@@ -13,6 +13,7 @@ pub(crate) struct TimelineSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExecutionGraph {
+    pub(crate) mixdown: GraphMixdown,
     pub(crate) timebase: GraphTimebase,
     pub(crate) loop_range: GraphLoopRange,
     pub(crate) punch_range: Option<GraphTickRange>,
@@ -21,14 +22,15 @@ pub(crate) struct ExecutionGraph {
     pub(crate) tracks: Vec<GraphTrack>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct GraphTimebase {
-    pub(crate) ppq: u32,
-    pub(crate) bpm: f64,
-    pub(crate) time_signature_numerator: u8,
-    pub(crate) time_signature_denominator: u8,
+pub(crate) struct GraphMixdown {
+    pub(crate) musical_end_tick: u64,
+    pub(crate) tail_seconds: f64,
+    pub(crate) fade_out_seconds: f64,
 }
+
+pub(crate) type GraphTimebase = riffra_core::ProjectTimebase;
 
 /// Disabled loop ranges retain their endpoints for recording status.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -53,6 +55,8 @@ pub(crate) struct GraphTrack {
     pub(crate) kind: GraphTrackKind,
     pub(crate) gain_db: f64,
     pub(crate) pan: f64,
+    pub(crate) pan_law: riffra_core::PanLaw,
+    pub(crate) external_audio_source_track_id: Option<String>,
     pub(crate) muted: bool,
     pub(crate) solo: bool,
     pub(crate) armed: bool,
@@ -177,6 +181,7 @@ pub(crate) struct GraphMidiClip {
     pub(crate) muted: bool,
     pub(crate) notes: Vec<GraphMidiNote>,
     pub(crate) events: Vec<GraphMidiEvent>,
+    pub(crate) instrument_control_events: Vec<riffra_core::InstrumentControlEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -211,6 +216,8 @@ pub(crate) enum GraphMidiEventKind {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OfflineRenderRequest {
+    pub(crate) include_end_events: bool,
+    pub(crate) tail_seconds: f64,
     pub(crate) graph: ExecutionGraph,
     pub(crate) destination: String,
     pub(crate) start_tick: u64,
@@ -247,6 +254,8 @@ mod tests {
                       instrument: Option<GraphInstrument>,
                       audio_clips: Vec<GraphAudioClip>| {
             GraphTrack {
+                pan_law: riffra_core::PanLaw::EqualPower,
+                external_audio_source_track_id: None,
                 id: format!("track-{}", matches!(kind, GraphTrackKind::Instrument)),
                 kind,
                 gain_db: 1.5,
@@ -276,6 +285,7 @@ mod tests {
                 instrument,
                 audio_clips,
                 midi_clips: vec![GraphMidiClip {
+                    instrument_control_events: Vec::new(),
                     id: "midi-1".into(),
                     start_tick: 120,
                     duration_ticks: 960,
@@ -410,11 +420,18 @@ mod tests {
             project_id: "project-full".into(),
             revision: 23,
             graph: ExecutionGraph {
+                mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {
                     ppq: 960,
-                    bpm: 123.5,
-                    time_signature_numerator: 7,
-                    time_signature_denominator: 8,
+                    tempo_changes: vec![riffra_core::TempoChange {
+                        tick: 0,
+                        bpm: 123.5,
+                    }],
+                    time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                        tick: 0,
+                        numerator: 7,
+                        denominator: 8,
+                    }],
                 },
                 loop_range: GraphLoopRange {
                     enabled: true,
@@ -437,11 +454,18 @@ mod tests {
             project_id: "project-minimal".into(),
             revision: 0,
             graph: ExecutionGraph {
+                mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {
                     ppq: 960,
-                    bpm: 120.0,
-                    time_signature_numerator: 4,
-                    time_signature_denominator: 4,
+                    tempo_changes: vec![riffra_core::TempoChange {
+                        tick: 0,
+                        bpm: 120.0,
+                    }],
+                    time_signature_changes: vec![riffra_core::TimeSignatureChange {
+                        tick: 0,
+                        numerator: 4,
+                        denominator: 4,
+                    }],
                 },
                 loop_range: GraphLoopRange {
                     enabled: false,
@@ -472,6 +496,8 @@ mod tests {
             (
                 "offline-render-request.json",
                 serde_json::to_string_pretty(&OfflineRenderRequest {
+                    include_end_events: false,
+                    tail_seconds: 0.0,
                     graph,
                     destination: "renders/song.wav".into(),
                     start_tick: 0,
