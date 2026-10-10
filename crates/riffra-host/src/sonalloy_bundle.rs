@@ -424,17 +424,35 @@ pub fn read(root: &Path) -> Result<Bundle, BundleError> {
                 "expected registered render/mix.wav",
             ));
         }
+        let part_ids = demo
+            .parts
+            .iter()
+            .map(|part| part.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let stem_ids = render
+            .stems
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if stem_ids != part_ids {
+            return Err(manifest_error(
+                "render.stems",
+                "expected exactly one stem for every demo part",
+            ));
+        }
         for (id, path) in &render.stems {
-            if !ids.contains_key(id.as_str())
-                || *path != format!("render/stems/{id}.wav")
-                || !paths.contains(path)
-            {
+            if *path != format!("render/stems/{id}.wav") || !paths.contains(path) {
                 return Err(manifest_error(
                     format!("render.stems.{id}"),
                     "invalid or unregistered stem reference",
                 ));
             }
         }
+    } else if paths.iter().any(|path| path.starts_with("render/")) {
+        return Err(manifest_error(
+            "render",
+            "render files require render references",
+        ));
     }
     if !demo.mix.fade_out_seconds.is_finite() || demo.mix.fade_out_seconds < 0.0 {
         return Err(demo_error(
@@ -774,6 +792,24 @@ mod tests {
         root
     }
 
+    fn add_render_files(root: &Path, manifest: &mut Value) {
+        let files = manifest["files"].as_array_mut().unwrap();
+        for path in [
+            "render/mix.wav",
+            "render/stems/lead.wav",
+            "render/stems/duck.wav",
+        ] {
+            let destination = root.join(path);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::write(&destination, path.as_bytes()).unwrap();
+            files.push(json!({
+                "path": path,
+                "sha256": hash_file(&destination, path).unwrap(),
+            }));
+        }
+        files.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+    }
+
     #[test]
     fn reads_source_order_controls_timebase_and_render_conditions() {
         let bundle = read(&fixture()).unwrap();
@@ -873,6 +909,70 @@ mod tests {
                 .to_string()
                 .contains("inventory mismatch")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_render_references_for_every_demo_part() {
+        let root = copy_fixture();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
+        add_render_files(&root, &mut manifest);
+        manifest["render"] = json!({
+            "mix": "render/mix.wav",
+            "stems": {
+                "duck": "render/stems/duck.wav",
+                "lead": "render/stems/lead.wav",
+            },
+        });
+        fs::write(
+            root.join("bundle.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        assert!(read(&root).is_ok());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_render_references_missing_a_demo_part_stem() {
+        let root = copy_fixture();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
+        add_render_files(&root, &mut manifest);
+        manifest["render"] = json!({
+            "mix": "render/mix.wav",
+            "stems": { "lead": "render/stems/lead.wav" },
+        });
+        fs::write(
+            root.join("bundle.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let diagnostic = read(&root).unwrap_err();
+
+        assert_eq!(diagnostic.location, "render.stems");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_render_files_without_render_references() {
+        let root = copy_fixture();
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
+        add_render_files(&root, &mut manifest);
+        fs::write(
+            root.join("bundle.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let diagnostic = read(&root).unwrap_err();
+
+        assert_eq!(diagnostic.location, "render");
         fs::remove_dir_all(root).unwrap();
     }
 

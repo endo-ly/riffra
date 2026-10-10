@@ -386,7 +386,11 @@ mod tests {
             TrackInstrumentSource::Internal { .. }
         ));
         let snapshot = import.snapshots[0].clone();
-        assert!(snapshot.join("assets/tone.wav").is_file());
+        assert!(
+            snapshot
+                .join("assets/13baa325a60e8ecc3a6282e4b8ff7daf7c2f97ffd1fa4dbfde8e7a1db596eb96.wav")
+                .is_file()
+        );
         assert!(
             UserInstrumentStore::new(&root, &sonalloy)
                 .list()
@@ -502,10 +506,14 @@ mod tests {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            output
-                .stdout
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+            let (samples, remainder) = output.stdout.as_chunks::<4>();
+            assert!(
+                remainder.is_empty(),
+                "ffmpeg output must contain complete f32 samples"
+            );
+            samples
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect::<Vec<_>>()
         };
         let reference_samples = samples(&reference);

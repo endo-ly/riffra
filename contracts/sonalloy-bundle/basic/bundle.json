@@ -17,12 +17,12 @@
       "sha256": "aa7fceaa37cd6b6c6b2abae0f70c5a39b4d6a1f09824cced308dacc308982f7b"
     },
     {
-      "path": "instruments/lead/assets/tone.wav",
+      "path": "instruments/lead/assets/13baa325a60e8ecc3a6282e4b8ff7daf7c2f97ffd1fa4dbfde8e7a1db596eb96.wav",
       "sha256": "13baa325a60e8ecc3a6282e4b8ff7daf7c2f97ffd1fa4dbfde8e7a1db596eb96"
     },
     {
       "path": "instruments/lead/definition.json",
-      "sha256": "2bc1753c17c2103f84454125cae9cd5ff39acb02c81a341e581ffe3027452603"
+      "sha256": "3330f2b98fb2aa7233eff370b2c6c417e59b39bf0c4e2382731fc99a4273b12a"
     },
     {
       "path": "patterns/duck.json",
