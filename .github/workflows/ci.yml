@@ -292,7 +292,7 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           cmake --build native/audio-engine/build-tsan --target riffra-audio-tests
           ctest --test-dir native/audio-engine/build-tsan --output-on-failure \
-            -R '^(BoundedMpmcQueueTest|RealtimeCommandQueueTest|SeqLockFrameTest|TrackProcessingPoolTest|RecordingCaptureRuntimeTest|TimelineRealtimeTest|PreviewEngineTest|TimelineEngineTest\.(KeepsAudioCaptureOpenForTheWholeAudioCallback|StreamsOfflineProcessingForASingleLongRecordingSegment|ProcessesAnInstrumentRuntimeOncePerTransportChunk|ProcessesAnAudioEffectChainOncePerTransportChunk|KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused|SendsEmergencyPanicToTheInstrumentRuntime)|AudioRenderPipelineTest\.(EmergencyMutePanicsAuditionedInstrumentBeforeUnmuting|PreviewControlUpdateKeepsAudioCallbackAvailable|ConsumesPreviewCommandsUnderEverySafetyMute)|AudioProtocolTest\.ControlOutputDiscardsQueuedTelemetry)$'
+            -R '^(BoundedMpmcQueueTest\..*|RealtimeCommandQueueTest\..*|SeqLockFrameTest\..*|TrackProcessingPoolTest\..*|RecordingCaptureRuntimeTest\..*|TimelineRealtimeTest\..*|PreviewEngineTest\..*|TimelineEngineTest\.(KeepsAudioCaptureOpenForTheWholeAudioCallback|StreamsOfflineProcessingForASingleLongRecordingSegment|ProcessesAnInstrumentRuntimeOncePerTransportChunk|ProcessesAnAudioEffectChainOncePerTransportChunk|KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused|SendsEmergencyPanicToTheInstrumentRuntime)|AudioRenderPipelineTest\.(EmergencyMutePanicsAuditionedInstrumentBeforeUnmuting|PreviewControlUpdateKeepsAudioCallbackAvailable|ConsumesPreviewCommandsUnderEverySafetyMute)|AudioProtocolTest\.ControlOutputDiscardsQueuedTelemetry)$'
 
   native-windows:
     name: Native audio engine (Windows)

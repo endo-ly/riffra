@@ -104,13 +104,13 @@ Rust と `riffra-audio` / `riffra-render` の間の全メッセージを、送�
 - 対象はスイートとケースを明示して指定する。ファイル単位の広い正規表現は使わない
 
 ```text
-BoundedMpmcQueueTest
-RealtimeCommandQueueTest
-SeqLockFrameTest
-TrackProcessingPoolTest
-RecordingCaptureRuntimeTest
-TimelineRealtimeTest
-PreviewEngineTest
+BoundedMpmcQueueTest.*
+RealtimeCommandQueueTest.*
+SeqLockFrameTest.*
+TrackProcessingPoolTest.*
+RecordingCaptureRuntimeTest.*
+TimelineRealtimeTest.*
+PreviewEngineTest.*
 TimelineEngineTest.KeepsAudioCaptureOpenForTheWholeAudioCallback
 TimelineEngineTest.StreamsOfflineProcessingForASingleLongRecordingSegment
 TimelineEngineTest.ProcessesAnInstrumentRuntimeOncePerTransportChunk
