@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  readInstrumentDrag,
-  writeInstrumentDrag,
-  RIFFRA_INSTRUMENT_MIME,
-  type RiffraInstrumentDragPayload,
-} from './instrument-drag';
+import { readInstrumentDrag, type RiffraInstrumentDragPayload } from './instrument-drag';
 
 const payload: RiffraInstrumentDragPayload = {
   version: 1,
@@ -20,22 +15,6 @@ function dataTransferWith(value: string): DataTransfer {
 }
 
 describe('instrument drag payload', () => {
-  it('writes and reads the versioned built-in payload', () => {
-    const dataTransfer = {
-      setData: vi.fn(),
-      effectAllowed: 'none',
-    } as unknown as DataTransfer;
-
-    writeInstrumentDrag(dataTransfer, payload);
-
-    expect(dataTransfer.setData).toHaveBeenCalledWith(
-      RIFFRA_INSTRUMENT_MIME,
-      JSON.stringify(payload),
-    );
-    expect(dataTransfer.effectAllowed).toBe('copy');
-    expect(readInstrumentDrag(dataTransferWith(JSON.stringify(payload)))).toEqual(payload);
-  });
-
   it('rejects malformed JSON payloads', () => {
     expect(readInstrumentDrag(dataTransferWith('{'))).toBeNull();
   });

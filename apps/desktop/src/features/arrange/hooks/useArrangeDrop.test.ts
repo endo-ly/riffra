@@ -83,38 +83,6 @@ function browserDropEvent(mime: string, payload: unknown): DragEvent {
 }
 
 describe('useArrangeDrop', () => {
-  it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {
-    const api = dropApi();
-    const setMessage = vi.fn();
-    const { result } = renderHook(() =>
-      useArrangeDrop({
-        api,
-        commit: commitStub(),
-        pixelsPerTick: 1,
-        snapTick: (raw) => Math.round(raw),
-        setMessage,
-      }),
-    );
-    const event = assetDropEvent({
-      version: 1,
-      assetId: 'asset:midi',
-      name: 'MIDI',
-      kind: 'midi',
-    });
-
-    // Act
-    act(() => {
-      result.current.handleDrop(event, 'track:audio', 'audio');
-    });
-
-    // Assert
-    await waitFor(() =>
-      expect(setMessage).toHaveBeenCalledWith('MIDI can only be placed on an Instrument Track.'),
-    );
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(api.addMidiClipToArrangement).not.toHaveBeenCalled();
-  });
-
   it('imports an OS MIDI file and places it on the selected Instrument Track', async () => {
     const api = dropApi({ importMidiBytes: vi.fn(async () => toAssetId('asset:lead')) });
     const commit = commitStub();
@@ -184,7 +152,7 @@ describe('useArrangeDrop', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('assigns a dragged built-in instrument only to an Instrument Track', async () => {
+  it('places a dragged instrument on an Instrument Track, creating one when needed', async () => {
     const api = dropApi();
     const commit = commitStub();
     const setMessage = vi.fn();
@@ -219,6 +187,18 @@ describe('useArrangeDrop', () => {
     );
     expect(commit).toHaveBeenCalledTimes(1);
 
+    // A drop below the Tracks creates an Instrument Track for the instrument.
+    act(() => {
+      result.current.handleDrop(browserDropEvent(RIFFRA_INSTRUMENT_MIME, payload));
+    });
+
+    await waitFor(() =>
+      expect(api.applyInstrument).toHaveBeenCalledWith('track:new', 'builtin:01-clean-sub-bass'),
+    );
+    expect(api.addTrack).toHaveBeenCalledWith('Clean Sub Bass', 'instrument');
+    // The created Track and the applied instrument each commit once.
+    expect(commit).toHaveBeenCalledTimes(3);
+
     act(() => {
       result.current.handleDrop(
         browserDropEvent(RIFFRA_INSTRUMENT_MIME, payload),
@@ -229,38 +209,37 @@ describe('useArrangeDrop', () => {
     await waitFor(() =>
       expect(setMessage).toHaveBeenCalledWith('Instruments load on an Instrument Track.'),
     );
-    expect(api.applyInstrument).toHaveBeenCalledTimes(1);
+    expect(api.applyInstrument).toHaveBeenCalledTimes(2);
   });
 
-  it('creates an Instrument Track for an instrument dropped below the Tracks', async () => {
+  it('rejects a MIDI Asset on an Audio Track without invoking placement', async () => {
     const api = dropApi();
-    const commit = commitStub();
+    const setMessage = vi.fn();
     const { result } = renderHook(() =>
       useArrangeDrop({
         api,
-        commit,
+        commit: commitStub(),
         pixelsPerTick: 1,
         snapTick: (raw) => Math.round(raw),
-        setMessage: vi.fn(),
+        setMessage,
       }),
     );
+    const event = assetDropEvent({
+      version: 1,
+      assetId: 'asset:midi',
+      name: 'MIDI',
+      kind: 'midi',
+    });
 
     act(() => {
-      result.current.handleDrop(
-        browserDropEvent(RIFFRA_INSTRUMENT_MIME, {
-          version: 1,
-          instrumentId: 'builtin:01-clean-sub-bass',
-          name: 'Clean Sub Bass',
-          origin: 'builtIn',
-        }),
-      );
+      result.current.handleDrop(event, 'track:audio', 'audio');
     });
 
     await waitFor(() =>
-      expect(api.applyInstrument).toHaveBeenCalledWith('track:new', 'builtin:01-clean-sub-bass'),
+      expect(setMessage).toHaveBeenCalledWith('MIDI can only be placed on an Instrument Track.'),
     );
-    expect(api.addTrack).toHaveBeenCalledWith('Clean Sub Bass', 'instrument');
-    expect(commit).toHaveBeenCalledTimes(2);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(api.addMidiClipToArrangement).not.toHaveBeenCalled();
   });
 
   it('adds a dropped effect plug-in to any Track but not to empty space', async () => {

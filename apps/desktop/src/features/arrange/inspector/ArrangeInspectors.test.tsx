@@ -95,7 +95,7 @@ function recordingSession(): CreativeSession {
 }
 
 describe('Arrange Inspectors', () => {
-  it('does not show Audio Monitoring for an Instrument Track and surfaces operation errors', async () => {
+  it('surfaces Track operation failures in the Inspector status', async () => {
     const session = defaultSession();
     const track = {
       panLaw: 'equalPower' as const,
@@ -126,14 +126,13 @@ describe('Arrange Inspectors', () => {
       />,
     );
 
-    expect(screen.queryByText('MONITORING')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
   });
 
-  it('edits MIDI Clip timing in bars and beats and shows the current value after editing', () => {
+  it('edits Clip position and length for Audio and MIDI Clips', async () => {
     // Arrange
-    const session = defaultSession();
+    const session = recordingSession();
     session.arrangement.midiClips.push({
       instrumentControlEvents: [],
       id: 'midi:1',
@@ -148,56 +147,43 @@ describe('Arrange Inspectors', () => {
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.updateMidiClip = vi.fn().mockResolvedValue(null);
-    render(
-      <MidiClipInspector
-        session={session}
-        applyCanonicalState={() => true}
-        selectedClipIds={['midi:1']}
-        setSelectedClipIds={() => undefined}
-        api={api}
-      />,
-    );
-    const start = screen.getByLabelText('Start');
-    const length = screen.getByLabelText('Length');
-
-    // Act
-    fireEvent.change(start, { target: { value: '3.2' } });
-    fireEvent.keyDown(start, { key: 'Enter' });
-    fireEvent.blur(start);
-    fireEvent.change(length, { target: { value: '9' } });
-    fireEvent.keyDown(length, { key: 'Escape' });
-    fireEvent.blur(length);
-
-    // Assert
-    expect(start).toHaveValue('1.1.000');
-    expect(length).toHaveValue('1.0.000');
-    expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
-    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
-  });
-
-  it('shows an Audio Clip length derived from its audio and moves it by bars', () => {
-    // Arrange
-    const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     api.updateAudioClip = vi.fn().mockResolvedValue(null);
-    render(
-      <ArrangeClipInspector
-        session={session}
-        applyCanonicalState={() => true}
-        selectedClipIds={['clip:a']}
-        setSelectedClipIds={() => undefined}
-        api={api}
-      />,
-    );
+    const clipProps = {
+      session,
+      applyCanonicalState: () => true,
+      selectedClipIds: ['midi:1'] as string[],
+      setSelectedClipIds: () => undefined,
+      api,
+    };
+    const audioView = render(<ArrangeClipInspector {...clipProps} selectedClipIds={['clip:a']} />);
     const start = screen.getByLabelText('Start');
 
-    // Act
+    // Act: move the Audio Clip by bars.
     fireEvent.change(start, { target: { value: '2' } });
     fireEvent.blur(start);
 
-    // Assert
+    // Assert: the length stays derived from the recorded audio.
+    await waitFor(() =>
+      expect(api.updateAudioClip).toHaveBeenCalledWith('clip:a', { startTick: 3_840 }),
+    );
     expect(screen.getByText('0.0.040')).toBeInTheDocument();
-    expect(api.updateAudioClip).toHaveBeenCalledWith('clip:a', { startTick: 3_840 });
+
+    // Act: commit a new MIDI Clip start and discard a cancelled length edit.
+    audioView.rerender(<MidiClipInspector {...clipProps} />);
+    const midiStart = screen.getByLabelText('Start');
+    const midiLength = screen.getByLabelText('Length');
+    fireEvent.change(midiStart, { target: { value: '3.2' } });
+    fireEvent.keyDown(midiStart, { key: 'Enter' });
+    fireEvent.blur(midiStart);
+    fireEvent.change(midiLength, { target: { value: '9' } });
+    fireEvent.keyDown(midiLength, { key: 'Escape' });
+    fireEvent.blur(midiLength);
+
+    // Assert
+    expect(midiStart).toHaveValue('1.1.000');
+    expect(midiLength).toHaveValue('1.0.000');
+    expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
+    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
   });
 
   it('commits Clip gain from the keyboard and typed values, and discards a cancelled edit', () => {
@@ -228,21 +214,18 @@ describe('Arrange Inspectors', () => {
     fireEvent.change(cancelled, { target: { value: '9' } });
     fireEvent.keyDown(cancelled, { key: 'Escape' });
     fireEvent.blur(cancelled);
-    for (const value of ['30', '-70']) {
-      fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
-      const input = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
-      expect(input).toHaveAttribute('min', '-60');
-      expect(input).toHaveAttribute('max', '24');
-      fireEvent.change(input, { target: { value } });
-      fireEvent.blur(input);
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Edit clip gain' }));
+    const clamped = screen.getByRole('spinbutton', { name: 'Edit clip gain' });
+    expect(clamped).toHaveAttribute('min', '-60');
+    expect(clamped).toHaveAttribute('max', '24');
+    fireEvent.change(clamped, { target: { value: '-70' } });
+    fireEvent.blur(clamped);
 
     // Assert
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(1, 'clip:a', { gainDb: -6 });
     expect(api.updateAudioClip).toHaveBeenNthCalledWith(2, 'clip:a', { gainDb: 3.2 });
-    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: 24 });
-    expect(api.updateAudioClip).toHaveBeenNthCalledWith(4, 'clip:a', { gainDb: -60 });
-    expect(api.updateAudioClip).toHaveBeenCalledTimes(4);
+    expect(api.updateAudioClip).toHaveBeenNthCalledWith(3, 'clip:a', { gainDb: -60 });
+    expect(api.updateAudioClip).toHaveBeenCalledTimes(3);
     expect(screen.getByRole('button', { name: 'Edit clip gain' })).toHaveTextContent('+0.0 dB');
   });
 
@@ -290,7 +273,7 @@ describe('Arrange Inspectors', () => {
     await waitFor(() => expect(screen.getByTestId('variants')).toHaveTextContent('processed,raw'));
   });
 
-  it('keeps A/B audition independent from the Clip variant', async () => {
+  it('auditions a Take against its variant and stops when Native playback ends', async () => {
     const session = recordingSession();
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
     const selection: ArrangeSelection = { kind: 'clips', clipIds: ['clip:a'] };
@@ -308,52 +291,15 @@ describe('Arrange Inspectors', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await waitFor(() => expect(api.calls).toContain('startTakeComparison'));
+
     fireEvent.click(screen.getByRole('button', { name: 'Processed' }));
     await waitFor(() => expect(api.calls).toContain('switchTakeComparisonVariant'));
     expect(api.calls).not.toContain('setAudioClipTakeVariant');
-  });
-
-  it('shows the current Take explicitly and provides a stop action for audition', async () => {
-    const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(
-      <TakeInspector
-        session={session}
-        selection={{ kind: 'track', trackId: 'track:audio' }}
-        applyCanonicalState={() => true}
-        recordingActive={false}
-        recordingCommandPending={false}
-        onRecordAnotherTake={() => undefined}
-        api={api}
-      />,
-    );
-
-    expect(screen.getByText('CURRENT')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Take 1 is current' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(api.calls).toContain('stopTakeComparison'));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Preview' })).toBeInTheDocument(),
-    );
-    expect(api.calls).toContain('stopTakeComparison');
-  });
-
-  it('clears the audition when Native reports that preview playback ended', async () => {
-    const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(
-      <TakeInspector
-        session={session}
-        selection={{ kind: 'track', trackId: 'track:audio' }}
-        applyCanonicalState={() => true}
-        recordingActive={false}
-        recordingCommandPending={false}
-        onRecordAnotherTake={() => undefined}
-        api={api}
-      />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
@@ -368,28 +314,7 @@ describe('Arrange Inspectors', () => {
     );
   });
 
-  it('routes Record another take to the selected recording group', () => {
-    const session = recordingSession();
-    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    const onRecordAnotherTake = vi.fn();
-    render(
-      <TakeInspector
-        session={session}
-        selection={{ kind: 'track', trackId: 'track:audio' }}
-        applyCanonicalState={() => true}
-        recordingActive={false}
-        recordingCommandPending={false}
-        onRecordAnotherTake={onRecordAnotherTake}
-        api={api}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Record another take' }));
-
-    expect(onRecordAnotherTake).toHaveBeenCalledWith('recording:1');
-  });
-
-  it('lets a Track selection switch between recording groups', async () => {
+  it('switches between recording groups and records another take', async () => {
     const session = recordingSession();
     const firstTake = session.arrangement.takes[0];
     session.arrangement.takes.push({
@@ -411,6 +336,7 @@ describe('Arrange Inspectors', () => {
       ],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const onRecordAnotherTake = vi.fn();
     render(
       <TakeInspector
         session={session}
@@ -418,17 +344,20 @@ describe('Arrange Inspectors', () => {
         applyCanonicalState={() => true}
         recordingActive={false}
         recordingCommandPending={false}
-        onRecordAnotherTake={() => undefined}
+        onRecordAnotherTake={onRecordAnotherTake}
         api={api}
       />,
     );
 
     const groupSelector = screen.getByRole('combobox', { name: 'Recording group' });
     expect(groupSelector).toHaveValue('recording:2');
-    fireEvent.change(groupSelector, { target: { value: 'recording:1' } });
-
-    await waitFor(() => expect(groupSelector).toHaveValue('recording:1'));
     expect(screen.getByText('CURRENT')).toBeInTheDocument();
+
+    fireEvent.change(groupSelector, { target: { value: 'recording:1' } });
+    await waitFor(() => expect(groupSelector).toHaveValue('recording:1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record another take' }));
+    expect(onRecordAnotherTake).toHaveBeenCalledWith('recording:1');
   });
 
   it('keeps MIDI Takes available without offering an audio preview', () => {

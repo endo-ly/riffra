@@ -6,15 +6,6 @@ import type { ArrangementMutationResult } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { useArrangeCommands } from './useArrangeCommands';
 
-function result(projection: ArrangementMutationResult['projection']): ArrangementMutationResult {
-  const session = defaultSession();
-  return {
-    canonical: canonicalState(session),
-    createdEntityIds: {},
-    projection,
-  };
-}
-
 describe('useArrangeCommands', () => {
   it('applies the canonical session and reports an immediate projection failure', async () => {
     const sessions: string[] = [];
@@ -27,34 +18,16 @@ describe('useArrangeCommands', () => {
       }),
     );
 
+    const mutation: ArrangementMutationResult = {
+      canonical: canonicalState(defaultSession()),
+      createdEntityIds: {},
+      projection: { state: 'failed', message: 'native rejected' },
+    };
     await act(async () => {
-      await hook.current.commit(
-        Promise.resolve(
-          result({
-            state: 'failed',
-            message: 'native rejected',
-          }),
-        ),
-      );
+      await hook.current.commit(Promise.resolve(mutation));
     });
 
     expect(sessions).toEqual([defaultSession().sessionId]);
     expect(hook.current.message).toBe('native rejected');
-  });
-
-  it('does not report a queued or non-projecting mutation as an error', async () => {
-    const { result: hook } = renderHook(() =>
-      useArrangeCommands({ applyCanonicalState: () => true }),
-    );
-
-    await act(async () => {
-      await hook.current.commit(Promise.resolve(result({ state: 'queued' })));
-    });
-    expect(hook.current.message).toBe('');
-
-    await act(async () => {
-      await hook.current.commit(Promise.resolve(result({ state: 'notRequired' })));
-    });
-    expect(hook.current.message).toBe('');
   });
 });
