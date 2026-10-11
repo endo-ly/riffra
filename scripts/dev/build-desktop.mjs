@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stageRiffraCli } from './ensure-desktop.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktopRoot = join(repositoryRoot, 'apps/desktop');
@@ -31,6 +32,7 @@ function readUpdaterPrivateKey() {
 
 function main() {
   const privateKey = readUpdaterPrivateKey();
+  stageRiffraCli({ configuration: 'release' });
   execFileSync('node', [join(repositoryRoot, 'scripts/dev/ensure-desktop.mjs')], {
     cwd: repositoryRoot,
     stdio: 'inherit',

@@ -102,6 +102,7 @@ pub fn run() {
                 .path()
                 .resource_dir()
                 .map_err(|error| format!("Application resources are unavailable: {error}"))?
+                .join("riffra-resources")
                 .join("instruments")
                 .join("builtin");
             let binaries = RuntimeBinaries::beside_current_executable()?;

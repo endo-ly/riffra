@@ -1,18 +1,25 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktopRoot = join(repositoryRoot, 'apps/desktop/src-tauri');
-const binariesRoot = join(desktopRoot, 'binaries');
+export const binariesRoot = join(desktopRoot, 'binaries');
 const resourcesRoot = join(desktopRoot, 'resources');
 const runtimeStampPath = join(binariesRoot, '.riffra-desktop-runtime.json');
 const nativeBuildConfiguration = 'RelWithDebInfo';
 const sidecarNames = ['riffra-audio', 'riffra-plugin-scan', 'riffra-render', 'sonalloy'];
 
-function getRustHostTriple() {
+export function getRustHostTriple() {
   try {
     const output = execFileSync('rustc', ['-vV'], {
       encoding: 'utf8',
@@ -27,6 +34,30 @@ function getRustHostTriple() {
   }
 
   throw new Error('Could not determine the Rust host target. Make sure rustc is installed.');
+}
+
+/**
+ * Stages the riffra CLI for the Tauri externalBin entry "binaries/riffra", which the Tauri
+ * build script requires whenever the desktop crate is compiled.
+ *
+ * `dev` reuses an already staged binary because the desktop never launches the CLI;
+ * `release` always rebuilds so distribution bundles ship the optimized CLI.
+ */
+export function stageRiffraCli({ configuration }) {
+  const exeSuffix = process.platform === 'win32' ? '.exe' : '';
+  const stagingPath = join(binariesRoot, `riffra-${getRustHostTriple()}${exeSuffix}`);
+  const release = configuration === 'release';
+  if (!release && isRunnableFile(stagingPath)) {
+    return;
+  }
+  const cargoArguments = release
+    ? ['build', '-p', 'riffra-cli', '--release']
+    : ['build', '-p', 'riffra-cli'];
+  execFileSync('cargo', cargoArguments, { cwd: repositoryRoot, stdio: 'inherit' });
+  copyFileSync(
+    join(repositoryRoot, `target/${release ? 'release' : 'debug'}/riffra${exeSuffix}`),
+    stagingPath,
+  );
 }
 
 function sidecarPaths(targetTriple) {
@@ -272,6 +303,7 @@ function ensureFinalResources() {
 
 function main() {
   const targetTriple = getRustHostTriple();
+  stageRiffraCli({ configuration: 'dev' });
   const inputFingerprint = nativeInputFingerprint();
   const resources = inspectResources();
   const sidecars = inspectSidecars({ targetTriple, inputFingerprint });
@@ -298,9 +330,17 @@ function main() {
   console.log('Desktop runtime is ready.');
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+function isDirectExecution() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isDirectExecution()) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }

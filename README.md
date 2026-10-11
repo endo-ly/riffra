@@ -106,6 +106,7 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 
 `serve` はフォアグラウンドでHostを保持し、起動診断を標準エラーへ出力する。
 `--attach` は既存Hostへ接続し、DataRootを直接開かない。
+インストール済みデスクトップでは、CLIが実行ファイルと同じディレクトリ(既定 `%LOCALAPPDATA%\Riffra`)へ `riffra.exe` として同梱され、アプリの更新に合わせて更新される。
 ヘッドレス操作のコマンドカタログと運用手順は `agents/skills/riffra-headless/` を参照。
 
 ## ドキュメント
