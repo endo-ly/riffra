@@ -62,10 +62,11 @@ inline juce::var navigateJson(const juce::var& root, const JsonPath& path) {
             if (index < 0 || index >= current.size()) return {};
             current = current[index];
         } else {
-            if (!current.isObject()) return {};
+            auto* object = current.getDynamicObject();
+            if (object == nullptr) return {};
             const auto identifier = juce::Identifier(juce::String::fromUTF8(token.c_str()));
-            if (!current.getDynamicObject()->hasProperty(identifier)) return {};
-            current = current.getProperty(identifier);
+            if (!object->hasProperty(identifier)) return {};
+            current = object->getProperty(identifier);
         }
     }
     return current;

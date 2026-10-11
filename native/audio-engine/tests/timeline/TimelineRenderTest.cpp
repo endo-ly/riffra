@@ -419,4 +419,67 @@ TEST(TimelineEngineTest, RoutesOneMutedSourceToParallelConsumersAndRejectsCycles
     EXPECT_TRUE(error.containsIgnoreCase("cycle")) << error;
 }
 
+TEST(TimelineEngineTest, MixesMonoAndStereoSourcesAtDifferentSampleRates) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto mono = directory.get().getChildFile("mixed-44100-mono.wav");
+    const auto stereo = directory.get().getChildFile("mixed-48000-stereo.wav");
+    ASSERT_TRUE(writePcmWave(mono, 44'100, 1, 44'100, 6'000));
+    ASSERT_TRUE(writePcmWave(stereo, 48'000, 2, 48'000, 4'000));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    snapshot.revision = 7;
+    auto track = makeAudioTrack("track:mixed");
+    track.audioClips = {
+        {"mono-44100", mono.getFullPathName(), 44'100, 0, 44'100, 44'100, 44'100, 0, 0, 0,
+         FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
+        {"stereo-48000", stereo.getFullPathName(), 48'000, 0, 48'000, 48'000, 48'000, 0, 0, 0,
+         FadeShapeSpec::linear, 0.0, 0.0, TakeVariantSpec::raw, false, false},
+    };
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 512, error)) << error;
+
+    // Act
+    ASSERT_TRUE(engine.play());
+    std::array<float, 512> left{};
+    std::array<float, 512> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    for (int block = 0; block < 8; ++block) engine.mix(outputs.data(), 2, 512);
+
+    // Assert: both sources contribute to the mix once they overlap.
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.1f);
+    EXPECT_GT(*std::max_element(right.begin(), right.end()), 0.1f);
+}
+
+TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    test::TemporaryDirectory directory;
+    auto snapshot = makeBuiltInInstrumentSnapshot("track:render");
+    const auto destination = directory.get().getChildFile("normalized.wav");
+
+    // Act
+    OfflineRenderer::Result result;
+    juce::String error;
+    ASSERT_TRUE(renderTestSnapshot(snapshot.graph, formats, destination, 0, 1'920, 48'000, 512,
+                                   true, result, error))
+        << error;
+
+    // Assert: the rendered output reaches the normalized target peak.
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
+    ASSERT_NE(reader, nullptr);
+    const auto sampleCount = static_cast<int>(reader->lengthInSamples);
+    ASSERT_GT(sampleCount, 0);
+    juce::AudioBuffer<float> rendered(2, sampleCount);
+    ASSERT_TRUE(reader->read(&rendered, 0, sampleCount, 0, true, true));
+    const auto peak = std::max(rendered.getMagnitude(0, 0, sampleCount),
+                               rendered.getMagnitude(1, 0, sampleCount));
+    EXPECT_NEAR(peak, 0.98f, 0.02f);
+}
+
 }  // namespace riffra
