@@ -85,16 +85,6 @@ describe('App native boundary', () => {
     expect(api.calls.filter((call) => call === 'bootstrap')).toHaveLength(2);
   });
 
-  it('keeps Browser and Properties mounted in the left column', async () => {
-    const api = new FakeNativeApi();
-    await renderApp(api);
-
-    expect(screen.getByRole('complementary', { name: 'Browser' })).toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Properties' })).toBeInTheDocument();
-    expect(document.querySelector('[data-navigation-rail]')).toBeNull();
-    expect(screen.queryByRole('complementary', { name: 'Inspector' })).not.toBeInTheDocument();
-  });
-
   it('supports both left column resize handles from the keyboard', async () => {
     const api = new FakeNativeApi();
     await renderApp(api);

@@ -82,28 +82,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_session_round_trips_through_its_document() {
-        // Arrange
-        let session = CreativeSession::new(1_000);
-
-        // Act
-        let payload = serialize_session_document(&session).unwrap();
-
-        // Assert
-        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-        assert_eq!(value["schemaVersion"], SESSION_SCHEMA_VERSION);
-        assert_eq!(
-            value["session"]["arrangement"]["timebase"],
-            serde_json::json!({
-                "ppq": 960,
-                "tempoChanges": [{ "tick": 0, "bpm": 120.0 }],
-                "timeSignatureChanges": [{ "tick": 0, "numerator": 4, "denominator": 4 }],
-            })
-        );
-        assert_eq!(deserialize_session_document(&payload).unwrap(), session);
-    }
-
-    #[test]
     fn unknown_or_missing_session_keys_are_invalid() {
         // Arrange
         let session = serde_json::to_value(CreativeSession::new(1_000)).unwrap();

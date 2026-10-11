@@ -86,20 +86,21 @@ describe('useProject', () => {
     expect(result.current.session?.projectName).toBe('Next');
   });
 
-  it('does not prefix a native project switch error twice', async () => {
+  it('reports a Project operation failure with its native context', async () => {
     const api = new FakeNativeApi();
     const initialBoot: BootstrapState = {
       ...api.bootstrapState,
       projectState: defaultProjectState(),
     };
-    const message = 'Project opening failed: audio definition schema is unsupported.';
+    const structuredMessage = 'Project opening failed: audio definition schema is unsupported.';
     api.setFailure(
       'openProject',
       new NativeCommandError({
-        message,
+        message: structuredMessage,
         details: { kind: 'projectSwitchFailed', operation: 'project.open' },
       }),
     );
+    api.setFailure('createProject', new NativeCommandError({ message: 'disk full' }));
     const { result } = renderHook(() => {
       const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
       return useProject(api, { boot, setBoot, hostGeneration: 0 });
@@ -110,26 +111,11 @@ describe('useProject', () => {
         result.current.openProject('01900000-0000-7000-8000-000000000002'),
       ).resolves.toBeNull();
     });
-
-    expect(result.current.projectError).toBe(message);
-  });
-
-  it('keeps the operation context for an ordinary native project error', async () => {
-    const api = new FakeNativeApi();
-    const initialBoot: BootstrapState = {
-      ...api.bootstrapState,
-      projectState: defaultProjectState(),
-    };
-    api.setFailure('createProject', new NativeCommandError({ message: 'disk full' }));
-    const { result } = renderHook(() => {
-      const [boot, setBoot] = useState<BootstrapState | null>(initialBoot);
-      return useProject(api, { boot, setBoot, hostGeneration: 0 });
-    });
+    expect(result.current.projectError).toBe(structuredMessage);
 
     await act(async () => {
       await expect(result.current.createProject()).resolves.toBeNull();
     });
-
     expect(result.current.projectError).toBe('Project creation failed: disk full');
   });
 

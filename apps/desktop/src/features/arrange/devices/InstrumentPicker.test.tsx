@@ -49,42 +49,8 @@ const plugins = [
   },
 ];
 
-function renderPicker() {
-  return render(
-    <InstrumentPicker
-      instruments={instruments}
-      plugins={plugins}
-      onSelectInstrument={vi.fn()}
-      onSelectVst3={vi.fn()}
-      onClose={vi.fn()}
-    />,
-  );
-}
-
 describe('InstrumentPicker', () => {
-  it('shows user and built-in instruments with external candidates in one picker', () => {
-    renderPicker();
-
-    expect(screen.getByText('Instruments')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', {
-        name: 'Clean Sub Bass — A focused low-frequency bass instrument.',
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'User Piano — A user instrument.' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('External Instruments')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'External Keys — Example Vendor' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'External Reverb — Example Vendor' }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/Sonalloy/i)).not.toBeInTheDocument();
-  });
-
-  it('routes built-in and VST3 selections to their distinct callbacks', () => {
+  it('routes built-in, user, and VST3 selections to their distinct callbacks', () => {
     const onSelectInstrument = vi.fn();
     const onSelectVst3 = vi.fn();
     render(
@@ -102,9 +68,13 @@ describe('InstrumentPicker', () => {
         name: 'Clean Sub Bass — A focused low-frequency bass instrument.',
       }),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'External Keys — Example Vendor' }));
-
     expect(onSelectInstrument).toHaveBeenCalledWith('builtin:01-clean-sub-bass');
+
+    fireEvent.click(screen.getByRole('button', { name: 'User Piano — A user instrument.' }));
+    expect(onSelectInstrument).toHaveBeenCalledWith(instruments[1].id);
+
+    fireEvent.click(screen.getByRole('button', { name: 'External Keys — Example Vendor' }));
     expect(onSelectVst3).toHaveBeenCalledWith(plugins[0]);
+    expect(screen.queryByRole('button', { name: 'External Reverb — Example Vendor' })).toBeNull();
   });
 });

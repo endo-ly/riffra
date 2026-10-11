@@ -104,101 +104,53 @@ mod tests {
     }
 
     #[test]
-    fn allows_every_documented_transition() {
-        for (from, to) in [
-            (
-                RecordingCaptureStatus::Recording,
-                RecordingCaptureStatus::Completing,
-            ),
-            (
-                RecordingCaptureStatus::Recording,
-                RecordingCaptureStatus::Recoverable,
-            ),
-            (
-                RecordingCaptureStatus::Recording,
-                RecordingCaptureStatus::Failed,
-            ),
-            (
-                RecordingCaptureStatus::Completing,
-                RecordingCaptureStatus::Completed,
-            ),
-            (
-                RecordingCaptureStatus::Completing,
-                RecordingCaptureStatus::Recoverable,
-            ),
-            (
-                RecordingCaptureStatus::Completing,
-                RecordingCaptureStatus::Failed,
-            ),
+    fn a_capture_walks_its_documented_states() {
+        for target in [
+            RecordingCaptureStatus::Completing,
+            RecordingCaptureStatus::Recoverable,
+            RecordingCaptureStatus::Failed,
         ] {
+            let mut capture = fresh();
             assert!(
-                RecordingCapture::allows(from, to),
-                "{from:?}->{to:?} should be allowed"
+                capture.transition(target, 2_000).is_ok(),
+                "{:?}->{target:?} should be allowed",
+                capture.status
             );
         }
     }
 
     #[test]
-    fn rejects_undocumented_transitions() {
-        let disallowed = [
-            (
-                RecordingCaptureStatus::Completed,
-                RecordingCaptureStatus::Recording,
-            ),
-            (
-                RecordingCaptureStatus::Recoverable,
-                RecordingCaptureStatus::Recording,
-            ),
-            (
-                RecordingCaptureStatus::Failed,
-                RecordingCaptureStatus::Recording,
-            ),
-            (
-                RecordingCaptureStatus::Recording,
-                RecordingCaptureStatus::Completed,
-            ),
-            (
-                RecordingCaptureStatus::Completed,
-                RecordingCaptureStatus::Completing,
-            ),
-            (
-                RecordingCaptureStatus::Recording,
-                RecordingCaptureStatus::Recording,
-            ),
-        ];
-        for (from, to) in disallowed {
-            assert!(
-                !RecordingCapture::allows(from, to),
-                "{from:?}->{to:?} should be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn completion_records_time_and_terminal_states_cannot_reenter() {
+    fn a_terminal_capture_cannot_reenter_a_previous_state() {
         let mut capture = fresh();
         capture
             .transition(RecordingCaptureStatus::Completing, 2_000)
             .unwrap();
-        assert_eq!(capture.status, RecordingCaptureStatus::Completing);
-        assert_eq!(capture.completed_at_ms, None);
+        // A self transition and a jump straight to Completed are undocumented.
+        assert!(
+            capture
+                .transition(RecordingCaptureStatus::Recording, 3_000)
+                .is_err()
+        );
+        assert!(
+            capture
+                .transition(RecordingCaptureStatus::Completing, 3_000)
+                .is_err()
+        );
         capture
-            .transition(RecordingCaptureStatus::Completed, 3_000)
+            .transition(RecordingCaptureStatus::Completed, 4_000)
             .unwrap();
-        assert_eq!(capture.status, RecordingCaptureStatus::Completed);
-        assert_eq!(capture.completed_at_ms, Some(3_000));
 
-        let mut failed_capture = fresh();
-        failed_capture
-            .transition(RecordingCaptureStatus::Failed, 2_000)
-            .unwrap();
-        let error = failed_capture
-            .transition(RecordingCaptureStatus::Recording, 3_000)
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            DomainError::InvalidRecordingTransition { .. }
-        ));
-        assert_eq!(failed_capture.status, RecordingCaptureStatus::Failed);
+        assert_eq!(capture.status, RecordingCaptureStatus::Completed);
+        assert_eq!(capture.completed_at_ms, Some(4_000));
+        assert!(
+            capture
+                .transition(RecordingCaptureStatus::Recording, 5_000)
+                .is_err()
+        );
+        assert!(
+            capture
+                .transition(RecordingCaptureStatus::Completing, 5_000)
+                .is_err()
+        );
     }
 }

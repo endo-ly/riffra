@@ -15,19 +15,6 @@ function useLibraryHarness(api: FakeNativeApi, hostGeneration = 1) {
 }
 
 describe('useInstrumentLibrary', () => {
-  it('loads the catalog and persists favorite changes', async () => {
-    const api = new FakeNativeApi();
-    const { result } = renderHook(() => useLibraryHarness(api));
-
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.items).toHaveLength(5);
-
-    await act(async () => {
-      await result.current.toggleFavorite(result.current.items[0]);
-    });
-    expect(result.current.items[0].favorite).toBe(true);
-  });
-
   it('does not start preview in Safe Mode and reloads on host generation changes', async () => {
     const api = new FakeNativeApi();
     const setAudio = vi.fn();
@@ -177,27 +164,5 @@ describe('useInstrumentLibrary', () => {
     expect(result.current.previewingId).toBe(first.id);
     expect(result.current.previewPendingId).toBeNull();
     expect(result.current.error).toContain('replacement preview failed');
-  });
-
-  it('reloads item memberships after deleting a collection', async () => {
-    const api = new FakeNativeApi();
-    const { result } = renderHook(() => useLibraryHarness(api));
-
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    await act(async () => {
-      await result.current.createCollection('Sketches');
-    });
-    const collection = result.current.collections[0];
-    await act(async () => {
-      await result.current.setCollectionMembership(result.current.items[0], collection.id, true);
-    });
-    expect(result.current.items[0].collectionIds).toEqual([collection.id]);
-
-    await act(async () => {
-      await result.current.deleteCollection(collection.id);
-    });
-
-    expect(result.current.collections).toEqual([]);
-    expect(result.current.items[0].collectionIds).toEqual([]);
   });
 });

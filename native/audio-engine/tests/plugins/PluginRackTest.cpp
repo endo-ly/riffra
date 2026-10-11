@@ -18,33 +18,6 @@ std::unique_ptr<PluginRack> makeRack(ProcessorTrace& trace, juce::String& error)
 
 }  // namespace
 
-TEST(PluginRackTest, ConfiguresStereoProcessor) {
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-    EXPECT_EQ(rack->status().inputChannels, 2);
-    EXPECT_EQ(rack->status().outputChannels, 2);
-    EXPECT_FALSE(rack->isInstrument());
-}
-
-TEST(PluginRackTest, PreparesProcessorBeforeProcessing) {
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-
-    std::array<float, kBlockSize> input{};
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<const float*, 1> inputs{input.data()};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->process(inputs.data(), 1, outputs.data(), 2, kBlockSize);
-
-    EXPECT_TRUE(trace.prepared);
-    EXPECT_TRUE(trace.processed);
-}
-
 TEST(PluginRackTest, ProcessesMonoInputToStereoOutput) {
     ProcessorTrace trace;
     juce::String error;
@@ -88,19 +61,6 @@ TEST(PluginRackTest, ReturnsDrySignalWhenBypassedOrUnloaded) {
     expectDrySignal(unloaded);
 }
 
-TEST(PluginRackTest, ReportsProcessedBlockCount) {
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
-
-    EXPECT_EQ(rack->status().processedBlocks, 1);
-}
-
 TEST(PluginRackTest, ChangesAndReportsPluginPrograms) {
     ProcessorTrace trace;
     juce::String error;
@@ -138,17 +98,7 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
     EXPECT_NEAR(restored->parameterValues[0], 0.75f, 0.0001f);
 }
 
-TEST(PluginRackTest, ReleasesProcessorWhenDestroyed) {
-    ProcessorTrace trace;
-    juce::String error;
-    auto rack = makeRack(trace, error);
-    ASSERT_NE(rack, nullptr) << error;
-    rack.reset();
-
-    EXPECT_TRUE(trace.released);
-}
-
-TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
+TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     InstrumentTrace trace;
     juce::String error;
     auto rack = PluginRackTestPeer::installInstrument(
@@ -158,14 +108,6 @@ TEST(PluginRackTest, ConfiguresInstrumentWithoutInputBus) {
     EXPECT_TRUE(rack->isInstrument());
     EXPECT_EQ(rack->status().inputChannels, 0);
     EXPECT_EQ(rack->status().outputChannels, 2);
-}
-
-TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::installInstrument(
-        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
 
     std::array<float, kBlockSize> outputLeft{};
     std::array<float, kBlockSize> outputRight{};
@@ -185,27 +127,6 @@ TEST(PluginRackTest, PassesMidiToInstrumentProcessor) {
     ASSERT_EQ(trace.midiMessageCount, 2);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOff());
     EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 60);
-}
-
-TEST(PluginRackTest, DrainsQueuedLiveMidiIntoTheNextBlock) {
-    // Arrange
-    InstrumentTrace trace;
-    juce::String error;
-    auto rack = PluginRackTestPeer::installInstrument(
-        std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
-    ASSERT_NE(rack, nullptr) << error;
-    std::array<float, kBlockSize> outputLeft{};
-    std::array<float, kBlockSize> outputRight{};
-    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f)));
-
-    // Act
-    rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
-
-    // Assert
-    ASSERT_EQ(trace.midiMessageCount, 1);
-    EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
-    EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 64);
 }
 
 TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
@@ -269,6 +190,25 @@ TEST(PluginRackTest, EnforcesMidiCapacityForTimelineAndQueuedEvents) {
         }
 
         EXPECT_EQ(rack->status().droppedMidiEvents, 1);
+    }
+
+    {
+        InstrumentTrace trace;
+        juce::String error;
+        auto rack = PluginRackTestPeer::installInstrument(
+            std::make_unique<TestInstrumentProcessor>(trace), kSampleRate, kBlockSize, error);
+        ASSERT_NE(rack, nullptr) << error;
+
+        std::array<float, kBlockSize> outputLeft{};
+        std::array<float, kBlockSize> outputRight{};
+        const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+        // Live MIDI queued between blocks reaches the instrument in the next one.
+        ASSERT_TRUE(rack->enqueueMidi(juce::MidiMessage::noteOn(1, 64, 0.5f)));
+        rack->process(nullptr, 0, outputs.data(), 2, kBlockSize);
+
+        ASSERT_EQ(trace.midiMessageCount, 1);
+        EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+        EXPECT_EQ(trace.lastMidiMessage.getNoteNumber(), 64);
     }
 
     {

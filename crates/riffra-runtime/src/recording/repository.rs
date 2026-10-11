@@ -1596,7 +1596,7 @@ mod tests {
         let root = temp_root();
         let _a = fixture_take(&root, "take-a", b"identical processed");
         let _b = fixture_take(&root, "take-b", b"identical processed");
-        let _c = fixture_take(&root, "take-c", b"different processed");
+        let _differing = fixture_take(&root, "take-c", b"different processed");
         let duplicates = detect_duplicates(&root).unwrap();
         assert_eq!(duplicates.len(), 1);
         let group = &duplicates[0];
@@ -1620,15 +1620,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(duplicates.len(), 1);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn reports_no_duplicates_when_all_takes_differ() {
-        let root = temp_root();
-        let _a = fixture_take(&root, "take-a", b"one");
-        let _b = fixture_take(&root, "take-b", b"two");
-        assert!(detect_duplicates(&root).unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

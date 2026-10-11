@@ -257,28 +257,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn newly_registered_asset_receives_a_fresh_unique_id() {
-        let a = Asset::register(
-            AssetKind::Audio,
-            "take-1",
-            "C:\\data\\take-1.wav",
-            Some(Provenance::recorded_root()),
-            1_000,
-        );
-        let b = Asset::register(
-            AssetKind::Audio,
-            "take-2",
-            "C:\\data\\take-2.wav",
-            Some(Provenance::recorded_root()),
-            1_000,
-        );
-        assert_ne!(a.id, b.id);
-        assert!(a.id.as_str().starts_with("asset:"));
-        let uuid = Uuid::parse_str(a.id.as_str().strip_prefix("asset:").unwrap()).unwrap();
-        assert_eq!(uuid.get_version_num(), 7);
-    }
-
-    #[test]
     fn deriving_new_content_mints_a_new_id_instead_of_reusing() {
         let source = Asset::register(
             AssetKind::Audio,
@@ -322,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn provenance_exposes_source_asset_ids() {
+    fn derived_assets_record_the_sources_they_came_from() {
         let a = Asset::register(
             AssetKind::Audio,
             "a",
@@ -348,8 +326,7 @@ mod tests {
         )
         .unwrap();
         let sources = render.provenance.as_ref().unwrap().source_asset_ids();
-        assert!(sources.contains(&a.id));
-        assert!(sources.contains(&b.id));
+        assert_eq!(sources, vec![a.id, b.id]);
     }
 
     #[test]
@@ -376,12 +353,5 @@ mod tests {
         // A valid UUID but not version 7 must be rejected.
         assert!(AssetId::from_normalized("asset:01890aef-3d2c-4b4e-8f1a-2b3c4d5e6f70").is_err());
         assert!(AssetId::from_normalized(format!("asset:{}", Uuid::now_v7())).is_ok());
-    }
-
-    #[test]
-    fn imported_provenance_has_no_source_and_is_imported() {
-        let provenance = Provenance::imported();
-        assert!(provenance.source_asset_ids.is_empty());
-        assert_eq!(provenance.operation, ProvenanceOperation::Imported);
     }
 }

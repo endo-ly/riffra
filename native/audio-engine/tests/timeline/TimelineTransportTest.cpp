@@ -329,9 +329,20 @@ TEST(TimelineEngineTest, TransportBoundariesConvergeWithoutAOneSampleCut) {
         engine.mix(outputs.data(), 2, kBlockSamples);
     }
     EXPECT_LT(std::abs(left.back()), 0.001f);
+
+    // Act: play again from the timeline origin.
+    ASSERT_TRUE(engine.seekToTick(0));
+    ASSERT_TRUE(engine.play());
+    std::fill(left.begin(), left.end(), 0.0f);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+
+    // Assert: a non-zero first source sample still starts at zero gain and
+    // reaches audible level within the short transport fade.
+    EXPECT_NEAR(left.front(), 0.0f, 0.001f);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.005f);
 }
 
-TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
+TEST(TimelineEngineTest, StopAdvancesThePlayheadOnlyThroughTheFadeBoundary) {
     // Arrange
     auto snapshot = makeTestSnapshot();
     snapshot.graph.metronomeEnabled = true;
@@ -345,88 +356,26 @@ TEST(TimelineEngineTest, MetronomeStopUsesTheTransportFadeBoundary) {
         << error.toStdString();
     std::array<float, kBlockSamples> output{};
     const std::array<float*, 1> outputs{output.data()};
+    std::array<float, kBlockSamples> click{};
+    const std::array<float*, 1> clickOutputs{click.data()};
 
     // Act
     ASSERT_TRUE(engine.play());
     engine.mix(outputs.data(), 1, kBlockSamples);
+    const auto beforeStop = engine.status().frame.timelineSample;
     ASSERT_TRUE(engine.stop());
     output.fill(0.0f);
     engine.mix(outputs.data(), 1, kBlockSamples);
-    engine.mixMetronome(outputs.data(), 1, kBlockSamples);
-
-    // Assert: the click continues through the 240-sample fade and then stays
-    // silent for the remainder of the callback.
-    EXPECT_GT(output.front(), 0.05f);
-    EXPECT_LT(std::abs(output[239]), 0.001f);
-    EXPECT_LT(*std::max_element(output.begin() + 240, output.end()), 0.001f);
-}
-
-TEST(TimelineEngineTest, TransportPlayFromTimelineZeroUsesTheDeclickEnvelope) {
-    // Arrange
-    test::TemporaryDirectory directory;
-    const auto rawFile = directory.get().getChildFile("play-zero-raw.wav");
-    const auto processedFile = directory.get().getChildFile("play-zero-processed.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
-
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine(true);
-    juce::String error;
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error))
-        << error.toStdString();
-    std::array<float, 64> left{};
-    std::array<float, 64> right{};
-    const std::array<float*, 2> outputs{left.data(), right.data()};
-
-    // Act
-    ASSERT_TRUE(engine.play());
-    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
-
-    // Assert: a non-zero first source sample still starts at zero gain and
-    // reaches audible level within the short transport fade.
-    EXPECT_NEAR(left.front(), 0.0f, 0.001f);
-    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.005f);
-}
-
-TEST(TimelineEngineTest, TransportStopAdvancesOnlyThroughTheFadeBoundary) {
-    // Arrange
-    test::TemporaryDirectory directory;
-    const auto rawFile = directory.get().getChildFile("stop-block-raw.wav");
-    const auto processedFile = directory.get().getChildFile("stop-block-processed.wav");
-    ASSERT_TRUE(writePcmWave(rawFile, 48'000, 1, 1024, 1'638));
-    ASSERT_TRUE(writePcmWave(processedFile, 48'000, 1, 1024, 3'277));
-    auto snapshot = makeRawAndProcessedClipSnapshot(rawFile, processedFile, 1024);
-
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    TimelineEngine engine(true);
-    juce::String error;
-    constexpr int kBlockSamples = 512;
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, kBlockSamples, error))
-        << error.toStdString();
-    std::array<float, kBlockSamples> left{};
-    std::array<float, kBlockSamples> right{};
-    const std::array<float*, 2> outputs{left.data(), right.data()};
-
-    // Act
-    ASSERT_TRUE(engine.seekToTick(4));
-    ASSERT_TRUE(engine.play());
-    engine.mix(outputs.data(), 2, kBlockSamples);
-    const auto beforeStop = engine.status().frame.timelineSample;
-    ASSERT_TRUE(engine.stop());
-    std::fill(left.begin(), left.end(), 0.0f);
-    std::fill(right.begin(), right.end(), 0.0f);
-    engine.mix(outputs.data(), 2, kBlockSamples);
+    engine.mixMetronome(clickOutputs.data(), 1, kBlockSamples);
     const auto afterStop = engine.status().frame.timelineSample;
 
-    // Assert: the playhead advances by the 5 ms fade only, not by the 512
-    // sample callback, and remains stable on subsequent stopped callbacks.
+    // Assert: the playhead advances by the 5 ms fade only, the click continues
+    // through it, and later stopped callbacks hold position.
     EXPECT_EQ(afterStop - beforeStop, 240);
-    EXPECT_GT(left.front(), 0.01f);
-    EXPECT_LT(std::abs(left.back()), 0.001f);
-    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_GT(click.front(), 0.05f);
+    EXPECT_LT(std::abs(click[239]), 0.001f);
+    EXPECT_LT(*std::max_element(click.begin() + 240, click.end()), 0.001f);
+    engine.mix(outputs.data(), 1, kBlockSamples);
     EXPECT_EQ(engine.status().frame.timelineSample, afterStop);
 }
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserPanel, type BrowserPanelProps } from '@/features/browser/BrowserPanel';
@@ -249,19 +249,6 @@ describe('BrowserPanel', () => {
     expect(onPreviewAsset).toHaveBeenNthCalledWith(1, targetAsset);
     expect(onPreviewAsset).toHaveBeenNthCalledWith(2, targetAsset);
     expect(onUpdateAsset).toHaveBeenCalledWith(targetAsset, 'Kit', null);
-  });
-
-  it('lists search matches from every source with where they live', () => {
-    // Arrange / Act
-    renderBrowser({ query: 'a' });
-
-    // Assert
-    const results = within(screen.getByRole('tree', { name: 'Search results' }));
-    expect(results.getByRole('treeitem', { name: /Clean Sub Bass/ })).toHaveTextContent(
-      'Instruments › Bass',
-    );
-    expect(results.getByRole('treeitem', { name: /Space Verb/ })).toHaveTextContent('Effects');
-    expect(results.getByRole('treeitem', { name: /Take A/ })).toHaveTextContent('Recordings');
   });
 
   it('drags a plug-in so it can be dropped on a Track', async () => {

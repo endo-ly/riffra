@@ -49,7 +49,7 @@ protected:
 
 }  // namespace
 
-TEST_F(RecordingSessionTest, FinalizesRawAndProcessedWaveFiles) {
+TEST_F(RecordingSessionTest, FinalizesRawAndProcessedWaveFilesWithAManifest) {
     juce::String error;
     auto session =
         RecordingSession::create(directory.get(), kSampleRate, kChannels, kChannels, error);
@@ -69,15 +69,6 @@ TEST_F(RecordingSessionTest, FinalizesRawAndProcessedWaveFiles) {
     EXPECT_EQ(processedReader->numChannels, kChannels);
     EXPECT_EQ(rawReader->lengthInSamples, kTotalSamples);
     EXPECT_EQ(processedReader->lengthInSamples, kTotalSamples);
-}
-
-TEST_F(RecordingSessionTest, WritesExpectedRecordingManifest) {
-    juce::String error;
-    auto session =
-        RecordingSession::create(directory.get(), kSampleRate, kChannels, kChannels, error);
-    ASSERT_NE(session, nullptr) << error;
-    ASSERT_TRUE(writeSyntheticTake(*session));
-    ASSERT_TRUE(session->finish(true, error)) << error;
 
     const auto manifest = test::parseJsonFile(directory.get().getChildFile("manifest.json"));
     ASSERT_TRUE(manifest.isObject());

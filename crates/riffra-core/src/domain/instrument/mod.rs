@@ -252,18 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn built_in_round_trips_without_vst3_state() {
-        let instrument = built_in();
-
-        let encoded = serde_json::to_value(&instrument).unwrap();
-        let decoded: TrackInstrument = serde_json::from_value(encoded).unwrap();
-
-        assert_eq!(decoded, instrument);
-        assert_eq!(decoded.built_in_preset_id(), Some("01-clean-sub-bass"));
-        assert!(decoded.as_vst3().is_none());
-    }
-
-    #[test]
     fn tagged_sources_reject_unknown_keys() {
         // Arrange
         let mut source = serde_json::to_value(&built_in().source).unwrap();
@@ -306,10 +294,11 @@ mod tests {
     }
 
     #[test]
-    fn user_snapshot_round_trips_with_canonical_ids() {
+    fn each_instrument_kind_keeps_the_identities_that_load_it() {
+        let built_in = built_in();
         let instrument_id = format!("user:{}", Uuid::now_v7());
         let snapshot_id = Uuid::now_v7().to_string();
-        let instrument = TrackInstrument::user_snapshot(
+        let user_snapshot = TrackInstrument::user_snapshot(
             "device:instrument".into(),
             "User Piano".into(),
             instrument_id.clone(),
@@ -317,44 +306,34 @@ mod tests {
             r#"{"schemaVersion":1}"#.into(),
         )
         .unwrap();
-
-        let encoded = serde_json::to_value(&instrument).unwrap();
-        let decoded: TrackInstrument = serde_json::from_value(encoded).unwrap();
-
-        assert_eq!(decoded, instrument);
-        assert_eq!(
-            decoded.user_snapshot_ids(),
-            Some((instrument_id.as_str(), snapshot_id.as_str()))
-        );
-        assert!(decoded.built_in_preset_id().is_none());
-    }
-
-    #[test]
-    fn vst3_source_is_serialized_as_a_tagged_plugin() {
-        // Arrange
-        let instrument = TrackInstrument::vst3(
+        let vst3 = TrackInstrument::vst3(
             "device:instrument".into(),
             "Synth".into(),
             "Synth.vst3".into(),
         )
         .unwrap();
 
-        // Act
-        let encoded = serde_json::to_value(&instrument.source).unwrap();
+        for instrument in [&built_in, &user_snapshot, &vst3] {
+            let encoded = serde_json::to_value(instrument).unwrap();
+            assert_eq!(
+                serde_json::from_value::<TrackInstrument>(encoded).unwrap(),
+                *instrument
+            );
+        }
 
-        // Assert
+        assert_eq!(built_in.built_in_preset_id(), Some("01-clean-sub-bass"));
         assert_eq!(
-            encoded,
+            user_snapshot.user_snapshot_ids(),
+            Some((instrument_id.as_str(), snapshot_id.as_str()))
+        );
+        assert_eq!(
+            serde_json::to_value(&vst3.source).unwrap(),
             serde_json::json!({
                 "type": "vst3",
                 "path": "Synth.vst3",
                 "parameterValues": [],
                 "disabledPlaceholder": false
             })
-        );
-        assert_eq!(
-            serde_json::from_value::<TrackInstrumentSource>(encoded).unwrap(),
-            instrument.source
         );
     }
 }

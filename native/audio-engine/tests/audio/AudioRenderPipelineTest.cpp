@@ -266,7 +266,7 @@ TEST(AudioRenderPipelineTest, DeviceFaultRemainsAfterUserMuteRelease) {
     EXPECT_FALSE(callback.isMuted());
 }
 
-TEST(AudioRenderPipelineTest, MuteReasonsAreIndependent) {
+TEST(AudioRenderPipelineTest, MuteReasonsAreReleasedIndependently) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
 
@@ -281,26 +281,14 @@ TEST(AudioRenderPipelineTest, MuteReasonsAreIndependent) {
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::DeviceFault));
     EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
-}
 
-TEST(AudioRenderPipelineTest, ClearingUserMuteDoesNotClearEngineTransition) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
+    callback.setFeedbackProtection(false);
+    callback.setDeviceFaulted(false);
+    callback.setEngineTransitionMute(false);
 
-    callback.setEngineTransitionMute(true);
-    callback.setUserEmergencyMute(false);
-
-    EXPECT_TRUE(callback.hasMuteReason(MuteReason::EngineTransition));
-}
-
-TEST(AudioRenderPipelineTest, ClearingUserMuteDoesNotClearFeedbackProtection) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-
-    callback.setFeedbackProtection(true);
-    callback.setUserEmergencyMute(false);
-
-    EXPECT_TRUE(callback.hasMuteReason(MuteReason::FeedbackProtection));
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::EngineTransition));
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::DeviceFault));
+    EXPECT_FALSE(callback.hasMuteReason(MuteReason::FeedbackProtection));
 }
 
 TEST(AudioRenderPipelineTest, MasterGainClampsToMinus90AndZero) {
@@ -314,26 +302,22 @@ TEST(AudioRenderPipelineTest, MasterGainClampsToMinus90AndZero) {
     EXPECT_FLOAT_EQ(callback.getMasterGainDb(), 0.0f);
 }
 
-TEST(AudioRenderPipelineTest, PreviewUsesExistingVoiceForSameKey) {
+TEST(AudioRenderPipelineTest, ReusesOneVoicePerKeyAndFillsFreeVoices) {
     PreviewEngine preview;
+    juce::String error;
+
+    // The same key replaces the voice content instead of adding a voice.
     juce::AudioBuffer<float> first(1, 16);
     juce::AudioBuffer<float> replacement(1, 16);
     fillPreviewBuffer(first, 1.0f);
     fillPreviewBuffer(replacement, 2.0f);
-    juce::String error;
-
     ASSERT_TRUE(preview.startPreview(first, 0, first.getNumSamples(), 1.0f, true, error, 7));
     EXPECT_NEAR(mixPreviewSamples(preview, 256), 1.0f, 0.01f);
-
     ASSERT_TRUE(
         preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 7));
     EXPECT_NEAR(mixPreviewSamples(preview, 512), 2.0f, 0.01f);
-}
 
-TEST(AudioRenderPipelineTest, PreviewUsesFreeVoicesBeforeStealing) {
-    PreviewEngine preview;
-    juce::String error;
-
+    // Distinct keys fill the remaining free voices.
     for (int key = 0; key < 7; ++key) {
         juce::AudioBuffer<float> source(1, 1);
         fillPreviewBuffer(source, static_cast<float>(key + 1));
@@ -341,15 +325,10 @@ TEST(AudioRenderPipelineTest, PreviewUsesFreeVoicesBeforeStealing) {
             preview.startPreview(source, 0, source.getNumSamples(), 1.0f, true, error, key));
     }
 
-    juce::AudioBuffer<float> freeVoice(1, 1);
-    fillPreviewBuffer(freeVoice, 8.0f);
-    ASSERT_TRUE(
-        preview.startPreview(freeVoice, 0, freeVoice.getNumSamples(), 1.0f, true, error, 7));
-
-    EXPECT_NEAR(mixPreviewSamples(preview, 512), 36.0f, 0.1f);
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 30.0f, 0.1f);
 }
 
-TEST(AudioRenderPipelineTest, PreviewStealsOldestVoiceAtCapacity) {
+TEST(AudioRenderPipelineTest, StealsTheOldestVoiceAtCapacityAndKeepsOtherKeysAudible) {
     PreviewEngine preview;
     juce::String error;
 
@@ -365,40 +344,10 @@ TEST(AudioRenderPipelineTest, PreviewStealsOldestVoiceAtCapacity) {
     ASSERT_TRUE(
         preview.startPreview(replacement, 0, replacement.getNumSamples(), 1.0f, true, error, 8));
 
+    // The oldest voice is replaced, and only that key goes silent.
     EXPECT_NEAR(mixPreviewSamples(preview, 512), 44.0f, 0.1f);
-}
-
-TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
-    PreviewEngine preview;
-    juce::AudioBuffer<float> source(1, 8);
-    juce::AudioBuffer<float> replacement(1, 8);
-    for (int sample = 0; sample < source.getNumSamples(); ++sample) {
-        source.setSample(0, sample, static_cast<float>(sample));
-        replacement.setSample(0, sample, static_cast<float>(10 + sample));
-    }
-    juce::String error;
-    ASSERT_TRUE(preview.startPreview(source, 2, 6, 1.0f, true, error, 7));
-
-    EXPECT_NEAR(mixPreviewSamples(preview, 256), 5.0f, 0.1f);
-
-    ASSERT_TRUE(preview.switchPreviewBuffer(7, replacement, error));
-    EXPECT_NEAR(mixPreviewSamples(preview, 512), 12.0f, 0.1f);
-}
-
-TEST(AudioRenderPipelineTest, StopPreviewForKeyDoesNotStopOtherVoices) {
-    PreviewEngine preview;
-    juce::AudioBuffer<float> first(1, 1);
-    juce::AudioBuffer<float> second(1, 1);
-    fillPreviewBuffer(first, 1.0f);
-    fillPreviewBuffer(second, 2.0f);
-    juce::String error;
-
-    ASSERT_TRUE(preview.startPreview(first, 0, first.getNumSamples(), 1.0f, true, error, 1));
-    ASSERT_TRUE(preview.startPreview(second, 0, second.getNumSamples(), 1.0f, true, error, 2));
-
-    preview.stopPreviewForKey(1);
-
-    EXPECT_NEAR(mixPreviewSamples(preview, 512), 2.0f, 0.01f);
+    preview.stopPreviewForKey(8);
+    EXPECT_NEAR(mixPreviewSamples(preview, 512), 35.0f, 0.1f);
 }
 
 TEST(AudioRenderPipelineTest, PreviewStartAndStopUseBoundaryDeclick) {
@@ -425,6 +374,42 @@ TEST(AudioRenderPipelineTest, PreviewStartAndStopUseBoundaryDeclick) {
         EXPECT_LT(std::abs(output[static_cast<std::size_t>(sample + 1)] -
                            output[static_cast<std::size_t>(sample)]),
                   0.02f);
+}
+
+TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
+    // Arrange
+    PreviewEngine preview;
+    juce::AudioBuffer<float> first(1, 512);
+    juce::AudioBuffer<float> replacement(1, 512);
+    for (int sample = 0; sample < first.getNumSamples(); ++sample) {
+        first.setSample(0, sample, static_cast<float>(sample) / 1'000'000.0f);
+        replacement.setSample(0, sample, static_cast<float>(sample) / 1'000.0f);
+    }
+    constexpr int kRelativeCursor = 8;
+    constexpr int kFadeFrames = 240;
+    replacement.setSample(0, kRelativeCursor + kFadeFrames, 1.0f);
+    juce::String error;
+    ASSERT_TRUE(preview.startPreview(first, 3, first.getNumSamples(), 1.0f, false, error, 17))
+        << error;
+    EXPECT_GT(mixPreviewSamples(preview, 8), 0.0f);
+
+    // Act
+    ASSERT_TRUE(preview.switchPreviewBuffer(17, replacement, error)) << error;
+    std::array<float, 512> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+
+    // Assert: the isolated replacement sample arrives after the old voice fades
+    // and the replacement advances from relative cursor 8 through its fade-in.
+    auto firstReplacementSample = -1;
+    for (int sample = 0; sample < static_cast<int>(output.size()); ++sample) {
+        if (output[static_cast<std::size_t>(sample)] > 0.5f) {
+            firstReplacementSample = sample;
+            break;
+        }
+    }
+    EXPECT_GE(firstReplacementSample, 2 * kFadeFrames);
+    EXPECT_LE(firstReplacementSample, 2 * kFadeFrames + 1);
 }
 
 TEST(AudioRenderPipelineTest, PreviewControlUpdateKeepsAudioCallbackAvailable) {

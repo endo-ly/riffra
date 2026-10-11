@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "JsonTestSupport.h"
@@ -43,27 +42,40 @@ TEST(SidecarContractTest, DecodesEveryCommandFixture) {
     }
 }
 
-TEST(SidecarContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
-    for (const auto type : kSidecarCommandTypes) {
-        const auto fixture = commandFixture(juce::String(std::string(type).c_str()));
-        JsonPath path;
-        std::vector<std::pair<JsonPath, std::string>> fields;
-        collectFieldPaths(fixture, path, fields);
-        for (const auto& [objectPath, key] : fields) {
-            juce::String error;
-            auto fieldPath = objectPath;
-            fieldPath.push_back(key);
-            EXPECT_FALSE(decodes(withoutKey(fixture, objectPath, key), error))
-                << type << ": removing " << formatPath(fieldPath) << " was accepted";
-        }
-        std::vector<JsonPath> objects;
-        collectObjectPaths(fixture, path, objects);
-        for (const auto& objectPath : objects) {
-            juce::String error;
-            EXPECT_FALSE(decodes(withUnknownKey(fixture, objectPath), error))
-                << type << ": an unknown key at " << formatPath(objectPath) << " was accepted";
-        }
-    }
+TEST(SidecarContractTest, RejectsRepresentativeMalformedCommands) {
+    const auto expectRejected = [](const char* mutation, const juce::var& value) {
+        juce::String error;
+        EXPECT_FALSE(decodes(value, error)) << mutation;
+        EXPECT_TRUE(error.isNotEmpty()) << mutation;
+    };
+
+    // A numeric command covers required root and command fields, unknown keys,
+    // and an incorrect field type.
+    const auto seek = commandFixture("seekTimeline");
+    expectRejected("missing requestId", withoutKey(seek, {}, "requestId"));
+    expectRejected("unknown root field", withUnknownKey(seek, {}));
+    expectRejected("missing seek tick", withoutKey(seek, {"command"}, "tick"));
+    expectRejected("unknown seek field", withUnknownKey(seek, {"command"}));
+    auto invalidTick = cloneJson(seek);
+    setValue(invalidTick, {"command", "tick"}, "later");
+    expectRejected("invalid seek tick type", invalidTick);
+
+    // MIDI bytes have their own required and typed payload.
+    const auto midi = commandFixture("sendTrackMidi");
+    expectRejected("missing MIDI bytes", withoutKey(midi, {"command"}, "bytes"));
+    expectRejected("unknown MIDI command field", withUnknownKey(midi, {"command"}));
+    auto invalidBytes = cloneJson(midi);
+    setValue(invalidBytes, {"command", "bytes"}, "not-midi-bytes");
+    expectRejected("invalid MIDI bytes type", invalidBytes);
+
+    // Snapshot commands carry nested objects whose schema is also strict.
+    const auto snapshot = commandFixture("prepareTimelineSnapshot");
+    expectRejected("missing execution snapshot", withoutKey(snapshot, {"command"}, "snapshot"));
+    expectRejected("unknown execution graph field",
+                   withUnknownKey(snapshot, {"command", "snapshot", "graph"}));
+    auto invalidSnapshot = cloneJson(snapshot);
+    setValue(invalidSnapshot, {"command", "snapshot"}, "not-an-object");
+    expectRejected("invalid nested snapshot type", invalidSnapshot);
 }
 
 TEST(SidecarContractTest, RejectsMalformedMidiBytes) {

@@ -15,10 +15,6 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
-# §4.3.2 Tauriコマンド契約のIPC結合テストを明示的に有効化する。
-# 通常テストとWindows固有のIPC実行環境を分離するためのオプトイン機能。
-# `--no-run` はコンパイル確認であり、IPC実行確認には専用Windows環境が必要。
-ipc-integration = ["tauri/test"]
 
 [dependencies]
 riffra-control = { path = "../../../crates/riffra-control" }

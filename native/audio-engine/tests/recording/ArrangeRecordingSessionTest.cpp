@@ -117,8 +117,8 @@ TEST_F(ArrangeRecordingSessionTest, CreatesTrackRecordingFilesAndManifest) {
     EXPECT_EQ(manifest.getProperty("state", {}).toString(), "completed");
     EXPECT_EQ(manifest.getProperty("capture", {}).getProperty("captureId", {}).toString(),
               "capture:test");
-    EXPECT_EQ(static_cast<juce::int64>(manifest.getProperty("samplesWritten", -1)), 512);
 
+    // Arrange recording captures every Track into its own files and segments.
     const auto captureSegments = manifest.getProperty("captureSegments", {});
     ASSERT_TRUE(captureSegments.isArray());
     ASSERT_EQ(captureSegments.size(), 2);

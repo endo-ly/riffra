@@ -609,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn session_apply_omits_created_ids_by_default() {
+    fn session_apply_returns_only_counts_unless_created_ids_are_requested() {
         let root =
             std::env::temp_dir().join(format!("riffra-dispatcher-apply-compact-{}", now_ms()));
         let dispatcher = Dispatcher::open(
@@ -618,7 +618,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = dispatcher
+        let counts = dispatcher
             .dispatch(
                 command(
                     "session.apply",
@@ -631,11 +631,32 @@ mod tests {
                 None,
             )
             .unwrap();
+        let with_ids = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({
+                        "operations": [
+                            {"command":"track.add","params":{"name":"Keys","kind":"instrument"}}
+                        ],
+                        "includeCreatedIds": true
+                    }),
+                ),
+                None,
+            )
+            .unwrap();
 
-        assert_eq!(output_type(&result), "batchMutation");
-        assert_eq!(output_value(&result)["createdEntityCounts"]["tracks"], 1);
-        assert!(output_value(&result).get("createdEntityIds").is_none());
-        assert!(output_value(&result).get("canonical").is_none());
+        let compact = output_value(&counts);
+        assert_eq!(compact["createdEntityCounts"]["tracks"], 1);
+        assert!(compact.get("createdEntityIds").is_none());
+        assert!(compact.get("canonical").is_none());
+        assert_eq!(
+            output_value(&with_ids)["createdEntityIds"]["tracks"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(output_value(&with_ids).get("canonical").is_none());
 
         let _ = fs::remove_dir_all(root);
     }

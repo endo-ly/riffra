@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { PropertiesPanel } from './PropertiesPanel';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { toAssetId } from '@/native/contracts';
@@ -47,21 +47,6 @@ function renderPanel(
 }
 
 describe('PropertiesPanel', () => {
-  it('shows the appropriate header for track and empty Arrange selections', () => {
-    const openDevices = vi.fn();
-    renderPanel({ kind: 'track', trackId: 'track:audio' }, defaultSession(), openDevices);
-    fireEvent.click(screen.getByRole('button', { name: /^Open Devices/ }));
-    expect(openDevices).toHaveBeenCalledOnce();
-
-    expect(screen.getByLabelText('Track name')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Close Properties/ })).not.toBeInTheDocument();
-
-    cleanup();
-    renderPanel({ kind: 'none' });
-
-    expect(screen.getByText('Nothing selected')).toBeInTheDocument();
-  });
-
   it('limits mixed clip selections to shared clip actions', () => {
     const session = defaultSession();
     session.arrangement.audioClips.push({
@@ -101,6 +86,7 @@ describe('PropertiesPanel', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Clip name')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('MIDI clip name')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Crossfade' })).not.toBeInTheDocument();
   });
 
   it('does not offer Crossfade when a mixed selection contains two Audio Clips', () => {
