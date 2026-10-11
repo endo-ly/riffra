@@ -293,11 +293,12 @@ export function ProjectHostSelector(props: ProjectHostSelectorProps) {
         <button
           type="button"
           role="menuitem"
-          className={styles.ghostButton}
+          className={styles.footerButton}
+          title="Import Sonalloy Bundle…"
           disabled={projectActionsDisabled}
           onClick={() => closeOnSuccess(props.onImportSonalloyBundle?.())}
         >
-          Import Sonalloy Bundle…
+          Import Sonalloy
         </button>
         <button
           type="button"
