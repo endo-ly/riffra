@@ -376,6 +376,42 @@ TEST(AudioRenderPipelineTest, PreviewStartAndStopUseBoundaryDeclick) {
                   0.02f);
 }
 
+TEST(AudioRenderPipelineTest, PreviewSwitchPreservesRelativeCursor) {
+    // Arrange
+    PreviewEngine preview;
+    juce::AudioBuffer<float> first(1, 512);
+    juce::AudioBuffer<float> replacement(1, 512);
+    for (int sample = 0; sample < first.getNumSamples(); ++sample) {
+        first.setSample(0, sample, static_cast<float>(sample) / 1'000'000.0f);
+        replacement.setSample(0, sample, static_cast<float>(sample) / 1'000.0f);
+    }
+    constexpr int kRelativeCursor = 8;
+    constexpr int kFadeFrames = 240;
+    replacement.setSample(0, kRelativeCursor + kFadeFrames, 1.0f);
+    juce::String error;
+    ASSERT_TRUE(preview.startPreview(first, 3, first.getNumSamples(), 1.0f, false, error, 17))
+        << error;
+    EXPECT_GT(mixPreviewSamples(preview, 8), 0.0f);
+
+    // Act
+    ASSERT_TRUE(preview.switchPreviewBuffer(17, replacement, error)) << error;
+    std::array<float, 512> output{};
+    const std::array<float*, 1> outputs{output.data()};
+    ASSERT_TRUE(preview.tryMix(outputs.data(), 1, static_cast<int>(output.size()), 48'000.0));
+
+    // Assert: the isolated replacement sample arrives after the old voice fades
+    // and the replacement advances from relative cursor 8 through its fade-in.
+    auto firstReplacementSample = -1;
+    for (int sample = 0; sample < static_cast<int>(output.size()); ++sample) {
+        if (output[static_cast<std::size_t>(sample)] > 0.5f) {
+            firstReplacementSample = sample;
+            break;
+        }
+    }
+    EXPECT_GE(firstReplacementSample, 2 * kFadeFrames);
+    EXPECT_LE(firstReplacementSample, 2 * kFadeFrames + 1);
+}
+
 TEST(AudioRenderPipelineTest, PreviewControlUpdateKeepsAudioCallbackAvailable) {
     PreviewEngine preview;
     juce::AudioBuffer<float> source(1, 4096);

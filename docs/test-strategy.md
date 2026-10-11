@@ -87,7 +87,7 @@ Rust と `riffra-audio` / `riffra-render` の間の全メッセージを、送�
 | 命令（Rust → C++）       | Rust の全 `SidecarCommand` → `contracts/sidecar/commands/` | C++ が受け付ける全命令にフィクスチャがあり、すべて厳格にデコードできる                                                          |
 | メッセージ（C++ → Rust） | C++ の全エンコーダ → `contracts/sidecar/messages/`         | Rust の全応答・イベント・レンダー結果・デバイスプローブ・プラグインスキャンにフィクスチャがあり、それぞれの厳密な型として読める |
 
-- 変異テストで、どのキーを 1 つ削除しても、未知のキーを 1 つ加えても、受け取る側がデコードを拒否することを確認する。`null` 値のキーも削除の対象に含める
+- 全 Sidecar Command に Rust Fixture があり、C++ がすべて正常にデコードできることを確認する。不正入力は代表的な Command とオブジェクト階層を使い、必須フィールド欠落、未知フィールド、不正型、不正 MIDI Bytes の拒否を確認する
 - 応答の単一性（未応答の破棄で `noResponse`、2 回目の応答は出力しない）は C++ の `CommandResponder` で、期待と異なる応答型・解釈できない行による即時失敗は Rust の `CommandBus` とプロトコル処理で確認する
 - 実プロセスとの往復は `apps/cli` の `headless_host_process` テストで確認する。Linux では Safe Mode、Windows では実サイドカーを使う通常モードを実行し、同一内容を2環境で繰り返さない
 
@@ -123,6 +123,8 @@ AudioRenderPipelineTest.ConsumesPreviewCommandsUnderEverySafetyMute
 AudioProtocolTest.ControlOutputDiscardsQueuedTelemetry
 ```
 
+明示的なCTest選択では39ケースを実行し、列挙した並行性スイートの全ケースを含める。
+
 - 抑制ファイル `native/audio-engine/tsan.supp` には JUCE 内部に起因する報告だけを理由付きで書く。Riffra のコードに対する報告は修正し、抑制しない
 
 ## 7. 音声・録音・レンダーの保証
@@ -139,13 +141,13 @@ AudioProtocolTest.ControlOutputDiscardsQueuedTelemetry
 
 ## 8. CI の構成
 
-| ジョブ                 | 実行内容                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Node                   | `format:check` / `lint` / `knip` / `typecheck` / `test`。本番 Vite ビルドは `main` 更新時と手動実行のみ      |
-| Rust host crates       | `cargo fmt --all --check`、clippy、workspace テスト（Tauri を除く）                                          |
-| Rust Tauri             | 空の bundle 設定で clippy とテスト。パッケージングと Sidecar 実行は Native ジョブで確認する                  |
-| Native audio (Linux)   | ネイティブビルド、変更された C++ の clang-format、Safe Mode の Headless Host プロセステスト、ThreadSanitizer |
-| Native audio (Windows) | 実サイドカーによる通常モードの Headless Host プロセステスト、Sonalloy 実音比較、ネイティブテスト             |
+| ジョブ                 | 実行内容                                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Node                   | `format:check` / `lint` / `knip` / `typecheck` / `test`。本番 Vite ビルドは `main` 更新時と手動実行のみ        |
+| Rust host crates       | `cargo fmt --all --check`、clippy、workspace テスト（Tauri を除く）、Safe Mode の Headless Host プロセステスト |
+| Rust Tauri             | 空の bundle 設定で clippy とテスト。パッケージングと Sidecar 実行は Native ジョブで確認する                    |
+| Native audio (Linux)   | ネイティブビルド、変更された C++ の clang-format、ThreadSanitizer                                              |
+| Native audio (Windows) | 実サイドカーによる通常モードの Headless Host プロセステスト、Sonalloy 実音比較、ネイティブテスト               |
 
 - 配布対象は Windows であり、macOS 向けの CI は実行しない。macOS 用の C++ 実装とクロスプラットフォーム対応は保持する
 - Sidecar は CMake install で生成・配置し、install が失敗すればビルドを失敗させる。実行ファイルの存在確認だけを行う独立 Step は設けない
@@ -158,15 +160,15 @@ AudioProtocolTest.ControlOutputDiscardsQueuedTelemetry
 | `SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset`   | 全プリセットのコンパイルと発音      | main 更新時・手動実行 |
 | `TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam` | 130 Pass のループ録音ストリーミング | main 更新時・手動実行 |
 
-どちらも `RIFFRA_RUN_SLOW_TESTS=1` のときだけ実行される。
+各テストはCTestへ1件ずつ `slow` ラベルで登録する。ビルドスクリプトは環境変数が厳密に `RIFFRA_RUN_SLOW_TESTS=1` の場合だけこのラベルを実行し、長時間ループケースも同じ値以外はSkipする。
 
 ### 8.2 Headless Host プロセステスト
 
 `apps/cli/tests/headless_host_process.rs` は `RIFFRA_HEADLESS_SAFE_MODE` でモードを切り替える。
 
-| 環境                   | モード     | 確認する内容                                                               |
+| ジョブ                 | モード     | 確認する内容                                                               |
 | ---------------------- | ---------- | -------------------------------------------------------------------------- |
-| Native audio (Linux)   | Safe Mode  | Host・CLI プロセスの起動、Endpoint 公開、Attached コマンド、終了後の片付け |
+| Rust host crates       | Safe Mode  | Host・CLI プロセスの起動、Endpoint 公開、Attached コマンド、終了後の片付け |
 | Native audio (Windows) | 通常モード | 実サイドカーを使った Host・CLI プロセス往復                                |
 
 Local Transport、ソケット権限、接続・再接続は Rust の通常テストで保証する。

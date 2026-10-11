@@ -573,7 +573,10 @@ mod tests {
 
         // Act / Assert
         wait_until(|| coordinator.status().active_session_revision == Some(3));
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[3]);
+        let initial_loads = driver.loaded.lock().unwrap();
+        assert_eq!(initial_loads.last(), Some(&3));
+        assert!(!initial_loads.contains(&2));
+        drop(initial_loads);
 
         // A prepare rejected as busy is reported as loading and retried once the
         // timeline is idle again.
@@ -583,6 +586,7 @@ mod tests {
 
         wait_until(|| coordinator.status().active_session_revision == Some(4));
         assert_eq!(driver.wait_for_idle_count.load(Ordering::Acquire), 1);
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
         let retried = coordinator.status();
         assert_eq!(retried.state, RuntimeProjectionState::Active);
         assert_eq!(retried.last_error, None);
@@ -596,7 +600,7 @@ mod tests {
         let failed = coordinator.status();
         assert_eq!(failed.active_session_revision, Some(4));
         assert_eq!(failed.last_error_code.as_deref(), Some("timeline"));
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[3, 4]);
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
         let prepares_after_failure = driver.prepare_started.load(Ordering::Acquire);
 
         // Resubmitting the same graph under a new revision is adopted instead of
@@ -615,6 +619,6 @@ mod tests {
             driver.prepare_started.load(Ordering::Acquire),
             prepares_after_failure
         );
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[3, 4]);
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
     }
 }

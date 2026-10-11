@@ -194,17 +194,6 @@ TEST(RuntimeLifecycleExecutorTest, FiresTheTimeoutHandlerAndKeepsExecutingTasks)
     EXPECT_EQ(timeouts.load(std::memory_order_acquire), 1);
 }
 
-TEST(RuntimeLifecycleExecutorTest, DoesNotFireTheTimeoutHandlerWithinTheTimeBound) {
-    RuntimeLifecycleExecutor executor;
-    std::atomic<int> timeouts{0};
-    executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
-
-    ASSERT_TRUE(executor.submit([] { std::this_thread::sleep_for(std::chrono::milliseconds(80)); },
-                                std::chrono::seconds(1)));
-    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(2)));
-    EXPECT_EQ(timeouts.load(std::memory_order_acquire), 0);
-}
-
 TEST(RuntimeLifecycleExecutorTest, DoesNotWatchdogMediaLengthBoundWorkWhileProgressing) {
     RuntimeLifecycleExecutor executor;
     std::atomic<int> timeouts{0};

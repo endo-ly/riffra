@@ -3,6 +3,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
+#include <vector>
 
 #include "TimelineTestSupport.h"
 #include "app/AudioCommandDispatcher.h"
@@ -13,6 +15,13 @@ namespace riffra {
 
 TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
     EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
+
+    const PluginDeviceSpec original{
+        "device:test", "C:\\test\\Effect.vst3", {std::nullopt, {0.1f, 0.2f}, false}};
+    const PluginDeviceSpec edited{
+        "device:test", "C:\\test\\Effect.vst3", {std::nullopt, {0.8f, 0.9f}, true}};
+    EXPECT_TRUE(sameEffectTopology(std::vector<PluginDeviceSpec>{original},
+                                   std::vector<PluginDeviceSpec>{edited}));
 }
 
 TEST(TimelineEngineTest, AppliesEditorEditsToTheInstrumentRuntime) {

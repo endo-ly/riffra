@@ -526,8 +526,7 @@ if(BUILD_TESTING)
   gtest_discover_tests(
     riffra-audio-tests
     TEST_FILTER
-      "-SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset"
-      -"-TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam")
+      "-SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset:TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam")
   add_test(
     NAME SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset
     COMMAND riffra-audio-tests

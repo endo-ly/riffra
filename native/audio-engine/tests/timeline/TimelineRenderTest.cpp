@@ -180,6 +180,26 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     EXPECT_NEAR(
         juce::FloatVectorOperations::findMaximum(left.data(), static_cast<int>(left.size())),
         automatedPeak, 0.01f);
+
+    // Verify volume and pan automation reach their late-block values in one
+    // realtime callback, rather than only preserving a static automation point.
+    auto rampSnapshot = makeAudioTrackSnapshot(1, true, false);
+    rampSnapshot.graph.tracks.front().volumeAutomation = {{0, -24.0}, {20, 0.0}};
+    rampSnapshot.graph.tracks.front().panAutomation = {{0, -1.0}, {20, 1.0}};
+    TimelineEngine rampEngine;
+    ASSERT_TRUE(loadTestSnapshot(rampEngine, rampSnapshot, formats, 48'000.0, 512, error))
+        << error.toStdString();
+    ASSERT_TRUE(rampEngine.play());
+    std::array<float, 512> rampInput{};
+    std::array<float, 512> rampLeft{};
+    std::array<float, 512> rampRight{};
+    rampInput.fill(0.25f);
+    const std::array<const float*, 1> rampInputs{rampInput.data()};
+    const std::array<float*, 2> rampOutputs{rampLeft.data(), rampRight.data()};
+    rampEngine.mix(rampInputs.data(), 1, rampOutputs.data(), 2, 512);
+    EXPECT_GT(rampLeft[20], rampRight[20] * 2.0f);
+    EXPECT_GT(rampRight[490], rampLeft[490] * 2.0f);
+    EXPECT_GT(rampLeft[490] + rampRight[490], (rampLeft[20] + rampRight[20]) * 4.0f);
 }
 
 TEST(TimelineEngineTest, TrackMetersExcludeNonAudibleSoloTracks) {

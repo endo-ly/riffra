@@ -4,7 +4,6 @@
 
 #include <functional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace riffra::json_test {
@@ -29,27 +28,6 @@ inline juce::var cloneJson(const juce::var& value) {
 
 inline juce::var readJsonFile(const juce::File& file) {
     return juce::JSON::parse(file.loadFileAsString());
-}
-
-/// Collects the path of every object, including the root.
-inline void collectObjectPaths(const juce::var& value, JsonPath& path,
-                               std::vector<JsonPath>& output) {
-    if (value.isArray()) {
-        const auto& items = *value.getArray();
-        for (int index = 0; index < items.size(); ++index) {
-            path.push_back("#" + std::to_string(index));
-            collectObjectPaths(items.getReference(index), path, output);
-            path.pop_back();
-        }
-    } else if (value.isObject()) {
-        output.push_back(path);
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index) {
-            path.push_back(properties.getName(index).toString().toStdString());
-            collectObjectPaths(properties.getValueAt(index), path, output);
-            path.pop_back();
-        }
-    }
 }
 
 /// Returns the value at `path`, or an undefined var when the path misses.

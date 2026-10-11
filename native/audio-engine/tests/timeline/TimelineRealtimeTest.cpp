@@ -295,12 +295,15 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     ASSERT_NE(rack, nullptr) << error;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live",
                                                                "instrument:live", std::move(rack)));
+    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:live",
+                                                                       kBlockSamples));
     engine.setRealtimeOwner(RealtimeOwner::audio);
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
+    ASSERT_EQ(engine.status().frame.transportState, TransportState::stopped);
     const auto routed = engine.enqueueLiveMidi(0, juce::MidiMessage::noteOn(1, 60, 0.8f));
     (void)engine.beginBlock(kBlockSamples);
     engine.mix(outputs.data(), 2, kBlockSamples);
@@ -308,6 +311,11 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     // Assert
     EXPECT_TRUE(routed);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
+    ASSERT_FALSE(trace.midiSamplePositions.empty());
+    EXPECT_EQ(trace.midiSamplePositions.front(), 0);
+    EXPECT_GT(left.front(), 0.01f);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
 }
 
 TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {
@@ -332,7 +340,6 @@ TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {
     ASSERT_TRUE(status.graph.has_value());
     EXPECT_EQ(status.graph->liveMidiDrops, 1u);
 }
-
 
 TEST(TimelineRealtimeTest, ProcessesALoopCaptureWithinThePreparedBlockSize) {
     // Arrange: the engine is prepared for 128-sample blocks.
