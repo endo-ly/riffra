@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "riffra-cli"
-version = "0.1.0"
+version = "2026.10.12"
 dependencies = [
  "clap",
  "riffra-control",
@@ -2774,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "riffra-desktop"
-version = "0.1.0"
+version = "2026.10.12"
 dependencies = [
  "riffra-control",
  "riffra-core",
