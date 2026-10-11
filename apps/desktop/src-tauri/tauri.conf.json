@@ -43,7 +43,7 @@
       "binaries/sonalloy"
     ],
     "resources": {
-      "resources/instruments/builtin": "instruments/builtin",
+      "resources/instruments/builtin": "riffra-resources/instruments/builtin",
       "resources/THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "resources/LICENSE-MIT": "LICENSE-MIT",
       "resources/LICENSE-APACHE": "LICENSE-APACHE"
