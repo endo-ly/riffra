@@ -490,6 +490,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             ? 'Pads'
             : midiNoteName(livePlay.settings.octave * 12 + 12)
         }
+        computerKeyboardBlockedReason={livePlay.blockedReason}
         onToggleComputerKeyboard={toggleComputerKeyboard}
       />
 

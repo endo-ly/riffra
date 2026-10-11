@@ -162,4 +162,18 @@ describe('MidiEditorPanel', () => {
       { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1 },
     ]);
   });
+
+  it('creates a note off the grid with Alt, like every other placement', () => {
+    // Arrange
+    const { lane, onAddNote } = setup(2160);
+    fireEvent.change(screen.getByLabelText('Snap'), { target: { value: '1/4' } });
+
+    // Act
+    fireEvent.doubleClick(lane, { clientX: 70, clientY: 804 });
+    fireEvent.doubleClick(lane, { clientX: 100, clientY: 804, altKey: true });
+
+    // Assert: the snapped start lands on 720, the free one keeps its raw tick.
+    expect(onAddNote).toHaveBeenNthCalledWith(1, 'clip:1', 720, 60, 960, 96, 1);
+    expect(onAddNote).toHaveBeenNthCalledWith(2, 'clip:1', 556, 60, 960, 96, 1);
+  });
 });

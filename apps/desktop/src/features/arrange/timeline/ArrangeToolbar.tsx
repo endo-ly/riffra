@@ -34,6 +34,8 @@ interface ArrangeToolbarProps {
   computerKeyboardOn: boolean;
   /** What the computer keyboard plays while it is on: an octave such as `C4`, or `Pads`. */
   computerKeyboardRange: string;
+  /** Why live input cannot reach the focused Track, or `null` when it can. */
+  computerKeyboardBlockedReason: string | null;
   onToggleComputerKeyboard: () => void;
 }
 
@@ -111,10 +113,14 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         Play Surface
       </ToolbarToggle>
       <ToolbarToggle
-        active={props.computerKeyboardOn}
+        active={props.computerKeyboardOn && props.computerKeyboardBlockedReason === null}
         icon="computerKeyboard"
         ariaLabel="Computer keyboard input"
-        title="Play the focused Instrument Track from the computer keyboard (Ctrl+Shift+K)"
+        title={
+          props.computerKeyboardBlockedReason === null
+            ? 'Play the focused Instrument Track from the computer keyboard (Ctrl+Shift+K)'
+            : `${props.computerKeyboardBlockedReason} Computer keyboard input stays off.`
+        }
         onClick={props.onToggleComputerKeyboard}
       >
         {props.computerKeyboardOn ? props.computerKeyboardRange : undefined}

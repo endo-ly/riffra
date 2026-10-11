@@ -7,6 +7,7 @@ import {
   midiNoteName,
 } from './musical-typing';
 import type { LivePlay } from './useLivePlay';
+import { LIVE_PLAY_BLOCKED_REASON } from './useLivePlay';
 import {
   Toolbar,
   ToolbarButton,
@@ -32,13 +33,13 @@ export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: Pla
     return <div className={styles.state}>Select an Instrument Track to play it here.</div>;
   }
   if (play.availability === 'notInstrument') {
-    return <div className={styles.state}>Only Instrument Tracks can be played live.</div>;
+    return <div className={styles.state}>{LIVE_PLAY_BLOCKED_REASON.notInstrument}</div>;
   }
   if (play.availability === 'noInstrument' || play.availability === 'instrumentMissing') {
     const missing = play.availability === 'instrumentMissing';
     return (
       <div className={styles.state}>
-        <strong>{missing ? 'Instrument unavailable.' : 'No instrument assigned.'}</strong>
+        <strong>{LIVE_PLAY_BLOCKED_REASON[play.availability]}</strong>
         <span>
           {missing
             ? 'The assigned plugin is missing or disabled.'
@@ -53,7 +54,7 @@ export function PlaySurface({ play, trackColor, audio, onChooseInstrument }: Pla
   if (play.availability === 'runtimeUnavailable') {
     return (
       <div className={styles.state}>
-        <strong>Audio runtime unavailable.</strong>
+        <strong>{LIVE_PLAY_BLOCKED_REASON.runtimeUnavailable}</strong>
         <span>{audio.message || 'Wait for the Arrange runtime to become ready.'}</span>
       </div>
     );

@@ -1292,7 +1292,15 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               onDoubleClick={(event) => {
                 if ((event.target as HTMLElement).closest('[data-note-id]')) return;
                 event.preventDefault();
-                void Promise.resolve(addNoteAt(event.currentTarget, event.clientX, event.clientY));
+                void Promise.resolve(
+                  addNoteAt(
+                    event.currentTarget,
+                    event.clientX,
+                    event.clientY,
+                    newNoteLength,
+                    event.altKey,
+                  ),
+                );
               }}
             >
               <div

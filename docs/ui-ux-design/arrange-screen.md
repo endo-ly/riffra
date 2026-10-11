@@ -496,19 +496,20 @@ Toolbar は編集中の Clip 名に続けて、Tool、Grid（Snap と Quantize�
 
 #### Note の作成と編集
 
-Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空白のダブルクリックでも Note を作成できる。開始位置は現在の Grid を基準とし、初期長は最後に触れた Note の長さを引き継ぐ（まだ触れていなければ Grid 幅）。Velocity は直前の入力値を引き継ぐ。
+Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空白のダブルクリックでも Note を作成できる。開始位置は現在の Grid を基準とし、Alt を押している間は Grid に吸着しない。初期長は最後に触れた Note の長さを引き継ぐ（まだ触れていなければ Grid 幅）。Velocity は直前の入力値を引き継ぐ。
 
-| 操作                       | 結果                      |
-| -------------------------- | ------------------------- |
-| Note をクリック            | 単一選択                  |
-| Ctrl / Shift + Note        | 選択を追加・解除          |
-| 空白をドラッグ             | Marquee 選択              |
-| Note をドラッグ            | 時間位置と Pitch を変更   |
-| Ctrl + Note をドラッグ     | 移動先へ複製              |
-| Note 左端 / 右端をドラッグ | 開始位置 / 終了位置を変更 |
-| ドラッグ中に Alt           | Grid に吸着せず配置       |
-| 空白をダブルクリック       | Note を作成               |
-| Draw でクリック / ドラッグ | Note を連続作成           |
+| 操作                       | 結果                        |
+| -------------------------- | --------------------------- |
+| Note をクリック            | 単一選択                    |
+| Ctrl / Shift + Note        | 選択を追加・解除            |
+| 空白をドラッグ             | Marquee 選択                |
+| Note をドラッグ            | 時間位置と Pitch を変更     |
+| Ctrl + Note をドラッグ     | 移動先へ複製                |
+| Note 左端 / 右端をドラッグ | 開始位置 / 終了位置を変更   |
+| ドラッグ中に Alt           | Grid に吸着せず配置         |
+| 空白をダブルクリック       | Note を作成                 |
+| Alt + 空白をダブルクリック | Grid に吸着せず Note を作成 |
+| Draw でクリック / ドラッグ | Note を連続作成             |
 
 Note を押しても動かさなければクリックとして扱い、位置は変えない。複数 Note の移動では相対関係を保ち、時間と Pitch をまとめて変更する。Length 変更でも選択群へ同じ差分を適用できる。ドラッグ中は移動先の Pitch と位置、または変更後の Length を Note の上に表示する。
 
@@ -594,7 +595,9 @@ Computer Keyboard が有効な間、または Play Surface を表示している
 
 Arrange Toolbar の Computer Keyboard（Ctrl+Shift+K）で入力を切り替える。有効な間は、どの領域を操作していても PC のキーが Focused Instrument Track を演奏する。Keyboard Mode では A から K の行が 1 オクターブを鳴らし、Z / X で Octave を移動する。Drum Pads Mode ではキーが各 Pad に対応する。Toolbar には有効な間の Octave（Drum Pads Mode では Pads）を表示する。
 
-有効な間は、修飾キーのない演奏キーを Shortcut より優先する。Text Input へ Focus がある間は文字入力を優先する。Mode、Octave、Velocity は Track ごとに保持し、Play Surface と共有する。
+有効な間は、修飾キーのない演奏キーを Shortcut より優先する。キーを押し続けても反復入力は演奏側で消費され、Shortcut へは届かない。Text Input へ Focus がある間は文字入力を優先する。Mode、Octave、Velocity は Track ごとに保持し、Play Surface と共有する。
+
+Focused Instrument Track が演奏できないときは Toolbar の Computer Keyboard を有効にせず、Tooltip で理由を示す。
 
 ### 6.3 Play Surface
 

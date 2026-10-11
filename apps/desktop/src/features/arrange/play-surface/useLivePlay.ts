@@ -19,13 +19,23 @@ interface LivePlaySettings {
 }
 
 /** Why the focused track cannot be played live, or `ready` when it can. */
-type LivePlayAvailability =
+export type LivePlayAvailability =
   | 'ready'
   | 'noTrack'
   | 'notInstrument'
   | 'noInstrument'
   | 'instrumentMissing'
   | 'runtimeUnavailable';
+
+/** The single reason live input cannot reach the focused track. */
+export const LIVE_PLAY_BLOCKED_REASON: Record<LivePlayAvailability, string> = {
+  ready: '',
+  noTrack: 'No Track is focused.',
+  notInstrument: 'Only Instrument Tracks can be played live.',
+  noInstrument: 'No instrument assigned.',
+  instrumentMissing: 'Instrument unavailable.',
+  runtimeUnavailable: 'Audio runtime unavailable.',
+};
 
 const DEFAULT_SETTINGS: LivePlaySettings = {
   mode: 'keys',
@@ -141,6 +151,8 @@ export function useLivePlay({
     track,
     availability,
     canPlay,
+    /** Why live input cannot reach the focused track, or `null` when it can. */
+    blockedReason: canPlay ? null : LIVE_PLAY_BLOCKED_REASON[availability],
     computerKeyboard,
     toggleComputerKeyboard,
     settings,

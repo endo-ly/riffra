@@ -1897,6 +1897,99 @@ describe('WorkspaceArrange', () => {
     expect(lowerArea).toHaveAttribute('data-view', 'midiEditor');
   });
 
+  it('keeps a held performance key away from the Arrange zoom shortcuts', () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
+      id: 'track:live',
+      name: 'Live Keys',
+      kind: 'instrument',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      instrument: {
+        id: 'device:live',
+        name: 'Fake Synth',
+        bypassed: false,
+        source: {
+          type: 'vst3',
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
+      },
+      effects: [],
+    });
+    session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
+      id: 'clip:live',
+      name: 'Live Clip',
+      trackId: 'track:live',
+      startTick: 0,
+      durationTicks: 1_920,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: false,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const scroller = container.querySelector('[class*="scroller"]') as HTMLElement;
+    Object.defineProperty(scroller, 'clientWidth', { value: 1408, configurable: true });
+    fireEvent.click(screen.getByText('Live Keys'));
+    fireEvent.click(screen.getByRole('button', { name: 'Computer keyboard input' }));
+    const zoom = screen.getByRole('group', { name: 'Timeline zoom' });
+    const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
+    const before = zoom.textContent;
+
+    // Act: hold the typing keys, which are also Arrange zoom shortcuts.
+    fireEvent.keyDown(window, { key: 'f' });
+    fireEvent.keyDown(window, { key: 'f', repeat: true });
+    fireEvent.keyUp(window, { key: 'f' });
+    fireEvent.keyDown(window, { key: 'z', repeat: true });
+
+    // Assert: the repeat never zooms, sounds one note, or shifts the octave.
+    expect(zoom.textContent).toBe(before);
+    expect(computerKeyboard).toHaveTextContent('C4');
+    expect(sendMidi.mock.calls.filter(([, bytes]) => bytes[0] === 0x90)).toHaveLength(1);
+  });
+
+  it('reports why the computer keyboard cannot play the focused track', () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push({
+      panLaw: 'equalPower' as const,
+      id: 'track:audio',
+      name: 'Audio Track',
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      effects: [],
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    render(<Harness api={api} initialSession={session} initialFocusedTrackId="track:audio" />);
+    const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
+
+    // Act: an Audio Track is focused and cannot receive performance MIDI.
+    // Assert: the toggle reports the reason instead of showing itself engaged.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
+    expect(computerKeyboard).toHaveAttribute(
+      'title',
+      expect.stringContaining('Only Instrument Tracks can be played live.'),
+    );
+  });
+
   it('routes Space to the shared transport controller from the Arrange editor', async () => {
     const api = new FakeNativeApi();
     let toggles = 0;
