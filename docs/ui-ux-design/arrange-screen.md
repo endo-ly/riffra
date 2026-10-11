@@ -473,8 +473,7 @@ Gain と Pan のドラッグ中は Native Runtime の一時プレビューへ値
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ [Pointer|Draw]  Snap [1/16 ▾]  [Preview]  [Quantize] [Duplicate]        │
-│ VEL [───●── 96]                  Time [−][＋]   Pitch [−][＋]           │
+│ ■ Clip │ [Pointer|Draw] │ Snap [1/16] [Quantize] │ Vel [─●─] │ Preview Ghost │
 ├─────────────┬────────────────────────────────────────────────────────────┤
 │             │  9.1       9.2       9.3       9.4       10.1            │
 │ Piano       ├────────────────────────────────────────────────────────────┤
@@ -495,23 +494,27 @@ Gain と Pan のドラッグ中は Native Runtime の一時プレビューへ値
 
 Piano Roll、Musical Ruler、Velocity Lane は一つの時間軸を共有する。横 Scroll / Zoom も同じ基準で動き、Active MIDI Clip が Arrangement のどこに位置しているかを Ruler 上で把握できる。再生中の Playhead 追従は Timeline と同じ挙動に従う。
 
-Toolbar は左側へ編集操作、右側へ表示操作をまとめる。Pointer / Draw、Snap、Preview、Quantize、Duplicate、Velocity、Time Zoom、Pitch Zoom が主な操作となる。
+Toolbar は編集中の Clip 名に続けて、Tool、Grid（Snap と Quantize）、Velocity、表示（Preview と参照表示）の順に左から並べる。右端は Lower Area 自体の操作に充てる。Velocity は選択中の Note の値を調整し、選択がないときは次に作成する Note の値を決める。Zoom は Wheel 操作で行う（Ruler / Grid / Zoom を参照）。
 
 #### Note の作成と編集
 
-Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空白のダブルクリックでも Note を作成できる。開始位置と初期長は現在の Grid を基準とし、Velocity は直前の入力値を引き継ぐ。
+Pointer は選択・移動・長さ変更、Draw は連続入力を担う。空白のダブルクリックでも Note を作成できる。開始位置は現在の Grid を基準とし、初期長は最後に触れた Note の長さを引き継ぐ（まだ触れていなければ Grid 幅）。Velocity は直前の入力値を引き継ぐ。
 
-| 操作                       | 結果                    |
-| -------------------------- | ----------------------- |
-| Note をクリック            | 単一選択                |
-| Ctrl / Shift + Note        | 選択を追加・解除        |
-| 空白をドラッグ             | Marquee 選択            |
-| Note をドラッグ            | 時間位置と Pitch を変更 |
-| Note 右端をドラッグ        | Note Length を変更      |
-| 空白をダブルクリック       | Note を作成             |
-| Draw でクリック / ドラッグ | Note を連続作成         |
+| 操作                       | 結果                      |
+| -------------------------- | ------------------------- |
+| Note をクリック            | 単一選択                  |
+| Ctrl / Shift + Note        | 選択を追加・解除          |
+| 空白をドラッグ             | Marquee 選択              |
+| Note をドラッグ            | 時間位置と Pitch を変更   |
+| Ctrl + Note をドラッグ     | 移動先へ複製              |
+| Note 左端 / 右端をドラッグ | 開始位置 / 終了位置を変更 |
+| ドラッグ中に Alt           | Grid に吸着せず配置       |
+| 空白をダブルクリック       | Note を作成               |
+| Draw でクリック / ドラッグ | Note を連続作成           |
 
-複数 Note の移動では相対関係を保ち、時間と Pitch をまとめて変更する。Length 変更でも選択群へ同じ差分を適用できる。
+Note を押しても動かさなければクリックとして扱い、位置は変えない。複数 Note の移動では相対関係を保ち、時間と Pitch をまとめて変更する。Length 変更でも選択群へ同じ差分を適用できる。ドラッグ中は移動先の Pitch と位置、または変更後の Length を Note の上に表示する。
+
+Pointer が指す行は Piano Roll と Piano Keyboard の両方で強調し、Keyboard にはその音名を表示する。Note には幅が足りる範囲で音名を表示する。Clip の終端より後ろは暗く表示する。
 
 Note の作成・移動・長さ変更・Pitch 変更が確定したら、その Note を所属 Track の Instrument で短く試聴する。Preview が有効な場合に限る。
 
@@ -525,7 +528,7 @@ Duplicate は選択フレーズの時間幅を基準に直後へ複製する。
 
 #### Quantize と Velocity
 
-Quantize は現在の Grid を基準に MIDI Note Selection へ適用する。Velocity Lane は Piano Roll と同じ Note Selection を共有し、複数 Note の Velocity をまとめて調整できる。
+Quantize は現在の Grid を基準に MIDI Note Selection へ適用し、選択がなければ Clip 内の全 Note へ適用する。Velocity Lane は Piano Roll と同じ Note Selection を共有し、複数 Note の Velocity をまとめて調整できる。同時刻の Note が重なる場合は選択中の Note を手前に表示する。
 
 ```text
 Piano Roll        ┌───────┐       ┌──────────┐
@@ -549,9 +552,9 @@ Clip 切替や Editor 終了時には Held Note を解放し、Preview の発音
 
 Ruler の小節線と拍線は Arrangement 上の境界に揃える。小節頭には小節番号を表示し、小節途中から始まる Clip の先頭には拍も添える。たとえば 9.3 から始まる Clip では、先頭を「9.3」、次の小節頭を「10」と表示する。
 
-Piano Roll と Velocity Lane の小節線・拍線は Ruler と同じ Arrangement 上の境界に揃える。Snap Grid の細分線も同じ時間軸を使い、Note の追加・移動・右端の Resize・Quantize はその境界へ吸着する。Clip より前へ吸着する場合は Clip 先頭に留める。Note 群を移動するときは操作対象の Note を基準に吸着し、Note 間の相対時間を保つ。
+Piano Roll と Velocity Lane の小節線・拍線は Ruler と同じ Arrangement 上の境界に揃える。Snap Grid の細分線も同じ時間軸を使い、Note の追加・移動・両端の Resize・Quantize はその境界へ吸着する。Clip より前へ吸着する場合は Clip 先頭に留める。Note 群を移動するときは操作対象の Note を基準に吸着し、Note 間の相対時間を保つ。
 
-Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小できる。
+Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ変化する。時間方向と Pitch 方向は独立して拡大縮小でき、Ctrl + Wheel は Pointer 位置を中心に時間方向を、Alt + Wheel は Pitch 方向を拡大縮小する。
 
 ### 5.4 Devices
 

@@ -491,7 +491,7 @@ select.control {
 
 .segmented button:hover:not(:disabled) {
   color: var(--color-text-strong);
-  background: var(--color-bg-surface-raised);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 }
 
 .segmented button:disabled {
@@ -500,8 +500,11 @@ select.control {
 
 .segmented button[aria-pressed='true'] {
   color: var(--color-text-strong);
-  background: var(--color-bg-hover);
-  box-shadow: var(--shadow-raised);
+  background: var(--color-control-active);
+}
+
+.segmented button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--color-control-active-hover);
 }
 
 .buttonRow {
@@ -579,7 +582,11 @@ select.control {
 
 .iconButton[aria-pressed='true'] {
   color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  background: var(--color-control-active);
+}
+
+.iconButton[aria-pressed='true']:hover {
+  background: var(--color-control-active-hover);
 }
 
 .take {

@@ -28,7 +28,10 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     restore: 'M7 7h10v10H7V7Zm2 2v6h6V9H9Z',
     curve:
       'M2.7 15.6C5.7 7.2 9.4 6.3 12.4 10.2C15 13.6 17.5 13.7 21.3 6.4L22.9 7.2C18.7 15.7 15 16.5 11.9 12.5C9.3 9.2 7 9.6 4.3 17.1Z',
-    magnet: 'M5 3h5v8a2 2 0 0 0 4 0V3h5v8a7 7 0 0 1-14 0V3Z',
+    // Notes of different lengths lined up against a grid line.
+    quantize: 'M3 3h2v18H3V3Zm4 3h10v3H7V6Zm0 5h6v3H7v-3Zm0 5h13v3H7v-3Z',
+    // A solid note in front of an outlined note from another track.
+    ghostNotes: 'M9 5h12v6H9V5Zm2 2v2h8V7h-8ZM3 13h12v6H3v-6Z',
     copy: 'M8 8h12v12H8V8ZM4 4h10v2H6v8H4V4Z',
     speaker: 'M4 9h4l5-4v14l-5-4H4V9Zm11.6-.5a6.3 6.3 0 0 1 0 7l-1.6-1.2a4.3 4.3 0 0 0 0-4.6Z',
     speakerOff:

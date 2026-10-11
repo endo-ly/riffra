@@ -35,6 +35,20 @@
   --color-status-warning: #e7b55d;
   --color-status-danger: #ee5a67;
   --color-selection: #bfeff1;
+  /*
+   * A chosen option or an engaged toggle: a neutral lift faintly tinted with
+   * the accent, whose icon takes the accent itself.
+   */
+  --color-control-active: color-mix(
+    in srgb,
+    var(--color-accent) 12%,
+    color-mix(in srgb, var(--color-text-primary) 9%, var(--color-bg-surface))
+  );
+  --color-control-active-hover: color-mix(
+    in srgb,
+    var(--color-accent) 16%,
+    color-mix(in srgb, var(--color-text-primary) 12%, var(--color-bg-surface))
+  );
   --color-scrollbar-thumb: #313b45;
   --color-scrollbar-track: #0b0f13;
 

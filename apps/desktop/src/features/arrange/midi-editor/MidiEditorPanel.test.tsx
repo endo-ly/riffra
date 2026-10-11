@@ -114,7 +114,7 @@ describe('MidiEditorPanel', () => {
       'clip:1',
       expect.objectContaining({ startTick: 720 }),
     );
-    const resize = note.querySelector<HTMLElement>('[class*="resizeHandle"]')!;
+    const resize = note.querySelector<HTMLElement>('[class*="resizeEnd"]')!;
     fireEvent.pointerDown(resize, { clientX: 100, clientY: 804, pointerId: 3 });
     fireEvent.pointerUp(window, { clientX: 250, clientY: 804, pointerId: 3 });
     expect(onUpdateNote).toHaveBeenLastCalledWith(
@@ -122,6 +122,8 @@ describe('MidiEditorPanel', () => {
       expect.objectContaining({ startTick: 100, durationTicks: 620 }),
     );
 
+    fireEvent.pointerDown(note, { clientX: 100, clientY: 804, pointerId: 4 });
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 804, pointerId: 4 });
     fireEvent.click(note);
     fireEvent.keyDown(screen.getByLabelText('MIDI Editor'), { key: 'ArrowRight' });
     expect(onUpdateNotes).toHaveBeenLastCalledWith('clip:1', [
@@ -130,6 +132,32 @@ describe('MidiEditorPanel', () => {
     playheadTickRef.current = 2160 + 350;
     fireEvent.keyDown(screen.getByLabelText('MIDI Editor'), { key: 'c', ctrlKey: true });
     fireEvent.keyDown(screen.getByLabelText('MIDI Editor'), { key: 'v', ctrlKey: true });
+    expect(onInsertNotes).toHaveBeenLastCalledWith('clip:1', [
+      { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1 },
+    ]);
+  });
+
+  it('resizes from the start edge, places freely with Alt, copies on Ctrl-drag and reuses the last length', () => {
+    // Arrange
+    const { lane, onAddNote, onUpdateNote, onInsertNotes } = setup(2160);
+    fireEvent.change(screen.getByLabelText('Snap'), { target: { value: '1/4' } });
+    const note = lane.querySelector<HTMLElement>('[data-note-id="note:1"]')!;
+    const resizeStart = note.querySelector<HTMLElement>('[class*="resizeStart"]')!;
+
+    // Act
+    fireEvent.pointerDown(resizeStart, { clientX: 18, clientY: 804, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 27, clientY: 804, pointerId: 1, altKey: true });
+    fireEvent.doubleClick(lane, { clientX: 70, clientY: 804 });
+    fireEvent.pointerDown(note, { clientX: 100, clientY: 804, pointerId: 2, ctrlKey: true });
+    fireEvent.pointerUp(window, { clientX: 170, clientY: 804, pointerId: 2 });
+
+    // Assert
+    expect(onUpdateNote).toHaveBeenCalledTimes(1);
+    expect(onUpdateNote).toHaveBeenLastCalledWith(
+      'clip:1',
+      expect.objectContaining({ startTick: 150, durationTicks: 150 }),
+    );
+    expect(onAddNote).toHaveBeenLastCalledWith('clip:1', 720, 60, 150, 96, 1);
     expect(onInsertNotes).toHaveBeenLastCalledWith('clip:1', [
       { pitch: 60, startTick: 720, durationTicks: 200, velocity: 96, channel: 1 },
     ]);

@@ -83,8 +83,14 @@
 
 .mode .active,
 .computerKeysActive {
-  color: var(--color-text-primary) !important;
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-panel)) !important;
+  color: var(--color-text-strong);
+  background: var(--color-control-active);
+}
+
+.mode .active:hover:not(:disabled),
+.computerKeysActive:hover:not(:disabled) {
+  color: var(--color-text-strong);
+  background: var(--color-control-active-hover);
 }
 
 .velocity {
