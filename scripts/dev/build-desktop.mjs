@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { binariesRoot, getRustHostTriple } from './ensure-desktop.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktopRoot = join(repositoryRoot, 'apps/desktop');
@@ -29,12 +30,26 @@ function readUpdaterPrivateKey() {
   return readFileSync(updaterKeyPath, 'utf8');
 }
 
+/** Builds the release CLI and stages it for the Tauri externalBin entry "binaries/riffra". */
+function stageCli() {
+  const targetTriple = getRustHostTriple();
+  const exeSuffix = process.platform === 'win32' ? '.exe' : '';
+  execFileSync('cargo', ['build', '-p', 'riffra-cli', '--release'], {
+    cwd: repositoryRoot,
+    stdio: 'inherit',
+  });
+  const builtPath = join(repositoryRoot, `target/release/riffra${exeSuffix}`);
+  const stagingPath = join(binariesRoot, `riffra-${targetTriple}${exeSuffix}`);
+  copyFileSync(builtPath, stagingPath);
+}
+
 function main() {
   const privateKey = readUpdaterPrivateKey();
   execFileSync('node', [join(repositoryRoot, 'scripts/dev/ensure-desktop.mjs')], {
     cwd: repositoryRoot,
     stdio: 'inherit',
   });
+  stageCli();
   execFileSync('node', [tauriCliPath, 'build'], {
     cwd: desktopRoot,
     env: {

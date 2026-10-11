@@ -2,17 +2,17 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const desktopRoot = join(repositoryRoot, 'apps/desktop/src-tauri');
-const binariesRoot = join(desktopRoot, 'binaries');
+export const binariesRoot = join(desktopRoot, 'binaries');
 const resourcesRoot = join(desktopRoot, 'resources');
 const runtimeStampPath = join(binariesRoot, '.riffra-desktop-runtime.json');
 const nativeBuildConfiguration = 'RelWithDebInfo';
 const sidecarNames = ['riffra-audio', 'riffra-plugin-scan', 'riffra-render', 'sonalloy'];
 
-function getRustHostTriple() {
+export function getRustHostTriple() {
   try {
     const output = execFileSync('rustc', ['-vV'], {
       encoding: 'utf8',
@@ -298,9 +298,17 @@ function main() {
   console.log('Desktop runtime is ready.');
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+function isDirectExecution() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isDirectExecution()) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }

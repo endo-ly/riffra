@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const tauriConfPath = join(repositoryRoot, 'apps/desktop/src-tauri/tauri.conf.json');
 const bundleDir = join(repositoryRoot, 'target/release/bundle/nsis');
+/** Rust manifests whose crate version tracks the release version of the distributed binaries. */
+const versionedManifestPaths = ['apps/desktop/src-tauri/Cargo.toml', 'apps/cli/Cargo.toml'];
 
 function runGit(...arguments_) {
   return execFileSync('git', arguments_, { cwd: repositoryRoot, encoding: 'utf8' }).trim();
@@ -43,11 +45,30 @@ function ensureCleanWorkingTree() {
 }
 
 function stampVersion(version) {
+  let stamped = false;
   const conf = JSON.parse(readFileSync(tauriConfPath, 'utf8'));
-  if (conf.version === version) return false;
-  conf.version = version;
-  writeFileSync(tauriConfPath, `${JSON.stringify(conf, null, 2)}\n`);
-  return true;
+  if (conf.version !== version) {
+    conf.version = version;
+    writeFileSync(tauriConfPath, `${JSON.stringify(conf, null, 2)}\n`);
+    stamped = true;
+  }
+  for (const manifestPath of versionedManifestPaths) {
+    const path = join(repositoryRoot, manifestPath);
+    const manifest = readFileSync(path, 'utf8');
+    const stampedManifest = manifest.replace(/^version = ".*?"/m, `version = "${version}"`);
+    if (stampedManifest !== manifest) {
+      writeFileSync(path, stampedManifest);
+      stamped = true;
+    }
+  }
+  if (stamped) {
+    // Record the new crate versions in Cargo.lock as part of the release commit.
+    execFileSync('cargo', ['update', '--workspace', '--offline'], {
+      cwd: repositoryRoot,
+      stdio: 'ignore',
+    });
+  }
+  return stamped;
 }
 
 function ensureTagIsAbsentLocally(tag) {
@@ -134,7 +155,12 @@ function main() {
   ensureTagIsNew(tag);
   const stamped = stampVersion(version);
   if (stamped) {
-    runGit('add', 'apps/desktop/src-tauri/tauri.conf.json');
+    runGit(
+      'add',
+      'apps/desktop/src-tauri/tauri.conf.json',
+      ...versionedManifestPaths,
+      'Cargo.lock',
+    );
     runGit('commit', '-m', `chore(release): ${tag}`);
   }
   ensureTagIsAbsentLocally(tag);

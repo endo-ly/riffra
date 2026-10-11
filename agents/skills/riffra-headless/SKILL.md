@@ -12,7 +12,7 @@ description: >-
 
 `riffra`(`apps/cli`)は GUI を使わずに制作状態を照会・編集・運用するヘッドレス用 CLI であり、Desktop アプリと同じ正準状態(`riffra-core`)を共有する。本書は全操作に共通する基盤(実行形態、制作フロー、入力契約、プロトコル、エラーコード)を扱う。コマンド別の引数・例文・値域は [references/commands.md](references/commands.md) を参照。
 
-以下、実行ファイルは `riffra` と表記する(`cargo run -p riffra-cli --` またはビルド済み `target/debug/riffra` に読み替える)。
+以下、実行ファイルは `riffra` と表記する(リポジトリでは `cargo run -p riffra-cli --` またはビルド済み `target/debug/riffra`、インストール済み環境ではデスクトップ実行ファイルと同じディレクトリの `riffra.exe`(既定 `%LOCALAPPDATA%\Riffra`)に読み替える)。
 
 ## 実行モード
 

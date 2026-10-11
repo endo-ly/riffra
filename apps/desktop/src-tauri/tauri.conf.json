@@ -39,6 +39,7 @@
       "binaries/riffra-audio",
       "binaries/riffra-plugin-scan",
       "binaries/riffra-render",
+      "binaries/riffra",
       "binaries/sonalloy"
     ],
     "resources": {
