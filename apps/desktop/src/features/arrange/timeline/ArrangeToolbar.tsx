@@ -40,6 +40,10 @@ interface ArrangeToolbarProps {
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
+  // One source of truth, so the toggle state and its label can never disagree.
+  const computerKeyboardOn =
+    props.computerKeyboardOn && props.computerKeyboardBlockedReason === null;
+
   return (
     <Toolbar
       label="Arrange toolbar"
@@ -113,7 +117,7 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         Play Surface
       </ToolbarToggle>
       <ToolbarToggle
-        active={props.computerKeyboardOn && props.computerKeyboardBlockedReason === null}
+        active={computerKeyboardOn}
         icon="computerKeyboard"
         ariaLabel="Computer keyboard input"
         title={
@@ -123,7 +127,7 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         }
         onClick={props.onToggleComputerKeyboard}
       >
-        {props.computerKeyboardOn ? props.computerKeyboardRange : undefined}
+        {computerKeyboardOn ? props.computerKeyboardRange : undefined}
       </ToolbarToggle>
     </Toolbar>
   );

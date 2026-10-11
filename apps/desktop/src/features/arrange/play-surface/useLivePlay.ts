@@ -147,6 +147,13 @@ export function useLivePlay({
     [canPlay],
   );
 
+  // Losing the ability to play releases live input, so it cannot come back armed
+  // on its own once another Track can play. Moving between playable Tracks keeps
+  // the input the user turned on.
+  useEffect(() => {
+    if (!canPlay) setComputerKeyboard(false);
+  }, [canPlay]);
+
   const setMode = (mode: LivePlayMode) => {
     melodic.releaseHeldNotes();
     drums.releaseAll();

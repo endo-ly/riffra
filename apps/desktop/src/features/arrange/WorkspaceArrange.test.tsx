@@ -2028,6 +2028,70 @@ describe('WorkspaceArrange', () => {
     fireEvent.keyDown(window, { key: 'a' });
     fireEvent.keyUp(window, { key: 'a' });
     expect(sendMidi).not.toHaveBeenCalled();
+
+    // Act: arm it on the Instrument Track, then move through a Track that cannot play.
+    fireEvent.click(computerKeyboard);
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByText('Audio Track'));
+
+    // Assert: leaving a playable Track releases live input, label included.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
+    expect(computerKeyboard).not.toHaveTextContent('C4');
+
+    // Act: return to the Instrument Track.
+    fireEvent.click(screen.getByText('Live Keys'));
+
+    // Assert: live input stayed off instead of coming back on its own.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
+    expect(sendMidi).not.toHaveBeenCalled();
+  });
+
+  it('keeps live input armed while moving between playable tracks', async () => {
+    // Arrange
+    const session = defaultSession();
+    const playable = (id: string, name: string) => ({
+      panLaw: 'equalPower' as const,
+      id,
+      name,
+      kind: 'instrument' as const,
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off' as const,
+      midiInput: {},
+      instrument: {
+        id: `device:${id}`,
+        name: 'Fake Synth',
+        bypassed: false,
+        source: {
+          type: 'vst3' as const,
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
+      },
+      effects: [],
+    });
+    session.arrangement.tracks.push(playable('track:a', 'Keys A'), playable('track:b', 'Keys B'));
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
+    render(<Harness api={api} initialSession={session} />);
+    fireEvent.click(screen.getByText('Keys A'));
+    const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
+    fireEvent.click(computerKeyboard);
+
+    // Act: move to the other Instrument Track.
+    fireEvent.click(screen.getByText('Keys B'));
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
+
+    // Assert: the input the user turned on followed the focus.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:b', [0x90, 60, 100]));
   });
 
   it('toggles live input once for a held computer keyboard shortcut', () => {
