@@ -1336,22 +1336,6 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn map_recovery_candidates(
-    candidates: Vec<riffra_host::RecoveryCandidate>,
-) -> Vec<RecoveryCandidate> {
-    candidates
-        .into_iter()
-        .map(|candidate| RecoveryCandidate {
-            file_name: candidate.file_name,
-            updated_at_ms: candidate.updated_at_ms,
-            session_id: candidate.session_id,
-            project_name: candidate.project_name,
-            note: candidate.note,
-        })
-        .collect()
-}
-
 fn map_runtime_recovery_candidates(
     candidates: Vec<riffra_runtime::RecoveryCandidate>,
 ) -> Vec<RecoveryCandidate> {

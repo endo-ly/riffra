@@ -698,12 +698,10 @@ mod tests {
             48_000,
         );
 
-        let with_clip = core
-            .application(&storage)
+        core.application(&storage)
             .add_audio_clip(clip, |_| true)
             .unwrap();
-        let moved = core
-            .application(&storage)
+        core.application(&storage)
             .move_audio_clips(vec![AudioClipMove {
                 clip_id: "clip:1".into(),
                 start_tick: TimelineTick(960),

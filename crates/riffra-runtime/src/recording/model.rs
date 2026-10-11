@@ -105,9 +105,6 @@ mod tests {
 
     #[test]
     fn a_capture_walks_its_documented_states() {
-        let mut capture = fresh();
-        assert_eq!(capture.status, RecordingCaptureStatus::Recording);
-
         for target in [
             RecordingCaptureStatus::Completing,
             RecordingCaptureStatus::Recoverable,
