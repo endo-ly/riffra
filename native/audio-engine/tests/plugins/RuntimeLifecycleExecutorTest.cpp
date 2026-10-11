@@ -162,12 +162,13 @@ TEST(RuntimeLifecycleExecutorTest, DropsOldestStateWhenCapacityIsExceeded) {
     EXPECT_EQ(newestValue.load(std::memory_order_acquire), 999);
 }
 
-TEST(RuntimeLifecycleExecutorTest, FiresTimeoutHandlerWhenTaskExceedsItsTimeBound) {
+TEST(RuntimeLifecycleExecutorTest, FiresTheTimeoutHandlerAndKeepsExecutingTasks) {
     RuntimeLifecycleExecutor executor;
     std::atomic<int> timeouts{0};
     executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
     std::atomic<bool> blockerStarted{false};
     std::atomic<bool> releaseBlocker{false};
+    std::atomic<int> laterRuns{0};
 
     ASSERT_TRUE(executor.submit(
         [&] {
@@ -182,14 +183,18 @@ TEST(RuntimeLifecycleExecutorTest, FiresTimeoutHandlerWhenTaskExceedsItsTimeBoun
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    EXPECT_GE(timeouts.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(timeouts.load(std::memory_order_acquire), 1);
 
     releaseBlocker.store(true, std::memory_order_release);
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    ASSERT_TRUE(executor.submit([&] { laterRuns.store(7, std::memory_order_release); },
+                                std::chrono::seconds(5)));
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_EQ(laterRuns.load(std::memory_order_acquire), 7);
     EXPECT_EQ(timeouts.load(std::memory_order_acquire), 1);
 }
 
-TEST(RuntimeLifecycleExecutorTest, DoesNotFireTimeoutHandlerWithinTimeBound) {
+TEST(RuntimeLifecycleExecutorTest, DoesNotFireTheTimeoutHandlerWithinTheTimeBound) {
     RuntimeLifecycleExecutor executor;
     std::atomic<int> timeouts{0};
     executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
@@ -238,37 +243,6 @@ TEST(RuntimeLifecycleExecutorTest, WatchdogsProgressAwareWorkWhenProgressStops) 
 
     releaseBlocker.store(true, std::memory_order_release);
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
-}
-
-TEST(RuntimeLifecycleExecutorTest, ContinuesExecutingTasksAfterTimeoutFires) {
-    RuntimeLifecycleExecutor executor;
-    std::atomic<int> timeouts{0};
-    executor.setTimeoutHandler([&] { timeouts.fetch_add(1, std::memory_order_acq_rel); });
-    std::atomic<bool> blockerStarted{false};
-    std::atomic<bool> releaseBlocker{false};
-    std::atomic<int> laterRuns{0};
-
-    ASSERT_TRUE(executor.submit(
-        [&] {
-            blockerStarted.store(true, std::memory_order_release);
-            while (!releaseBlocker.load(std::memory_order_acquire))
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        },
-        std::chrono::milliseconds(50)));
-    if (!waitForFlag(blockerStarted, std::chrono::seconds(1))) {
-        releaseBlocker.store(true, std::memory_order_release);
-        FAIL() << "Lifecycle worker did not start the blocker task.";
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    EXPECT_GE(timeouts.load(std::memory_order_acquire), 1);
-
-    releaseBlocker.store(true, std::memory_order_release);
-    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
-    ASSERT_TRUE(executor.submit([&] { laterRuns.store(7, std::memory_order_release); },
-                                std::chrono::seconds(5)));
-    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
-    EXPECT_EQ(laterRuns.load(std::memory_order_acquire), 7);
-    EXPECT_EQ(timeouts.load(std::memory_order_acquire), 1);
 }
 
 }  // namespace riffra

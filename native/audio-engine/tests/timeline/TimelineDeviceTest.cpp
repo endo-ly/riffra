@@ -15,21 +15,17 @@ TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
     EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
 }
 
-TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
+TEST(TimelineEngineTest, AppliesEditorEditsToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
+    const auto parameter = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
+    const auto state = TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime();
+    const auto program = TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime();
 
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, AppliesPluginStateToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime());
-}
-
-TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
+    // Assert: a parameter, a persisted state, and a program all reach the runtime.
+    EXPECT_TRUE(parameter);
+    EXPECT_TRUE(state);
+    EXPECT_TRUE(program);
 }
 
 TEST(TimelineEngineTest, WarmsUpAndResetsPluginDevices) {

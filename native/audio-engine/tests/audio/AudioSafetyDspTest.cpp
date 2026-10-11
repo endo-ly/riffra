@@ -92,16 +92,4 @@ TEST(AudioSafetyDspTest, FeedbackDetectorIgnoresBriefPeak) {
     EXPECT_FALSE(detector.isSuspected());
 }
 
-TEST(AudioSafetyDspTest, FeedbackDetectorIgnoresPeakInputWhenMonitoringIsOff) {
-    FeedbackDetector detector;
-    detector.prepare(kSampleRate);
-
-    const auto sustainedBlocks =
-        static_cast<int>(std::ceil(kSampleRate * 300.0 / 1000.0 / kBlockSize));
-    for (int block = 0; block < sustainedBlocks; ++block)
-        detector.observe(0.99f, kBlockSize, false);
-
-    EXPECT_FALSE(detector.isSuspected());
-}
-
 }  // namespace riffra

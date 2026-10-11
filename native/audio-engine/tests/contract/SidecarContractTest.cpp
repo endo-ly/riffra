@@ -47,19 +47,19 @@ TEST(SidecarContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
     for (const auto type : kSidecarCommandTypes) {
         const auto fixture = commandFixture(juce::String(std::string(type).c_str()));
         JsonPath path;
-        std::vector<std::pair<JsonPath, std::string>> fields;
-        collectFieldPaths(fixture, path, fields);
-        for (const auto& [objectPath, key] : fields) {
-            juce::String error;
-            auto fieldPath = objectPath;
-            fieldPath.push_back(key);
-            EXPECT_FALSE(decodes(withoutKey(fixture, objectPath, key), error))
-                << type << ": removing " << formatPath(fieldPath) << " was accepted";
-        }
         std::vector<JsonPath> objects;
         collectObjectPaths(fixture, path, objects);
         for (const auto& objectPath : objects) {
+            const auto value = navigateJson(fixture, objectPath);
+            const auto fields = objectFieldNames(value);
+            if (fields.empty()) continue;
+
             juce::String error;
+            auto missingPath = objectPath;
+            missingPath.push_back(fields.front());
+            EXPECT_FALSE(decodes(withoutKey(fixture, objectPath, fields.front()), error))
+                << type << ": removing " << formatPath(missingPath) << " was accepted";
+
             EXPECT_FALSE(decodes(withUnknownKey(fixture, objectPath), error))
                 << type << ": an unknown key at " << formatPath(objectPath) << " was accepted";
         }

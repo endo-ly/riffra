@@ -109,7 +109,7 @@ TEST(AudioDeviceServiceTest, ReportsProbeFieldsRequiredByTheHost) {
     EXPECT_EQ(probe.getProperty("message", {}).toString(), "Audio device list refreshed.");
 }
 
-TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
+TEST(MidiInputServiceTest, ProcessesMonitoredNotesWithoutListeningForDevices) {
     TimelineEngine timeline;
     AudioRenderPipeline callback(timeline);
     MidiInputService service(callback.preview(), timeline);
@@ -121,13 +121,6 @@ TEST(MidiInputServiceTest, TracksMonitorStateAndNoteMessages) {
     EXPECT_TRUE(monitor.isActive());
     EXPECT_EQ(monitor.getMessageCount(), 1u);
     EXPECT_EQ(monitor.getLastNote(), 60);
-}
-
-TEST(MidiInputServiceTest, StartsWithoutListeningForDevices) {
-    TimelineEngine timeline;
-    AudioRenderPipeline callback(timeline);
-    MidiInputService service(callback.preview(), timeline);
-
     EXPECT_FALSE(service.isListening());
     EXPECT_FALSE(service.deviceSetChanged());
 }

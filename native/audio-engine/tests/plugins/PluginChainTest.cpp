@@ -86,21 +86,13 @@ TEST(PluginChainTest, BypassesOnlyRequestedDevice) {
     EXPECT_FLOAT_EQ(outputRight.back(), 1.0f);
 }
 
-TEST(PluginChainTest, AggregatesDeviceLatency) {
-    std::vector<int> order;
-    juce::String error;
-    auto chain = makeChain(order, error);
-    ASSERT_NE(chain, nullptr) << error;
-
-    EXPECT_EQ(chain->latencySamples(), 448);
-}
-
-TEST(PluginChainTest, AggregatesDeviceTail) {
+TEST(PluginChainTest, AggregatesDeviceLatencyAndTail) {
     std::vector<int> order;
     juce::String error;
     auto chain = makeChain(order, error, true);
     ASSERT_NE(chain, nullptr) << error;
 
+    EXPECT_EQ(chain->latencySamples(), 448);
     EXPECT_EQ(chain->tailSamples(), 2'880);
 }
 

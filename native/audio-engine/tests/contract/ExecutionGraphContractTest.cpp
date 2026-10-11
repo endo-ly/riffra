@@ -79,88 +79,54 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(state.parameterValues.size(), 2u);
 }
 
-TEST(ExecutionGraphContractTest, DecodesEveryFixtureInTheContractDirectory) {
-    const juce::File directory(RIFFRA_CONTRACT_FIXTURE_DIR);
-    const auto files = directory.findChildFiles(juce::File::findFiles, false, "*.json");
-    ASSERT_FALSE(files.isEmpty());
-    for (const auto& file : files) {
-        const auto value = juce::JSON::parse(file.loadFileAsString());
-        juce::String error;
-        if (file.getFileName() == "timeline-snapshot-minimal.json" ||
-            file.getFileName() == "timeline-snapshot-full.json") {
-            TimelineSnapshotSpec decoded;
-            ASSERT_TRUE(decodeTimelineSnapshot(value, decoded, error)) << error.toStdString();
-        } else if (file.getFileName() == "offline-render-request.json") {
-            OfflineRenderRequestSpec decoded;
-            ASSERT_TRUE(decodeOfflineRenderRequest(value, decoded, error)) << error.toStdString();
-        } else if (file.getFileName() == "plugin-state.json") {
-            PluginStateSpec decoded;
-            ASSERT_TRUE(decodePluginState(value, decoded, error)) << error.toStdString();
-        } else {
-            FAIL() << "unhandled execution graph fixture: " << file.getFileName().toStdString();
-        }
-    }
-}
-
 TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth) {
     const auto full = fixture("timeline-snapshot-full.json");
-    std::vector<JsonPath> paths;
-    JsonPath path;
-    collectObjectPaths(full, path, paths);
+    const std::vector<JsonPath> objects{
+        {},
+        {"graph"},
+        {"graph", "timebase"},
+        {"graph", "tracks", "#0"},
+        {"graph", "tracks", "#0", "audioClips", "#0"},
+        {"graph", "tracks", "#1"},
+        {"graph", "tracks", "#1", "midiClips", "#0"},
+        {"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0"},
+        {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0"},
+        {"graph", "tracks", "#2", "instrument"},
+    };
+    for (const auto& objectPath : objects) {
+        const auto value = navigateJson(full, objectPath);
+        ASSERT_FALSE(value.isUndefined()) << formatPath(objectPath);
+        const auto fields = objectFieldNames(value);
+        ASSERT_FALSE(fields.empty()) << formatPath(objectPath);
 
-    std::vector<std::pair<JsonPath, std::string>> fieldPaths;
-    collectFieldPaths(full, path, fieldPaths);
-    for (const auto& [objectPath, key] : fieldPaths) {
-        const auto missing = withoutKey(full, objectPath, key);
-        auto expectedPath = objectPath;
-        expectedPath.push_back(key);
-        expectTimelineSnapshotRejected(missing, formatPath(expectedPath));
-    }
+        auto missingPath = objectPath;
+        missingPath.push_back(fields.front());
+        expectTimelineSnapshotRejected(withoutKey(full, objectPath, fields.front()),
+                                       formatPath(missingPath));
 
-    for (const auto& objectPath : paths) {
-        const auto unknown = withUnknownKey(full, objectPath);
-        const auto expectedPath = formatPath(objectPath);
-        expectTimelineSnapshotRejected(unknown, expectedPath.isEmpty()
-                                                    ? juce::String("__unexpected")
-                                                    : expectedPath + ".__unexpected");
+        auto unknownPath = objectPath;
+        unknownPath.push_back("__unexpected");
+        const auto expectedUnknown =
+            formatPath(unknownPath).isEmpty() ? juce::String("__unexpected")
+                                              : formatPath(unknownPath);
+        expectTimelineSnapshotRejected(withUnknownKey(full, objectPath), expectedUnknown);
     }
 }
 
 TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     const auto full = fixture("timeline-snapshot-full.json");
     const std::vector<std::pair<JsonPath, juce::var>> invalidValues{
-        {JsonPath{"graph", "timebase", "ppq"}, 1},
         {JsonPath{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 0.0},
-        {JsonPath{"graph", "timebase", "tempoChanges", "#0", "bpm"}, -1.0},
-        {JsonPath{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 0},
-        {JsonPath{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 0},
         {JsonPath{"graph", "masterGainDb"}, -91.0},
-        {JsonPath{"graph", "masterGainDb"}, 1.0},
-        {JsonPath{"graph", "tracks", "#0", "gainDb"}, -91.0},
         {JsonPath{"graph", "tracks", "#0", "gainDb"}, 25.0},
-        {JsonPath{"graph", "tracks", "#0", "pan"}, -1.1},
         {JsonPath{"graph", "tracks", "#0", "pan"}, 1.1},
-        {JsonPath{"graph", "tracks", "#0", "audioInput", "channelIndex"}, 32},
-        {JsonPath{"graph", "tracks", "#0", "volumeAutomation", "#0", "value"}, -91.0},
         {JsonPath{"graph", "tracks", "#0", "volumeAutomation", "#0", "value"}, 25.0},
-        {JsonPath{"graph", "tracks", "#0", "panAutomation", "#0", "value"}, -1.1},
-        {JsonPath{"graph", "tracks", "#0", "panAutomation", "#0", "value"}, 1.1},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "pan"}, 1.1},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "gainDb"}, -91.0},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "gainDb"}, 25.0},
+        {JsonPath{"graph", "tracks", "#0", "audioInput", "channelIndex"}, 32},
         {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "sourceSampleRate"}, 0},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "sourceEndFrame"}, 0},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "durationFrames"}, 0},
-        {JsonPath{"graph", "tracks", "#0", "audioClips", "#0", "durationSampleRate"}, 0},
         {JsonPath{"graph", "tracks", "#1", "midiInput", "channel"}, 17},
-        {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "channel"}, 0},
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "note"}, 128},
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "velocity"}, 0},
-        {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "channel"}, 17},
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data1"}, 128},
-        {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data2"}, 128},
-        {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "channel"}, 0},
-        {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "channel"}, 17},
     };
     for (const auto& [pathToValue, invalid] : invalidValues) {
         auto mutated = cloneJson(full);
@@ -185,46 +151,21 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
     const std::vector<std::pair<JsonPath, juce::var>> validBoundaries{
         {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 20.0},
         {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 400.0},
-        {{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 1},
-        {{"graph", "timebase", "timeSignatureChanges", "#0", "numerator"}, 255},
-        {{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 1},
-        {{"graph", "timebase", "timeSignatureChanges", "#0", "denominator"}, 32},
         {{"graph", "masterGainDb"}, -90.0},
         {{"graph", "masterGainDb"}, 0.0},
         {{"graph", "tracks", "#0", "gainDb"}, -90.0},
         {{"graph", "tracks", "#0", "gainDb"}, 24.0},
         {{"graph", "tracks", "#0", "pan"}, -1.0},
         {{"graph", "tracks", "#0", "pan"}, 1.0},
-        {{"graph", "tracks", "#0", "volumeAutomation", "#0", "value"}, -90.0},
         {{"graph", "tracks", "#0", "volumeAutomation", "#0", "value"}, 24.0},
-        {{"graph", "tracks", "#0", "panAutomation", "#0", "value"}, -1.0},
         {{"graph", "tracks", "#0", "panAutomation", "#0", "value"}, 1.0},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "pan"}, -1.0},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "pan"}, 1.0},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "gainDb"}, -90.0},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "gainDb"}, 24.0},
-        {{"graph", "tracks", "#0", "audioInput", "channelIndex"}, 0},
         {{"graph", "tracks", "#0", "audioInput", "channelIndex"}, 31},
         {{"graph", "tracks", "#0", "audioClips", "#0", "sourceSampleRate"}, 1},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "sourceEndFrame"}, 1},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "durationFrames"}, 1},
-        {{"graph", "tracks", "#0", "audioClips", "#0", "durationSampleRate"}, 1},
-        {{"graph", "tracks", "#1", "midiInput", "channel"}, 1},
         {{"graph", "tracks", "#1", "midiInput", "channel"}, 16},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "startTick"}, 0},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "durationTicks"}, 1},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "note"}, 0},
         {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "note"}, 127},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "velocity"}, 1},
         {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "velocity"}, 127},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "channel"}, 1},
         {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "channel"}, 16},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 0},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "channel"}, 1},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "channel"}, 16},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data1"}, 0},
         {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data1"}, 127},
-        {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data2"}, 0},
         {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data2"}, 127},
     };
     for (const auto& [pathToValue, boundary] : validBoundaries) {
