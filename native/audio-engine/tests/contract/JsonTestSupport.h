@@ -4,7 +4,6 @@
 
 #include <functional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace riffra::json_test {
@@ -31,47 +30,34 @@ inline juce::var readJsonFile(const juce::File& file) {
     return juce::JSON::parse(file.loadFileAsString());
 }
 
-/// Collects the path of every object, including the root.
-inline void collectObjectPaths(const juce::var& value, JsonPath& path,
-                               std::vector<JsonPath>& output) {
-    if (value.isArray()) {
-        const auto& items = *value.getArray();
-        for (int index = 0; index < items.size(); ++index) {
-            path.push_back("#" + std::to_string(index));
-            collectObjectPaths(items.getReference(index), path, output);
-            path.pop_back();
-        }
-    } else if (value.isObject()) {
-        output.push_back(path);
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index) {
-            path.push_back(properties.getName(index).toString().toStdString());
-            collectObjectPaths(properties.getValueAt(index), path, output);
-            path.pop_back();
+/// Returns the value at `path`, or an undefined var when the path misses.
+inline juce::var navigateJson(const juce::var& root, const JsonPath& path) {
+    juce::var current = root;
+    for (const auto& token : path) {
+        if (!token.empty() && token.front() == '#') {
+            if (!current.isArray()) return {};
+            const auto index = std::stoi(token.substr(1));
+            if (index < 0 || index >= current.size()) return {};
+            current = current[index];
+        } else {
+            auto* object = current.getDynamicObject();
+            if (object == nullptr) return {};
+            const auto identifier = juce::Identifier(juce::String::fromUTF8(token.c_str()));
+            if (!object->hasProperty(identifier)) return {};
+            current = object->getProperty(identifier);
         }
     }
+    return current;
 }
 
-/// Collects every object key as (path of its object, key).
-inline void collectFieldPaths(const juce::var& value, JsonPath& path,
-                              std::vector<std::pair<JsonPath, std::string>>& output) {
-    if (value.isArray()) {
-        const auto& items = *value.getArray();
-        for (int index = 0; index < items.size(); ++index) {
-            path.push_back("#" + std::to_string(index));
-            collectFieldPaths(items.getReference(index), path, output);
-            path.pop_back();
-        }
-    } else if (value.isObject()) {
-        const auto& properties = value.getDynamicObject()->getProperties();
-        for (int index = 0; index < properties.size(); ++index) {
-            const auto key = properties.getName(index).toString().toStdString();
-            output.emplace_back(path, key);
-            path.push_back(key);
-            collectFieldPaths(properties.getValueAt(index), path, output);
-            path.pop_back();
-        }
-    }
+/// Names the fields of a JSON object, in document order.
+inline std::vector<std::string> objectFieldNames(const juce::var& value) {
+    std::vector<std::string> names;
+    if (!value.isObject()) return names;
+    const auto& properties = value.getDynamicObject()->getProperties();
+    for (int index = 0; index < properties.size(); ++index)
+        names.push_back(properties.getName(index).toString().toStdString());
+    return names;
 }
 
 inline juce::String formatPath(const JsonPath& path) {

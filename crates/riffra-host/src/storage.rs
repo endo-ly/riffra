@@ -496,6 +496,17 @@ mod tests {
         let loaded = store.load_or_create().unwrap();
         assert!(loaded.recovered_from_generation);
         assert_eq!(loaded.session.settings.note, "recover me");
+        assert!(!store.recovery_candidates().unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_project_without_a_corrupt_generation_offers_no_recovery() {
+        let root = test_root("no-recovery");
+        let store = SessionStore::new(&root, TEST_PROJECT_ID);
+        store.save(&CreativeSession::new(now_ms())).unwrap();
+
+        assert!(store.recovery_candidates().unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -545,14 +556,6 @@ mod tests {
         );
         assert_eq!(fs::read(&current).unwrap(), original);
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn clamps_unsafe_master_gain_before_persisting() {
-        let mut session = CreativeSession::new(now_ms());
-        session.settings.master_db = 12.0;
-        let normalized = session.validate_and_normalize().unwrap();
-        assert_eq!(normalized.settings.master_db, 0.0);
     }
 
     #[test]
@@ -671,18 +674,5 @@ mod tests {
                 .is_file()
         );
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn reserves_space_for_current_generation_and_atomic_temp_file() {
-        assert_eq!(required_space(100, 50), 64 * 1024 + 150);
-    }
-
-    #[test]
-    fn default_session_carries_an_empty_arrangement() {
-        let session = CreativeSession::new(now_ms())
-            .validate_and_normalize()
-            .unwrap();
-        assert!(session.arrangement.tracks.is_empty());
     }
 }

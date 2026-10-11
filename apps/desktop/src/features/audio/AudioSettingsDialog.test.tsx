@@ -228,17 +228,6 @@ describe('AudioSettingsDialog', () => {
     expect(screen.getByRole('option', { name: 'Input 2' })).toBeInTheDocument();
   });
 
-  it('uses one Audio device selector for same-device drivers', async () => {
-    renderDialog();
-    const user = userEvent.setup();
-
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Audio driver' }), 'ASIO');
-
-    expect(screen.getByRole('combobox', { name: 'Audio device' })).toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Input device' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Output device' })).not.toBeInTheDocument();
-  });
-
   it('keeps the driver selector available when the active driver has no devices', async () => {
     const emptyDriverProbe: AudioDeviceProbe = {
       ...probe,

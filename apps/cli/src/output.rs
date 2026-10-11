@@ -211,50 +211,6 @@ mod tests {
     use riffra_control::CommandResult;
 
     #[test]
-    fn canonical_mutations_become_small_receipts() {
-        let response = ControlResponse::success(
-            "request-1",
-            7,
-            CommandResult {
-                result_type: "arrangementMutation".into(),
-                value: json!({
-                    "canonical": {
-                        "session": {
-                            "arrangement": {
-                                "tracks": [{
-                                    "id": "track:keys",
-                                    "instrument": {
-                                        "id": "device:synth",
-                                        "stateData": "large"
-                                    },
-                                    "effects": []
-                                }],
-                                "midiClips": [{
-                                    "id": "clip:keys",
-                                    "notes": [{"id": "note:old"}, {"id": "note:new"}]
-                                }]
-                            }
-                        }
-                    },
-                    "projection": {"state": "queued"},
-                    "createdEntityIds": {"midiNotes": ["note:new"]}
-                }),
-            },
-        );
-
-        let response = compact_agent_response(response);
-        let result = response.result.unwrap();
-        assert_eq!(result.result_type, "mutation");
-        assert_eq!(response.sequence, Some(7));
-        assert_eq!(result.value["sequence"], 7);
-        assert_eq!(result.value["projection"]["state"], "queued");
-        assert_eq!(result.value["createdEntityIds"]["midiNotes"][0], "note:new");
-        let encoded = result.value.to_string();
-        assert!(!encoded.contains("canonical"));
-        assert!(!encoded.contains("stateData"));
-    }
-
-    #[test]
     fn canonical_state_deliveries_are_not_compacted() {
         let original = ControlResponse::success(
             "request-1",

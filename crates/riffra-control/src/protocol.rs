@@ -306,16 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn conflict_contains_machine_readable_revisions() {
-        let error = ProtocolError::conflict(18, 20);
-        assert_eq!(error.code, ErrorCode::Conflict);
-        assert_eq!(error.details.unwrap()["currentSequence"], 20);
-    }
+    fn a_conflict_carries_the_machine_readable_state_the_client_must_adopt() {
+        let revision = ProtocolError::conflict(18, 20);
+        assert_eq!(revision.code, ErrorCode::Conflict);
+        assert_eq!(revision.details.unwrap()["currentSequence"], 20);
 
-    #[test]
-    fn project_conflict_contains_machine_readable_project_ids() {
-        let error = ProtocolError::project_conflict("project:a", "project:b");
-        assert_eq!(error.code, ErrorCode::Conflict);
-        assert_eq!(error.details.unwrap()["currentProjectId"], "project:b");
+        let project = ProtocolError::project_conflict("project:a", "project:b");
+        assert_eq!(project.code, ErrorCode::Conflict);
+        assert_eq!(project.details.unwrap()["currentProjectId"], "project:b");
     }
 }

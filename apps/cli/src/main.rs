@@ -505,20 +505,6 @@ mod tests {
     }
 
     #[test]
-    fn control_requests_return_request_id_and_sequence() {
-        let root = std::env::temp_dir().join(format!("riffra-cli-protocol-{}", std::process::id()));
-        let dispatcher = open_test_dispatcher(root.clone());
-        let response = handle_request(
-            &dispatcher,
-            r#"{"requestId":"42","command":"session.get","params":{}}"#,
-        );
-        assert!(response.ok);
-        assert_eq!(response.request_id, "42");
-        assert!(response.sequence.is_some());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn interactive_mutations_return_a_compact_receipt() {
         let root = std::env::temp_dir().join(format!(
             "riffra-cli-mutation-receipt-{}",

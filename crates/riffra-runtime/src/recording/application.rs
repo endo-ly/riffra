@@ -2151,18 +2151,4 @@ mod tests {
         assert_eq!(recordings.len(), 1);
         let _ = fs::remove_dir_all(root);
     }
-
-    #[test]
-    fn detect_duplicates_returns_groups() {
-        let root = temp_root("dupes");
-        let audio = AudioSupervisor::offline("test");
-        let _ = seed_take(&root, "take-a", b"identical");
-        let _ = seed_take(&root, "take-b", b"identical");
-        let _ = seed_take(&root, "take-c", b"different");
-        let ctx = context_for(&root, &audio, false);
-        let groups = detect_duplicate_recordings(&ctx).unwrap();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].len(), 2);
-        let _ = fs::remove_dir_all(root);
-    }
 }

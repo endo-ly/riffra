@@ -119,22 +119,31 @@ mod tests {
         )
         .unwrap();
 
-        let updated = dispatcher
+        // Arrange: only the tempo is patched first.
+        let tempo_only = dispatcher
             .dispatch(command("timebase.update", json!({"bpm": 140.0})), None)
             .unwrap();
-        let session = mutated_session(&updated);
-        assert_eq!(session.arrangement.timebase.ppq, 960);
-        assert_eq!(session.arrangement.timebase.tempo_changes[0].bpm, 140.0);
+
+        assert_eq!(mutated_session(&tempo_only).arrangement.timebase.ppq, 960);
         assert_eq!(
-            session.arrangement.timebase.time_signature_changes[0].numerator,
-            4
+            mutated_session(&tempo_only)
+                .arrangement
+                .timebase
+                .tempo_changes[0]
+                .bpm,
+            140.0
         );
         assert_eq!(
-            session.arrangement.timebase.time_signature_changes[0].denominator,
+            mutated_session(&tempo_only)
+                .arrangement
+                .timebase
+                .time_signature_changes[0]
+                .numerator,
             4
         );
 
-        let updated = dispatcher
+        // Act: the meter is patched while the tempo changes again.
+        let patched = dispatcher
             .dispatch(
                 command(
                     "timebase.update",
@@ -147,8 +156,10 @@ mod tests {
                 None,
             )
             .unwrap();
+
+        // Assert
         assert_eq!(
-            mutated_session(&updated).arrangement.timebase,
+            mutated_session(&patched).arrangement.timebase,
             riffra_core::ProjectTimebase {
                 ppq: 960,
                 tempo_changes: vec![riffra_core::TempoChange {
@@ -159,9 +170,10 @@ mod tests {
                     tick: 0,
                     numerator: 7,
                     denominator: 8
-                }]
+                }],
             }
         );
+
         let _ = fs::remove_dir_all(root);
     }
 

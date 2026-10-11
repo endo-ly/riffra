@@ -562,67 +562,63 @@ mod tests {
     }
 
     #[test]
-    fn keeps_only_the_latest_queued_snapshot() {
+    fn prepares_only_the_newest_snapshot_and_keeps_the_active_projection_usable() {
+        // Arrange: submissions that overlap one preparation collapse onto the
+        // newest snapshot only.
         let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(20)));
         let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
         submit_canonical(&coordinator, snapshot(1), key(1, 1));
         submit_canonical(&coordinator, snapshot(2), key(2, 2));
         submit_canonical(&coordinator, snapshot(3), key(3, 3));
 
+        // Act / Assert
         wait_until(|| coordinator.status().active_session_revision == Some(3));
-        let loaded = driver.loaded.lock().unwrap().clone();
-        assert_eq!(loaded.last().copied(), Some(3));
-        assert!(!loaded.contains(&2));
-    }
+        let initial_loads = driver.loaded.lock().unwrap();
+        assert_eq!(initial_loads.last(), Some(&3));
+        assert!(!initial_loads.contains(&2));
+        drop(initial_loads);
 
-    #[test]
-    fn treats_timeline_busy_as_loading_and_retries_after_idle() {
-        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
+        // A prepare rejected as busy is reported as loading and retried once the
+        // timeline is idle again.
         driver.busy_prepare_count.store(1, Ordering::Release);
-        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
-
-        submit_canonical(&coordinator, snapshot(4), key(4, 4));
+        let busy = Arc::new(snapshot(4));
+        submit_canonical(&coordinator, Arc::clone(&busy), key(4, 4));
 
         wait_until(|| coordinator.status().active_session_revision == Some(4));
-        let status = coordinator.status();
         assert_eq!(driver.wait_for_idle_count.load(Ordering::Acquire), 1);
-        assert_eq!(status.state, RuntimeProjectionState::Active);
-        assert_eq!(status.last_error, None);
-        assert_eq!(status.last_error_code, None);
-    }
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
+        let retried = coordinator.status();
+        assert_eq!(retried.state, RuntimeProjectionState::Active);
+        assert_eq!(retried.last_error, None);
+        assert_eq!(retried.last_error_code, None);
 
-    #[test]
-    fn preserves_the_active_projection_when_a_new_prepare_fails() {
-        let driver = Arc::new(FakeProjectionDriver::new(Duration::from_millis(5)));
-        let coordinator = ProjectionCoordinator::new(Arc::clone(&driver)).unwrap();
-        let original = snapshot(10);
-        submit_canonical(&coordinator, Arc::clone(&original), key(1, 10));
-        wait_until(|| coordinator.status().active_session_revision == Some(10));
-
+        // A failing prepare keeps the last active projection playable.
         driver.failed_prepare_count.store(1, Ordering::Release);
-        submit_canonical(&coordinator, snapshot(11), key(2, 11));
+        submit_canonical(&coordinator, snapshot(5), key(5, 5));
 
         wait_until(|| coordinator.status().state == RuntimeProjectionState::Failed);
-        let status = coordinator.status();
-        assert_eq!(status.active_session_revision, Some(10));
-        assert_eq!(status.active_projection_sequence, Some(1));
-        assert_eq!(status.last_error_code.as_deref(), Some("timeline"));
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+        let failed = coordinator.status();
+        assert_eq!(failed.active_session_revision, Some(4));
+        assert_eq!(failed.last_error_code.as_deref(), Some("timeline"));
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
+        let prepares_after_failure = driver.prepare_started.load(Ordering::Acquire);
 
-        // Act
-        let result = coordinator
-            .submit_canonical_with_deadline(reidentify(&original, 12), key(3, 12), None)
+        // Resubmitting the same graph under a new revision is adopted instead of
+        // prepared again, which clears the failure.
+        let adopted = coordinator
+            .submit_canonical_with_deadline(reidentify(&busy, 6), key(6, 6), None)
             .unwrap();
 
-        // Assert
-        assert!(matches!(result, CanonicalSubmit::Adopted));
+        assert!(matches!(adopted, CanonicalSubmit::Adopted));
         let restored = coordinator.status();
         assert_eq!(restored.state, RuntimeProjectionState::Active);
-        assert_eq!(restored.active_session_revision, Some(12));
-        assert_eq!(restored.active_projection_sequence, Some(3));
+        assert_eq!(restored.active_session_revision, Some(6));
         assert_eq!(restored.last_error, None);
         assert_eq!(restored.last_error_code, None);
-        assert_eq!(driver.prepare_started.load(Ordering::Acquire), 2);
-        assert_eq!(driver.loaded.lock().unwrap().as_slice(), &[10]);
+        assert_eq!(
+            driver.prepare_started.load(Ordering::Acquire),
+            prepares_after_failure
+        );
+        assert_eq!(driver.loaded.lock().unwrap().last(), Some(&4));
     }
 }

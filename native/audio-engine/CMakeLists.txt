@@ -523,14 +523,26 @@ if(BUILD_TESTING)
   endif()
 
   include(GoogleTest)
-  gtest_discover_tests(riffra-audio-tests
-    TEST_FILTER "-SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset")
+  gtest_discover_tests(
+    riffra-audio-tests
+    TEST_FILTER
+      "-SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset:TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam")
   add_test(
     NAME SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset
     COMMAND riffra-audio-tests
       --gtest_filter=SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset)
   set_tests_properties(
     SonalloyInstrumentRuntimeTest.CompilesAndPlaysEveryReleasedPreset
+    PROPERTIES LABELS slow)
+
+  # A short loop replayed hundreds of times takes minutes and is only meaningful
+  # on main and on demand.
+  add_test(
+    NAME TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam
+    COMMAND riffra-audio-tests
+      --gtest_filter=TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam)
+  set_tests_properties(
+    TimelineEngineTest.StreamsALongLoopRecordingWithoutPreallocatingRam
     PROPERTIES LABELS slow)
 
   add_executable(riffra-audio-benchmarks EXCLUDE_FROM_ALL

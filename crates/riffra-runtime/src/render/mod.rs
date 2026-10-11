@@ -503,25 +503,41 @@ mod tests {
     }
 
     #[test]
-    fn entire_arrangement_uses_tick_extent() {
-        let session = session_with_clips();
-        assert_eq!(
-            resolve_range(&session, &RenderRange::EntireArrangement).unwrap(),
-            (0, 2_400)
-        );
-    }
-
-    #[test]
-    fn entire_arrangement_uses_the_explicit_midi_clip_end_after_resize() {
+    fn a_render_range_resolves_from_the_arrangement_extent_and_the_meter() {
+        // Arrange: a MIDI clip whose explicit end is shorter than its content.
         let mut session = session_with_clips();
         session
             .arrangement
             .resize_midi_clip("clip", None, Some(TimelineTick(1_920)))
             .unwrap();
 
+        // Act
+        let entire = resolve_range(&session, &RenderRange::EntireArrangement).unwrap();
+        let selection = resolve_range(
+            &session,
+            &RenderRange::TimeSelection {
+                start: "1:2+1/2".parse().unwrap(),
+                end: "2:1".parse().unwrap(),
+            },
+        )
+        .unwrap();
+
+        // Assert: the explicit clip end wins over the content extent.
+        assert_eq!(entire, (0, 1_920));
+        assert_eq!(selection, (1_440, 3_840));
+
+        // Time signatures are read in the project's own meter.
+        session.arrangement.timebase.time_signature_changes[0].numerator = 3;
         assert_eq!(
-            resolve_range(&session, &RenderRange::EntireArrangement).unwrap(),
-            (0, 1_920)
+            resolve_range(
+                &session,
+                &RenderRange::TimeSelection {
+                    start: "3:1".parse().unwrap(),
+                    end: "4:1".parse().unwrap(),
+                },
+            )
+            .unwrap(),
+            (5_760, 8_640)
         );
     }
 
@@ -551,50 +567,6 @@ mod tests {
                 },
             )
             .is_err()
-        );
-    }
-
-    #[test]
-    fn time_selection_converts_musical_positions_at_the_render_boundary() {
-        let session = session_with_clips();
-        assert_eq!(
-            resolve_range(
-                &session,
-                &RenderRange::TimeSelection {
-                    start: "9:1".parse().unwrap(),
-                    end: "13:1".parse().unwrap(),
-                },
-            )
-            .unwrap(),
-            (30_720, 46_080)
-        );
-        assert_eq!(
-            resolve_range(
-                &session,
-                &RenderRange::TimeSelection {
-                    start: "1:2+1/2".parse().unwrap(),
-                    end: "2:1".parse().unwrap(),
-                },
-            )
-            .unwrap(),
-            (1_440, 3_840)
-        );
-    }
-
-    #[test]
-    fn time_selection_uses_the_project_time_signature() {
-        let mut session = session_with_clips();
-        session.arrangement.timebase.time_signature_changes[0].numerator = 3;
-        assert_eq!(
-            resolve_range(
-                &session,
-                &RenderRange::TimeSelection {
-                    start: "3:1".parse().unwrap(),
-                    end: "4:1".parse().unwrap(),
-                },
-            )
-            .unwrap(),
-            (5_760, 8_640)
         );
     }
 

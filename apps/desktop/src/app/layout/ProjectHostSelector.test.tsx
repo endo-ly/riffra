@@ -110,7 +110,7 @@ describe('ProjectHostSelector', () => {
     expect(onRenameProject).toHaveBeenCalledWith('My Project');
   });
 
-  it('keeps the selector open when Host switching fails', async () => {
+  it('keeps the selector open and reports the failure when a Host switch fails', async () => {
     const onSwitch = vi.fn().mockResolvedValue(null);
     const user = userEvent.setup();
     renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
@@ -123,10 +123,23 @@ describe('ProjectHostSelector', () => {
     );
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.getByText('Host switch failed')).toBeInTheDocument();
+
+    vi.mocked(openHostDataRoot).mockResolvedValueOnce('D:\\Music\\offline-host');
+    await user.click(screen.getByRole('menuitem', { name: 'Connect…' }));
+
+    await waitFor(() =>
+      expect(onSwitch).toHaveBeenCalledWith({
+        type: 'dataRoot',
+        dataRoot: 'D:\\Music\\offline-host',
+      }),
+    );
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
-  it('keeps the selector open when Project switching fails', async () => {
+  it('keeps the selector open and reports the failure when the Project changes', async () => {
     const onOpenProject = vi.fn().mockResolvedValue(null);
+    const onCreateProject = vi.fn().mockResolvedValue(null);
     const projectState = {
       ...defaultProjectState(),
       projects: [
@@ -140,8 +153,9 @@ describe('ProjectHostSelector', () => {
       ],
     };
     const user = userEvent.setup();
-    renderSelector(embedded, {
+    const { rerender } = renderSelector(embedded, {
       onOpenProject,
+      onCreateProject,
       projectState,
       projectError: 'Project opening failed: audio definition schema is unsupported.',
     });
@@ -156,17 +170,23 @@ describe('ProjectHostSelector', () => {
     expect(
       screen.getByText('Project opening failed: audio definition schema is unsupported.'),
     ).toBeInTheDocument();
-  });
 
-  it('keeps the selector open when Project creation fails', async () => {
-    const onCreateProject = vi.fn().mockResolvedValue(null);
-    const user = userEvent.setup();
-    renderSelector(embedded, {
-      onCreateProject,
-      projectError: 'Project creation failed: disk full',
-    });
+    rerender(
+      <ProjectHostSelector
+        state={embedded}
+        hosts={hosts}
+        switching={false}
+        error={null}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onSwitch={vi.fn().mockResolvedValue(null)}
+        onReconnect={vi.fn().mockResolvedValue(null)}
+        projectState={projectState}
+        onOpenProject={onOpenProject}
+        onCreateProject={onCreateProject}
+        projectError="Project creation failed: disk full"
+      />,
+    );
 
-    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
     await user.click(screen.getByRole('menuitem', { name: 'New Project' }));
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledOnce());
@@ -183,25 +203,6 @@ describe('ProjectHostSelector', () => {
     await user.click(screen.getByRole('menuitem', { name: /project-a/i }));
 
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
-  });
-
-  it('keeps the selector open when a selected local Host cannot be connected', async () => {
-    vi.mocked(openHostDataRoot).mockResolvedValueOnce('D:\\Music\\offline-host');
-    const onSwitch = vi.fn().mockResolvedValue(null);
-    const user = userEvent.setup();
-    renderSelector(embedded, { onSwitch, error: 'Host switch failed' });
-
-    await user.click(screen.getByRole('button', { name: /Project: Untitled Project/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Connect…' }));
-
-    await waitFor(() =>
-      expect(onSwitch).toHaveBeenCalledWith({
-        type: 'dataRoot',
-        dataRoot: 'D:\\Music\\offline-host',
-      }),
-    );
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.getByText('Host switch failed')).toBeInTheDocument();
   });
 
   it('offers reconnect when the active Host is disconnected', async () => {

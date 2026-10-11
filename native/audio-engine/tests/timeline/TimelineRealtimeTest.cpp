@@ -295,12 +295,15 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     ASSERT_NE(rack, nullptr) << error;
     ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:live",
                                                                "instrument:live", std::move(rack)));
+    ASSERT_TRUE(TimelineEngineTestPeer::setPlaybackCompensationForTest(engine, "track:live",
+                                                                       kBlockSamples));
     engine.setRealtimeOwner(RealtimeOwner::audio);
     std::array<float, kBlockSamples> left{};
     std::array<float, kBlockSamples> right{};
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
     // Act
+    ASSERT_EQ(engine.status().frame.transportState, TransportState::stopped);
     const auto routed = engine.enqueueLiveMidi(0, juce::MidiMessage::noteOn(1, 60, 0.8f));
     (void)engine.beginBlock(kBlockSamples);
     engine.mix(outputs.data(), 2, kBlockSamples);
@@ -308,6 +311,11 @@ TEST(TimelineRealtimeTest, DeliversLiveMidiToTheArmedInstrumentAtTheNextBlock) {
     // Assert
     EXPECT_TRUE(routed);
     EXPECT_TRUE(trace.lastMidiMessage.isNoteOn());
+    EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
+    ASSERT_FALSE(trace.midiSamplePositions.empty());
+    EXPECT_EQ(trace.midiSamplePositions.front(), 0);
+    EXPECT_GT(left.front(), 0.01f);
+    EXPECT_GT(*std::max_element(left.begin(), left.end()), 0.01f);
 }
 
 TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {
@@ -331,6 +339,63 @@ TEST(TimelineRealtimeTest, CountsLiveMidiTheFullQueueCannotTake) {
     const auto status = engine.status();
     ASSERT_TRUE(status.graph.has_value());
     EXPECT_EQ(status.graph->liveMidiDrops, 1u);
+}
+
+TEST(TimelineRealtimeTest, ProcessesALoopCaptureWithinThePreparedBlockSize) {
+    // Arrange: the engine is prepared for 128-sample blocks.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    auto snapshot = makeTestSnapshot();
+    snapshot.graph.loopRange = {true, 0, 960};
+    auto track = makeAudioTrack("track:blocksize");
+    track.armed = true;
+    track.audioInput = AudioInputSpec{0};
+    snapshot.graph.tracks.push_back(std::move(track));
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 128, error)) << error;
+    test::TemporaryDirectory directory;
+    LoopDataCaptureSink captureSink(directory.get());
+    engine.setRecordingSink(&captureSink);
+
+    constexpr int kTotalSamples = 24'000;
+    constexpr int kEngineBlockSamples = 128;
+    constexpr float kImpulseAmplitude = 0.8f;
+    constexpr int kImpulsePosition = 500;
+    ASSERT_TRUE(engine.seekToTick(0));
+    int captureOffset = 0;
+    int captureSamples = 0;
+    ASSERT_TRUE(engine.startRecording(0, error) == RealtimeRequest::accepted);
+    ASSERT_TRUE(TimelineEngineTestPeer::recordingWindow(engine, kTotalSamples, captureOffset,
+                                                        captureSamples));
+    std::array<float, kEngineBlockSamples> input{};
+    std::array<float, kEngineBlockSamples> outputLeft{};
+    std::array<float, kEngineBlockSamples> outputRight{};
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+
+    // Act
+    int mixed = 0;
+    while (mixed < kTotalSamples) {
+        input.fill(0.0f);
+        if (mixed <= kImpulsePosition && kImpulsePosition < mixed + kEngineBlockSamples)
+            input[static_cast<std::size_t>(kImpulsePosition - mixed)] = kImpulseAmplitude;
+        engine.mix(inputs.data(), 1, outputs.data(), 2, kEngineBlockSamples);
+        mixed += kEngineBlockSamples;
+    }
+    ASSERT_TRUE(engine.stopRecording(error));
+    ASSERT_TRUE(finalizeCapturedRecording(engine, error));
+    engine.clearRecordingSink();
+
+    // Assert: the processed variant is chunked to the prepared block size and the
+    // impulse survives the split at its original position.
+    EXPECT_EQ(captureSink.totalRaw, kTotalSamples);
+    EXPECT_EQ(captureSink.totalProcessed, kTotalSamples);
+    EXPECT_GT(captureSink.offlineProcessedWriteCalls, 1);
+    EXPECT_LE(captureSink.maxOfflineProcessedWriteSize, kEngineBlockSamples);
+    ASSERT_LT(static_cast<std::size_t>(kImpulsePosition), captureSink.processedLeft.size());
+    EXPECT_NEAR(captureSink.processedLeft[static_cast<std::size_t>(kImpulsePosition)],
+                kImpulseAmplitude, 0.01f);
 }
 
 }  // namespace riffra

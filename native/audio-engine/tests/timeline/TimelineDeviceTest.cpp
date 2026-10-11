@@ -3,6 +3,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
+#include <vector>
 
 #include "TimelineTestSupport.h"
 #include "app/AudioCommandDispatcher.h"
@@ -13,23 +15,26 @@ namespace riffra {
 
 TEST(TimelineEngineTest, KeepsCanonicalTrackStateWhenDeviceRuntimeIsReused) {
     EXPECT_TRUE(TimelineEngineTestPeer::canonicalTrackStateSurvivesReusableDeviceCommit());
+
+    const PluginDeviceSpec original{
+        "device:test", "C:\\test\\Effect.vst3", {std::nullopt, {0.1f, 0.2f}, false}};
+    const PluginDeviceSpec edited{
+        "device:test", "C:\\test\\Effect.vst3", {std::nullopt, {0.8f, 0.9f}, true}};
+    EXPECT_TRUE(sameEffectTopology(std::vector<PluginDeviceSpec>{original},
+                                   std::vector<PluginDeviceSpec>{edited}));
 }
 
-TEST(TimelineEngineTest, AppliesEditorParameterToTheInstrumentRuntime) {
+TEST(TimelineEngineTest, AppliesEditorEditsToTheInstrumentRuntime) {
     // Arrange
     // Act
-    const auto passed = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
+    const auto parameter = TimelineEngineTestPeer::editorParameterUpdatesInstrumentRuntime();
+    const auto state = TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime();
+    const auto program = TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime();
 
-    // Assert
-    EXPECT_TRUE(passed);
-}
-
-TEST(TimelineEngineTest, AppliesPluginStateToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::persistedStateUpdatesInstrumentRuntime());
-}
-
-TEST(TimelineEngineTest, AppliesPluginProgramToTheInstrumentRuntime) {
-    EXPECT_TRUE(TimelineEngineTestPeer::programChangeUpdatesInstrumentRuntime());
+    // Assert: a parameter, a persisted state, and a program all reach the runtime.
+    EXPECT_TRUE(parameter);
+    EXPECT_TRUE(state);
+    EXPECT_TRUE(program);
 }
 
 TEST(TimelineEngineTest, WarmsUpAndResetsPluginDevices) {

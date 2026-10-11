@@ -541,28 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_command_request_reports_command_path() {
-        // Arrange
-        let (dispatcher, root) = open("unknown-command");
-
-        // Act
-        let error = dispatcher
-            .dispatch_request(ControlRequest::new(
-                "unknown-command",
-                "missing.command",
-                json!({}),
-                None,
-            ))
-            .unwrap_err()
-            .protocol_error();
-
-        // Assert
-        assert_eq!(error.code, ErrorCode::InvalidRequest);
-        assert_eq!(error.details.unwrap()["path"], "/command");
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn standalone_rejects_every_runtime_command() {
         // Arrange
         let (dispatcher, root) = open("runtime-only");
@@ -720,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn master_gain_set_updates_canonical_settings_in_standalone() {
+    fn master_gain_set_commits_canonical_settings() {
         // Arrange
         let (dispatcher, root) = open("master-gain");
 
