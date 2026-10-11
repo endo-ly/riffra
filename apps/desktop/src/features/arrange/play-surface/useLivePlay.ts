@@ -139,7 +139,13 @@ export function useLivePlay({
     sendMidi,
   });
 
-  const toggleComputerKeyboard = useCallback(() => setComputerKeyboard((enabled) => !enabled), []);
+  // A track that cannot play refuses to turn live input on, so focusing another
+  // Track never leaves input armed behind a toolbar that shows it off. Turning
+  // it off always works.
+  const toggleComputerKeyboard = useCallback(
+    () => setComputerKeyboard((enabled) => (enabled ? false : canPlay)),
+    [canPlay],
+  );
 
   const setMode = (mode: LivePlayMode) => {
     melodic.releaseHeldNotes();

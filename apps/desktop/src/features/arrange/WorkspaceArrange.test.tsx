@@ -1960,14 +1960,84 @@ describe('WorkspaceArrange', () => {
     expect(sendMidi.mock.calls.filter(([, bytes]) => bytes[0] === 0x90)).toHaveLength(1);
   });
 
-  it('reports why the computer keyboard cannot play the focused track', () => {
+  it('never arms live input on a track that cannot play', () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.tracks.push(
+      {
+        panLaw: 'equalPower' as const,
+        id: 'track:audio',
+        name: 'Audio Track',
+        kind: 'audio',
+        gainDb: 0,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        effects: [],
+      },
+      {
+        panLaw: 'equalPower' as const,
+        id: 'track:live',
+        name: 'Live Keys',
+        kind: 'instrument',
+        gainDb: 0,
+        pan: 0,
+        muted: false,
+        solo: false,
+        armed: false,
+        monitoring: 'off',
+        midiInput: {},
+        instrument: {
+          id: 'device:live',
+          name: 'Fake Synth',
+          bypassed: false,
+          source: {
+            type: 'vst3',
+            path: 'C:\\Plugins\\FakeSynth.vst3',
+            parameterValues: [],
+            disabledPlaceholder: false,
+          },
+        },
+        effects: [],
+      },
+    );
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
+    render(<Harness api={api} initialSession={session} />);
+    const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
+
+    // Act: select an Audio Track, which cannot receive performance MIDI.
+    fireEvent.click(screen.getByText('Audio Track'));
+
+    // Assert: the toggle reports the reason instead of showing itself engaged.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
+    expect(computerKeyboard).toHaveAttribute(
+      'title',
+      expect.stringContaining('No Track is focused.'),
+    );
+
+    // Act: ask for live input there, then focus an Instrument Track.
+    fireEvent.click(computerKeyboard);
+    fireEvent.click(screen.getByText('Live Keys'));
+
+    // Assert: the Instrument Track does not inherit an input the user never armed.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
+    expect(sendMidi).not.toHaveBeenCalled();
+  });
+
+  it('toggles live input once for a held computer keyboard shortcut', () => {
     // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
       panLaw: 'equalPower' as const,
-      id: 'track:audio',
-      name: 'Audio Track',
-      kind: 'audio',
+      id: 'track:live',
+      name: 'Live Keys',
+      kind: 'instrument',
       gainDb: 0,
       pan: 0,
       muted: false,
@@ -1975,19 +2045,31 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
+      instrument: {
+        id: 'device:live',
+        name: 'Fake Synth',
+        bypassed: false,
+        source: {
+          type: 'vst3',
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
+      },
       effects: [],
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
-    render(<Harness api={api} initialSession={session} initialFocusedTrackId="track:audio" />);
+    render(<Harness api={api} initialSession={session} />);
+    fireEvent.click(screen.getByText('Live Keys'));
     const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
 
-    // Act: an Audio Track is focused and cannot receive performance MIDI.
-    // Assert: the toggle reports the reason instead of showing itself engaged.
-    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'false');
-    expect(computerKeyboard).toHaveAttribute(
-      'title',
-      expect.stringContaining('Only Instrument Tracks can be played live.'),
-    );
+    // Act: hold Ctrl+Shift+K.
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, shiftKey: true, repeat: true });
+    fireEvent.keyUp(window, { key: 'k', ctrlKey: true, shiftKey: true });
+
+    // Assert: the press turned it on and the repeats did not turn it back off.
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('routes Space to the shared transport controller from the Arrange editor', async () => {

@@ -597,7 +597,7 @@ Arrange Toolbar の Computer Keyboard（Ctrl+Shift+K）で入力を切り替え�
 
 有効な間は、修飾キーのない演奏キーを Shortcut より優先する。キーを押し続けても反復入力は演奏側で消費され、Shortcut へは届かない。Text Input へ Focus がある間は文字入力を優先する。Mode、Octave、Velocity は Track ごとに保持し、Play Surface と共有する。
 
-Focused Instrument Track が演奏できないときは Toolbar の Computer Keyboard を有効にせず、Tooltip で理由を示す。
+Focused Instrument Track が演奏できないときは Toolbar の Computer Keyboard を有効にせず、Tooltip で理由を示す。演奏できない Track で有効化しようとしても内部状態は変わらず、演奏できる Track へ移っても入力は接受されない。Shortcut を押し続けても 1 回の切り替えになる。
 
 ### 6.3 Play Surface
 

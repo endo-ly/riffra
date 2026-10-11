@@ -305,6 +305,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       if (handleRulerKeyboard(event) || event.defaultPrevented) return;
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        // A held shortcut toggles once; the repeats of the key belong to nothing.
+        if (event.repeat) return;
         toggleComputerKeyboard();
         return;
       }
