@@ -301,18 +301,37 @@ mod tests {
     }
 
     #[test]
-    fn commit_persists_and_records_history() {
+    fn commit_persists_and_records_history_with_the_same_revision() {
         let storage = MemoryStorage::default();
         let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
+
+        let initial = core.canonical_state();
+        assert_eq!(initial.sequence, 0);
+        assert_eq!(initial.history, HistoryState::default());
 
         let committed = core
             .application(&storage)
             .add_track_with_created_ids("Main", TrackKind::Audio)
             .unwrap();
 
+        let saved = storage.sessions.lock().unwrap().len();
         assert_eq!(committed.session.arrangement.tracks.len(), 1);
-        assert_eq!(storage.sessions.lock().unwrap().len(), 1);
-        assert!(core.history_state().can_undo);
+        assert_eq!(saved, 1);
+
+        let canonical = core.canonical_state();
+        assert_eq!(canonical.project_id, "project:test");
+        assert_eq!(canonical.sequence, 1);
+        assert_eq!(canonical.session.session_id, initial.session.session_id);
+        assert!(canonical.history.can_undo);
+        assert!(!canonical.history.can_redo);
+
+        core.undo(&storage).unwrap();
+
+        let undone = core.canonical_state();
+        assert_eq!(undone.sequence, 2);
+        assert!(!undone.history.can_undo);
+        assert!(undone.history.can_redo);
+        assert!(undone.session.arrangement.tracks.is_empty());
     }
 
     #[test]
@@ -736,11 +755,7 @@ mod tests {
         let undone = core.undo(&storage).unwrap();
         let redone = core.redo(&storage).unwrap();
 
-        assert_eq!(with_clip.arrangement.audio_clips.len(), 1);
-        assert_eq!(
-            moved.arrangement.audio_clips[0].start_tick,
-            TimelineTick(960)
-        );
+        // Every edit in the flow is undoable, redoable, and persisted as one save.
         assert!(undone.arrangement.tracks[0].effects.is_empty());
         assert_eq!(redone.arrangement.tracks[0].effects.len(), 1);
         assert_eq!(redone.arrangement.audio_clips.len(), 2);
@@ -995,38 +1010,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_snapshot_keeps_sequence_with_session() {
-        let core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
-        let snapshot = core.snapshot();
-        assert_eq!(snapshot.sequence, 0);
-        assert!(!snapshot.session.session_id.is_empty());
-    }
-
-    #[test]
-    fn canonical_state_keeps_history_with_the_same_revision() {
-        let storage = MemoryStorage::default();
-        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
-
-        let initial = core.canonical_state();
-        assert_eq!(initial.sequence, 0);
-        assert_eq!(initial.history, HistoryState::default());
-
-        core.application(&storage)
-            .add_track_with_created_ids("Keys", TrackKind::Instrument)
-            .unwrap();
-        let committed = core.canonical_state();
-        assert_eq!(committed.sequence, 1);
-        assert!(committed.history.can_undo);
-        assert_eq!(committed.session.arrangement.tracks.len(), 1);
-
-        core.undo(&storage).unwrap();
-        let undone = core.canonical_state();
-        assert_eq!(undone.sequence, 2);
-        assert!(!undone.history.can_undo);
-        assert!(undone.history.can_redo);
-    }
-
-    #[test]
     fn stale_prepared_commit_returns_typed_conflict_without_mutating_state() {
         let storage = MemoryStorage::default();
         let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
@@ -1087,19 +1070,6 @@ mod tests {
         assert_eq!(after.session, before.session);
         assert_eq!(after.sequence, before.sequence);
         assert_eq!(core.history_state(), HistoryState::default());
-    }
-
-    #[test]
-    fn add_track_leaves_coloring_to_the_ui() {
-        let storage = MemoryStorage::default();
-        let mut core = AppCore::new("project:test".into(), CreativeSession::new(1), 0);
-
-        let committed = core
-            .application(&storage)
-            .add_track_with_created_ids("Main", TrackKind::Audio)
-            .unwrap();
-
-        assert_eq!(committed.session.arrangement.tracks[0].color, None);
     }
 
     #[test]

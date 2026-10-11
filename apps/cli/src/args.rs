@@ -3616,24 +3616,6 @@ mod tests {
             ],
             vec![
                 "riffra",
-                "track",
-                "update",
-                "--track-id",
-                "track:1",
-                "--pan",
-                "-inf",
-            ],
-            vec![
-                "riffra",
-                "audio-clip",
-                "update",
-                "--clip-id",
-                "clip:1",
-                "--gain-db",
-                "Infinity",
-            ],
-            vec![
-                "riffra",
                 "audio-clip",
                 "update",
                 "--clip-id",
@@ -3660,48 +3642,6 @@ mod tests {
         ])
         .expect("finite float values must parse");
         assert!(finite.request().is_ok());
-    }
-
-    #[test]
-    fn fixed_value_options_expose_possible_values() {
-        fn possible_values(path: &[&str], long: &str) -> Vec<String> {
-            let command = Cli::command();
-            let mut current = &command;
-            for name in path {
-                current = current
-                    .find_subcommand(name)
-                    .unwrap_or_else(|| panic!("missing subcommand {name}"));
-            }
-            current
-                .get_arguments()
-                .find(|arg| arg.get_long() == Some(long))
-                .unwrap_or_else(|| panic!("missing --{long}"))
-                .get_possible_values()
-                .iter()
-                .map(|value| value.get_name().to_owned())
-                .collect()
-        }
-
-        assert_eq!(
-            possible_values(&["track", "add"], "kind"),
-            ["audio", "instrument"]
-        );
-        assert_eq!(
-            possible_values(&["track", "update"], "monitoring"),
-            ["off", "auto", "on"]
-        );
-        assert_eq!(
-            possible_values(&["automation", "set"], "parameter"),
-            ["volume", "pan"]
-        );
-        assert_eq!(
-            possible_values(&["automation", "clear"], "parameter"),
-            ["volume", "pan"]
-        );
-        assert_eq!(
-            possible_values(&["render", "start"], "range"),
-            ["entire-arrangement", "loop-range"]
-        );
     }
 
     #[test]

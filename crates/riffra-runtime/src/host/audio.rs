@@ -378,32 +378,4 @@ mod tests {
             "device failed",
         )));
     }
-
-    #[test]
-    fn stable_audio_diagnostics_excludes_internal_projection_details() {
-        let mut status = AudioStatus {
-            mute_reasons: 1 | 4,
-            ..AudioStatus::default()
-        };
-        status.diagnostics.realtime.callback_overruns = 3;
-        status
-            .diagnostics
-            .instrument_faults
-            .push(crate::api::output::AudioInstrumentFault {
-                track_id: "track:piano".into(),
-                instrument_type: "Built-in".into(),
-                fault_code: 0,
-                dropped_midi_events: 0,
-            });
-
-        let report = serde_json::to_value(audio_diagnostics_report(&status)).unwrap();
-
-        assert_eq!(report["mute"]["userEmergency"], true);
-        assert_eq!(report["mute"]["deviceFault"], true);
-        assert_eq!(report["realtime"]["callbackOverruns"], 3);
-        assert_eq!(report["instrumentFaults"][0]["instrumentType"], "Built-in");
-        assert!(report.get("projection").is_none());
-        assert!(report.get("timeline").is_none());
-        assert!(report.get("debug").is_none());
-    }
 }

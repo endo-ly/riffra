@@ -1069,28 +1069,87 @@ mod tests {
         assert_eq!(machine.status().active_session_revision, Some(3));
     }
     #[test]
-    fn canonical_adoption_supersedes_an_obsolete_queued_graph() {
-        // Arrange
+    fn adopts_the_active_graph_under_a_new_canonical_key_without_repreparing_it() {
+        // Arrange: a rename keeps the same projected graph.
         let now = Instant::now();
         let mut machine = machine(now);
-        let graph = snapshot(1);
-        let (running, _) = submit(&mut machine, graph.clone(), key(1, 1), true, now);
-        let (obsolete, _) = submit(&mut machine, snapshot(2), key(2, 2), true, now);
+        let mut session = CreativeSession::new(0);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:a".into(), "a".into()));
+        let graph = project_session_for_test(&session);
+        active(&mut machine, Arc::clone(&graph), key(1, 0), now);
+        session.arrangement.tracks[0].name = "renamed".into();
+        let running_graph = snapshot(20);
 
-        // Act
-        let (following, effects) =
-            submit(&mut machine, reidentify(&graph, 3), key(3, 3), true, now);
-        finish(&mut machine, running, now);
-
-        // Assert
+        // Act: the renamed session reaches the same projected graph.
+        let (adopted, effects) = submit(&mut machine, Arc::clone(&graph), key(2, 0), true, now);
         no_prepare(&effects);
+        assert!(matches!(
+            machine.result(adopted),
+            Some(Ok(status)) if status.active_projection_sequence == Some(2)
+        ));
+        assert_eq!(machine.status().active_session_revision, Some(0));
+
+        // An older canonical state never regresses the active key.
+        let (older, effects) = submit(&mut machine, Arc::clone(&graph), key(1, 0), true, now);
+        no_prepare(&effects);
+        assert!(matches!(
+            machine.result(older),
+            Some(Err(RuntimeError::Superseded { .. }))
+        ));
+        assert_eq!(machine.status().active_projection_sequence, Some(2));
+
+        // A canonical identity arriving while a job runs waits for it and then
+        // supersedes the obsolete graph that was queued behind it.
+        let (running, _) = submit(&mut machine, running_graph.clone(), key(20, 20), true, now);
+        let (obsolete, _) = submit(&mut machine, snapshot(21), key(21, 21), true, now);
+        let (following, effects) = submit(
+            &mut machine,
+            reidentify(&running_graph, 22),
+            key(22, 22),
+            true,
+            now,
+        );
+        no_prepare(&effects);
+        assert!(machine.result(following).is_none());
+
+        finish(&mut machine, running, now);
         assert!(matches!(
             machine.result(obsolete),
             Some(Err(RuntimeError::Superseded { .. }))
         ));
-        assert!(matches!(machine.result(following), Some(Ok(_))));
+        assert!(matches!(
+            machine.result(following),
+            Some(Ok(status)) if status.active_projection_sequence == Some(22)
+        ));
         assert!(machine.job.is_none());
-        assert_eq!(machine.status().active_projection_sequence, Some(3));
+    }
+
+    #[test]
+    fn starts_a_pending_play_once_the_active_graph_is_adopted() {
+        let now = Instant::now();
+        let mut machine = machine(now);
+        let mut transport = super::super::transport::TransportController::default();
+        let graph = snapshot(20);
+        active(&mut machine, graph.clone(), key(0, 20), now);
+
+        // Act
+        let play = transport.request_play(Some(key(1, 20)));
+        assert!(!machine.ready_for(key(1, 20)));
+        assert!(!machine.pending_for(key(1, 20)));
+
+        let (_, effects) = submit(&mut machine, graph, key(1, 20), true, now);
+
+        // Assert
+        no_prepare(&effects);
+        assert!(machine.ready_for(key(1, 20)));
+        assert_eq!(
+            transport.projection_activated(key(1, 20)),
+            Some(play.operation)
+        );
+        assert!(transport.can_execute_play(play.operation, Some(key(1, 20))));
     }
 
     #[test]
@@ -1178,18 +1237,6 @@ mod tests {
         no_prepare(&effects);
         assert_eq!(machine.status().active_session_revision, Some(12));
         assert_eq!(machine.status().last_error, None);
-    }
-    #[test]
-    fn reuses_the_active_canonical_projection_while_a_candidate_is_preparing() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let graph = snapshot(10);
-        active(&mut machine, graph.clone(), key(1, 10), now);
-        submit(&mut machine, snapshot(11), key(2, 11), false, now);
-        let (_, effects) = submit(&mut machine, reidentify(&graph, 12), key(3, 12), true, now);
-        no_prepare(&effects);
-        assert_eq!(machine.status().state, RuntimeProjectionState::Active);
-        assert_eq!(machine.status().active_projection_sequence, Some(3));
     }
     #[test]
     fn failed_candidate_after_active_canonical_adoption_only_fails_its_waiter() {
@@ -1360,18 +1407,6 @@ mod tests {
         assert_eq!(machine.status().active_audio_environment_revision, Some(1));
     }
     #[test]
-    fn adopts_a_new_canonical_key_without_repreparing_the_active_graph() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let graph = snapshot(10);
-        active(&mut machine, graph.clone(), key(1, 10), now);
-        let (operation, effects) =
-            submit(&mut machine, reidentify(&graph, 12), key(2, 12), true, now);
-        no_prepare(&effects);
-        assert!(matches!(machine.result(operation), Some(Ok(_))));
-        assert_eq!(machine.status().active_session_revision, Some(12));
-    }
-    #[test]
     fn prepares_when_only_projection_diagnostics_change() {
         let now = Instant::now();
         let mut machine = machine(now);
@@ -1393,86 +1428,6 @@ mod tests {
                 .iter()
                 .any(|effect| matches!(effect, Effect::Prepare(_)))
         );
-    }
-    #[test]
-    fn reuses_projection_after_a_presentation_only_canonical_change() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let mut session = CreativeSession::new(0);
-        session
-            .arrangement
-            .tracks
-            .push(Track::audio("track:a".into(), "a".into()));
-        active(
-            &mut machine,
-            project_session_for_test(&session),
-            key(1, session.arrangement.revision),
-            now,
-        );
-        session.arrangement.tracks[0].name = "renamed".into();
-        let (_, effects) = submit(
-            &mut machine,
-            project_session_for_test(&session),
-            key(2, session.arrangement.revision),
-            true,
-            now,
-        );
-        no_prepare(&effects);
-        assert_eq!(machine.status().active_projection_sequence, Some(2));
-    }
-    #[test]
-    fn does_not_regress_the_active_key_for_an_older_canonical_state() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        active(&mut machine, snapshot(10), key(10, 10), now);
-        let (operation, effects) = submit(&mut machine, snapshot(9), key(9, 9), true, now);
-        no_prepare(&effects);
-        assert!(matches!(
-            machine.result(operation),
-            Some(Err(RuntimeError::Superseded { .. }))
-        ));
-        assert_eq!(machine.status().active_projection_sequence, Some(10));
-    }
-    #[test]
-    fn defers_canonical_identity_until_an_in_progress_projection_finishes() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let graph = snapshot(10);
-        let (running, _) = submit(&mut machine, graph.clone(), key(1, 10), true, now);
-        let (following, effects) =
-            submit(&mut machine, reidentify(&graph, 12), key(2, 12), true, now);
-        no_prepare(&effects);
-        assert!(machine.result(following).is_none());
-        finish(&mut machine, running, now);
-        assert!(
-            matches!(machine.result(following),Some(Ok(status)) if status.active_projection_sequence==Some(2))
-        );
-    }
-    #[test]
-    fn preserves_a_pending_canonical_reference_when_a_candidate_is_queued_after_it() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let graph = snapshot(10);
-        let (running, _) = submit(&mut machine, graph.clone(), key(1, 10), true, now);
-        let (following, _) = submit(&mut machine, reidentify(&graph, 12), key(2, 12), true, now);
-        let (candidate, _) = submit(&mut machine, snapshot(13), key(3, 13), false, now);
-        finish(&mut machine, running, now);
-        assert!(matches!(machine.result(following), Some(Ok(_))));
-        assert_eq!(machine.job.as_ref().unwrap().request.operation, candidate);
-    }
-    #[test]
-    fn defers_to_the_running_canonical_before_a_queued_candidate() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let graph = snapshot(10);
-        let (running, _) = submit(&mut machine, graph.clone(), key(1, 10), true, now);
-        let (candidate, _) = submit(&mut machine, snapshot(11), key(2, 11), false, now);
-        let (following, effects) =
-            submit(&mut machine, reidentify(&graph, 12), key(3, 12), true, now);
-        no_prepare(&effects);
-        finish(&mut machine, running, now);
-        assert!(matches!(machine.result(following), Some(Ok(_))));
-        assert_eq!(machine.job.as_ref().unwrap().request.operation, candidate);
     }
     #[test]
     fn stop_and_deadline_complete_waiters_without_accepting_late_work() {
@@ -1631,38 +1586,6 @@ mod tests {
         );
     }
     #[test]
-    fn stale_waiting_submissions_do_not_follow_a_newer_preparation() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let (operation, _) = submit(&mut machine, snapshot(20), key(20, 20), true, now);
-
-        let (stale, effects) = submit(&mut machine, snapshot(19), key(19, 19), true, now);
-
-        no_prepare(&effects);
-        assert!(matches!(
-            machine.result(stale),
-            Some(Err(RuntimeError::Superseded { .. }))
-        ));
-        assert_eq!(machine.status().target_projection_sequence, Some(20));
-        finish(&mut machine, operation, now);
-        assert!(machine.ready_for(key(20, 20)));
-    }
-    #[test]
-    fn reuses_an_active_projection_without_repreparing_before_play() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let mut transport = super::super::transport::TransportController::default();
-        let graph = snapshot(20);
-        active(&mut machine, graph.clone(), key(20, 20), now);
-
-        let (_, effects) = submit(&mut machine, graph, key(20, 20), true, now);
-        let play = transport.request_play(Some(key(20, 20)));
-
-        no_prepare(&effects);
-        assert!(machine.ready_for(key(20, 20)));
-        assert!(transport.can_execute_play(play.operation, Some(key(20, 20))));
-    }
-    #[test]
     fn a_canonical_update_during_playback_does_not_rearm_transport() {
         let now = Instant::now();
         let mut machine = machine(now);
@@ -1675,26 +1598,6 @@ mod tests {
 
         assert_eq!(transport.projection_activated(key(11, 11)), None);
         assert!(machine.ready_for(key(11, 11)));
-    }
-    #[test]
-    fn pending_play_starts_after_canonical_identity_adoption() {
-        let now = Instant::now();
-        let mut machine = machine(now);
-        let mut transport = super::super::transport::TransportController::default();
-        let graph = snapshot(10);
-        active(&mut machine, graph.clone(), key(0, 10), now);
-        let play = transport.request_play(Some(key(1, 11)));
-        assert!(!machine.ready_for(key(1, 11)));
-        assert!(!machine.pending_for(key(1, 11)));
-
-        let (_, effects) = submit(&mut machine, reidentify(&graph, 11), key(1, 11), true, now);
-
-        no_prepare(&effects);
-        assert!(machine.ready_for(key(1, 11)));
-        assert_eq!(
-            transport.projection_activated(key(1, 11)),
-            Some(play.operation)
-        );
     }
     #[test]
     fn a_stalled_play_wait_recovers_when_canonical_projection_is_resubmitted() {

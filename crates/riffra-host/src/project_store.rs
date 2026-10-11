@@ -311,42 +311,41 @@ mod tests {
     }
 
     #[test]
-    fn initializes_a_project_and_restores_the_active_project() {
+    fn initializes_lists_and_restores_the_active_project() {
         let root = root("active");
-        let first = ProjectStore::new(&root);
-        let initialized = first.initialize().unwrap();
-        let first_id = initialized.project_id.clone();
-        assert_eq!(initialized.loaded.session.project_name, None);
+        let store = ProjectStore::new(&root);
+        let first_id = store.initialize().unwrap().project_id;
         assert!(root.join("renders").is_dir());
         assert!(!root.join("exports").exists());
 
-        let second = first.create(Some("Second".into())).unwrap();
-        first.write_workspace(&second.project_id).unwrap();
-        drop(first);
-
-        let reopened = ProjectStore::new(&root);
-        let reopened_project = reopened.initialize().unwrap();
-        assert_eq!(reopened_project.project_id, second.project_id);
-        assert_ne!(first_id, second.project_id);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn session_store_remains_bound_after_recording_another_workspace_project() {
-        let root = root("fixed-storage");
-        let store = ProjectStore::new(&root);
-        let initialized = store.initialize().unwrap();
-        let first_id = initialized.project_id;
-        let first_storage = initialized.storage;
-        let second = store.create(Some("Second".into())).unwrap();
+        let second = store.create(Some("Alpha".into())).unwrap();
+        let first_storage = store.session_store(&first_id).unwrap();
+        let second_storage = store.session_store(&second.project_id).unwrap();
         let mut first_session = first_storage.load_or_create().unwrap().session;
-        first_session.settings.note = "first remains first".into();
-
-        store.write_workspace(&second.project_id).unwrap();
+        first_session.settings.note = "first".into();
         first_storage.save(&first_session).unwrap();
+        let mut second_session = second_storage.load_or_create().unwrap().session;
+        second_session.settings.note = "second".into();
+        second_storage.save(&second_session).unwrap();
 
         assert_eq!(
             store
+                .list()
+                .unwrap()
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha", "Untitled Project"]
+        );
+
+        store.write_workspace(&second.project_id).unwrap();
+        drop(store);
+
+        let reopened = ProjectStore::new(&root);
+        assert_eq!(reopened.initialize().unwrap().project_id, second.project_id);
+        // Projects never share storage.
+        assert_eq!(
+            reopened
                 .session_store(&first_id)
                 .unwrap()
                 .load_or_create()
@@ -354,10 +353,10 @@ mod tests {
                 .session
                 .settings
                 .note,
-            "first remains first"
+            "first"
         );
-        assert_ne!(
-            store
+        assert_eq!(
+            reopened
                 .session_store(&second.project_id)
                 .unwrap()
                 .load_or_create()
@@ -365,7 +364,7 @@ mod tests {
                 .session
                 .settings
                 .note,
-            "first remains first"
+            "second"
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -410,40 +409,6 @@ mod tests {
 
         assert_eq!(error.0.kind(), io::ErrorKind::NotFound);
         assert_eq!(reopened.list().unwrap().len(), 1);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn lists_projects_by_name_and_keeps_project_storage_separate() {
-        let root = root("list");
-        let store = ProjectStore::new(&root);
-        let first_id = store.initialize().unwrap().project_id;
-        let second = store.create(Some("Alpha".into())).unwrap();
-        let first = store.session_store(&first_id).unwrap();
-        let second_store = store.session_store(&second.project_id).unwrap();
-        let mut first_session = first.load_or_create().unwrap().session;
-        first_session.settings.note = "first".into();
-        first.save(&first_session).unwrap();
-        let mut second_session = second_store.load_or_create().unwrap().session;
-        second_session.settings.note = "second".into();
-        second_store.save(&second_session).unwrap();
-
-        let summaries = store.list().unwrap();
-        assert_eq!(
-            summaries
-                .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>(),
-            ["Alpha", "Untitled Project"]
-        );
-        assert_eq!(
-            first.load_or_create().unwrap().session.settings.note,
-            "first"
-        );
-        assert_eq!(
-            second_store.load_or_create().unwrap().session.settings.note,
-            "second"
-        );
         let _ = fs::remove_dir_all(root);
     }
 

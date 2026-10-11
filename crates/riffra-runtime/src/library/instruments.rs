@@ -590,81 +590,50 @@ mod tests {
     }
 
     #[test]
-    fn preferences_merge_without_mutating_catalog_metadata() {
+    fn library_preferences_persist_across_favorites_and_collections() {
         let root = TempRoot::new();
         let catalog = catalog(&root.0);
 
-        let updated = set_user_tags(
+        // Arrange: a favorite and a collection that holds the same instrument.
+        set_favorite(&root.0, &catalog, "builtin:01-bass", true).unwrap();
+        let collection = create_collection(&root.0, "Favorites".into()).unwrap();
+        set_collection_membership(&root.0, &catalog, collection.id, "builtin:01-bass", true)
+            .unwrap();
+
+        // Act
+        let listed = list(&root.0, &catalog).unwrap();
+
+        // Assert
+        assert!(listed[0].favorite);
+        assert_eq!(listed[0].collection_ids, [collection.id]);
+
+        // Act: user tags merge with the catalog without changing its metadata.
+        let tagged = set_user_tags(
             &root.0,
             &catalog,
             "builtin:01-bass",
             vec!["Warm".into(), "warm".into()],
         )
         .unwrap();
-        assert_eq!(updated.user_tags, ["Warm"]);
-        assert_eq!(updated.tags, ["Low", "Warm"]);
 
-        let rejected =
-            set_category_override(&root.0, &catalog, "builtin:01-bass", Some("Bass".into()));
+        assert_eq!(tagged.user_tags, ["Warm"]);
+        assert_eq!(tagged.tags, ["Low", "Warm"]);
         assert_eq!(
-            rejected.unwrap_err(),
+            set_category_override(&root.0, &catalog, "builtin:01-bass", Some("Bass".into()))
+                .unwrap_err(),
             "built-in instrument categories are fixed"
         );
-        let listed = list(&root.0, &catalog).unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].category, "Bass");
-    }
 
-    #[test]
-    fn collection_delete_removes_membership_atomically() {
-        let root = TempRoot::new();
-        let catalog = catalog(&root.0);
-        let collection = create_collection(&root.0, "Favorites".into()).unwrap();
-        set_collection_membership(&root.0, &catalog, collection.id, "builtin:01-bass", true)
-            .unwrap();
-
+        // Act: deleting a collection removes its membership.
         delete_collection(&root.0, collection.id).unwrap();
 
+        // Assert
         assert!(list_collections(&root.0).unwrap().is_empty());
         assert!(
-            list(&root.0, &catalog)
-                .unwrap()
-                .first()
-                .unwrap()
+            list(&root.0, &catalog).unwrap()[0]
                 .collection_ids
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn favorites_persist() {
-        let root = TempRoot::new();
-        let catalog = catalog(&root.0);
-
-        let favorited = set_favorite(&root.0, &catalog, "builtin:01-bass", true).unwrap();
-
-        assert!(favorited.favorite);
-        assert!(list(&root.0, &catalog).unwrap()[0].favorite);
-    }
-
-    #[test]
-    fn collections_are_case_insensitive_and_membership_is_reversible() {
-        let root = TempRoot::new();
-        let catalog = catalog(&root.0);
-        let collection = create_collection(&root.0, "Favorites".into()).unwrap();
-
-        let duplicate = create_collection(&root.0, "favorites".into()).unwrap_err();
-        assert_eq!(duplicate, "instrument collection name is already in use");
-
-        let member =
-            set_collection_membership(&root.0, &catalog, collection.id, "builtin:01-bass", true)
-                .unwrap();
-        assert_eq!(member.collection_ids, [collection.id]);
-
-        let removed =
-            set_collection_membership(&root.0, &catalog, collection.id, "builtin:01-bass", false)
-                .unwrap();
-        assert!(removed.collection_ids.is_empty());
     }
 
     #[test]

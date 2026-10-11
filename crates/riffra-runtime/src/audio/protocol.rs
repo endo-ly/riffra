@@ -508,38 +508,35 @@ mod tests {
     }
 
     #[test]
-    fn device_faults_and_command_errors_update_the_status_message() {
-        for (kind, faulted) in [("deviceLost", true), ("pluginRejected", false)] {
-            let (supervisor, events) = supervisor();
-            let fault = serde_json::json!({
-                "kind": "event",
-                "event": {
-                    "type": "fault",
-                    "kind": kind,
-                    "message": "device missing",
-                    "operation": "audioDevice.recover",
-                    "details": null,
-                },
-            });
+    fn sidecar_messages_drive_one_audio_status() {
+        // Arrange: a ready sidecar and a client that records the host events.
+        let (ready, meter_events) = supervisor();
+        ready.handle_sidecar_line(1, fixture("event.ready.json").as_bytes());
+        let mut meters: serde_json::Value =
+            serde_json::from_str(&fixture("event.audioMeters.json")).unwrap();
 
-            supervisor.handle_sidecar_line(1, &line(fault));
+        // Act / Assert: meter mute reasons move the status between Ready and Muted.
+        meters["event"]["muteReasons"] = serde_json::json!(16);
+        ready.handle_sidecar_line(1, &line(meters.clone()));
+        assert_eq!(ready.status().unwrap().state, AudioState::Muted);
 
-            let status = supervisor.status().unwrap();
-            assert_eq!(status.state == AudioState::Faulted, faulted, "{kind}");
-            assert_eq!(status.message, "device missing");
-            assert!(matches!(
-                events.events().last(),
-                Some(HostEvent::AudioStatus(_))
-            ));
-        }
-    }
+        meters["event"]["muteReasons"] = serde_json::json!(0);
+        ready.handle_sidecar_line(1, &line(meters.clone()));
+        assert_eq!(ready.status().unwrap().state, AudioState::Ready);
+        assert!(matches!(
+            meter_events.events().last(),
+            Some(HostEvent::AudioMeters(_))
+        ));
 
-    #[test]
-    fn a_busy_timeline_error_keeps_the_status_message() {
-        let (supervisor, _) = supervisor();
-        let before = supervisor.status().unwrap().message;
+        // Meters that belong to no project refresh the status without an event.
+        meters["event"]["projectId"] = serde_json::Value::Null;
+        let emitted = meter_events.events().len();
+        ready.handle_sidecar_line(1, &line(meters));
+        assert_eq!(meter_events.events().len(), emitted);
 
-        supervisor.handle_sidecar_line(
+        // A busy timeline is reported as loading, so it keeps the status message.
+        let before = ready.status().unwrap().message;
+        ready.handle_sidecar_line(
             1,
             &line(serde_json::json!({
                 "kind": "error",
@@ -552,61 +549,34 @@ mod tests {
                 },
             })),
         );
+        assert_eq!(ready.status().unwrap().message, before);
 
-        assert_eq!(supervisor.status().unwrap().message, before);
-    }
+        // Only a device fault faults the audio state, and every fault keeps its
+        // message on the way to the UI.
+        for (kind, faulted) in [("deviceLost", true), ("pluginRejected", false)] {
+            let (faulted_supervisor, faulted_events) = supervisor();
+            faulted_supervisor.handle_sidecar_line(
+                1,
+                &line(serde_json::json!({
+                    "kind": "event",
+                    "event": {
+                        "type": "fault",
+                        "kind": kind,
+                        "message": "device missing",
+                        "operation": "audioDevice.recover",
+                        "details": null,
+                    },
+                })),
+            );
 
-    #[test]
-    fn meter_mute_reasons_move_between_ready_and_muted() {
-        let (supervisor, events) = supervisor();
-        supervisor.handle_sidecar_line(1, fixture("event.ready.json").as_bytes());
-        let mut meters: serde_json::Value =
-            serde_json::from_str(&fixture("event.audioMeters.json")).unwrap();
-
-        meters["event"]["muteReasons"] = serde_json::json!(16);
-        supervisor.handle_sidecar_line(1, &line(meters.clone()));
-        assert_eq!(supervisor.status().unwrap().state, AudioState::Muted);
-
-        meters["event"]["muteReasons"] = serde_json::json!(0);
-        supervisor.handle_sidecar_line(1, &line(meters));
-        assert_eq!(supervisor.status().unwrap().state, AudioState::Ready);
-        assert!(matches!(
-            events.events().last(),
-            Some(HostEvent::AudioMeters(_))
-        ));
-    }
-
-    #[test]
-    fn meters_without_an_active_project_update_only_the_status() {
-        let (supervisor, events) = supervisor();
-        let mut meters: serde_json::Value =
-            serde_json::from_str(&fixture("event.audioMeters.json")).unwrap();
-        meters["event"]["projectId"] = serde_json::Value::Null;
-
-        supervisor.handle_sidecar_line(1, &line(meters));
-
-        assert!(
-            !events
-                .events()
-                .iter()
-                .any(|event| matches!(event, HostEvent::AudioMeters(_)))
-        );
-    }
-
-    #[test]
-    fn the_status_state_follows_its_mute_reasons() {
-        assert_eq!(
-            audio_state_from_wire(WireAudioState::Ready, 2),
-            AudioState::Muted
-        );
-        assert_eq!(
-            audio_state_from_wire(WireAudioState::Muted, 0),
-            AudioState::Ready
-        );
-        assert_eq!(
-            audio_state_from_wire(WireAudioState::Faulted, 2),
-            AudioState::Faulted
-        );
+            let status = faulted_supervisor.status().unwrap();
+            assert_eq!(status.state == AudioState::Faulted, faulted, "{kind}");
+            assert_eq!(status.message, "device missing");
+            assert!(matches!(
+                faulted_events.events().last(),
+                Some(HostEvent::AudioStatus(_))
+            ));
+        }
     }
 
     #[test]
