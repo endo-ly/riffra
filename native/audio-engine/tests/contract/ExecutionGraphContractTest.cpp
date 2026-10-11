@@ -106,9 +106,9 @@ TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth)
 
         auto unknownPath = objectPath;
         unknownPath.push_back("__unexpected");
-        const auto expectedUnknown =
-            formatPath(unknownPath).isEmpty() ? juce::String("__unexpected")
-                                              : formatPath(unknownPath);
+        const auto expectedUnknown = formatPath(unknownPath).isEmpty()
+                                         ? juce::String("__unexpected")
+                                         : formatPath(unknownPath);
         expectTimelineSnapshotRejected(withUnknownKey(full, objectPath), expectedUnknown);
     }
 }
