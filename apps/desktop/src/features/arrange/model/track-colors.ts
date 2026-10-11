@@ -14,3 +14,12 @@ export const TRACK_COLOR_PALETTE: readonly string[] = [
 export function resolveTrackColor(track: { color?: string | null }, index: number): string {
   return track.color ?? TRACK_COLOR_PALETTE[Math.max(0, index) % TRACK_COLOR_PALETTE.length];
 }
+
+/** Resolves the display color of the track with `trackId` from its position in `tracks`. */
+export function resolveTrackColorById(
+  tracks: readonly { id: string; color?: string | null }[],
+  trackId: string,
+): string {
+  const index = tracks.findIndex((track) => track.id === trackId);
+  return resolveTrackColor(tracks[index] ?? {}, index);
+}

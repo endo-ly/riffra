@@ -12,6 +12,8 @@ import {
   countOffGridNotes,
   clipGridTicks,
   snapClipTick,
+  formatMusicalLength,
+  formatMusicalPosition,
 } from '@/features/arrange/model/arrange-timeline';
 import type { SnapGrid } from '@/features/arrange/model/arrange-timeline';
 import { isBlackKey, midiNoteName } from '@/features/arrange/play-surface/musical-typing';
@@ -25,7 +27,6 @@ import {
   ToolbarSegmented,
   ToolbarSelect,
   ToolbarSlider,
-  ToolbarStepper,
   ToolbarToggle,
 } from '@/shared/ui/Toolbar';
 import { MidiEditorRuler } from './MidiEditorRuler';
@@ -34,6 +35,7 @@ import styles from './MidiEditorPanel.module.css';
 
 type MidiEditResult = void | PromiseLike<CreativeSession | null>;
 type MidiEditorTool = 'pointer' | 'draw';
+type NoteDragMode = 'move' | 'resizeStart' | 'resizeEnd';
 interface MidiNoteInput {
   pitch: number;
   startTick: number;
@@ -57,6 +59,10 @@ export interface MidiGhostNote {
 }
 
 const ZOOM_STEP = 1.25;
+const NOTE_DRAG_THRESHOLD = 3;
+/** Notes name their pitch only where the name fits. */
+const NOTE_LABEL_MIN_WIDTH = 30;
+const NOTE_LABEL_MIN_HEIGHT = 11;
 const LANE_LABEL_WIDTH = 48;
 
 interface MidiEditorPanelProps {
@@ -119,9 +125,14 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
   const [dragging, setDragging] = useState<{
     gestureId: number;
     noteId: string;
+    mode: NoteDragMode;
+    /** Ctrl-drag places moved copies and leaves the originals in place. */
+    copying: boolean;
     previewNotes: Record<string, MidiNote>;
     awaitingCanonical: boolean;
   } | null>(null);
+  const [lastNoteLength, setLastNoteLength] = useState<number | null>(null);
+  const [hoverPitch, setHoverPitch] = useState<number | null>(null);
   const [tool, setTool] = useState<MidiEditorTool>('pointer');
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [ghostsVisible, setGhostsVisible] = useState(true);
@@ -148,6 +159,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     noteId: string;
   } | null>(null);
   const dragGestureRef = useRef(0);
+  const suppressNoteClickRef = useRef(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const laneViewportRef = useRef<HTMLDivElement>(null);
   const rulerContentRef = useRef<HTMLDivElement>(null);
@@ -180,6 +192,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     snap === 'bar'
       ? Math.max(0, snapToBar(start + tick, props.timebase) - start)
       : snapClipTick(tick, start, gridTicks);
+  /** Snaps a clip-local tick to the grid, or keeps it free while Alt is held. */
+  const placeTick = (tick: number, free: boolean) =>
+    free ? Math.max(0, Math.round(tick)) : snapLocalTick(tick, clipStartTick, snapTicks);
+  // New notes take the length of the note touched last, so a phrase keeps one rhythm.
+  const newNoteLength = lastNoteLength ?? (snapTicks || beatTicks);
   const barLineTicks = musicalGridTicks(
     clipStartTick,
     clipStartTick + visibleTicks,
@@ -208,11 +225,12 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     () => notes.filter((note) => selectedNoteIds.includes(note.id)),
     [notes, selectedNoteIds],
   );
+  // Without a selection the velocity control sets the velocity of the next placed note.
   const selectedVelocity = selectedNotes.length
     ? Math.round(
         selectedNotes.reduce((total, note) => total + note.velocity, 0) / selectedNotes.length,
       )
-    : 96;
+    : lastUsedVelocity;
   const pitchRows = useMemo(
     () => Array.from({ length: PITCH_HIGH - PITCH_LOW }, (_, index) => PITCH_LOW + index).reverse(),
     [],
@@ -397,6 +415,26 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     };
   }, [hasClip, syncScrollContent]);
 
+  // Ctrl+wheel zooms time around the cursor and Alt+wheel zooms pitch; a plain
+  // wheel keeps scrolling. The listener is not passive so the WebView's own
+  // page zoom never takes Ctrl+wheel.
+  useEffect(() => {
+    const viewport = laneViewportRef.current;
+    if (!viewport) return;
+    const onWheel = (event: WheelEvent) => {
+      const zoomIn = event.deltaY < 0;
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        applyHorizontalZoom(pixelsPerTick * (zoomIn ? ZOOM_STEP : 1 / ZOOM_STEP), event.clientX);
+      } else if (event.altKey) {
+        event.preventDefault();
+        applyVerticalZoom(rowHeight + (zoomIn ? 2 : -2));
+      }
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+  }, [applyHorizontalZoom, applyVerticalZoom, hasClip, pixelsPerTick, rowHeight]);
+
   // Follow the playhead during playback: once the playhead crosses the follow
   // line the view scrolls continuously to keep it there. A manual scroll pauses
   // the follow while the playhead stays in view; when it leaves the viewport the
@@ -484,6 +522,20 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     return true;
   };
 
+  /** Selects the notes an edit adds to the clip once the edit lands. */
+  const selectAddedNotes = (operation: MidiEditResult): MidiEditResult => {
+    if (!clip || operation === undefined) return;
+    const beforeIds = new Set(clip.notes.map((note) => note.id));
+    void Promise.resolve(operation).then((next) => {
+      const nextClip = next?.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
+      if (!nextClip) return;
+      setSelectedNoteIds(
+        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
+      );
+    });
+    return operation;
+  };
+
   const pasteNotes = (): MidiEditResult => {
     if (!clip || !clipboardRef.current || !props.onInsertNotes) return;
     const anchor = snapLocalTick(
@@ -491,22 +543,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
       clip.startTick,
       snapTicks,
     );
-    const beforeIds = new Set(clip.notes.map((note) => note.id));
     const inputs = clipboardRef.current.notes.map(({ relativeStartTick, ...note }) => ({
       ...note,
       startTick: anchor + relativeStartTick,
     }));
-    const operation = props.onInsertNotes(clip.id, inputs);
-    if (operation === undefined) return;
-    void Promise.resolve(operation).then((next) => {
-      if (!next) return;
-      const nextClip = next.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
-      if (!nextClip) return;
-      setSelectedNoteIds(
-        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
-      );
-    });
-    return operation;
+    return selectAddedNotes(props.onInsertNotes(clip.id, inputs));
   };
 
   const duplicateSelectedNotes = (): MidiEditResult => {
@@ -561,29 +602,22 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     lane: HTMLElement,
     clientX: number,
     clientY: number,
-    durationTicks = snapTicks || beatTicks,
+    durationTicks = newNoteLength,
+    free = false,
   ): MidiEditResult => {
     if (!clip || !props.onAddNote) return;
     const bounds = lane.getBoundingClientRect();
     const rawTick = (clientX - bounds.left) / pixelsPerTick;
     const rawPitch = pitchFromClientY(clientY, bounds.top, rowHeight);
     if (rawPitch === null) return;
-    const requestedStartTick = snapLocalTick(rawTick, clip.startTick, snapTicks);
+    const requestedStartTick = placeTick(rawTick, free);
     const startTick = Math.min(Math.max(0, clip.durationTicks - 1), requestedStartTick);
-    const beforeIds = new Set(clip.notes.map((note) => note.id));
     const duration = Math.max(1, Math.round(durationTicks));
+    setLastNoteLength(duration);
     auditionNote(rawPitch, lastUsedVelocity, duration);
-    const operation = props.onAddNote(clip.id, startTick, rawPitch, duration, lastUsedVelocity, 1);
-    if (operation === undefined) return;
-    void Promise.resolve(operation).then((next) => {
-      if (!next) return;
-      const nextClip = next.arrangement.midiClips.find((candidate) => candidate.id === clip.id);
-      if (!nextClip) return;
-      setSelectedNoteIds(
-        nextClip.notes.filter((note) => !beforeIds.has(note.id)).map((note) => note.id),
-      );
-    });
-    return operation;
+    return selectAddedNotes(
+      props.onAddNote(clip.id, startTick, rawPitch, duration, lastUsedVelocity, 1),
+    );
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -684,15 +718,24 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     return <div className={styles.empty} />;
   }
 
+  // Quantize works on the selection, or on the whole clip when nothing is selected.
+  const quantizeTargets = selectedNotes.length ? selectedNotes : notes;
   const runQuantize = () => {
     if (!props.clip) return;
-    const selected = props.clip.notes.filter((note) => selectedNoteIds.includes(note.id));
-    const offGrid = countOffGridNotes(selected, snapTicks, props.clip.startTick);
+    const offGrid = countOffGridNotes(quantizeTargets, snapTicks, props.clip.startTick);
     if (offGrid === 0) {
-      toast('Selected notes are already on the grid.');
+      toast(
+        selectedNotes.length
+          ? 'Selected notes are already on the grid.'
+          : 'Notes are already on the grid.',
+      );
       return;
     }
-    const operation = props.onQuantize?.(props.clip.id, selectedNoteIds, snapTicks);
+    const operation = props.onQuantize?.(
+      props.clip.id,
+      quantizeTargets.map((note) => note.id),
+      snapTicks,
+    );
     if (!operation) return;
     void Promise.resolve(operation).then(
       (next) => {
@@ -707,6 +750,32 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     );
   };
 
+  const noteBox = (note: MidiNote): CSSProperties => ({
+    left: note.startTick * pixelsPerTick,
+    top: pitchRowTop(note.note, rowHeight),
+    width: Math.max(4, note.durationTicks * pixelsPerTick),
+    height: rowHeight - 1,
+    opacity: Math.max(0.45, 0.4 + (note.velocity / 127) * 0.6),
+  });
+  // While a drag is shown, the dragged note names where it lands: pitch and
+  // start for a move, length for a resize.
+  const draggedNote = dragging?.awaitingCanonical
+    ? undefined
+    : dragging?.previewNotes[dragging.noteId];
+  const dragReadout =
+    dragging && draggedNote
+      ? {
+          text:
+            dragging.mode === 'move'
+              ? `${midiNoteName(draggedNote.note)} · ${formatMusicalPosition(clipStartTick + draggedNote.startTick, props.timebase)}`
+              : formatMusicalLength(draggedNote.durationTicks, props.timebase),
+          style: {
+            left: draggedNote.startTick * pixelsPerTick,
+            top: Math.max(0, pitchRowTop(draggedNote.note, rowHeight) - 18),
+          },
+        }
+      : null;
+
   const handleVelocityChange = (value: number) => {
     setVelocityDraft(value);
     setLastUsedVelocity(value);
@@ -714,6 +783,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
 
   const commitVelocity = (value: number) => {
     setLastUsedVelocity(value);
+    if (!selectedNoteIds.length) return;
     void props.onUpdateNotes?.(
       props.clip!.id,
       selectedNoteIds.map((noteId) => ({ noteId, patch: { velocity: value } })),
@@ -773,14 +843,16 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     : [];
 
   const handlePointerDown = (
-    event: React.PointerEvent<HTMLSpanElement>,
+    event: React.PointerEvent<HTMLElement>,
     note: MidiNote,
-    mode: 'move' | 'resize',
+    mode: NoteDragMode,
   ) => {
     editorRef.current?.focus();
     event.stopPropagation();
+    setLastNoteLength(note.durationTicks);
     const originX = event.clientX;
     const originY = event.clientY;
+    const copying = mode === 'move' && (event.ctrlKey || event.metaKey);
     const movingNoteIds =
       selectedNoteIds.includes(note.id) && selectedNoteIds.length > 1 ? selectedNoteIds : [note.id];
     const originNotes = props.clip!.notes.filter((candidate) =>
@@ -795,18 +867,21 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     setDragging({
       gestureId,
       noteId: note.id,
+      mode,
+      copying,
       previewNotes,
       awaitingCanonical: false,
     });
     const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
-    const updatePreview = (clientX: number, clientY: number) => {
-      const deltaTicks = (clientX - originX) / pixelsPerTick;
+    const updatePreview = (pointer: PointerEvent): MidiNote => {
+      const deltaTicks = (pointer.clientX - originX) / pixelsPerTick;
+      const free = pointer.altKey;
       if (mode === 'move') {
-        const snappedStart = snapLocalTick(note.startTick + deltaTicks, clipStartTick, snapTicks);
+        const nextStart = placeTick(note.startTick + deltaTicks, free);
         const minTickDelta = -Math.min(...originNotes.map((candidate) => candidate.startTick));
-        const tickDelta = Math.max(minTickDelta, snappedStart - note.startTick);
-        const rawPitchDelta = Math.round((originY - clientY) / rowHeight);
+        const tickDelta = Math.max(minTickDelta, nextStart - note.startTick);
+        const rawPitchDelta = Math.round((originY - pointer.clientY) / rowHeight);
         const minPitchDelta = Math.max(
           ...originNotes.map((candidate) => PITCH_LOW - candidate.note),
         );
@@ -814,47 +889,59 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           ...originNotes.map((candidate) => PITCH_HIGH - 1 - candidate.note),
         );
         const pitchDelta = Math.max(minPitchDelta, Math.min(maxPitchDelta, rawPitchDelta));
+        return { ...note, startTick: note.startTick + tickDelta, note: note.note + pitchDelta };
+      }
+      if (mode === 'resizeStart') {
+        const nextStart = placeTick(note.startTick + deltaTicks, free);
+        const minStartDelta = -Math.min(...originNotes.map((candidate) => candidate.startTick));
+        const maxStartDelta = Math.min(
+          ...originNotes.map((candidate) => candidate.durationTicks - 1),
+        );
+        const startDelta = Math.max(
+          minStartDelta,
+          Math.min(maxStartDelta, nextStart - note.startTick),
+        );
         return {
           ...note,
-          startTick: note.startTick + tickDelta,
-          note: note.note + pitchDelta,
+          startTick: note.startTick + startDelta,
+          durationTicks: note.durationTicks - startDelta,
         };
       }
-      const snappedDuration =
-        snapLocalTick(note.startTick + note.durationTicks + deltaTicks, clipStartTick, snapTicks) -
-        note.startTick;
+      const nextEnd = placeTick(note.startTick + note.durationTicks + deltaTicks, free);
       const minDurationDelta = Math.max(
         ...originNotes.map((candidate) => 1 - candidate.durationTicks),
       );
-      const durationDelta = Math.max(minDurationDelta, snappedDuration - note.durationTicks);
+      const durationDelta = Math.max(
+        minDurationDelta,
+        nextEnd - note.startTick - note.durationTicks,
+      );
       return { ...note, durationTicks: note.durationTicks + durationDelta };
     };
     const buildPreviewNotes = (nextNote: MidiNote) => {
-      if (originNotes.length < 2) return { [nextNote.id]: nextNote };
-      if (mode === 'move') {
-        const tickDelta = nextNote.startTick - note.startTick;
-        const pitchDelta = nextNote.note - note.note;
-        return Object.fromEntries(
-          originNotes.map((candidate) => [
-            candidate.id,
-            {
-              ...candidate,
-              startTick: candidate.startTick + tickDelta,
-              note: candidate.note + pitchDelta,
-            },
-          ]),
-        ) as Record<string, MidiNote>;
-      }
+      const tickDelta = nextNote.startTick - note.startTick;
+      const pitchDelta = nextNote.note - note.note;
       const durationDelta = nextNote.durationTicks - note.durationTicks;
       return Object.fromEntries(
         originNotes.map((candidate) => [
           candidate.id,
-          { ...candidate, durationTicks: candidate.durationTicks + durationDelta },
+          {
+            ...candidate,
+            startTick: candidate.startTick + tickDelta,
+            note: candidate.note + pitchDelta,
+            durationTicks: candidate.durationTicks + durationDelta,
+          },
         ]),
       ) as Record<string, MidiNote>;
     };
+    // A press that stays put is a click: it selects without snapping the note anywhere.
+    const travelled = (pointer: PointerEvent) =>
+      Math.abs(pointer.clientX - originX) >= NOTE_DRAG_THRESHOLD ||
+      Math.abs(pointer.clientY - originY) >= NOTE_DRAG_THRESHOLD;
+    let moved = false;
     const move = (pointer: PointerEvent) => {
-      preview = updatePreview(pointer.clientX, pointer.clientY);
+      moved ||= travelled(pointer);
+      if (!moved) return;
+      preview = updatePreview(pointer);
       previewNotes = buildPreviewNotes(preview);
       setDragging((current) =>
         current?.gestureId === gestureId
@@ -874,35 +961,60 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
     };
     finish = (pointer) => {
       cleanup();
-      preview = updatePreview(pointer.clientX, pointer.clientY);
+      moved ||= travelled(pointer);
+      preview = moved ? updatePreview(pointer) : note;
       previewNotes = buildPreviewNotes(preview);
-      let operation: MidiEditResult | undefined;
       const changed = originNotes.some((candidate) => {
         const next = previewNotes[candidate.id];
         return (
-          next &&
-          (next.startTick !== candidate.startTick ||
-            next.note !== candidate.note ||
-            next.durationTicks !== candidate.durationTicks)
+          next.startTick !== candidate.startTick ||
+          next.note !== candidate.note ||
+          next.durationTicks !== candidate.durationTicks
         );
       });
-      if (changed) {
-        auditionNote(preview.note, preview.velocity, preview.durationTicks);
-        const updates = originNotes.map((candidate) => {
-          const next = previewNotes[candidate.id];
-          return {
-            noteId: candidate.id,
-            patch:
-              mode === 'move'
-                ? { startTick: next.startTick, note: next.note }
-                : { durationTicks: next.durationTicks },
-          };
-        });
-        if (props.onUpdateNotes && originNotes.length > 1) {
-          operation = props.onUpdateNotes(props.clip!.id, updates);
-        } else {
-          operation = props.onUpdateNote?.(props.clip!.id, preview);
-        }
+      // A drag that edited notes ends without the click that would reselect them.
+      suppressNoteClickRef.current = changed;
+      if (!changed) {
+        clearDragging();
+        return;
+      }
+      auditionNote(preview.note, preview.velocity, preview.durationTicks);
+      if (mode !== 'move') setLastNoteLength(preview.durationTicks);
+      let operation: MidiEditResult;
+      if (copying) {
+        operation = selectAddedNotes(
+          props.onInsertNotes?.(
+            props.clip!.id,
+            originNotes.map((candidate) => {
+              const next = previewNotes[candidate.id];
+              return {
+                pitch: next.note,
+                startTick: next.startTick,
+                durationTicks: next.durationTicks,
+                velocity: next.velocity,
+                channel: next.channel,
+              };
+            }),
+          ),
+        );
+      } else if (props.onUpdateNotes && originNotes.length > 1) {
+        operation = props.onUpdateNotes(
+          props.clip!.id,
+          originNotes.map((candidate) => {
+            const next = previewNotes[candidate.id];
+            return {
+              noteId: candidate.id,
+              patch:
+                mode === 'move'
+                  ? { startTick: next.startTick, note: next.note }
+                  : mode === 'resizeStart'
+                    ? { startTick: next.startTick, durationTicks: next.durationTicks }
+                    : { durationTicks: next.durationTicks },
+            };
+          }),
+        );
+      } else {
+        operation = props.onUpdateNote?.(props.clip!.id, preview);
       }
       if (operation === undefined) {
         clearDragging();
@@ -941,25 +1053,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
         }
       }}
     >
-      <Toolbar
-        label="MIDI Editor toolbar"
-        trailing={
-          <>
-            <ToolbarStepper
-              label="Time"
-              ariaLabel="MIDI Editor zoom"
-              onStep={(direction) =>
-                applyHorizontalZoom(pixelsPerTick * (direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP))
-              }
-            />
-            <ToolbarStepper
-              label="Pitch"
-              ariaLabel="MIDI Editor pitch zoom"
-              onStep={(direction) => applyVerticalZoom(rowHeight + (direction > 0 ? 2 : -2))}
-            />
-          </>
-        }
-      >
+      <Toolbar label="MIDI Editor toolbar">
+        <span className={styles.clipIdentity} title={props.clip.name}>
+          {props.clip.name}
+        </span>
+        <ToolbarDivider />
         <ToolbarSegmented
           label="MIDI Editor tool"
           value={tool}
@@ -976,6 +1074,34 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           onChange={setSnap}
           options={SNAP_GRID_OPTIONS.map((value) => ({ value, label: snapGridLabel(value) }))}
         />
+        <ToolbarButton
+          icon="quantize"
+          ariaLabel="Quantize"
+          disabled={!quantizeTargets.length || snapTicks === 0 || !props.onQuantize}
+          title={
+            snapTicks === 0
+              ? 'Select a snap grid before quantizing'
+              : selectedNotes.length
+                ? 'Quantize the selected notes to the snap grid'
+                : 'Quantize all notes to the snap grid'
+          }
+          onClick={runQuantize}
+        >
+          Quantize
+        </ToolbarButton>
+        <ToolbarDivider />
+        <ToolbarSlider
+          label="Vel"
+          ariaLabel={
+            selectedNoteIds.length ? 'Selected MIDI note velocity' : 'New MIDI note velocity'
+          }
+          value={velocityDraft}
+          min={1}
+          max={127}
+          onChange={handleVelocityChange}
+          onCommit={commitVelocity}
+        />
+        <ToolbarDivider />
         <ToolbarToggle
           icon="speaker"
           ariaLabel="Preview"
@@ -989,41 +1115,11 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
           onClick={() => setPreviewEnabled((enabled) => !enabled)}
         />
         <ToolbarToggle
+          icon="ghostNotes"
           ariaLabel="Reference notes"
           active={ghostsVisible}
           title="Show notes from other tracks behind this clip"
           onClick={() => setGhostsVisible((visible) => !visible)}
-        >
-          Ghost
-        </ToolbarToggle>
-        <ToolbarDivider />
-        <ToolbarButton
-          icon="magnet"
-          ariaLabel="Quantize"
-          disabled={!selectedNoteIds.length || snapTicks === 0 || !props.onQuantize}
-          title={
-            snapTicks === 0
-              ? 'Select a snap grid before quantizing'
-              : 'Quantize notes to the snap grid'
-          }
-          onClick={runQuantize}
-        />
-        <ToolbarButton
-          icon="copy"
-          ariaLabel="Duplicate"
-          disabled={!selectedNoteIds.length}
-          title="Duplicate the selected notes"
-          onClick={() => void Promise.resolve(duplicateSelectedNotes())}
-        />
-        <ToolbarSlider
-          label="Vel"
-          ariaLabel="Selected MIDI note velocity"
-          value={velocityDraft}
-          min={1}
-          max={127}
-          disabled={!selectedNoteIds.length}
-          onChange={handleVelocityChange}
-          onCommit={commitVelocity}
         />
       </Toolbar>
       <div className={styles.editorSurface}>
@@ -1056,6 +1152,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     height: rowHeight,
                   }}
                   data-piano-key={pitch}
+                  data-hover={pitch === hoverPitch || undefined}
                   role="button"
                   tabIndex={0}
                   aria-label={`Preview ${midiNoteName(pitch)}`}
@@ -1084,9 +1181,7 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     previewNoteOff(pitch);
                   }}
                 >
-                  <span className={styles.pianoWhiteKey}>
-                    {pitch % 12 === 0 ? midiNoteName(pitch) : null}
-                  </span>
+                  <span className={styles.pianoWhiteKey} />
                   {isBlackKey(pitch % 12) && (
                     <span
                       className={styles.pianoBlackKey}
@@ -1097,6 +1192,9 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                       aria-hidden="true"
                     />
                   )}
+                  {(pitch % 12 === 0 || pitch === hoverPitch) && (
+                    <span className={styles.pianoLabel}>{midiNoteName(pitch)}</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -1104,6 +1202,12 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               className={styles.lane}
               data-midi-lane
               style={{ height: laneHeight, width: laneWidth }}
+              onPointerMove={(event) => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const pitch = pitchFromClientY(event.clientY, bounds.top, rowHeight);
+                if (pitch !== hoverPitch) setHoverPitch(pitch);
+              }}
+              onPointerLeave={() => setHoverPitch(null)}
               onPointerDown={(event) => {
                 setNoteContextMenu(null);
                 editorRef.current?.focus();
@@ -1144,16 +1248,12 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                     const right = Math.max(originX, pointer.clientX);
                     const rawStart = (left - bounds.left) / pixelsPerTick;
                     const rawEnd = (right - bounds.left) / pixelsPerTick;
-                    const startTick = snapLocalTick(rawStart, clipStartTick, snapTicks);
-                    const endTick = Math.max(
-                      startTick,
-                      snapLocalTick(rawEnd, clipStartTick, snapTicks),
+                    const startTick = placeTick(rawStart, pointer.altKey);
+                    const endTick = Math.max(startTick, placeTick(rawEnd, pointer.altKey));
+                    const durationTicks = endTick - startTick || newNoteLength;
+                    void Promise.resolve(
+                      addNoteAt(lane, left, originY, durationTicks, pointer.altKey),
                     );
-                    const durationTicks = Math.max(
-                      1,
-                      endTick - startTick || snapTicks || beatTicks,
-                    );
-                    void Promise.resolve(addNoteAt(lane, left, originY, durationTicks));
                   } else if (width < 4 && height < 4) {
                     setSelectedNoteIds([]);
                   } else {
@@ -1192,9 +1292,22 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
               onDoubleClick={(event) => {
                 if ((event.target as HTMLElement).closest('[data-note-id]')) return;
                 event.preventDefault();
-                void Promise.resolve(addNoteAt(event.currentTarget, event.clientX, event.clientY));
+                void Promise.resolve(
+                  addNoteAt(
+                    event.currentTarget,
+                    event.clientX,
+                    event.clientY,
+                    newNoteLength,
+                    event.altKey,
+                  ),
+                );
               }}
             >
+              <div
+                className={styles.clipEnd}
+                style={{ left: props.clip.durationTicks * pixelsPerTick }}
+                aria-hidden="true"
+              />
               {marquee && <div className={styles.marquee} style={marquee} />}
               {drawPreview && <div className={styles.drawPreview} style={drawPreview} />}
               <i
@@ -1239,37 +1352,29 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                 <div
                   key={pitch}
                   className={`${styles.pitchRow} ${isBlackKey(pitch % 12) ? styles.pitchBlack : ''} ${pitch % 12 === 0 ? styles.pitchOctave : ''}`}
-                  style={{
-                    top: pitchRowTop(pitch, rowHeight),
-                    height: rowHeight,
-                    lineHeight: `${rowHeight}px`,
-                  }}
-                >
-                  {pitch % 12 === 0 ? midiNoteName(pitch) : null}
-                </div>
+                  data-hover={pitch === hoverPitch || undefined}
+                  style={{ top: pitchRowTop(pitch, rowHeight), height: rowHeight }}
+                />
               ))}
               {notes
                 .filter((note) => note.note >= PITCH_LOW && note.note < PITCH_HIGH)
                 .map((note) => {
-                  const visibleNote = dragging?.previewNotes[note.id] ?? note;
-                  const isPreviewed = Boolean(dragging?.previewNotes[note.id]);
-                  const noteWidth = visibleNote.durationTicks * pixelsPerTick;
+                  const preview = dragging?.copying ? undefined : dragging?.previewNotes[note.id];
+                  const visibleNote = preview ?? note;
                   return (
                     <span
                       key={note.id}
                       data-note-id={note.id}
-                      className={`${styles.note} ${isPreviewed ? styles.dragging : ''} ${noteWidth < 12 ? styles.narrow : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
-                      style={{
-                        left: visibleNote.startTick * pixelsPerTick,
-                        top: pitchRowTop(visibleNote.note, rowHeight),
-                        width: Math.max(4, noteWidth),
-                        height: rowHeight - 1,
-                        opacity: Math.max(0.45, 0.4 + (visibleNote.velocity / 127) * 0.6),
-                      }}
+                      className={`${styles.note} ${preview ? styles.dragging : ''} ${selectedNoteIds.includes(note.id) ? styles.selected : ''}`}
+                      style={noteBox(visibleNote)}
                       onPointerDown={(event) => handlePointerDown(event, note, 'move')}
                       onClick={(event) => {
                         event.stopPropagation();
                         editorRef.current?.focus();
+                        if (suppressNoteClickRef.current) {
+                          suppressNoteClickRef.current = false;
+                          return;
+                        }
                         setSelectedNoteIds((current) =>
                           event.ctrlKey || event.shiftKey
                             ? current.includes(note.id)
@@ -1286,13 +1391,35 @@ export function MidiEditorPanel(props: MidiEditorPanelProps) {
                         setNoteContextMenu({ x: event.clientX, y: event.clientY, noteId: note.id });
                       }}
                     >
+                      {visibleNote.durationTicks * pixelsPerTick >= NOTE_LABEL_MIN_WIDTH &&
+                        rowHeight >= NOTE_LABEL_MIN_HEIGHT && (
+                          <span className={styles.noteLabel}>{midiNoteName(visibleNote.note)}</span>
+                        )}
                       <i
-                        className={styles.resizeHandle}
-                        onPointerDown={(event) => handlePointerDown(event, note, 'resize')}
+                        className={styles.resizeStart}
+                        onPointerDown={(event) => handlePointerDown(event, note, 'resizeStart')}
+                      />
+                      <i
+                        className={styles.resizeEnd}
+                        onPointerDown={(event) => handlePointerDown(event, note, 'resizeEnd')}
                       />
                     </span>
                   );
                 })}
+              {dragging?.copying &&
+                Object.values(dragging.previewNotes).map((copy) => (
+                  <span
+                    key={`copy-${copy.id}`}
+                    aria-hidden="true"
+                    className={`${styles.note} ${styles.dragging}`}
+                    style={noteBox(copy)}
+                  />
+                ))}
+              {dragReadout && (
+                <span className={styles.dragReadout} style={dragReadout.style}>
+                  {dragReadout.text}
+                </span>
+              )}
             </div>
           </div>
         </div>

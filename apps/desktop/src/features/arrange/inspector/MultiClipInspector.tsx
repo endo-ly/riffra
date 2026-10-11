@@ -67,7 +67,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
   return (
     <div className={styles.inspector}>
       <div className={styles.identity}>
-        <span className={styles.identityIcon}>
+        <span className={styles.identityTile}>
           <Icon name="copy" />
         </span>
         <div className={styles.identityBlock}>
@@ -78,7 +78,7 @@ export function MultiClipInspector(props: MultiClipInspectorProps) {
         </div>
       </div>
       <section className={styles.section}>
-        <div className={styles.clipActions}>
+        <div className={styles.buttonRow}>
           {selectedClips.length === 2 && audioClips.length === 2 && (
             <button
               type="button"

@@ -34,9 +34,9 @@ describe('App native boundary', () => {
     await renderApp(api);
     await userEvent.click(screen.getByRole('button', { name: /^Project:/ }));
     await waitFor(() =>
-      expect(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' })).toBeEnabled(),
+      expect(screen.getByRole('menuitem', { name: 'Import Sonalloy' })).toBeEnabled(),
     );
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy' }));
     expect(folder).toHaveBeenCalledOnce();
     await waitFor(() => expect(api.calls).toContain('importSonalloyBundle'));
     api.setFailure(
@@ -44,7 +44,7 @@ describe('App native boundary', () => {
       new Error('parts[1].pattern.events[2]: unsupported event'),
     );
     await userEvent.click(screen.getByRole('button', { name: /^Project:/ }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy Bundle…' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Import Sonalloy' }));
     await waitFor(() =>
       expect(
         screen.getByText(/parts\[1\].pattern.events\[2\]: unsupported event/),

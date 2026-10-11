@@ -27,14 +27,23 @@ interface ArrangeToolbarProps {
   automationAvailable: boolean;
   automationOpen: boolean;
   onToggleAutomation: () => void;
-  playSurfaceAvailable: boolean;
   playSurfaceOpen: boolean;
   onTogglePlaySurface: () => void;
   mixerOpen: boolean;
   onToggleMixer: () => void;
+  computerKeyboardOn: boolean;
+  /** What the computer keyboard plays while it is on: an octave such as `C4`, or `Pads`. */
+  computerKeyboardRange: string;
+  /** Why live input cannot reach the focused Track, or `null` when it can. */
+  computerKeyboardBlockedReason: string | null;
+  onToggleComputerKeyboard: () => void;
 }
 
 export function ArrangeToolbar(props: ArrangeToolbarProps) {
+  // One source of truth, so the toggle state and its label can never disagree.
+  const computerKeyboardOn =
+    props.computerKeyboardOn && props.computerKeyboardBlockedReason === null;
+
   return (
     <Toolbar
       label="Arrange toolbar"
@@ -90,20 +99,6 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         Automation
       </ToolbarToggle>
       <ToolbarToggle
-        active={props.playSurfaceOpen}
-        icon="keys"
-        ariaLabel="Play Surface"
-        disabled={!props.playSurfaceAvailable}
-        title={
-          props.playSurfaceAvailable
-            ? 'Show or hide the Play Surface for the focused Instrument Track'
-            : 'Focus an Instrument Track to use the Play Surface'
-        }
-        onClick={props.onTogglePlaySurface}
-      >
-        Play Surface
-      </ToolbarToggle>
-      <ToolbarToggle
         active={props.mixerOpen}
         icon="mixer"
         ariaLabel="Mixer"
@@ -111,6 +106,28 @@ export function ArrangeToolbar(props: ArrangeToolbarProps) {
         onClick={props.onToggleMixer}
       >
         Mixer
+      </ToolbarToggle>
+      <ToolbarToggle
+        active={props.playSurfaceOpen}
+        icon="keys"
+        ariaLabel="Play Surface"
+        title="Show or hide the on-screen keyboard and drum pads"
+        onClick={props.onTogglePlaySurface}
+      >
+        Play Surface
+      </ToolbarToggle>
+      <ToolbarToggle
+        active={computerKeyboardOn}
+        icon="computerKeyboard"
+        ariaLabel="Computer keyboard input"
+        title={
+          props.computerKeyboardBlockedReason === null
+            ? 'Play the focused Instrument Track from the computer keyboard (Ctrl+Shift+K)'
+            : `${props.computerKeyboardBlockedReason} Computer keyboard input stays off.`
+        }
+        onClick={props.onToggleComputerKeyboard}
+      >
+        {computerKeyboardOn ? props.computerKeyboardRange : undefined}
       </ToolbarToggle>
     </Toolbar>
   );

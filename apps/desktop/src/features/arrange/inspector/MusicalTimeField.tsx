@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react';
-import clsx from 'clsx';
 import type { ProjectTimebase } from '@/model/domain';
 import {
   formatMusicalLength,
@@ -42,10 +41,9 @@ export function MusicalTimeField(props: MusicalTimeFieldProps) {
   };
 
   return (
-    <label className={styles.field}>
+    <label className={styles.inlineField}>
       <span>{props.label}</span>
       <input
-        className={clsx(styles.control, styles.mono)}
         value={draft ?? formatted}
         spellCheck={false}
         onFocus={() => setDraft(formatted)}

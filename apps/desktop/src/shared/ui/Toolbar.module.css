@@ -1,15 +1,20 @@
+/*
+ * Toolbar controls carry no borders. Buttons sit flat and lift on hover;
+ * choices live in a surface-colored well where the chosen one rises; an
+ * engaged toggle lights its icon instead of filling its box.
+ */
 .toolbar {
   z-index: var(--z-chrome);
   min-width: 0;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   min-height: var(--size-toolbar);
   overflow-x: auto;
   scrollbar-width: none;
   padding: 0 var(--space-3);
-  background: linear-gradient(180deg, var(--color-bg-surface), var(--color-bg-panel));
+  background: var(--color-bg-panel);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -35,12 +40,13 @@
   flex: 0 0 auto;
   width: 1px;
   height: 16px;
+  margin: 0 var(--space-1);
   background: var(--color-border-subtle);
 }
 
 .toolbar svg {
-  width: var(--size-icon-sm);
-  height: var(--size-icon-sm);
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
 }
 
 .field,
@@ -54,7 +60,7 @@
 .stepper > span {
   color: var(--color-text-muted);
   font-size: var(--font-size-micro);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -65,22 +71,36 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-1-5);
-  padding: 0 var(--space-2-5);
+  padding: 0 var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
-  background-color: var(--color-bg-panel);
-  border: 1px solid var(--color-border-default);
+  background-color: transparent;
+  border: 0;
   border-radius: var(--radius-sm);
-}
-
-select.control {
-  width: 62px;
-  padding: 0 var(--space-5) 0 var(--space-1-5);
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
 }
 
 .control:hover:not(:disabled) {
+  color: var(--color-text-strong);
+  background-color: var(--color-bg-surface);
+}
+
+.control:disabled {
+  color: var(--color-text-disabled);
+}
+
+select.control {
+  width: 64px;
+  justify-content: flex-start;
+  padding: 0 var(--space-5) 0 var(--space-2);
   color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
+  background-color: var(--color-bg-surface);
+}
+
+select.control:hover:not(:disabled) {
+  background-color: var(--color-bg-surface-raised);
 }
 
 .iconOnly {
@@ -88,13 +108,29 @@ select.control {
   padding: 0;
 }
 
+.control.active,
+.segmentedButton.active {
+  color: var(--color-text-strong);
+  background-color: var(--color-control-active);
+}
+
+.control.active:hover:not(:disabled),
+.segmentedButton.active:hover:not(:disabled) {
+  background-color: var(--color-control-active-hover);
+}
+
+.control.active svg,
+.segmentedButton.active svg {
+  color: var(--color-accent);
+}
+
 .segmented {
   display: flex;
+  gap: var(--space-0-5);
   height: var(--size-control-dense);
   box-sizing: border-box;
   padding: var(--space-0-5);
-  background: var(--color-bg-panel);
-  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
   border-radius: var(--radius-sm);
 }
 
@@ -103,13 +139,16 @@ select.control {
   align-items: center;
   justify-content: center;
   gap: var(--space-1-5);
-  min-width: 28px;
+  min-width: 26px;
   padding: 0 var(--space-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-small);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
 }
 
 .segmentedButton:has(> svg:only-child) {
@@ -117,15 +156,8 @@ select.control {
 }
 
 .segmentedButton:hover:not(:disabled) {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-.control.active,
-.segmentedButton.active {
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-panel));
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
 }
 
 .field input[type='range'] {

@@ -99,12 +99,15 @@ export function useDrumPads({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTypingTarget(event.target)) return;
-      if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
       const pad = drumPadByKey(key);
-      if (pad === undefined || heldKeysRef.current.has(key)) return;
+      if (pad === undefined) return;
+
+      // Held keys stay with the performance input: a repeated keydown must not
+      // reach an Arrange shortcut, so consume it before acting on it.
       event.preventDefault();
+      if (event.repeat || heldKeysRef.current.has(key)) return;
       heldKeysRef.current.add(key);
       noteOn(pad.note);
     };
@@ -119,12 +122,13 @@ export function useDrumPads({
 
     const onBlur = () => releaseAll();
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    // Capture phase: while live input is on, its keys play before any shortcut sees them.
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
   }, [enabled, releaseAll, noteOn, noteOff]);

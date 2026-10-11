@@ -119,25 +119,30 @@ export function useMusicalTyping({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTypingTarget(event.target)) return;
-      if (event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
+      const octaveKey =
+        key === MUSICAL_TYPING_OCTAVE_DOWN_KEY || key === MUSICAL_TYPING_OCTAVE_UP_KEY;
+      const semitone = octaveKey ? undefined : TYPING_KEY_BY_LOWER.get(key);
+      if (!octaveKey && semitone === undefined) return;
 
-      if (key === MUSICAL_TYPING_OCTAVE_DOWN_KEY || key === MUSICAL_TYPING_OCTAVE_UP_KEY) {
+      // Held keys stay with the performance input: a repeated keydown must not
+      // reach an Arrange shortcut, so consume it before acting on it.
+      event.preventDefault();
+      if (event.repeat) return;
+
+      if (octaveKey) {
         const currentOctave = paramsRef.current.octave;
         const delta = key === MUSICAL_TYPING_OCTAVE_DOWN_KEY ? -1 : 1;
         const next = currentOctave + delta;
         if (next < MUSICAL_TYPING_MIN_OCTAVE || next > MUSICAL_TYPING_MAX_OCTAVE) return;
-        event.preventDefault();
         paramsRef.current.onOctaveChange?.(delta);
         return;
       }
 
-      if (!TYPING_KEY_BY_LOWER.has(key) || heldKeysRef.current.has(key)) return;
+      if (heldKeysRef.current.has(key)) return;
       const { octave: oc } = paramsRef.current;
-      const semitone = TYPING_KEY_BY_LOWER.get(key)!;
-      const note = baseNoteForOctave(oc) + semitone;
-      event.preventDefault();
+      const note = baseNoteForOctave(oc) + semitone!;
       heldKeysRef.current.add(key);
       noteOn(note);
     };
@@ -154,12 +159,13 @@ export function useMusicalTyping({
 
     const onBlur = () => releaseHeldNotes();
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    // Capture phase: while live input is on, its keys play before any shortcut sees them.
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
   }, [enabled, releaseHeldNotes, noteOn, noteOff]);

@@ -21,7 +21,9 @@ import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
 import { ArrangeMidiEditor } from './ArrangeMidiEditor';
 import { resolveTrackColor } from './model/track-colors';
 import { ArrangePlayhead } from './components/ArrangePlayhead';
-import { PlaySurfacePanel, type PlaySurfaceMode } from './play-surface/PlaySurfacePanel';
+import { PlaySurface } from './play-surface/PlaySurface';
+import { midiNoteName } from './play-surface/musical-typing';
+import { useLivePlay } from './play-surface/useLivePlay';
 import { ToolbarButton } from '@/shared/ui/Toolbar';
 import {
   buildTrackTimeline,
@@ -72,7 +74,6 @@ interface WorkspaceArrangeProps {
   missingDeviceIds?: string[];
   plugins?: PluginEntry[];
   instruments?: InstrumentLibraryItem[];
-  playSurfaceHost: HTMLElement | null;
 }
 
 export function WorkspaceArrange(props: WorkspaceArrangeProps) {
@@ -89,8 +90,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   >({});
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const [confirmRequest, setConfirmRequest] = useState<ArrangeConfirmRequest | null>(null);
-  const [playSurfaceMode, setPlaySurfaceMode] = useState<PlaySurfaceMode>('closed');
-  const [playSurfaceSummary, setPlaySurfaceSummary] = useState('');
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
@@ -256,6 +255,14 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     props.audio.state !== 'starting' &&
     props.audio.state !== 'faulted' &&
     props.audio.state !== 'offline';
+  const livePlay = useLivePlay({
+    track: focusedTrack,
+    runtimeReady,
+    missingDeviceIds,
+    surfaceOpen: lower.view === 'playSurface' && !lower.collapsed,
+    api: props.api,
+  });
+  const { toggleComputerKeyboard } = livePlay;
   const activeInstrumentUnavailable = Boolean(
     activeMidiTrack?.instrument?.source.type === 'vst3' &&
     (activeMidiTrack.instrument.source.disabledPlaceholder ||
@@ -296,6 +303,13 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (handleRulerKeyboard(event) || event.defaultPrevented) return;
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        // A held shortcut toggles once; the repeats of the key belong to nothing.
+        if (event.repeat) return;
+        toggleComputerKeyboard();
+        return;
+      }
       if (event.key === ' ' && !isEditableTarget(event.target)) {
         event.preventDefault();
         onToggleTransport();
@@ -333,6 +347,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     onToggleTransport,
     rulerTimeSelection,
     timebase,
+    toggleComputerKeyboard,
     zoomToRange,
   ]);
 
@@ -467,13 +482,18 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onToggleAutomation={() => {
           if (selectedTrackId) toggleAutomation(selectedTrackId);
         }}
-        playSurfaceAvailable={focusedTrack?.kind === 'instrument'}
-        playSurfaceOpen={playSurfaceMode !== 'closed'}
-        onTogglePlaySurface={() =>
-          setPlaySurfaceMode(playSurfaceMode === 'closed' ? 'expanded' : 'closed')
-        }
+        playSurfaceOpen={lower.view === 'playSurface'}
+        onTogglePlaySurface={lower.togglePlaySurface}
         mixerOpen={lower.view === 'mixer'}
         onToggleMixer={lower.toggleMixer}
+        computerKeyboardOn={livePlay.computerKeyboard}
+        computerKeyboardRange={
+          livePlay.settings.mode === 'pads'
+            ? 'Pads'
+            : midiNoteName(livePlay.settings.octave * 12 + 12)
+        }
+        computerKeyboardBlockedReason={livePlay.blockedReason}
+        onToggleComputerKeyboard={toggleComputerKeyboard}
       />
 
       <ArrangeOverlays
@@ -758,12 +778,29 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
       <ArrangeLowerArea
         view={lower.view}
         height={lower.height}
-        minimumHeight={lower.view === 'mixer' ? 240 : 180}
+        minimumHeight={lower.view === 'mixer' ? 240 : lower.view === 'playSurface' ? 220 : 180}
         collapsed={lower.collapsed}
         maximized={lower.maximized}
         onCollapsedChange={lower.setCollapsed}
         onHeightChange={lower.setHeight}
         controls={lowerControls}
+        playSurface={
+          <PlaySurface
+            play={livePlay}
+            trackColor={
+              focusedTrack
+                ? resolveTrackColor(focusedTrack, arrangement.tracks.indexOf(focusedTrack))
+                : null
+            }
+            audio={props.audio}
+            onChooseInstrument={() => {
+              if (focusedTrack) {
+                props.setSelection({ kind: 'track', trackId: focusedTrack.id });
+                lower.openDevices();
+              }
+            }}
+          />
+        }
         midiEditor={
           <ArrangeMidiEditor
             clip={activeMidiClip}
@@ -814,25 +851,6 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
             onError={setMessage}
           />
         }
-      />
-
-      <PlaySurfacePanel
-        host={props.playSurfaceHost}
-        mode={playSurfaceMode}
-        track={focusedTrack}
-        summary={playSurfaceSummary}
-        onModeChange={setPlaySurfaceMode}
-        audio={props.audio}
-        api={props.api}
-        runtimeReady={runtimeReady}
-        missingDeviceIds={missingDeviceIds}
-        onChooseInstrument={() => {
-          if (focusedTrack) {
-            props.setSelection({ kind: 'track', trackId: focusedTrack.id });
-            lower.openDevices();
-          }
-        }}
-        onSummaryChange={setPlaySurfaceSummary}
       />
     </section>
   );

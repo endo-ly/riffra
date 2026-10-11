@@ -28,13 +28,21 @@ export function Icon({ name, className }: { name: string; className?: string }) 
     restore: 'M7 7h10v10H7V7Zm2 2v6h6V9H9Z',
     curve:
       'M2.7 15.6C5.7 7.2 9.4 6.3 12.4 10.2C15 13.6 17.5 13.7 21.3 6.4L22.9 7.2C18.7 15.7 15 16.5 11.9 12.5C9.3 9.2 7 9.6 4.3 17.1Z',
-    magnet: 'M5 3h5v8a2 2 0 0 0 4 0V3h5v8a7 7 0 0 1-14 0V3Z',
+    // Notes of different lengths lined up against a grid line.
+    quantize: 'M3 3h2v18H3V3Zm4 3h10v3H7V6Zm0 5h6v3H7v-3Zm0 5h13v3H7v-3Z',
+    // A solid note in front of an outlined note from another track.
+    ghostNotes: 'M9 5h12v6H9V5Zm2 2v2h8V7h-8ZM3 13h12v6H3v-6Z',
     copy: 'M8 8h12v12H8V8ZM4 4h10v2H6v8H4V4Z',
     speaker: 'M4 9h4l5-4v14l-5-4H4V9Zm11.6-.5a6.3 6.3 0 0 1 0 7l-1.6-1.2a4.3 4.3 0 0 0 0-4.6Z',
+    speakerOff:
+      'M4 9h4l5-4v14l-5-4H4V9Zm11.3.7 1.4-1.4 2.3 2.3 2.3-2.3 1.4 1.4-2.3 2.3 2.3 2.3-1.4 1.4-2.3-2.3-2.3 2.3-1.4-1.4 2.3-2.3-2.3-2.3Z',
+    loop: 'M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z',
     module: 'M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z',
     wave: 'M3 10h2v4H3v-4Zm4-3h2v10H7V7Zm4-4h2v18h-2V3Zm4 4h2v10h-2V7Zm4 3h2v4h-2v-4Z',
     note: 'M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z',
     keys: 'M4 17h16v2H4v-2Zm0-11h3v9H4V6Zm6.5 0h3v9h-3V6Zm6.5 0h3v9h-3V6Z',
+    computerKeyboard:
+      'M2 6h20v12H2V6Zm2 2v8h16V8H4Zm1 1h2v2H5V9Zm3 0h2v2H8V9Zm3 0h2v2h-2V9Zm3 0h2v2h-2V9Zm3 0h2v2h-2V9ZM7 13h10v2H7v-2Z',
     mixer:
       'M5 4h2v5h2v2H7v9H5v-9H3V9h2V4Zm6 0h2v9h2v2h-2v5h-2v-5H9v-2h2V4Zm6 0h2v3h2v2h-2v11h-2V9h-2V7h2V4Z',
     grip: 'M9 5h2v2H9V5Zm4 0h2v2h-2V5ZM9 11h2v2H9v-2Zm4 0h2v2h-2v-2ZM9 17h2v2H9v-2Zm4 0h2v2h-2v-2Z',

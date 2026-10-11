@@ -225,11 +225,11 @@ Desktop の Devices は既存 Control Command の `device.inspect`、`device.par
 
 MIDI 系の意味づけは次の通り。
 
-| 命令                               | 意味                                                                                                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `setLiveMidiTarget`                | Play Surface のフォーカスを Runtime-only 状態に設定する。`trackId: null` で解除する。対象トラックは同一 Track Runtime を使い、トラック間補償遅延のみ迂回する |
-| `sendTrackMidi` / `panicTrackMidi` | 要求内の Track ID へライブ MIDI を直接送る                                                                                                                   |
-| `setFeedbackProtection`            | フィードバック保護の切替。解除は `active: false` で行う                                                                                                      |
+| 命令                               | 意味                                                                                                                                                                                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setLiveMidiTarget`                | ライブ演奏の対象（Computer Keyboard が有効な間、または Play Surface を表示中の Focused Instrument Track）を Runtime-only 状態に設定する。`trackId: null` で解除する。対象トラックは同一 Track Runtime を使い、トラック間補償遅延のみ迂回する |
+| `sendTrackMidi` / `panicTrackMidi` | 要求内の Track ID へライブ MIDI を直接送る                                                                                                                                                                                                   |
+| `setFeedbackProtection`            | フィードバック保護の切替。解除は `active: false` で行う                                                                                                                                                                                      |
 
 ### 5.5 エラー
 

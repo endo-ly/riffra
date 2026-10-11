@@ -45,12 +45,12 @@
 
 .transportGroup .toggleActive {
   color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  background: var(--color-control-active);
 }
 
 .transportGroup .toggleActive:hover:not(:disabled) {
   color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  background: var(--color-control-active-hover);
 }
 
 .transportGroup .playButton {
