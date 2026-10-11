@@ -53,11 +53,11 @@ Arrangeは、入力された音を聞きながら音を作り、録音し、時�
 
 #### Play Surface
 
-Play Surfaceは、Timelineを見ながらFocused Instrument Trackを演奏するための領域である。Keyboard／Drum Pads、Octave、Velocity、Computer Keyboard入力を提供し、Record Armは自動変更しない。
+Play Surfaceは、Timelineを見ながらFocused Instrument Trackを演奏するための入力である。PCのキーで演奏するComputer Keyboardと、画面上のKeyboard／Drum Padsを提供し、Octave、Velocityを共有する。Record Armは自動変更しない。
 
 - FocusとObject Selectionを分離し、MIDI Clipを選択しても演奏先を維持する
 - Armedかつ録音中のFocused Trackだけへ演奏MIDIを記録する
-- MIDI EditorとPlay Surfaceは独立して開閉でき、同時に使える
+- Computer KeyboardはPlay Surfaceを開かずに使え、MIDI EditorやDevicesを表示したまま演奏できる
 
 ### 2.2 Design
 
@@ -168,7 +168,7 @@ flowchart TD
 
 共通の画面骨格は [共通画面構造](ui-ux-design/application-layout.md) で定義する。Arrange では Browser、Properties、Timeline、Detail Area、Play Surface が同じセッションを参照し、選択・編集・演奏の文脈を保ったまま連携する。
 
-Focused Instrument Track は Play Surface から演奏できる。MIDI Editor と Play Surface は同時に利用できるため、MIDI の編集とライブ入力を切り替えずに確認できる。
+Focused Instrument Track は Computer Keyboard と Play Surface から演奏できる。Computer Keyboard は MIDI Editor を表示したまま使えるため、MIDI の編集とライブ入力を切り替えずに確認できる。
 
 選択、ドラッグ、試聴、取り消し、エラー表示の意味は、制作領域が変わっても統一する。
 

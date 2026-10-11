@@ -75,7 +75,6 @@ function LeftColumnResizeHandle(props: {
 export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}) {
   const [leftColumnWidth, setLeftColumnWidth] = useState<number>(LEFT_COLUMN_WIDTH.default);
   const [propertiesHeight, setPropertiesHeight] = useState<number | null>(null);
-  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const [panelResize, setPanelResize] = useState<{
     startX: number;
     startWidth: number;
@@ -591,17 +590,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               runtimeProjectionFailure={runtimeProjectionFailure}
               runtimeProjectionRetrying={runtimeProjectionRetrying}
               onRetryRuntimeProjection={retryRuntimeProjection}
-              playSurfaceHost={playSurfaceHost}
             />
           </fieldset>
         </section>
       </div>
 
-      <div
-        ref={setPlaySurfaceHost}
-        className={shellStyles.playSurfaceHost}
-        data-play-surface-host
-      />
       {commandOpen && hostConnected && (
         <div className={styles.commandBackdrop} onMouseDown={() => setCommandOpen(false)}>
           <section

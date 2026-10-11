@@ -5,11 +5,10 @@
   display: grid;
   position: relative;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--size-global-control-bar) minmax(0, 1fr) auto;
+  grid-template-rows: var(--size-global-control-bar) minmax(0, 1fr);
   grid-template-areas:
     'global'
-    'body'
-    'play-surface';
+    'body';
   background: var(--color-bg-app);
 }
 
@@ -38,13 +37,6 @@
       transparent 42%
     ),
     var(--color-bg-app);
-}
-
-.playSurfaceHost {
-  grid-area: play-surface;
-  min-width: 0;
-  min-height: 0;
-  isolation: isolate;
 }
 
 .isPanelResizing,

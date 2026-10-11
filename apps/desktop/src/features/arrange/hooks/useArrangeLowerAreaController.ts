@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MidiClip } from '@/model/domain';
 
 type ArrangeDetailView = 'midiEditor' | 'devices';
-export type ArrangeLowerView = 'closed' | ArrangeDetailView | 'mixer';
+/** Views toggled over the detail views; closing one returns to the detail view below it. */
+type ArrangeOverlayView = 'mixer' | 'playSurface';
+export type ArrangeLowerView = 'closed' | ArrangeDetailView | ArrangeOverlayView;
+
+const DEFAULT_HEIGHTS: Record<'detail' | ArrangeOverlayView, number> = {
+  detail: 380,
+  mixer: 320,
+  playSurface: 260,
+};
 
 interface ArrangeLowerAreaControllerOptions {
   midiClips: MidiClip[];
@@ -18,20 +26,20 @@ export function useArrangeLowerAreaController({
   const [view, setView] = useState<ArrangeLowerView>('closed');
   const [collapsed, setCollapsedState] = useState(false);
   const [maximized, setMaximizedState] = useState(false);
-  const [detailHeight, setDetailHeight] = useState(380);
-  const [mixerHeight, setMixerHeight] = useState(320);
-  const [returnViewAfterMixer, setReturnViewAfterMixer] = useState<ArrangeDetailView | null>(null);
+  const [heights, setHeights] = useState(DEFAULT_HEIGHTS);
+  const [returnView, setReturnView] = useState<ArrangeDetailView | null>(null);
   const activeMidiClip = useMemo(
     () => midiClips.find((clip) => clip.id === activeMidiClipId) ?? null,
     [activeMidiClipId, midiClips],
   );
-  const height = view === 'mixer' ? mixerHeight : detailHeight;
+  const heightKey = view === 'mixer' || view === 'playSurface' ? view : 'detail';
+  const height = heights[heightKey];
 
   const close = useCallback(() => {
     setView('closed');
     setCollapsedState(false);
     setMaximizedState(false);
-    setReturnViewAfterMixer(null);
+    setReturnView(null);
   }, []);
 
   const setCollapsed = useCallback((next: boolean) => {
@@ -44,29 +52,35 @@ export function useArrangeLowerAreaController({
     setMaximizedState(next);
   }, []);
 
-  const toggleMixer = useCallback(() => {
-    if (view === 'mixer') {
-      const nextView =
-        returnViewAfterMixer === 'devices'
-          ? 'devices'
-          : returnViewAfterMixer === 'midiEditor' && activeMidiClip
-            ? 'midiEditor'
-            : 'closed';
-      setReturnViewAfterMixer(null);
+  const toggleOverlay = useCallback(
+    (overlay: ArrangeOverlayView) => {
       setCollapsedState(false);
-      setView(nextView);
-      return;
-    }
-    setReturnViewAfterMixer(view === 'midiEditor' || view === 'devices' ? view : null);
-    setCollapsedState(false);
-    setView('mixer');
-  }, [activeMidiClip, returnViewAfterMixer, view]);
+      if (view === overlay) {
+        const nextView =
+          returnView === 'devices'
+            ? 'devices'
+            : returnView === 'midiEditor' && activeMidiClip
+              ? 'midiEditor'
+              : 'closed';
+        setReturnView(null);
+        setView(nextView);
+        return;
+      }
+      if (view === 'midiEditor' || view === 'devices') setReturnView(view);
+      else if (view === 'closed') setReturnView(null);
+      setView(overlay);
+    },
+    [activeMidiClip, returnView, view],
+  );
+
+  const toggleMixer = useCallback(() => toggleOverlay('mixer'), [toggleOverlay]);
+  const togglePlaySurface = useCallback(() => toggleOverlay('playSurface'), [toggleOverlay]);
 
   const openMidiEditor = useCallback(
     (clip: MidiClip) => {
       selectClip(clip.id);
       setActiveMidiClipId(clip.id);
-      setReturnViewAfterMixer(null);
+      setReturnView(null);
       setView('midiEditor');
       setCollapsedState(false);
     },
@@ -74,7 +88,7 @@ export function useArrangeLowerAreaController({
   );
 
   const openDevices = useCallback(() => {
-    setReturnViewAfterMixer(null);
+    setReturnView(null);
     setView('devices');
     setCollapsedState(false);
   }, []);
@@ -85,11 +99,8 @@ export function useArrangeLowerAreaController({
   }, []);
 
   const setHeight = useCallback(
-    (nextHeight: number) => {
-      if (view === 'mixer') setMixerHeight(nextHeight);
-      else setDetailHeight(nextHeight);
-    },
-    [view],
+    (nextHeight: number) => setHeights((current) => ({ ...current, [heightKey]: nextHeight })),
+    [heightKey],
   );
 
   useEffect(() => {
@@ -109,6 +120,7 @@ export function useArrangeLowerAreaController({
     openDevices,
     keepSelectedMidiClipVisible,
     toggleMixer,
+    togglePlaySurface,
     close,
     setCollapsed,
     setMaximized,

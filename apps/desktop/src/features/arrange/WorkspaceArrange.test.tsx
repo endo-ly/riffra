@@ -52,7 +52,6 @@ function Harness({
   const [focusedTrackId, setFocusedTrackId] = useState<string | null>(
     initialFocusedTrackId ?? null,
   );
-  const [playSurfaceHost, setPlaySurfaceHost] = useState<HTMLDivElement | null>(null);
   const lower = useArrangeLowerAreaController({
     midiClips: session.arrangement.midiClips,
     selectClip: (clipId) => setSelection({ kind: 'clips', clipIds: [clipId] }),
@@ -87,9 +86,7 @@ function Harness({
         }
         runtimeProjectionRetrying={runtimeProjectionRetrying ?? false}
         onRetryRuntimeProjection={onRetryRuntimeProjection ?? noopRetryRuntimeProjection}
-        playSurfaceHost={playSurfaceHost}
       />
-      <div ref={setPlaySurfaceHost} data-play-surface-host />
       <ToastStack />
     </>
   );
@@ -2229,16 +2226,15 @@ describe('WorkspaceArrange', () => {
     expect(lowerArea).toHaveAttribute('data-view', 'mixer');
     fireEvent.click(mixerToggle);
     expect(lowerArea).toHaveAttribute('data-view', 'devices');
-
-    expect(screen.getByRole('button', { name: 'Play Surface' })).toBeEnabled();
   });
 
-  it('keeps the Play Surface independent from the MIDI lower area', async () => {
+  it('plays the focused instrument from the computer keyboard and shows the Play Surface in the lower area', async () => {
+    // Arrange
     const session = defaultSession();
     session.arrangement.tracks.push({
       panLaw: 'equalPower' as const,
-      id: 'track:play-surface',
-      name: 'Play Surface Instrument',
+      id: 'track:live',
+      name: 'Live Keys',
       kind: 'instrument',
       gainDb: 0,
       pan: 0,
@@ -2247,13 +2243,24 @@ describe('WorkspaceArrange', () => {
       armed: false,
       monitoring: 'off',
       midiInput: {},
+      instrument: {
+        id: 'device:live',
+        name: 'Fake Synth',
+        bypassed: false,
+        source: {
+          type: 'vst3',
+          path: 'C:\\Plugins\\FakeSynth.vst3',
+          parameterValues: [],
+          disabledPlaceholder: false,
+        },
+      },
       effects: [],
     });
     session.arrangement.midiClips.push({
       instrumentControlEvents: [],
-      id: 'clip:play-surface',
-      name: 'Play Surface Clip',
-      trackId: 'track:play-surface',
+      id: 'clip:live',
+      name: 'Live Clip',
+      trackId: 'track:live',
       startTick: 0,
       durationTicks: 1_920,
       notes: [],
@@ -2262,29 +2269,34 @@ describe('WorkspaceArrange', () => {
       loopEnabled: false,
     });
     const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    const sendMidi = vi.spyOn(api, 'sendMidiToTrack');
+    const setLiveTarget = vi.spyOn(api, 'setLiveMidiTarget');
     const { container } = render(<Harness api={api} initialSession={session} />);
+    fireEvent.click(screen.getByText('Live Keys'));
+    const computerKeyboard = screen.getByRole('button', { name: 'Computer keyboard input' });
 
-    fireEvent.click(screen.getByText('Play Surface Instrument'));
-    const playSurfaceToggle = screen.getByRole('button', { name: 'Play Surface' });
-    await waitFor(() => expect(playSurfaceToggle).toBeEnabled());
-    fireEvent.click(playSurfaceToggle);
-    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Compact Play Surface' }));
-    expect(screen.getByRole('button', { name: 'Expand Play Surface' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Play Surface' }));
+    // Act: play without opening any panel.
+    fireEvent.click(computerKeyboard);
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyUp(window, { key: 'a' });
 
-    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:play-surface"]')!);
-    expect(screen.getByRole('region', { name: 'Arrange lower area' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
-    expect(
-      screen.queryByText('Play Surface Instrument · Play Surface Clip'),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close lower area' }));
-    expect(screen.queryByRole('region', { name: 'Arrange lower area' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close Play Surface' }));
+    // Assert
+    expect(computerKeyboard).toHaveAttribute('aria-pressed', 'true');
+    expect(computerKeyboard).toHaveTextContent('C4');
     expect(screen.queryByRole('region', { name: 'Play Surface' })).not.toBeInTheDocument();
+    await waitFor(() => expect(sendMidi).toHaveBeenCalledWith('track:live', [0x90, 60, 100]));
+    expect(setLiveTarget).toHaveBeenLastCalledWith('track:live');
+
+    // Act: the Play Surface opens over the MIDI Editor and returns to it.
+    fireEvent.doubleClick(container.querySelector('[data-clip-id="clip:live"]')!);
+    const lowerArea = screen.getByRole('region', { name: 'Arrange lower area' });
+    fireEvent.click(screen.getByRole('button', { name: 'Play Surface' }));
+
+    // Assert
+    expect(lowerArea).toHaveAttribute('data-view', 'playSurface');
+    expect(screen.getByRole('region', { name: 'Play Surface' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Play Surface' }));
+    expect(lowerArea).toHaveAttribute('data-view', 'midiEditor');
   });
 
   it('routes Space to the shared transport controller from the Arrange editor', async () => {

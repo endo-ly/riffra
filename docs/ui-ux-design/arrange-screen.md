@@ -26,7 +26,7 @@ Arrange は Riffra の主制作画面であり、演奏、監視、録音、音�
 
 ### 2.1 画面構成
 
-Arrange の Main Canvas は Timeline である。Browser と Properties は Left Column に常時表示し、MIDI Editor、Mixer、Devices は Timeline の下側に Lower Area として開く。Play Surface は演奏入力が必要な場面で独立して展開する。
+Arrange の Main Canvas は Timeline である。Browser と Properties は Left Column に常時表示し、MIDI Editor、Mixer、Devices、Play Surface は Timeline の下側に Lower Area として開く。Focused Instrument Track は、どの表示面を開いていても Computer Keyboard で演奏できる。
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -42,14 +42,11 @@ Arrange の Main Canvas は Timeline である。Browser と Properties は Left
 │                    │ │ Timeline · Tracks / Clips / Automation              │ │
 │                    │ ├─────────────────────────────────────────────────────┤ │
 │                    │ │ LOWER AREA                                          │ │
-│ PROPERTIES         │ │ MIDI Editor / Mixer / Devices                       │ │
-├────────────────────┴─────────────────────────────────────────────────────────┤
-│ PLAY SURFACE · optional                                                      │
-│ Focused Instrument Track / Keyboard / Drum Pads / Octave / Velocity         │
-└──────────────────────────────────────────────────────────────────────────────┘
+│ PROPERTIES         │ │ MIDI Editor / Mixer / Devices / Play Surface        │ │
+└────────────────────┴─────────────────────────────────────────────────────────┘
 ```
 
-制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Lower Area は内部編集とミックス確認、Play Surface は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Lower Area の Mixer で音を調整しながら Play Surface で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。Devices では選択 Track の音源と Effect Chain を編集する。
+制作の中心は Timeline に置く。Browser は探索、Properties は属性調整、Lower Area は内部編集とミックス確認、Computer Keyboard は演奏という異なる役割を持つため、同時利用の意味も明確になる。たとえば Properties で Track 属性を確認し、Lower Area の Mixer で音を調整しながら Computer Keyboard で弾く、Timeline を再生しながら MIDI Editor で Note を直す、といった制作フローを画面切替だけに頼らず進められる。Devices では選択 Track の音源と Effect Chain を編集する。
 
 ### 2.2 選択・編集対象・演奏先
 
@@ -122,16 +119,17 @@ Arrange Toolbar は Timeline 全体へ作用する頻出操作をまとめる。
 
 左側は編集操作、右側は表示操作としてまとまりを持たせる。
 
-| 要素          | 挙動                                            |
-| ------------- | ----------------------------------------------- |
-| Select        | Clip の選択、移動、Trim、Marquee など通常編集   |
-| Split         | 指定位置で Clip を分割                          |
-| Snap          | Timeline の時間編集に使う Grid                  |
-| Automation    | 選択 Track の Automation Lane を開閉            |
-| Mixer         | Timeline 下側の Mixer Lower Area を開閉         |
-| Play Surface  | Focused Instrument Track の Play Surface を開閉 |
-| Bars / Time   | Ruler の表示形式を切替                          |
-| Timeline Zoom | 時間方向の拡大・縮小                            |
+| 要素              | 挙動                                            |
+| ----------------- | ----------------------------------------------- |
+| Select            | Clip の選択、移動、Trim、Marquee など通常編集   |
+| Split             | 指定位置で Clip を分割                          |
+| Snap              | Timeline の時間編集に使う Grid                  |
+| Automation        | 選択 Track の Automation Lane を開閉            |
+| Mixer             | Timeline 下側の Mixer Lower Area を開閉         |
+| Play Surface      | Lower Area の Play Surface を開閉               |
+| Computer Keyboard | Focused Instrument Track への PC キー入力を切替 |
+| Bars / Time       | Ruler の表示形式を切替                          |
+| Timeline Zoom     | 時間方向の拡大・縮小                            |
 
 Snap は Clip 移動、Trim、Split、Time Selection、Marker 移動など Timeline 上の時間操作で共通に使う。
 
@@ -457,7 +455,7 @@ Lower Area は、Timeline Toolbar または対象を開く操作から明示さ�
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Lower Area は、Resize、Collapse / Restore、Expand / Restore、Close を提供する。対象の切替は MIDI Clip の編集操作、Track の Devices 操作、Arrange Toolbar の Mixer 操作から行い、Lower Area を閉じても Arrange Selection と Active MIDI Clip は維持する。Play Surface は Lower Area と独立して開閉できる。MIDI Editor と Devices は同じ高さを共有し、Mixer の高さは別に保持する。Mixer を閉じると、その直前に開いていた MIDI Editor または Devices へ戻る。直前が閉じた状態なら Lower Area を閉じる。
+Lower Area は、Resize、Collapse / Restore、Expand / Restore、Close を提供する。対象の切替は MIDI Clip の編集操作、Track の Devices 操作、Arrange Toolbar の Mixer / Play Surface 操作から行い、Lower Area を閉じても Arrange Selection と Active MIDI Clip は維持する。MIDI Editor と Devices は同じ高さを共有し、Mixer と Play Surface はそれぞれの高さを保持する。Mixer または Play Surface を閉じると、その直前に開いていた MIDI Editor または Devices へ戻る。直前が閉じた状態なら Lower Area を閉じる。
 
 ### 5.2 Mixer
 
@@ -570,51 +568,51 @@ VST3 Device を選択すると、同じ汎用 Editor で Parameter と公開さ�
 
 Plugin Editor と Preset は Device が公開している場合に表示する。Plugin Editor 側の変更は正準状態へ反映され、選択中 Device の詳細も更新される。Missing と Disabled Placeholder では Parameter を問い合わせず、読み込み失敗時は Device を残して詳細欄にエラーを表示する。
 
-Devices と Play Surface は同時に利用できる。Devices で音色を調整し、Focused Instrument Track を演奏して結果を確認する。Browser は探索と Project 外の Plugin Audition を担当し、Devices 内の Picker は現在の Track への追加・変更を担当する。
+Devices を開いたまま Computer Keyboard で Focused Instrument Track を演奏し、音色の調整結果を確認できる。Browser は探索と Project 外の Plugin Audition を担当し、Devices 内の Picker は現在の Track への追加・変更を担当する。
 
 ---
 
 ## 6. Play Surface
 
-Play Surface の配置、Closed / Compact / Expanded の表示段階、Keyboard / Drum Pads の Mode Selector は本節で定義する。Arrange では、演奏先となる Focused Instrument Track と、録音・編集との関係を定義する。
+Focused Instrument Track は Computer Keyboard と Play Surface でライブに演奏する。Computer Keyboard は PC のキーで演奏する入力であり、Play Surface は画面上の Keyboard / Drum Pads である。Computer Keyboard は Play Surface を開かずに使え、MIDI Editor や Devices を表示したまま演奏できる。
 
 ### 6.1 Focused Instrument Track
 
-Play Surface、Computer Keyboard、演奏用 MIDI 入力は Focused Instrument Track へ送る。これは入力先を選ぶ状態であり、別のランタイムグラフを生成する操作ではない。
-
-Arrange Toolbar の Play Surface で Play Surface を開閉し、Focused Instrument Track へ入力する。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
+Computer Keyboard、Play Surface、演奏用 MIDI 入力は Focused Instrument Track へ送る。これは入力先を選ぶ状態であり、別のランタイムグラフを生成する操作ではない。Instrument Track を選択するとその Track が Focus される。MIDI Clip や別 Track を編集している間も Focus は演奏文脈として保持されるため、Arrangement の編集と Instrument の演奏を並行できる。
 
 ```text
 Arrange Selection ───────────────→ Properties / Timeline editing
 
 Active MIDI Clip ────────────────→ MIDI Editor
 
-Focused Instrument Track ────────→ Play Surface / Computer MIDI
+Focused Instrument Track ────────→ Computer Keyboard / Play Surface / MIDI input
 ```
 
-別の Instrument Track を Focus すると、Play Surface の Track 名、Instrument、入力状態も同じ文脈へ更新する。
+Computer Keyboard が有効な間、または Play Surface を表示している間、Runtime は Focused Instrument Track を低遅延で監視する。
 
-### 6.2 Lower Area との連携
+### 6.2 Computer Keyboard
 
-Play Surface と Lower Area は同時に利用できる。Mixer では Instrument の出力を確認し、Devices では Instrument と Effect を調整しながら演奏する。
+Arrange Toolbar の Computer Keyboard（Ctrl+Shift+K）で入力を切り替える。有効な間は、どの領域を操作していても PC のキーが Focused Instrument Track を演奏する。Keyboard Mode では A から K の行が 1 オクターブを鳴らし、Z / X で Octave を移動する。Drum Pads Mode ではキーが各 Pad に対応する。Toolbar には有効な間の Octave（Drum Pads Mode では Pads）を表示する。
+
+有効な間は、修飾キーのない演奏キーを Shortcut より優先する。Text Input へ Focus がある間は文字入力を優先する。Mode、Octave、Velocity は Track ごとに保持し、Play Surface と共有する。
+
+### 6.3 Play Surface
+
+Play Surface は Lower Area の表示面であり、Arrange Toolbar の Play Surface で開閉する。Mixer と同じく他の表示面の上に開き、閉じると直前の MIDI Editor または Devices へ戻る。
 
 ```text
-Devices
-[Instrument] → [EQ] → [Reverb]
-      ▲
-      │ parameter editing
-      │
-Play Surface
-[ Keyboard / Drum Pads ]
-      │
-      └─ play and evaluate
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ■ Track Instrument │ [Keyboard|Drum Pads] − C4 + │ Vel [─●─] │ Status    │
+├──────────────────────────────────────────────────────────────────────────┤
+│                       Keyboard / Drum Pads                               │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-MIDI Editor と併用する場合は、MIDI Editor が Active MIDI Clip の演奏内容、Play Surface が Focused Instrument Track へのライブ入力を担当する。両者の対象は Header と Focus 表示から判別でき、発音経路は同じ Instrument Runtime と Effect Chain へ統合される。
+Toolbar には Track と Instrument、Mode、Octave、Velocity、Computer Keyboard の状態を並べ、その下に Keyboard または Drum Pads を表示する。Key と Pad はマウスで演奏でき、Computer Keyboard から演奏した音も同じ Key / Pad を点灯させる。
 
-### 6.3 録音との関係
+### 6.4 録音との関係
 
-Play Surface から送られた MIDI は Focused Instrument Track で演奏される。録音時は Track の Record Arm と MIDI routing に従って Session へ記録する。
+Computer Keyboard と Play Surface から送られた MIDI は Focused Instrument Track で演奏される。録音時は Track の Record Arm と MIDI routing に従って Session へ記録する。
 
 録音開始前には Focused Track、Arm、Input source を確認できる状態を作る。Count-in、Metronome、Record の開始操作は Global Control Bar の Transport が担当し、録音中の進行は Timeline 上へ表示する。
 
@@ -639,7 +637,7 @@ Loop / Metronome / Count-in / Tempo / Signature
    Timeline  MIDI Editor  Play Surface
 ```
 
-Timeline、Lower Area、Play Surface のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
+Timeline と Lower Area のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
 
 Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。準備中の Play は UI をブロックせず、Stop は保留中の Play より優先される。Stop 後に準備が終わっても自動再生せず、投影失敗時は Play 意図を解除して失敗を通知する。
 
@@ -734,7 +732,7 @@ MIDI Editor の主要操作は次の通りである。
 
 Transport、Workspace、Command、Emergency Mute などアプリ全体へ作用する Shortcut は Global command として働く。
 
-Computer Keyboard を演奏入力へ使う場合は Play Surface の入力モードを明示し、Text Input へ Focus がある間は文字入力を優先する。
+Computer Keyboard が有効な間は、修飾キーのない演奏キーを Shortcut より優先する。Text Input へ Focus がある間は文字入力を優先する。
 
 ---
 
@@ -788,14 +786,14 @@ Play and review
 
 ### 9.3 Instrument と Effect の音作り
 
-Instrument と Effect の音作りは、Devices と Play Surface を組み合わせて行う。
+Instrument と Effect の音作りは、Devices と Computer Keyboard を組み合わせて行う。
 
 ```text
 Select / Focus Instrument Track
         ↓
 Open Devices
         ↓
-Open Play Surface
+Turn on Computer Keyboard
         ↓
 Play
         ↓
@@ -808,14 +806,14 @@ Reorder / Bypass / Compare
 Return to Timeline
 ```
 
-Devices と Play Surface を同時に使うことで、音色変更と演奏確認を画面切替に依存せず往復できる。
+Devices を開いたまま演奏できるため、音色変更と演奏確認を画面切替に依存せず往復できる。
 
 ### 9.4 演奏から録音
 
 ```text
 Focus Instrument Track
       ↓
-Open Play Surface
+Turn on Computer Keyboard
       ↓
 Arm Track
       ↓
@@ -832,7 +830,7 @@ Stop
 Review Take
 ```
 
-録音開始・停止は Global Transport、入力は Play Surface / MIDI controller、進行表示は Timeline、候補比較は Take Properties が担当する。
+録音開始・停止は Global Transport、入力は Computer Keyboard / Play Surface / MIDI controller、進行表示は Timeline、候補比較は Take Properties が担当する。
 
 ### 9.5 Take の比較と採用
 

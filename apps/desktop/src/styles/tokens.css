@@ -97,9 +97,9 @@
    * overlays, dialogs, shared chrome). Lower never paints above higher;
    * gaps are reserved for future insertions.
    *
-   * Region roots (.workspace, .column, .area, .editor, .playSurfaceHost)
-   * declare isolation: isolate so module-local canvas stacking stays
-   * confined to its panel; only these tokens order across regions.
+   * Region roots (.workspace, .column, .area, .editor) declare isolation:
+   * isolate so module-local canvas stacking stays confined to its panel;
+   * only these tokens order across regions.
    */
   --z-chrome: 10;
   --z-handle: 20;
