@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import styles from './Inspector.module.css';
 
 interface MixValueFieldProps {
@@ -8,6 +8,8 @@ interface MixValueFieldProps {
   value: number;
   min: number;
   max: number;
+  /** Value the slider fill grows from: `min` for a level, the center for a balance. */
+  origin: number;
   step: number;
   /** Step for typed values, finer than the slider's. */
   inputStep: number;
@@ -16,16 +18,21 @@ interface MixValueFieldProps {
 }
 
 /**
- * One line of label, slider and value. Clicking the value switches it to a
- * number field. A drag or typed value is shown only while it is being edited;
- * otherwise the field reflects the current value, so rejected input never
- * lingers.
+ * One line of label, slider and value. The slider fills from `origin` to the
+ * value. Clicking the value switches it to a number field. A drag or typed
+ * value is shown only while it is being edited; otherwise the field reflects
+ * the current value, so rejected input never lingers.
  */
 export function MixValueField(props: MixValueFieldProps) {
   const [draft, setDraft] = useState<number | null>(null);
   const [typing, setTyping] = useState(false);
   const cancelled = useRef(false);
   const shown = draft ?? props.value;
+  const percent = (value: number) => ((value - props.min) / (props.max - props.min)) * 100;
+  const fill = {
+    '--fill-start': `${Math.min(percent(shown), percent(props.origin))}%`,
+    '--fill-end': `${Math.max(percent(shown), percent(props.origin))}%`,
+  } as CSSProperties;
 
   const finish = (next: number | null) => {
     if (next !== null && Number.isFinite(next)) {
@@ -37,7 +44,7 @@ export function MixValueField(props: MixValueFieldProps) {
 
   return (
     <div className={styles.mixField}>
-      <span className={styles.mixLabel}>{props.label}</span>
+      <span className={styles.rowLabel}>{props.label}</span>
       <input
         className={styles.range}
         aria-label={props.name}
@@ -46,6 +53,7 @@ export function MixValueField(props: MixValueFieldProps) {
         max={props.max}
         step={props.step}
         value={shown}
+        style={fill}
         onChange={(event) => setDraft(Number(event.currentTarget.value))}
         onPointerUp={() => finish(draft)}
         onKeyUp={() => finish(draft)}

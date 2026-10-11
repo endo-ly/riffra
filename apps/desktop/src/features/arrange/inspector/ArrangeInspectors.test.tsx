@@ -126,7 +126,7 @@ describe('Arrange Inspectors', () => {
       />,
     );
 
-    expect(screen.queryByText('MONITORING')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Monitoring' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('MIDI channel'), { target: { value: '1' } });
     expect(await screen.findByRole('status')).toHaveTextContent('MIDI route failed');
   });
@@ -173,6 +173,49 @@ describe('Arrange Inspectors', () => {
     expect(length).toHaveValue('1.0.000');
     expect(api.updateMidiClip).toHaveBeenCalledTimes(1);
     expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { startTick: 2 * 3_840 + 960 });
+  });
+
+  it('toggles MIDI Clip playback and deletes it from the header', async () => {
+    // Arrange
+    const session = defaultSession();
+    session.arrangement.midiClips.push({
+      instrumentControlEvents: [],
+      id: 'midi:1',
+      name: 'Phrase',
+      trackId: 'track:instrument',
+      startTick: 0,
+      durationTicks: 3_840,
+      notes: [],
+      events: [],
+      muted: false,
+      loopEnabled: true,
+    });
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.updateMidiClip = vi.fn().mockResolvedValue(null);
+    api.removeTimelineClips = vi.fn().mockResolvedValue(null);
+    const setSelectedClipIds = vi.fn();
+    render(
+      <MidiClipInspector
+        session={session}
+        applyCanonicalState={() => true}
+        selectedClipIds={['midi:1']}
+        setSelectedClipIds={setSelectedClipIds}
+        api={api}
+      />,
+    );
+
+    // Act
+    fireEvent.click(screen.getByRole('button', { name: 'Mute clip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Loop clip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clip actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+
+    // Assert
+    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { muted: true });
+    expect(api.updateMidiClip).toHaveBeenCalledWith('midi:1', { loopEnabled: false });
+    expect(api.removeTimelineClips).toHaveBeenCalledWith([], ['midi:1']);
+    await waitFor(() => expect(setSelectedClipIds).toHaveBeenCalledWith([]));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('shows an Audio Clip length derived from its audio and moves it by bars', () => {

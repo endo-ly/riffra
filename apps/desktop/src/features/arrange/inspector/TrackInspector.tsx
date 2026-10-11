@@ -40,18 +40,26 @@ export function TrackInspector(props: TrackInspectorProps) {
   );
   const trackIndex = props.session.arrangement.tracks.findIndex((t) => t.id === props.track.id);
   const displayColor = resolveTrackColor(props.track, trackIndex);
+  const instrumentTrack = props.track.kind === 'instrument';
+  const effectCount = props.track.effects.length;
+  const effectSummary =
+    effectCount === 0 ? 'No effects' : `${effectCount} effect${effectCount === 1 ? '' : 's'}`;
+  const deviceSummary = instrumentTrack
+    ? [props.track.instrument?.name ?? 'No instrument', effectSummary]
+    : [effectSummary];
   return (
-    <div className={styles.inspector}>
+    <div className={styles.inspector} style={{ '--track-color': displayColor } as CSSProperties}>
       <div className={styles.identity}>
         <button
           type="button"
-          className={styles.colorDot}
+          className={styles.identityTile}
           aria-label="Track color"
+          aria-expanded={colorOpen}
           title={props.track.color ? `Color ${props.track.color}` : `Auto color ${displayColor}`}
-          style={{ '--track-color': displayColor } as CSSProperties}
-          data-color={props.track.color ? 'custom' : 'auto'}
           onClick={() => setColorOpen((open) => !open)}
-        />
+        >
+          <Icon name={instrumentTrack ? 'note' : 'wave'} />
+        </button>
         {colorOpen && (
           <div className={styles.colorPalette} role="group" aria-label="Track color">
             {TRACK_COLOR_PALETTE.map((hex) => (
@@ -81,56 +89,105 @@ export function TrackInspector(props: TrackInspectorProps) {
             </button>
           </div>
         )}
-        <span className={styles.identityIcon}>
-          <Icon name={props.track.kind === 'audio' ? 'wave' : 'note'} />
-        </span>
-        <input
-          className={styles.identityName}
-          aria-label="Track name"
-          value={name}
-          onChange={(event) => setName(event.currentTarget.value)}
-          onBlur={() => {
-            const next = name.trim();
-            if (next && next !== props.track.name) {
-              commit(props.api.updateTrack(props.track.id, { name: next }));
-            } else {
-              setName(props.track.name);
-            }
-          }}
-        />
+        <div className={styles.identityBlock}>
+          <input
+            className={styles.identityName}
+            aria-label="Track name"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
+            onBlur={() => {
+              const next = name.trim();
+              if (next && next !== props.track.name) {
+                commit(props.api.updateTrack(props.track.id, { name: next }));
+              } else {
+                setName(props.track.name);
+              }
+            }}
+          />
+          <small>{instrumentTrack ? 'Instrument track' : 'Audio track'}</small>
+        </div>
       </div>
 
-      <div className={styles.mixCluster} aria-label="Track mix">
-        <MixValueField
-          label="Gain"
-          name="Track gain"
-          value={props.track.gainDb}
-          min={-60}
-          max={12}
-          step={0.5}
-          inputStep={0.1}
-          format={formatGainDb}
-          onCommit={(gainDb) => commit(props.api.updateTrack(props.track.id, { gainDb }))}
-        />
-        <MixValueField
-          label="Pan"
-          name="Track pan"
-          value={props.track.pan}
-          min={-1}
-          max={1}
-          step={0.05}
-          inputStep={0.05}
-          format={formatPan}
-          onCommit={(pan) => commit(props.api.updateTrack(props.track.id, { pan }))}
-        />
-      </div>
+      <section className={styles.section} aria-label="Track mix">
+        <div className={styles.rows}>
+          <MixValueField
+            label="Volume"
+            name="Track gain"
+            value={props.track.gainDb}
+            min={-60}
+            max={12}
+            origin={-60}
+            step={0.5}
+            inputStep={0.1}
+            format={formatGainDb}
+            onCommit={(gainDb) => commit(props.api.updateTrack(props.track.id, { gainDb }))}
+          />
+          <MixValueField
+            label="Pan"
+            name="Track pan"
+            value={props.track.pan}
+            min={-1}
+            max={1}
+            origin={0}
+            step={0.05}
+            inputStep={0.05}
+            format={formatPan}
+            onCommit={(pan) => commit(props.api.updateTrack(props.track.id, { pan }))}
+          />
+        </div>
+      </section>
 
-      {props.track.kind === 'audio' ? (
-        <>
-          <section className={styles.section}>
-            <header className={styles.sectionHeader}>
-              <strong>INPUT</strong>
-            </header>
+      <section className={styles.section} aria-label="Track input">
+        <header className={styles.sectionHeader}>
+          <strong>INPUT</strong>
+        </header>
+        {instrumentTrack ? (
+          <div className={styles.controlPair}>
+            <select
+              className={styles.control}
+              aria-label="MIDI input"
+              value={props.track.midiInput.deviceId ?? ''}
+              onChange={(event) =>
+                commit(
+                  props.api.setTrackMidiInput(props.track.id, {
+                    ...props.track.midiInput,
+                    deviceId: event.currentTarget.value || undefined,
+                  }),
+                )
+              }
+            >
+              <option value="">All Inputs</option>
+              {props.audio.midiInputs.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className={styles.control}
+              aria-label="MIDI channel"
+              value={props.track.midiInput.channel ?? ''}
+              onChange={(event) =>
+                commit(
+                  props.api.setTrackMidiInput(props.track.id, {
+                    ...props.track.midiInput,
+                    channel: event.currentTarget.value
+                      ? Number(event.currentTarget.value)
+                      : undefined,
+                  }),
+                )
+              }
+            >
+              <option value="">All Ch</option>
+              {Array.from({ length: 16 }, (_, index) => index + 1).map((channel) => (
+                <option key={channel} value={channel}>
+                  Ch {channel}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className={styles.rows}>
             <select
               className={styles.control}
               aria-label="Audio input"
@@ -159,96 +216,43 @@ export function TrackInspector(props: TrackInspectorProps) {
                   </option>
                 )}
             </select>
-            <div
-              className={clsx(styles.segmented, styles.segmentedGap)}
-              role="group"
-              aria-label="Monitoring"
-            >
-              {(['off', 'auto', 'on'] as const).map((monitoring) => (
-                <button
-                  type="button"
-                  key={monitoring}
-                  aria-pressed={props.track.monitoring === monitoring}
-                  onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
-                >
-                  {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
-                </button>
-              ))}
-            </div>
-          </section>
-        </>
-      ) : (
-        <>
-          <section className={styles.section}>
-            <header className={styles.sectionHeader}>
-              <strong>MIDI INPUT</strong>
-            </header>
-            <div className={styles.fieldColumn}>
-              <select
-                className={styles.control}
-                aria-label="MIDI input"
-                value={props.track.midiInput.deviceId ?? ''}
-                onChange={(event) =>
-                  commit(
-                    props.api.setTrackMidiInput(props.track.id, {
-                      ...props.track.midiInput,
-                      deviceId: event.currentTarget.value || undefined,
-                    }),
-                  )
-                }
-              >
-                <option value="">All Inputs</option>
-                {props.audio.midiInputs.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {device.name}
-                  </option>
+            <div className={styles.labeledRow}>
+              <span className={styles.rowLabel}>Monitor</span>
+              <div className={styles.segmented} role="group" aria-label="Monitoring">
+                {(['off', 'auto', 'on'] as const).map((monitoring) => (
+                  <button
+                    type="button"
+                    key={monitoring}
+                    aria-pressed={props.track.monitoring === monitoring}
+                    onClick={() => commit(props.api.updateTrack(props.track.id, { monitoring }))}
+                  >
+                    {monitoring === 'off' ? 'Off' : monitoring === 'auto' ? 'Auto' : 'On'}
+                  </button>
                 ))}
-              </select>
-              <select
-                className={styles.control}
-                aria-label="MIDI channel"
-                value={props.track.midiInput.channel ?? ''}
-                onChange={(event) =>
-                  commit(
-                    props.api.setTrackMidiInput(props.track.id, {
-                      ...props.track.midiInput,
-                      channel: event.currentTarget.value
-                        ? Number(event.currentTarget.value)
-                        : undefined,
-                    }),
-                  )
-                }
-              >
-                <option value="">All Channels</option>
-                {Array.from({ length: 16 }, (_, index) => index + 1).map((channel) => (
-                  <option key={channel} value={channel}>
-                    Channel {channel}
-                  </option>
-                ))}
-              </select>
+              </div>
             </div>
-          </section>
-        </>
-      )}
+          </div>
+        )}
+      </section>
+
       <section className={styles.section} aria-label="Track devices">
         <header className={styles.sectionHeader}>
           <strong>DEVICES</strong>
-          <button type="button" className={styles.headerAction} onClick={props.onOpenDevices}>
-            Open Devices
-          </button>
         </header>
-        <div className={styles.fieldColumn}>
-          {props.track.kind === 'instrument' && (
-            <div className={styles.summaryRow}>
-              <span>Instrument</span>
-              <strong>{props.track.instrument?.name ?? 'None'}</strong>
-            </div>
-          )}
-          <div className={styles.summaryRow}>
-            <span>Effects</span>
-            <strong>{props.track.effects.length}</strong>
-          </div>
-        </div>
+        <button
+          type="button"
+          className={styles.deviceCard}
+          aria-label={`Open Devices: ${deviceSummary.join(', ')}`}
+          onClick={props.onOpenDevices}
+        >
+          <span className={styles.deviceIcon}>
+            <Icon name={instrumentTrack ? 'keys' : 'module'} />
+          </span>
+          <span className={styles.deviceText}>
+            <strong>{deviceSummary[0]}</strong>
+            {deviceSummary[1] && <small>{deviceSummary[1]}</small>}
+          </span>
+        </button>
       </section>
       {operationMessage && (
         <p className={styles.message} role="status">

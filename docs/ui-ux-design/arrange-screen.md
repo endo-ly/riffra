@@ -378,14 +378,14 @@ Audio Clip の属性を扱う。
 
 ```text
 AUDIO CLIP
-────────────────
-Name
+──────────────────────────────────
+Name · Track       [Mute] [Loop] [⋯]
+──────────────────────────────────
 Start / Length
 Gain / Pan
-Fade In / Fade Out
-Mute / Loop
+Fade In / Fade Out / Fade Shape
 
-[Duplicate] [Delete]
+⋯  Duplicate / Loop to Clip / Delete
 ```
 
 Timeline 上の Trim / Fade と同じ Clip を参照しながら、数値確認と精密調整を行える。
@@ -396,16 +396,18 @@ MIDI Clip 自体の属性を扱う。
 
 ```text
 MIDI CLIP
-────────────────
-Name
-Start
-Length
-Mute / Loop
+──────────────────────────────────
+Name · Track       [Mute] [Loop] [⋯]
+──────────────────────────────────
+Start / Length
+Pitch     −12 / −1 / +1 / +12
+Velocity  −10 / +10
+Quantize  Grid [Apply]
 
-[Duplicate] [Delete]
+⋯  Duplicate / Delete
 ```
 
-Pitch、Velocity、Note Length など演奏内容は MIDI Editor が担当する。
+Pitch、Velocity、Quantize は Clip 内の全 Note へまとめて適用する。Note 単位の編集は MIDI Editor が担当する。
 
 #### Multi Clip Properties
 

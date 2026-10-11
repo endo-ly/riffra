@@ -50,7 +50,7 @@ describe('PropertiesPanel', () => {
   it('shows the appropriate header for track and empty Arrange selections', () => {
     const openDevices = vi.fn();
     renderPanel({ kind: 'track', trackId: 'track:audio' }, defaultSession(), openDevices);
-    fireEvent.click(screen.getByRole('button', { name: 'Open Devices' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Open Devices/ }));
     expect(openDevices).toHaveBeenCalledOnce();
 
     expect(screen.getByLabelText('Track name')).toBeInTheDocument();
