@@ -156,38 +156,32 @@ impl HostState {
                 session_adapter::clear_track_instrument(&mut context, &params.track_id)
             }
             CanonicalCommand::EffectAdd(params) => {
-                session_adapter::add_track_effect_with_expected_sequence(
+                session_adapter::add_effect_with_expected_sequence(
                     &mut context,
-                    &params.track_id,
+                    &params.owner,
                     &params.plugin_path,
                     sequence,
                 )
             }
-            CanonicalCommand::EffectRemove(params) => session_adapter::remove_track_effect(
+            CanonicalCommand::EffectRemove(params) => {
+                session_adapter::remove_effect(&mut context, &params.owner, &params.device_id)
+            }
+            CanonicalCommand::EffectReorder(params) => {
+                session_adapter::reorder_effects(&mut context, &params.owner, &params.device_ids)
+            }
+            CanonicalCommand::DeviceBypass(params) => session_adapter::set_device_bypassed(
                 &mut context,
-                &params.track_id,
-                &params.device_id,
-            ),
-            CanonicalCommand::EffectReorder(params) => session_adapter::reorder_track_effects(
-                &mut context,
-                &params.track_id,
-                &params.device_ids,
-            ),
-            CanonicalCommand::DeviceBypass(params) => session_adapter::set_track_device_bypassed(
-                &mut context,
-                &params.track_id,
+                &params.owner,
                 &params.device_id,
                 params.bypassed,
             ),
-            CanonicalCommand::DeviceParameterSet(params) => {
-                session_adapter::set_track_device_parameter(
-                    &mut context,
-                    &params.track_id,
-                    &params.device_id,
-                    params.parameter_index,
-                    params.value,
-                )
-            }
+            CanonicalCommand::DeviceParameterSet(params) => session_adapter::set_device_parameter(
+                &mut context,
+                &params.owner,
+                &params.device_id,
+                params.parameter_index,
+                params.value,
+            ),
             CanonicalCommand::MissingRelink(params) => {
                 let asset_id =
                     riffra_core::AssetId::from_normalized(&params.asset_id).map_err(|error| {
@@ -208,7 +202,17 @@ impl HostState {
             }
             CanonicalCommand::Undo(_) => session_adapter::undo(&mut context),
             CanonicalCommand::Redo(_) => session_adapter::redo(&mut context),
-            command @ (CanonicalCommand::SessionGet(_)
+            command @ (CanonicalCommand::MixerGet(_)
+            | CanonicalCommand::MixBusList(_)
+            | CanonicalCommand::MixBusAdd(_)
+            | CanonicalCommand::MixBusUpdate(_)
+            | CanonicalCommand::MixBusRemove(_)
+            | CanonicalCommand::TrackOutputSet(_)
+            | CanonicalCommand::SendList(_)
+            | CanonicalCommand::SendAdd(_)
+            | CanonicalCommand::SendUpdate(_)
+            | CanonicalCommand::SendRemove(_)
+            | CanonicalCommand::SessionGet(_)
             | CanonicalCommand::SessionInspect(_)
             | CanonicalCommand::SessionApply(_)
             | CanonicalCommand::SessionSettingsUpdate(_)
@@ -461,13 +465,13 @@ impl HostState {
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
-            RuntimeCommand::TrackMixPreview(params) => {
-                if params.track_id.trim().is_empty() {
-                    return Err(ProtocolError::new(
-                        ErrorCode::InvalidRequest,
-                        "track id is required",
-                    ));
-                }
+            RuntimeCommand::SendLevelPreview(params) => {
+                self.audio
+                    .preview_send_level(&params.send_id, params.level_db)
+                    .map_err(audio_error)?;
+                ControlOutput::Ok(())
+            }
+            RuntimeCommand::ChannelMixPreview(params) => {
                 if params.gain_db.is_none() && params.pan.is_none() {
                     return Err(ProtocolError::new(
                         ErrorCode::InvalidRequest,
@@ -483,7 +487,7 @@ impl HostState {
                     ));
                 }
                 self.audio
-                    .preview_track_mix(&params.track_id, params.gain_db, params.pan)
+                    .preview_channel_mix(&params.owner, params.gain_db, params.pan)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
@@ -669,41 +673,37 @@ impl HostState {
             }
             RuntimeCommand::PluginEditorOpen(params) => {
                 let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
-                session_adapter::open_track_plugin_editor(
-                    &mut context,
-                    &params.track_id,
-                    &params.device_id,
-                )
-                .map_err(|error| error.protocol_error())?;
+                session_adapter::open_plugin_editor(&mut context, &params.owner, &params.device_id)
+                    .map_err(|error| error.protocol_error())?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::DeviceInspect(params) => {
                 match canonical_built_in_instrument_inspection(
                     &current,
-                    &params.track_id,
+                    &params.owner,
                     &params.device_id,
                 )? {
                     Some(inspection) => ControlOutput::DeviceInspection(inspection),
                     None => ControlOutput::DeviceInspection(
                         self.audio
-                            .inspect_track_device(&params.track_id, &params.device_id)
+                            .inspect_device(&params.owner, &params.device_id)
                             .map_err(audio_error)?,
                     ),
                 }
             }
             RuntimeCommand::DeviceParameterList(params) => {
-                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 ControlOutput::DeviceParameters(
                     self.audio
-                        .list_track_device_parameters(&params.track_id, &params.device_id)
+                        .list_device_parameters(&params.owner, &params.device_id)
                         .map_err(audio_error)?,
                 )
             }
             RuntimeCommand::DeviceParameterGet(params) => {
-                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 ControlOutput::DeviceParameter(
                     self.audio
-                        .list_track_device_parameters(&params.track_id, &params.device_id)
+                        .list_device_parameters(&params.owner, &params.device_id)
                         .map_err(audio_error)?
                         .into_iter()
                         .find(|parameter| parameter.index == params.parameter_index)
@@ -716,10 +716,10 @@ impl HostState {
                 )
             }
             RuntimeCommand::PluginPresetList(params) => {
-                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 let presets = self
                     .audio
-                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .list_plugin_programs(&params.owner, &params.device_id)
                     .map_err(audio_error)?
                     .presets;
                 if presets.is_empty() {
@@ -730,10 +730,10 @@ impl HostState {
                 ControlOutput::PluginPresets(presets)
             }
             RuntimeCommand::PluginPresetGet(params) => {
-                let _ = canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 let programs = self
                     .audio
-                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .list_plugin_programs(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
                 let current_index = programs.current_index.ok_or_else(|| {
                     command_error("plugin does not expose a current host-visible program")
@@ -754,10 +754,10 @@ impl HostState {
                     ));
                 }
                 let (plugin_path, bypassed) =
-                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                    canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 let programs = self
                     .audio
-                    .list_track_plugin_programs(&params.track_id, &params.device_id)
+                    .list_plugin_programs(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
                 let program_index = resolve_plugin_preset(
                     &programs.presets,
@@ -767,26 +767,26 @@ impl HostState {
                 let previous_program = programs.current_index;
                 let previous_state = self
                     .audio
-                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .get_plugin_state(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
                 let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 let rollback = || {
                     if let Some(previous_program) = previous_program {
-                        let _ = self.audio.set_track_plugin_program(
-                            &params.track_id,
+                        let _ = self.audio.set_plugin_program(
+                            &params.owner,
                             &params.device_id,
                             previous_program,
                         );
                     }
-                    let _ = self.audio.set_track_plugin_state(
-                        &params.track_id,
+                    let _ = self.audio.set_plugin_state(
+                        &params.owner,
                         &params.device_id,
                         previous_state.clone(),
                     );
                 };
                 let state = self
                     .audio
-                    .set_track_plugin_program(&params.track_id, &params.device_id, program_index)
+                    .set_plugin_program(&params.owner, &params.device_id, program_index)
                     .map_err(audio_error)?;
                 let state_snapshot = match plugin_state_snapshot(&plugin_path, state) {
                     Ok(snapshot) => snapshot,
@@ -797,9 +797,7 @@ impl HostState {
                 };
                 let commit = context.commit(|mut app| {
                     app.persist_plugin_state(
-                        &riffra_core::EffectOwner::Track {
-                            id: (params.track_id).to_owned(),
-                        },
+                        &params.owner,
                         &params.device_id,
                         state_snapshot.parameter_values.clone(),
                         state_snapshot.state_data.clone(),
@@ -814,31 +812,29 @@ impl HostState {
             }
             RuntimeCommand::PluginStateGet(params) => {
                 let (plugin_path, _) =
-                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                    canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 let state = self
                     .audio
-                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .get_plugin_state(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
                 ControlOutput::PluginState(plugin_state_snapshot(&plugin_path, state)?)
             }
             RuntimeCommand::PluginStateSet(params) => {
                 let (plugin_path, bypassed) =
-                    canonical_plugin_device(&current, &params.track_id, &params.device_id)?;
+                    canonical_plugin_device(&current, &params.owner, &params.device_id)?;
                 validate_plugin_state(&params.state, &plugin_path)?;
                 let previous_state = self
                     .audio
-                    .get_track_plugin_state(&params.track_id, &params.device_id)
+                    .get_plugin_state(&params.owner, &params.device_id)
                     .map_err(audio_error)?;
                 let native_state = plugin_state_value(&params.state, bypassed);
                 let mut context = self.session_context(writer.take(), current.clone(), &publish)?;
                 self.audio
-                    .set_track_plugin_state(&params.track_id, &params.device_id, native_state)
+                    .set_plugin_state(&params.owner, &params.device_id, native_state)
                     .map_err(audio_error)?;
                 let commit = context.commit(|mut app| {
                     app.persist_plugin_state(
-                        &riffra_core::EffectOwner::Track {
-                            id: (params.track_id).to_owned(),
-                        },
+                        &params.owner,
                         &params.device_id,
                         params.state.parameter_values.clone(),
                         params.state.state_data.clone(),
@@ -846,8 +842,8 @@ impl HostState {
                     )
                 });
                 if let Err(error) = commit {
-                    let _ = self.audio.set_track_plugin_state(
-                        &params.track_id,
+                    let _ = self.audio.set_plugin_state(
+                        &params.owner,
                         &params.device_id,
                         previous_state,
                     );
@@ -1439,58 +1435,33 @@ pub(super) fn audio_error(error: crate::NativeAudioError) -> ProtocolError {
 
 fn canonical_plugin_device(
     canonical: &CanonicalState,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
 ) -> Result<(String, bool), ProtocolError> {
-    let track = canonical
+    let device = canonical
         .session
         .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| command_error(format!("track is not registered: {track_id}")))?;
-    if let Some(instrument) = track
-        .instrument
-        .as_ref()
-        .filter(|instrument| instrument.id == device_id)
-    {
-        let Some(vst3) = instrument.as_vst3() else {
-            return Err(command_error(
-                "built-in instruments do not expose VST3 plugin controls",
-            ));
-        };
-        return Ok((vst3.path.to_owned(), instrument.bypassed));
-    }
-    let device = track
-        .effects
-        .iter()
-        .find(|device| device.id == device_id)
-        .ok_or_else(|| command_error(format!("track device is not registered: {device_id}")))?;
-    Ok((device.plugin.path.clone(), device.bypassed))
+        .device(owner, device_id)
+        .map_err(|error| command_error(error.to_string()))?;
+    let plugin = device
+        .plugin()
+        .ok_or_else(|| command_error("built-in instruments do not expose VST3 plugin controls"))?;
+    Ok((plugin.path.clone(), device.bypassed()))
 }
 
-/// Returns the canonical inspection of a built-in instrument, or `None` for a
-/// VST3 device that only the native runtime can inspect.
 fn canonical_built_in_instrument_inspection(
     canonical: &CanonicalState,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
 ) -> Result<Option<DeviceInspection>, ProtocolError> {
-    let track = canonical
+    let device = canonical
         .session
         .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| command_error(format!("track is not registered: {track_id}")))?;
-    if let Some(instrument) = track
-        .instrument
-        .as_ref()
-        .filter(|instrument| instrument.id == device_id)
+        .device(owner, device_id)
+        .map_err(|error| command_error(error.to_string()))?;
+    if let riffra_core::DeviceRef::Instrument(instrument) = device
+        && instrument.as_vst3().is_none()
     {
-        if instrument.as_vst3().is_some() {
-            return Ok(None);
-        }
         return Ok(Some(DeviceInspection {
             id: instrument.id.clone(),
             name: instrument.name.clone(),
@@ -1500,11 +1471,6 @@ fn canonical_built_in_instrument_inspection(
             parameter_count: 0,
             state_persisted: false,
         }));
-    }
-    if !track.effects.iter().any(|device| device.id == device_id) {
-        return Err(command_error(format!(
-            "track device is not registered: {device_id}"
-        )));
     }
     Ok(None)
 }

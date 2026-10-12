@@ -68,48 +68,53 @@ struct PanicTrackMidiCommand final {
     juce::String trackId;
 };
 
-struct SetTrackMixCommand final {
-    juce::String trackId;
+struct SetChannelMixCommand final {
+    EffectOwnerSpec owner;
     std::optional<double> gainDb;
     std::optional<double> pan;
 };
 
-struct SetTrackDeviceBypassedCommand final {
-    juce::String trackId;
+struct SetSendLevelCommand final {
+    juce::String sendId;
+    double levelDb = 0.0;
+};
+
+struct SetDeviceBypassedCommand final {
+    EffectOwnerSpec owner;
     juce::String deviceId;
     bool bypassed = false;
 };
 
-struct SetTrackDeviceParameterCommand final {
-    juce::String trackId;
+struct SetDeviceParameterCommand final {
+    EffectOwnerSpec owner;
     juce::String deviceId;
     std::uint32_t parameterIndex = 0;
     float value = 0.0f;
 };
 
-enum class TrackDeviceQuery { status, parameters, programs, pluginState };
+enum class DeviceQuery { status, parameters, programs, pluginState };
 
-struct GetTrackDeviceCommand final {
-    TrackDeviceQuery query = TrackDeviceQuery::status;
-    juce::String trackId;
+struct GetDeviceCommand final {
+    DeviceQuery query = DeviceQuery::status;
+    EffectOwnerSpec owner;
     juce::String deviceId;
 };
 
-struct SetTrackPluginStateCommand final {
-    juce::String trackId;
+struct SetPluginStateCommand final {
+    EffectOwnerSpec owner;
     juce::String deviceId;
     PluginStateSpec state;
 };
 
-struct SetTrackDeviceProgramCommand final {
-    juce::String trackId;
+struct SetDeviceProgramCommand final {
+    EffectOwnerSpec owner;
     juce::String deviceId;
     std::uint32_t programIndex = 0;
 };
 
-struct OpenTrackPluginEditorCommand final {
+struct OpenPluginEditorCommand final {
     juce::String projectId;
-    juce::String trackId;
+    EffectOwnerSpec owner;
     juce::String deviceId;
 };
 
@@ -176,13 +181,12 @@ using SidecarCommandSpec = std::variant<
     SetEngineTransitionMuteCommand, PreviewMasterGainDbCommand, PrepareTimelineSnapshotCommand,
     CommitTimelineSnapshotCommand, DiscardTimelineSnapshotCommand, WaitForTimelineIdleCommand,
     TransportCommand, SetMidiListeningCommand, SetLiveMidiTargetCommand, SendTrackMidiCommand,
-    PanicTrackMidiCommand, SetTrackMixCommand, SetTrackDeviceBypassedCommand,
-    SetTrackDeviceParameterCommand, GetTrackDeviceCommand, SetTrackPluginStateCommand,
-    SetTrackDeviceProgramCommand, OpenTrackPluginEditorCommand, PreviewSampleCommand,
-    PreviewInstrumentCommand, StopPreviewCommand, StopInstrumentPreviewCommand,
-    OpenPluginAuditionCommand, StartTakeComparisonCommand, SwitchTakeComparisonVariantCommand,
-    StopTakeComparisonCommand, RecoverAudioDeviceCommand, SetAudioDriverCommand,
-    StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
+    PanicTrackMidiCommand, SetChannelMixCommand, SetSendLevelCommand, SetDeviceBypassedCommand,
+    SetDeviceParameterCommand, GetDeviceCommand, SetPluginStateCommand, SetDeviceProgramCommand,
+    OpenPluginEditorCommand, PreviewSampleCommand, PreviewInstrumentCommand, StopPreviewCommand,
+    StopInstrumentPreviewCommand, OpenPluginAuditionCommand, StartTakeComparisonCommand,
+    SwitchTakeComparisonVariantCommand, StopTakeComparisonCommand, RecoverAudioDeviceCommand,
+    SetAudioDriverCommand, StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
 
 /// One decoded stdin line of the realtime sidecar.
 struct SidecarRequestSpec final {
@@ -191,7 +195,7 @@ struct SidecarRequestSpec final {
 };
 
 /// Every command `type` accepted on stdin.
-inline constexpr std::array<std::string_view, 40> kSidecarCommandTypes{
+inline constexpr std::array<std::string_view, 41> kSidecarCommandTypes{
     "status",
     "setEmergencyMute",
     "setFeedbackProtection",
@@ -210,16 +214,17 @@ inline constexpr std::array<std::string_view, 40> kSidecarCommandTypes{
     "setLiveMidiTarget",
     "sendTrackMidi",
     "panicTrackMidi",
-    "setTrackMix",
-    "setTrackDeviceBypassed",
-    "setTrackDeviceParameter",
-    "getTrackDeviceStatus",
-    "getTrackDeviceParameters",
-    "getTrackDevicePrograms",
-    "getTrackPluginState",
-    "setTrackPluginState",
-    "setTrackDeviceProgram",
-    "openTrackPluginEditor",
+    "setChannelMix",
+    "setSendLevel",
+    "setDeviceBypassed",
+    "setDeviceParameter",
+    "getDeviceStatus",
+    "getDeviceParameters",
+    "getDevicePrograms",
+    "getPluginState",
+    "setPluginState",
+    "setDeviceProgram",
+    "openPluginEditor",
     "previewSample",
     "previewInstrument",
     "stopPreview",

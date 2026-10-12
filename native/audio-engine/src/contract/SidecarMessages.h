@@ -241,36 +241,36 @@ struct TimelineAckSpec final {};
 struct TimelineIdleAckSpec final {};
 /// Completes `sendTrackMidi` and `panicTrackMidi`.
 struct MidiAckSpec final {};
-/// Completes `setTrackMix`.
-struct TrackMixAckSpec final {};
+/// Completes `setChannelMix` and `setSendLevel`.
+struct MixAckSpec final {};
 /// Completes the Track Device commands that change a device or open its editor.
-struct TrackDeviceAckSpec final {};
+struct DeviceAckSpec final {};
 
 /// A transport command accepted by the realtime command queue.
 struct TransportAcceptedSpec final {
     std::uint64_t commandSequence = 0;
 };
 
-struct TrackDeviceCapabilitiesSpec final {
+struct DeviceCapabilitiesSpec final {
     bool parameters = false;
     bool state = false;
     bool presets = false;
     bool editor = false;
 };
 
-struct TrackDeviceStatusSpec final {
+struct DeviceStatusSpec final {
     juce::String name;
     bool bypassed = false;
     std::uint32_t parameterCount = 0;
-    TrackDeviceCapabilitiesSpec capabilities;
+    DeviceCapabilitiesSpec capabilities;
 };
 
-struct TrackDeviceParameterChoiceSpec final {
+struct DeviceParameterChoiceSpec final {
     float value = 0.0f;
     juce::String displayValue;
 };
 
-struct TrackDeviceParameterSpec final {
+struct DeviceParameterSpec final {
     std::uint32_t index = 0;
     juce::String name;
     float value = 0.0f;
@@ -280,37 +280,36 @@ struct TrackDeviceParameterSpec final {
     juce::String label;
     bool discrete = false;
     std::uint32_t stepCount = 0;
-    std::vector<TrackDeviceParameterChoiceSpec> choices;
+    std::vector<DeviceParameterChoiceSpec> choices;
 };
 
-struct TrackDeviceParametersSpec final {
-    std::vector<TrackDeviceParameterSpec> parameters;
+struct DeviceParametersSpec final {
+    std::vector<DeviceParameterSpec> parameters;
 };
 
-struct TrackDeviceProgramSpec final {
+struct DeviceProgramSpec final {
     std::uint32_t index = 0;
     juce::String name;
 };
 
-struct TrackDeviceProgramsSpec final {
+struct DeviceProgramsSpec final {
     std::optional<std::uint32_t> currentIndex;
-    std::vector<TrackDeviceProgramSpec> programs;
+    std::vector<DeviceProgramSpec> programs;
 };
 
-struct TrackPluginStateSpec final {
+struct PluginStateResponseSpec final {
     PluginStateSpec state;
 };
 
-/// Completes `setTrackDeviceProgram` with the state the program loaded.
-struct TrackDeviceProgramChangedSpec final {
+/// Completes `setDeviceProgram` with the state the program loaded.
+struct DeviceProgramChangedSpec final {
     PluginStateSpec state;
 };
 
 using SidecarResponseSpec =
     std::variant<AudioStatusSpec, TransportAcceptedSpec, TimelineAckSpec, TimelineIdleAckSpec,
-                 MidiAckSpec, TrackMixAckSpec, TrackDeviceAckSpec, TrackDeviceStatusSpec,
-                 TrackDeviceParametersSpec, TrackDeviceProgramsSpec, TrackPluginStateSpec,
-                 TrackDeviceProgramChangedSpec>;
+                 MidiAckSpec, MixAckSpec, DeviceAckSpec, DeviceStatusSpec, DeviceParametersSpec,
+                 DeviceProgramsSpec, PluginStateResponseSpec, DeviceProgramChangedSpec>;
 
 struct SidecarErrorSpec final {
     juce::String kind;
@@ -330,16 +329,16 @@ struct RecordingCompleteSpec final {
     std::optional<juce::String> message;
 };
 
-struct TrackPluginStateChangedSpec final {
+struct PluginStateChangedSpec final {
     juce::String projectId;
-    juce::String trackId;
+    EffectOwnerSpec owner;
     juce::String deviceId;
     PluginStateSpec state;
 };
 
-struct TrackPluginParameterChangedSpec final {
+struct PluginParameterChangedSpec final {
     juce::String projectId;
-    juce::String trackId;
+    EffectOwnerSpec owner;
     juce::String deviceId;
     std::uint32_t parameterIndex = 0;
     float value = 0.0f;
@@ -365,8 +364,8 @@ struct InputChannelDetailsSpec final {
 
 using SidecarEventSpec =
     std::variant<ReadySpec, AudioStatusSpec, AudioMetersSpec, TransportStatusSpec,
-                 RecordingCompleteSpec, TrackPluginStateChangedSpec,
-                 TrackPluginParameterChangedSpec, FaultSpec>;
+                 RecordingCompleteSpec, PluginStateChangedSpec, PluginParameterChangedSpec,
+                 FaultSpec>;
 
 struct OfflineRenderCompleteSpec final {
     std::uint64_t frames = 0;
@@ -375,10 +374,10 @@ struct OfflineRenderCompleteSpec final {
 
 /// Every response `type` written on stdout.
 inline constexpr std::array<std::string_view, 12> kSidecarResponseTypes{
-    "audioStatus",         "transportAccepted", "timelineAck",
-    "timelineIdleAck",     "midiAck",           "trackMixAck",
-    "trackDeviceAck",      "trackDeviceStatus", "trackDeviceParameters",
-    "trackDevicePrograms", "trackPluginState",  "trackDeviceProgramChanged",
+    "audioStatus",     "transportAccepted", "timelineAck",
+    "timelineIdleAck", "midiAck",           "mixAck",
+    "deviceAck",       "deviceStatus",      "deviceParameters",
+    "devicePrograms",  "pluginState",       "deviceProgramChanged",
 };
 
 /// Every event `type` written on stdout.
@@ -388,8 +387,8 @@ inline constexpr std::array<std::string_view, 8> kSidecarEventTypes{
     "audioMeters",
     "transportStatus",
     "recordingComplete",
-    "trackPluginStateChanged",
-    "trackPluginParameterChanged",
+    "pluginStateChanged",
+    "pluginParameterChanged",
     "fault",
 };
 

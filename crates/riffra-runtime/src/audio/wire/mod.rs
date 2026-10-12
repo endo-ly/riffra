@@ -15,9 +15,9 @@ pub(crate) use commands::{
 pub(crate) use messages::{
     PluginScanMessage, PluginScanMetadata, ProbeMessage, RenderMessage, SidecarError, SidecarEvent,
     SidecarMessage, SidecarResponse, WireAudioChannel, WireAudioMeters, WireAudioState,
-    WireAudioStatus, WireInstrumentFault, WireMidiDevice, WirePluginState, WireRecordingComplete,
-    WireRecordingPhase, WireRecoveryStatus, WireTrackPluginParameterChanged,
-    WireTrackPluginStateChanged, WireTransportState, WireTransportStatus,
+    WireAudioStatus, WireInstrumentFault, WireMidiDevice, WirePluginParameterChanged,
+    WirePluginState, WirePluginStateChanged, WireRecordingComplete, WireRecordingPhase,
+    WireRecoveryStatus, WireTransportState, WireTransportStatus,
 };
 
 use serde::{Deserialize, Deserializer, Serialize};

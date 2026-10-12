@@ -90,9 +90,9 @@ pub struct AudioMeterFrame {
 /// Plugin state captured from an open native plugin editor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct TrackPluginStateChanged {
+pub struct PluginStateChanged {
     pub project_id: String,
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_values: Vec<f32>,
     pub state_data: Option<String>,
@@ -102,9 +102,9 @@ pub struct TrackPluginStateChanged {
 /// One parameter changed in an open native plugin editor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct TrackPluginParameterChanged {
+pub struct PluginParameterChanged {
     pub project_id: String,
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_index: u32,
     pub value: f32,

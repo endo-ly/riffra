@@ -67,8 +67,8 @@ pub struct MasterGainParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
-pub struct TrackMixParams {
-    pub track_id: String,
+pub struct ChannelMixParams {
+    pub owner: riffra_core::EffectOwner,
     pub gain_db: Option<f64>,
     pub pan: Option<f64>,
 }
@@ -194,4 +194,12 @@ pub struct TakeVariantParams {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TakeComparisonParams {
     pub variant: AudioTakeVariant,
+}
+
+/// Transient Send level; canonical state is changed only by send.update.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ts_rs::TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SendLevelPreviewParams {
+    pub send_id: String,
+    pub level_db: f64,
 }

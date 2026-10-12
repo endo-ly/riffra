@@ -2,7 +2,7 @@
   "kind": "response",
   "requestId": 1,
   "response": {
-    "type": "trackDeviceParameters",
+    "type": "deviceParameters",
     "parameters": [
       {
         "index": 0,

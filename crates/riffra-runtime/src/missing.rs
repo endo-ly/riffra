@@ -79,6 +79,27 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
         }
     }
 
+    for (owner, effects) in session
+        .arrangement
+        .mixer
+        .buses
+        .iter()
+        .map(|bus| (format!("bus:{}", bus.id), bus.effects.as_slice()))
+        .chain(std::iter::once((
+            "master".into(),
+            session.arrangement.mixer.master_effects.as_slice(),
+        )))
+    {
+        for device in effects {
+            collect_missing_plugin(
+                &mut missing,
+                (&device.id, &device.name),
+                &device.plugin,
+                format!("{owner}:effect:{}", device.id),
+            );
+        }
+    }
+
     missing
 }
 

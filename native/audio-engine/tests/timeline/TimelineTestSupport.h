@@ -566,7 +566,8 @@ public:
 
         // Act
         if (!engine.loadSnapshot(second, formats, 48'000.0, 32, error, false) ||
-            !engine.preparedTrackReusesRuntimeDevices("track:state") ||
+            !engine.preparedOwnerReusesRuntimeDevices(
+                EffectOwnerSpec{EffectOwnerKindSpec::track, "track:state"}) ||
             !(engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted))
             return false;
 
@@ -603,8 +604,9 @@ public:
         }
 
         // Act
-        if (!engine.mirrorEditorDeviceParameter("track:editor-instrument", "instrument:editor", 0,
-                                                0.75f, error))
+        if (!engine.mirrorEditorDeviceParameter(
+                EffectOwnerSpec{EffectOwnerKindSpec::track, "track:editor-instrument"},
+                "instrument:editor", 0, 0.75f, error))
             return false;
         if (!engine.play()) return false;
         std::array<float, 32> left{};
@@ -645,9 +647,9 @@ public:
         if (!rackPointer->setParameter(0, 0.25f, error)) return false;
 
         // Act
-        const auto changed =
-            engine.setDevicePersistedState("track:plugin-state", "instrument:plugin-state",
-                                           PluginStateSpec{std::nullopt, {0.75f}, false}, error);
+        const auto changed = engine.setDevicePersistedState(
+            EffectOwnerSpec{EffectOwnerKindSpec::track, "track:plugin-state"},
+            "instrument:plugin-state", PluginStateSpec{std::nullopt, {0.75f}, false}, error);
 
         // Assert
         if (!changed) return false;
@@ -682,8 +684,9 @@ public:
         }
 
         // Act
-        const auto changed =
-            engine.setDeviceProgram("track:plugin-program", "instrument:plugin-program", 1, error);
+        const auto changed = engine.setDeviceProgram(
+            EffectOwnerSpec{EffectOwnerKindSpec::track, "track:plugin-program"},
+            "instrument:plugin-program", 1, error);
 
         // Assert
         return changed && trace.currentProgram == 1;
@@ -794,7 +797,8 @@ public:
         const auto snapshot = makeInstrumentSnapshot("track:audio-device");
         if (!loadTestSnapshot(engine, snapshot, formats, 48'000.0, 256, error) ||
             !loadTestSnapshot(engine, snapshot, formats, 48'000.0, 256, error, false) ||
-            !engine.preparedTrackReusesRuntimeDevices("track:audio-device") ||
+            !engine.preparedOwnerReusesRuntimeDevices(
+                EffectOwnerSpec{EffectOwnerKindSpec::track, "track:audio-device"}) ||
             !(engine.commitPreparedSnapshot(error) == RealtimeRequest::accepted))
             return false;
 

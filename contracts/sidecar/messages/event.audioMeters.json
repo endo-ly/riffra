@@ -23,7 +23,7 @@
         "rmsRight": 0.0625
       }
     ],
-    "type": "audioMeters",
-    "busMeters": []
+    "busMeters": [],
+    "type": "audioMeters"
   }
 }

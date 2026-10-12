@@ -75,12 +75,12 @@ void AudioCommandDispatcher::handle(const CommitTimelineSnapshotCommand&,
             const auto shouldCloseEditor =
                 context.timelineEngine.hasPreparedSnapshot() &&
                 context.trackPluginEditor != nullptr &&
-                !context.timelineEngine.preparedTrackReusesRuntimeDevices(
-                    context.trackPluginEditorTrackId);
+                !context.timelineEngine.preparedOwnerReusesRuntimeDevices(
+                    context.pluginEditorOwner);
             if (shouldCloseEditor) {
                 context.trackPluginEditor->close();
                 context.trackPluginEditor.reset();
-                context.trackPluginEditorTrackId.clear();
+                context.pluginEditorOwner = {};
                 context.trackPluginEditorDeviceId.clear();
             }
             juce::String timelineError;

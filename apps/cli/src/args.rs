@@ -100,6 +100,11 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: InstrumentEventCommand,
     },
+    /// Inspect and edit Group, Return, and Send routing.
+    Mixer {
+        #[command(subcommand)]
+        command: MixerCommand,
+    },
     /// Inspect or replace the Project's mixdown settings.
     Mixdown {
         #[command(subcommand)]
@@ -467,6 +472,97 @@ pub enum ExternalAudioInputCommand {
     },
     /// Disconnect the instrument input; missing required input is diagnosed.
     Clear(IdArg),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MixerCommand {
+    /// Read all canonical Mixer state.
+    Get,
+    /// Create, inspect, and edit Group and Return channels.
+    Bus {
+        #[command(subcommand)]
+        command: MixBusCommand,
+    },
+    /// Create, inspect, and edit parallel Sends.
+    Send {
+        #[command(subcommand)]
+        command: SendCommand,
+    },
+    /// Set a Track's main output; omit --bus-id to route directly to Master.
+    Output {
+        /// Track ID whose output or Send is edited.
+        #[arg(long)]
+        track_id: String,
+        /// Group or Return channel ID.
+        #[arg(long)]
+        bus_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MixBusCommand {
+    /// List Group and Return channels.
+    List,
+    /// Create a channel with neutral mix controls.
+    Add {
+        /// Display name for the channel.
+        #[arg(long)]
+        name: String,
+        /// Input role: group for Track outputs, return for parallel Sends.
+        #[arg(long, value_parser = ["group", "return"])]
+        kind: String,
+    },
+    /// Update name, gainDb, pan, panLaw, muted, or solo from JSON or @file.
+    Update {
+        /// Group or Return channel ID.
+        #[arg(long)]
+        bus_id: String,
+        /// Partial controls as a JSON object or @file.
+        #[arg(long)]
+        patch_json: String,
+    },
+    /// Remove a channel after disconnecting all references.
+    Remove {
+        /// Group or Return channel ID.
+        #[arg(long)]
+        bus_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SendCommand {
+    /// List parallel Track-to-Return routes.
+    List,
+    /// Create an enabled Send; --pre-fader selects the signal before Track Gain and Pan.
+    Add {
+        /// Track ID whose output or Send is edited.
+        #[arg(long)]
+        track_id: String,
+        /// Destination Return channel ID.
+        #[arg(long)]
+        return_bus_id: String,
+        /// Send level in dB, clamped to -90..=24.
+        #[arg(long, value_parser = finite_f64, allow_hyphen_values = true, default_value = "0")]
+        level_db: f64,
+        /// Take the signal after Track Effects and before Track Gain and Pan.
+        #[arg(long)]
+        pre_fader: bool,
+    },
+    /// Update returnBusId, levelDb, position, or enabled from JSON or @file.
+    Update {
+        /// Send route ID.
+        #[arg(long)]
+        send_id: String,
+        /// Partial controls as a JSON object or @file.
+        #[arg(long)]
+        patch_json: String,
+    },
+    /// Remove a parallel route.
+    Remove {
+        /// Send route ID.
+        #[arg(long)]
+        send_id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1685,8 +1781,44 @@ pub struct InstrumentApplyArgs {
     pub instrument_id: String,
 }
 
+#[derive(Debug, Args)]
+#[group(id = "device-owner", required = true, multiple = false)]
+pub struct DeviceOwnerArgs {
+    /// Track ID owning the instrument or effect.
+    #[arg(long)]
+    pub track_id: Option<String>,
+    /// Group or Return ID owning the effect.
+    #[arg(long)]
+    pub bus_id: Option<String>,
+    /// Select the Master effect chain.
+    #[arg(long)]
+    pub master: bool,
+}
+
+impl DeviceOwnerArgs {
+    fn into_owner(self) -> Result<riffra_core::EffectOwner, String> {
+        match (self.track_id, self.bus_id, self.master) {
+            (Some(id), None, false) => Ok(riffra_core::EffectOwner::Track { id }),
+            (None, Some(id), false) => Ok(riffra_core::EffectOwner::Bus { id }),
+            (None, None, true) => Ok(riffra_core::EffectOwner::Master),
+            _ => Err("select exactly one of --track-id, --bus-id, or --master".into()),
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct EffectAddArgs {
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
+    /// VST3 effect binary or bundle path.
+    #[arg(long)]
+    pub plugin_path: String,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum EffectCommand {
+    /// Insert a VST3 effect into a Track, Bus, or Master chain.
+    Add(EffectAddArgs),
     /// Remove one effect device from a Track.
     Remove(EffectRemoveArgs),
     /// Reorder the effect devices on a Track to the supplied id order.
@@ -1695,9 +1827,8 @@ pub enum EffectCommand {
 
 #[derive(Debug, Args)]
 pub struct EffectRemoveArgs {
-    /// Id of the Track whose effects are modified.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the effect device to remove.
     #[arg(long)]
     pub device_id: String,
@@ -1705,9 +1836,8 @@ pub struct EffectRemoveArgs {
 
 #[derive(Debug, Args)]
 pub struct EffectReorderArgs {
-    /// Id of the Track whose effects are reordered.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Comma-separated device ids in the desired order; mutually exclusive with --device-ids-json.
     #[arg(long, value_delimiter = ',')]
     pub device_ids: Vec<String>,
@@ -1731,9 +1861,8 @@ pub enum DeviceCommand {
 
 #[derive(Debug, Args)]
 pub struct DeviceBypassArgs {
-    /// Id of the Track that owns the device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the device to bypass or unbypass.
     #[arg(long)]
     pub device_id: String,
@@ -1744,9 +1873,8 @@ pub struct DeviceBypassArgs {
 
 #[derive(Debug, Args)]
 pub struct DeviceParameterSetArgs {
-    /// Id of the Track that owns the device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the device whose parameter is written.
     #[arg(long)]
     pub device_id: String,
@@ -1770,9 +1898,8 @@ pub enum DeviceParameterCommand {
 
 #[derive(Debug, Args)]
 pub struct DeviceInspectArgs {
-    /// Id of the Track that owns the device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the device to inspect.
     #[arg(long)]
     pub device_id: String,
@@ -1780,9 +1907,8 @@ pub struct DeviceInspectArgs {
 
 #[derive(Debug, Args)]
 pub struct DeviceParameterListArgs {
-    /// Id of the Track that owns the device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the device whose parameters are listed.
     #[arg(long)]
     pub device_id: String,
@@ -1790,9 +1916,8 @@ pub struct DeviceParameterListArgs {
 
 #[derive(Debug, Args)]
 pub struct DeviceParameterGetArgs {
-    /// Id of the Track that owns the device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the device whose parameter is read.
     #[arg(long)]
     pub device_id: String,
@@ -2064,8 +2189,6 @@ pub enum PluginCommand {
     },
     /// Load or replace a VST3 instrument plugin on an Instrument Track.
     Instrument(PluginPathArgs),
-    /// Add a VST3 effect plugin to a Track.
-    Effect(PluginPathArgs),
     /// Scan a directory for VST3 plugins and wait for the report; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
     Scan(PluginScanArgs),
     /// Start a background VST3 plugin scan as a Job; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which blocks VST3 discovery and load validation.
@@ -2125,9 +2248,8 @@ pub enum PluginStateCommand {
 
 #[derive(Debug, Args)]
 pub struct PluginDeviceArgs {
-    /// Id of the Track that hosts the plugin device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the plugin device.
     #[arg(long)]
     pub device_id: String,
@@ -2135,9 +2257,8 @@ pub struct PluginDeviceArgs {
 
 #[derive(Debug, Args)]
 pub struct PluginPresetSetArgs {
-    /// Id of the Track that hosts the plugin device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the plugin device whose preset is set.
     #[arg(long)]
     pub device_id: String,
@@ -2151,9 +2272,8 @@ pub struct PluginPresetSetArgs {
 
 #[derive(Debug, Args)]
 pub struct PluginStateSaveArgs {
-    /// Id of the Track that hosts the plugin device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the plugin device whose state is saved.
     #[arg(long)]
     pub device_id: String,
@@ -2164,9 +2284,8 @@ pub struct PluginStateSaveArgs {
 
 #[derive(Debug, Args)]
 pub struct PluginStateLoadArgs {
-    /// Id of the Track that hosts the plugin device.
-    #[arg(long)]
-    pub track_id: String,
+    #[command(flatten)]
+    pub owner: DeviceOwnerArgs,
     /// Id of the plugin device whose state is replaced.
     #[arg(long)]
     pub device_id: String,
@@ -2523,6 +2642,60 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 })
                 .into()
             }
+        },
+        CliCommand::Mixer { command } => match command {
+            MixerCommand::Get => Canonical::MixerGet(empty).into(),
+            MixerCommand::Output { track_id, bus_id } => {
+                Canonical::TrackOutputSet(TrackOutputParams { track_id, bus_id }).into()
+            }
+            MixerCommand::Bus { command } => match command {
+                MixBusCommand::List => Canonical::MixBusList(empty).into(),
+                MixBusCommand::Add { name, kind } => Canonical::MixBusAdd(MixBusAddParams {
+                    name,
+                    kind: decode_params(Value::String(kind))?,
+                })
+                .into(),
+                MixBusCommand::Update { bus_id, patch_json } => {
+                    Canonical::MixBusUpdate(MixBusUpdateParams {
+                        bus_id,
+                        patch: decode_params(json_argument("patch-json", &patch_json)?)?,
+                    })
+                    .into()
+                }
+                MixBusCommand::Remove { bus_id } => {
+                    Canonical::MixBusRemove(MixBusIdParams { bus_id }).into()
+                }
+            },
+            MixerCommand::Send { command } => match command {
+                SendCommand::List => Canonical::SendList(empty).into(),
+                SendCommand::Add {
+                    track_id,
+                    return_bus_id,
+                    level_db,
+                    pre_fader,
+                } => Canonical::SendAdd(SendAddParams {
+                    track_id,
+                    return_bus_id,
+                    level_db,
+                    position: if pre_fader {
+                        riffra_core::SendPosition::PreFader
+                    } else {
+                        riffra_core::SendPosition::PostFader
+                    },
+                })
+                .into(),
+                SendCommand::Update {
+                    send_id,
+                    patch_json,
+                } => Canonical::SendUpdate(SendUpdateParams {
+                    send_id,
+                    patch: decode_params(json_argument("patch-json", &patch_json)?)?,
+                })
+                .into(),
+                SendCommand::Remove { send_id } => {
+                    Canonical::SendRemove(SendIdParams { send_id }).into()
+                }
+            },
         },
         CliCommand::Mixdown { command } => match command {
             MixdownCommand::Get => Canonical::MixdownGet(empty).into(),
@@ -2962,40 +3135,43 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             InstrumentCommand::Clear(args) => Canonical::InstrumentClear(track_id(args)).into(),
         },
         CliCommand::Effect { command } => match command {
-            EffectCommand::Remove(args) => Canonical::EffectRemove(TrackDeviceParams {
-                track_id: args.track_id,
+            EffectCommand::Add(args) => Canonical::EffectAdd(EffectAddParams {
+                owner: args.owner.into_owner()?,
+                plugin_path: args.plugin_path,
+            })
+            .into(),
+            EffectCommand::Remove(args) => Canonical::EffectRemove(DeviceParams {
+                owner: args.owner.into_owner()?,
                 device_id: args.device_id,
             })
             .into(),
             EffectCommand::Reorder(args) => Canonical::EffectReorder(EffectReorderParams {
-                track_id: args.track_id,
+                owner: args.owner.into_owner()?,
                 device_ids: id_list(args.device_ids, args.device_ids_json, "device-ids")?,
             })
             .into(),
         },
         CliCommand::Device { command } => match command {
             DeviceCommand::Bypass(args) => Canonical::DeviceBypass(DeviceBypassParams {
-                track_id: args.track_id,
+                owner: args.owner.into_owner()?,
                 device_id: args.device_id,
                 bypassed: args.bypassed.unwrap_or(false),
             })
             .into(),
-            DeviceCommand::Inspect(args) => Runtime::DeviceInspect(TrackDeviceParams {
-                track_id: args.track_id,
+            DeviceCommand::Inspect(args) => Runtime::DeviceInspect(DeviceParams {
+                owner: args.owner.into_owner()?,
                 device_id: args.device_id,
             })
             .into(),
             DeviceCommand::Parameter { command } => match command {
-                DeviceParameterCommand::List(args) => {
-                    Runtime::DeviceParameterList(TrackDeviceParams {
-                        track_id: args.track_id,
-                        device_id: args.device_id,
-                    })
-                    .into()
-                }
+                DeviceParameterCommand::List(args) => Runtime::DeviceParameterList(DeviceParams {
+                    owner: args.owner.into_owner()?,
+                    device_id: args.device_id,
+                })
+                .into(),
                 DeviceParameterCommand::Get(args) => {
                     Runtime::DeviceParameterGet(DeviceParameterGetParams {
-                        track_id: args.track_id,
+                        owner: args.owner.into_owner()?,
                         device_id: args.device_id,
                         parameter_index: args.parameter_index,
                     })
@@ -3003,7 +3179,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 }
                 DeviceParameterCommand::Set(args) => {
                     Canonical::DeviceParameterSet(DeviceParameterSetParams {
-                        track_id: args.track_id,
+                        owner: args.owner.into_owner()?,
                         device_id: args.device_id,
                         parameter_index: args.parameter_index,
                         value: args.value,
@@ -3119,7 +3295,6 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             PluginCommand::Instrument(args) => {
                 Canonical::InstrumentVst3Set(plugin_path(args)).into()
             }
-            PluginCommand::Effect(args) => Canonical::EffectAdd(plugin_path(args)).into(),
             PluginCommand::Scan(args) => {
                 Runtime::PluginScan(PluginScanParams { path: args.path }).into()
             }
@@ -3128,10 +3303,10 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             }
             PluginCommand::Preset { command } => match command {
                 PluginPresetCommand::List(args) => {
-                    Runtime::PluginPresetList(plugin_device(args)).into()
+                    Runtime::PluginPresetList(plugin_device(args)?).into()
                 }
                 PluginPresetCommand::Get(args) => {
-                    Runtime::PluginPresetGet(plugin_device(args)).into()
+                    Runtime::PluginPresetGet(plugin_device(args)?).into()
                 }
                 PluginPresetCommand::Set(args) => {
                     if args.preset.is_some() == args.preset_index.is_some() {
@@ -3141,7 +3316,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         );
                     }
                     Runtime::PluginPresetSet(PluginPresetSetParams {
-                        track_id: args.track_id,
+                        owner: args.owner.into_owner()?,
                         device_id: args.device_id,
                         preset: args.preset,
                         preset_index: args.preset_index,
@@ -3150,8 +3325,8 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                 }
             },
             PluginCommand::State { command } => match command {
-                PluginStateCommand::Save(args) => Runtime::PluginStateGet(TrackDeviceParams {
-                    track_id: args.track_id,
+                PluginStateCommand::Save(args) => Runtime::PluginStateGet(DeviceParams {
+                    owner: args.owner.into_owner()?,
                     device_id: args.device_id,
                 })
                 .into(),
@@ -3246,11 +3421,11 @@ fn plugin_path(args: PluginPathArgs) -> PluginPathParams {
     }
 }
 
-fn plugin_device(args: PluginDeviceArgs) -> TrackDeviceParams {
-    TrackDeviceParams {
-        track_id: args.track_id,
+fn plugin_device(args: PluginDeviceArgs) -> Result<DeviceParams, String> {
+    Ok(DeviceParams {
+        owner: args.owner.into_owner()?,
         device_id: args.device_id,
-    }
+    })
 }
 
 fn range(args: RangeArgs) -> Result<RangeParams, CommandDecodeError> {
@@ -3385,7 +3560,7 @@ fn plugin_state_load(args: PluginStateLoadArgs) -> Result<ControlCommand, Reques
     let state = serde_json::from_str::<Value>(&encoded)
         .map_err(|error| format!("--file is invalid JSON: {error}"))?;
     Ok(Runtime::PluginStateSet(PluginStateSetParams {
-        track_id: args.track_id,
+        owner: args.owner.into_owner()?,
         device_id: args.device_id,
         state: field("/state", state)?,
     })
@@ -3563,6 +3738,50 @@ mod tests {
         assert_eq!(all_lanes.params["trackId"], "track:1");
         assert!(all_lanes.params["parameter"].is_null());
         assert_eq!(pan_lane.params["parameter"], "pan");
+    }
+
+    #[test]
+    fn mixer_commands_preserve_routing_controls() {
+        let bus = wire(
+            Cli::try_parse_from([
+                "riffra", "mixer", "bus", "add", "--name", "Reverb", "--kind", "return",
+            ])
+            .unwrap(),
+        );
+        let send = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "mixer",
+                "send",
+                "add",
+                "--track-id",
+                "track:1",
+                "--return-bus-id",
+                "bus:1",
+                "--level-db",
+                "-12",
+                "--pre-fader",
+            ])
+            .unwrap(),
+        );
+        let master = wire(
+            Cli::try_parse_from(["riffra", "mixer", "output", "--track-id", "track:1"]).unwrap(),
+        );
+
+        assert_eq!(bus.name, "mixer.bus.add");
+        assert_eq!(bus.params, json!({ "name": "Reverb", "kind": "return" }));
+        assert_eq!(send.name, "mixer.send.add");
+        assert_eq!(
+            send.params,
+            json!({
+                "trackId": "track:1", "returnBusId": "bus:1", "levelDb": -12.0, "position": "preFader",
+            })
+        );
+        assert_eq!(master.name, "mixer.output.set");
+        assert_eq!(
+            master.params,
+            json!({ "trackId": "track:1", "busId": null })
+        );
     }
 
     #[test]
@@ -3852,7 +4071,7 @@ mod tests {
         assert_eq!(request.name, "plugin.state.get");
         assert_eq!(
             request.params,
-            json!({"trackId":"track:keys","deviceId":"device:synth"})
+            json!({"owner":{"kind":"track","id":"track:keys"},"deviceId":"device:synth"})
         );
 
         let cli = Cli::try_parse_from([

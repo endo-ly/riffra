@@ -1,6 +1,10 @@
 {
   "command": {
     "deviceId": "device-1",
+    "owner": {
+      "id": "track-1",
+      "kind": "track"
+    },
     "state": {
       "bypassed": false,
       "parameterValues": [
@@ -9,8 +13,7 @@
       ],
       "stateData": "opaque-state"
     },
-    "trackId": "track-1",
-    "type": "setTrackPluginState"
+    "type": "setPluginState"
   },
   "requestId": 1
 }

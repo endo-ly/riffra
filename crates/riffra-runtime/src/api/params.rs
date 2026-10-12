@@ -8,6 +8,7 @@ mod device;
 mod instrument;
 mod instrument_event;
 mod library;
+mod mixer;
 mod music;
 mod project;
 mod record;
@@ -20,6 +21,7 @@ pub use device::*;
 pub use instrument::*;
 pub use instrument_event::*;
 pub use library::*;
+pub use mixer::*;
 pub use music::*;
 pub use project::*;
 pub use record::*;
@@ -56,11 +58,11 @@ pub struct DeviceIdParams {
     pub device_id: String,
 }
 
-/// Identifies one Device on one Track.
+/// Identifies one plugin device on its canonical channel.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TrackDeviceParams {
-    pub track_id: String,
+pub struct DeviceParams {
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
 }
 

@@ -53,51 +53,55 @@ pub(crate) enum SidecarCommand {
     PanicTrackMidi {
         track_id: String,
     },
-    SetTrackMix {
-        track_id: String,
+    SetChannelMix {
+        owner: riffra_core::EffectOwner,
         gain_db: Option<f64>,
         pan: Option<f64>,
     },
-    SetTrackDeviceBypassed {
-        track_id: String,
+    SetSendLevel {
+        send_id: String,
+        level_db: f64,
+    },
+    SetDeviceBypassed {
+        owner: riffra_core::EffectOwner,
         device_id: String,
         bypassed: bool,
     },
-    SetTrackDeviceParameter {
-        track_id: String,
+    SetDeviceParameter {
+        owner: riffra_core::EffectOwner,
         device_id: String,
         parameter_index: u32,
         value: f32,
     },
-    GetTrackDeviceStatus {
-        track_id: String,
+    GetDeviceStatus {
+        owner: riffra_core::EffectOwner,
         device_id: String,
     },
-    GetTrackDeviceParameters {
-        track_id: String,
+    GetDeviceParameters {
+        owner: riffra_core::EffectOwner,
         device_id: String,
     },
-    GetTrackDevicePrograms {
-        track_id: String,
+    GetDevicePrograms {
+        owner: riffra_core::EffectOwner,
         device_id: String,
     },
-    GetTrackPluginState {
-        track_id: String,
+    GetPluginState {
+        owner: riffra_core::EffectOwner,
         device_id: String,
     },
-    SetTrackPluginState {
-        track_id: String,
+    SetPluginState {
+        owner: riffra_core::EffectOwner,
         device_id: String,
         state: GraphPluginState,
     },
-    SetTrackDeviceProgram {
-        track_id: String,
+    SetDeviceProgram {
+        owner: riffra_core::EffectOwner,
         device_id: String,
         program_index: u32,
     },
-    OpenTrackPluginEditor {
+    OpenPluginEditor {
         project_id: String,
-        track_id: String,
+        owner: riffra_core::EffectOwner,
         device_id: String,
     },
     PreviewSample {
@@ -162,13 +166,13 @@ pub(crate) enum ExpectedResponse {
     TimelineAck,
     TimelineIdleAck,
     MidiAck,
-    TrackMixAck,
-    TrackDeviceAck,
-    TrackDeviceStatus,
-    TrackDeviceParameters,
-    TrackDevicePrograms,
-    TrackPluginState,
-    TrackDeviceProgramChanged,
+    MixAck,
+    DeviceAck,
+    DeviceStatus,
+    DeviceParameters,
+    DevicePrograms,
+    PluginState,
+    DeviceProgramChanged,
 }
 
 impl SidecarCommand {
@@ -204,16 +208,16 @@ impl SidecarCommand {
             | Self::DiscardTimelineSnapshot => ExpectedResponse::TimelineAck,
             Self::WaitForTimelineIdle { .. } => ExpectedResponse::TimelineIdleAck,
             Self::SendTrackMidi { .. } | Self::PanicTrackMidi { .. } => ExpectedResponse::MidiAck,
-            Self::SetTrackMix { .. } => ExpectedResponse::TrackMixAck,
-            Self::SetTrackDeviceBypassed { .. }
-            | Self::SetTrackDeviceParameter { .. }
-            | Self::SetTrackPluginState { .. }
-            | Self::OpenTrackPluginEditor { .. } => ExpectedResponse::TrackDeviceAck,
-            Self::GetTrackDeviceStatus { .. } => ExpectedResponse::TrackDeviceStatus,
-            Self::GetTrackDeviceParameters { .. } => ExpectedResponse::TrackDeviceParameters,
-            Self::GetTrackDevicePrograms { .. } => ExpectedResponse::TrackDevicePrograms,
-            Self::GetTrackPluginState { .. } => ExpectedResponse::TrackPluginState,
-            Self::SetTrackDeviceProgram { .. } => ExpectedResponse::TrackDeviceProgramChanged,
+            Self::SetChannelMix { .. } | Self::SetSendLevel { .. } => ExpectedResponse::MixAck,
+            Self::SetDeviceBypassed { .. }
+            | Self::SetDeviceParameter { .. }
+            | Self::SetPluginState { .. }
+            | Self::OpenPluginEditor { .. } => ExpectedResponse::DeviceAck,
+            Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
+            Self::GetDeviceParameters { .. } => ExpectedResponse::DeviceParameters,
+            Self::GetDevicePrograms { .. } => ExpectedResponse::DevicePrograms,
+            Self::GetPluginState { .. } => ExpectedResponse::PluginState,
+            Self::SetDeviceProgram { .. } => ExpectedResponse::DeviceProgramChanged,
         }
     }
 }

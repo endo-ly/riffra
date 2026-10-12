@@ -119,11 +119,11 @@ SidecarErrorSpec error() {
 }
 
 std::vector<SidecarResponseSpec> responses() {
-    TrackDeviceParametersSpec parameters;
+    DeviceParametersSpec parameters;
     parameters.parameters = {
         {0, "Gain", 0.5f, 0.25f, true, "-6", "dB", false, 0, {}},
         {1, "Mode", 0.0f, 0.0f, true, "Clean", "", true, 2, {{0.0f, "Clean"}, {1.0f, "Warm"}}}};
-    TrackDeviceProgramsSpec programs;
+    DeviceProgramsSpec programs;
     programs.currentIndex = 1u;
     programs.programs = {{0, "Init"}, {1, "Bright"}};
     return {
@@ -132,13 +132,13 @@ std::vector<SidecarResponseSpec> responses() {
         TimelineAckSpec{},
         TimelineIdleAckSpec{},
         MidiAckSpec{},
-        TrackMixAckSpec{},
-        TrackDeviceAckSpec{},
-        TrackDeviceStatusSpec{"Test Effect", false, 1, {true, true, true, false}},
+        MixAckSpec{},
+        DeviceAckSpec{},
+        DeviceStatusSpec{"Test Effect", false, 1, {true, true, true, false}},
         parameters,
         programs,
-        TrackPluginStateSpec{pluginState()},
-        TrackDeviceProgramChangedSpec{pluginState()},
+        PluginStateResponseSpec{pluginState()},
+        DeviceProgramChangedSpec{pluginState()},
     };
 }
 
@@ -149,8 +149,11 @@ std::vector<SidecarEventSpec> events() {
         audioMeters(),
         transportStatus(),
         RecordingCompleteSpec{"recordings/take-1", false, juce::String("processing failed")},
-        TrackPluginStateChangedSpec{"project-1", "track-1", "device-1", pluginState()},
-        TrackPluginParameterChangedSpec{"project-1", "track-1", "device-1", 2, 0.5f},
+        PluginStateChangedSpec{"project-1", EffectOwnerSpec{EffectOwnerKindSpec::track, "track-1"},
+                               "device-1", pluginState()},
+        PluginParameterChangedSpec{"project-1",
+                                   EffectOwnerSpec{EffectOwnerKindSpec::track, "track-1"},
+                                   "device-1", 2, 0.5f},
         FaultSpec{error()},
     };
 }

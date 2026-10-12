@@ -2,7 +2,7 @@
   "kind": "response",
   "requestId": 1,
   "response": {
-    "type": "trackDeviceStatus",
+    "type": "deviceStatus",
     "name": "Test Effect",
     "bypassed": false,
     "parameterCount": 1,

@@ -1,0 +1,11 @@
+{
+  "command": {
+    "deviceId": "device-1",
+    "owner": {
+      "id": "track-1",
+      "kind": "track"
+    },
+    "type": "getPluginState"
+  },
+  "requestId": 1
+}

@@ -119,7 +119,8 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     const auto beforePreviewStatus = engine.status();
     ASSERT_TRUE(beforePreviewStatus.graph.has_value());
 
-    ASSERT_TRUE(engine.setTrackMixControl("track:live", -6.0f, -1.0f, error))
+    ASSERT_TRUE(engine.setChannelMixControl(
+        EffectOwnerSpec{EffectOwnerKindSpec::track, "track:live"}, -6.0f, -1.0f, error))
         << error.toStdString();
     const auto afterPreviewStatus = engine.status();
     ASSERT_TRUE(afterPreviewStatus.graph.has_value());
@@ -170,7 +171,8 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
     const auto automatedPeak =
         juce::FloatVectorOperations::findMaximum(left.data(), static_cast<int>(left.size()));
-    ASSERT_TRUE(engine.setTrackMixControl("track:live", -24.0f, std::nullopt, error))
+    ASSERT_TRUE(engine.setChannelMixControl(
+        EffectOwnerSpec{EffectOwnerKindSpec::track, "track:live"}, -24.0f, std::nullopt, error))
         << error.toStdString();
     left.fill(0.0f);
     right.fill(0.0f);
@@ -578,6 +580,29 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
         graph = TimelineEngineTestPeer::committedGraph(engine);
         EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
         EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        for (const auto& [owner, id] : std::array<std::pair<EffectOwnerSpec, juce::String>, 3>{
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"},
+                           juce::String("fx:group")},
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:return"},
+                           juce::String("fx:return")},
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::master, {}},
+                           juce::String("fx:master")}}) {
+            ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.75f, error)) << error;
+            auto state = engine.devicePersistedState(owner, id, error);
+            ASSERT_TRUE(state.has_value()) << error;
+            ASSERT_FALSE(state->parameterValues.empty());
+            EXPECT_NEAR(state->parameterValues[0], 0.75f, 0.001f);
+            ASSERT_TRUE(state->stateData.has_value());
+            ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.25f, error));
+            ASSERT_TRUE(engine.setDevicePersistedState(owner, id, *state, error)) << error;
+            EXPECT_NEAR(engine.devicePersistedState(owner, id, error)->parameterValues[0], 0.75f,
+                        0.001f);
+            ASSERT_TRUE(engine.setDeviceBypassed(owner, id, true, error));
+            EXPECT_TRUE(engine.devicePersistedState(owner, id, error)->bypassed);
+        }
+        ASSERT_TRUE(engine.setChannelMixControl(
+            EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"}, -9.0f, 0.2f, error));
+        ASSERT_TRUE(engine.setSendLevelControl("send:first", -12.0f, error));
     }
 }
 

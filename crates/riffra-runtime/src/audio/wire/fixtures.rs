@@ -92,51 +92,55 @@ fn command_samples() -> Vec<SidecarCommand> {
             bytes: vec![0x90, 60, 100],
         },
         SidecarCommand::PanicTrackMidi { track_id: track() },
-        SidecarCommand::SetTrackMix {
-            track_id: track(),
+        SidecarCommand::SetChannelMix {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             gain_db: Some(-3.0),
             pan: None,
         },
-        SidecarCommand::SetTrackDeviceBypassed {
-            track_id: track(),
+        SidecarCommand::SetSendLevel {
+            send_id: "send:1".into(),
+            level_db: -6.0,
+        },
+        SidecarCommand::SetDeviceBypassed {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
             bypassed: true,
         },
-        SidecarCommand::SetTrackDeviceParameter {
-            track_id: track(),
+        SidecarCommand::SetDeviceParameter {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
             parameter_index: 2,
             value: 0.5,
         },
-        SidecarCommand::GetTrackDeviceStatus {
-            track_id: track(),
+        SidecarCommand::GetDeviceStatus {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
-        SidecarCommand::GetTrackDeviceParameters {
-            track_id: track(),
+        SidecarCommand::GetDeviceParameters {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
-        SidecarCommand::GetTrackDevicePrograms {
-            track_id: track(),
+        SidecarCommand::GetDevicePrograms {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
-        SidecarCommand::GetTrackPluginState {
-            track_id: track(),
+        SidecarCommand::GetPluginState {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
-        SidecarCommand::SetTrackPluginState {
-            track_id: track(),
+        SidecarCommand::SetPluginState {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
             state: plugin_state(),
         },
-        SidecarCommand::SetTrackDeviceProgram {
-            track_id: track(),
+        SidecarCommand::SetDeviceProgram {
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
             program_index: 1,
         },
-        SidecarCommand::OpenTrackPluginEditor {
+        SidecarCommand::OpenPluginEditor {
             project_id: "project-1".into(),
-            track_id: track(),
+            owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
         SidecarCommand::PreviewSample {
@@ -263,13 +267,13 @@ fn response_name(response: &SidecarResponse) -> &'static str {
         SidecarResponse::TimelineAck {} => "timelineAck",
         SidecarResponse::TimelineIdleAck {} => "timelineIdleAck",
         SidecarResponse::MidiAck {} => "midiAck",
-        SidecarResponse::TrackMixAck {} => "trackMixAck",
-        SidecarResponse::TrackDeviceAck {} => "trackDeviceAck",
-        SidecarResponse::TrackDeviceStatus(_) => "trackDeviceStatus",
-        SidecarResponse::TrackDeviceParameters(_) => "trackDeviceParameters",
-        SidecarResponse::TrackDevicePrograms(_) => "trackDevicePrograms",
-        SidecarResponse::TrackPluginState(_) => "trackPluginState",
-        SidecarResponse::TrackDeviceProgramChanged(_) => "trackDeviceProgramChanged",
+        SidecarResponse::MixAck {} => "mixAck",
+        SidecarResponse::DeviceAck {} => "deviceAck",
+        SidecarResponse::DeviceStatus(_) => "deviceStatus",
+        SidecarResponse::DeviceParameters(_) => "deviceParameters",
+        SidecarResponse::DevicePrograms(_) => "devicePrograms",
+        SidecarResponse::PluginState(_) => "pluginState",
+        SidecarResponse::DeviceProgramChanged(_) => "deviceProgramChanged",
     }
 }
 
@@ -280,8 +284,8 @@ fn event_name(event: &SidecarEvent) -> &'static str {
         SidecarEvent::AudioMeters(_) => "audioMeters",
         SidecarEvent::TransportStatus(_) => "transportStatus",
         SidecarEvent::RecordingComplete(_) => "recordingComplete",
-        SidecarEvent::TrackPluginStateChanged(_) => "trackPluginStateChanged",
-        SidecarEvent::TrackPluginParameterChanged(_) => "trackPluginParameterChanged",
+        SidecarEvent::PluginStateChanged(_) => "pluginStateChanged",
+        SidecarEvent::PluginParameterChanged(_) => "pluginParameterChanged",
         SidecarEvent::Fault(_) => "fault",
     }
 }
@@ -299,13 +303,13 @@ const RESPONSES: [&str; 12] = [
     "timelineAck",
     "timelineIdleAck",
     "midiAck",
-    "trackMixAck",
-    "trackDeviceAck",
-    "trackDeviceStatus",
-    "trackDeviceParameters",
-    "trackDevicePrograms",
-    "trackPluginState",
-    "trackDeviceProgramChanged",
+    "mixAck",
+    "deviceAck",
+    "deviceStatus",
+    "deviceParameters",
+    "devicePrograms",
+    "pluginState",
+    "deviceProgramChanged",
 ];
 const EVENTS: [&str; 8] = [
     "ready",
@@ -313,8 +317,8 @@ const EVENTS: [&str; 8] = [
     "audioMeters",
     "transportStatus",
     "recordingComplete",
-    "trackPluginStateChanged",
-    "trackPluginParameterChanged",
+    "pluginStateChanged",
+    "pluginParameterChanged",
     "fault",
 ];
 const RENDER_MESSAGES: [&str; 2] = ["offlineRenderComplete", "error"];
@@ -372,9 +376,9 @@ fn sidecar_message_fixtures_decode() {
     let mut decoded = BTreeSet::new();
     for (name, value) in message_fixtures() {
         let bytes = serde_json::to_vec(&value).unwrap();
-        if name == "response.trackDeviceParameters.json" {
+        if name == "response.deviceParameters.json" {
             let SidecarMessage::Response {
-                response: SidecarResponse::TrackDeviceParameters(status),
+                response: SidecarResponse::DeviceParameters(status),
                 ..
             } = decode_message(&bytes).unwrap()
             else {

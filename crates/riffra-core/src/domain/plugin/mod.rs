@@ -35,6 +35,30 @@ pub struct EffectDevice {
     pub plugin: Vst3Plugin,
 }
 
+/// A canonical instrument or effect borrowed from its owning channel.
+pub enum DeviceRef<'a> {
+    Instrument(&'a crate::TrackInstrument),
+    Effect(&'a EffectDevice),
+}
+
+impl DeviceRef<'_> {
+    /// Returns persisted VST3 state, if the device hosts a VST3.
+    pub fn plugin(&self) -> Option<&Vst3Plugin> {
+        match self {
+            Self::Instrument(instrument) => instrument.as_vst3(),
+            Self::Effect(effect) => Some(&effect.plugin),
+        }
+    }
+
+    /// Whether the owning channel bypasses this device.
+    pub fn bypassed(&self) -> bool {
+        match self {
+            Self::Instrument(instrument) => instrument.bypassed,
+            Self::Effect(effect) => effect.bypassed,
+        }
+    }
+}
+
 impl Vst3Plugin {
     /// Creates the state of a newly inserted plugin.
     pub fn new(path: String) -> Self {

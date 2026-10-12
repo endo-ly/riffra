@@ -85,7 +85,7 @@ pub struct SendPatch {
 }
 
 /// Canonical owner of an ordered effect chain.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "camelCase")]
 pub enum EffectOwner {
     Track { id: String },
@@ -111,6 +111,52 @@ fn normalize_gain(gain_db: &mut f64) -> Result<(), String> {
 }
 
 impl Arrangement {
+    /// Resolves a device without changing its canonical state.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown channel or device.
+    pub fn device(
+        &self,
+        owner: &EffectOwner,
+        device_id: &str,
+    ) -> Result<crate::DeviceRef<'_>, DomainError> {
+        let effects = match owner {
+            EffectOwner::Track { id } => {
+                let track = self
+                    .tracks
+                    .iter()
+                    .find(|track| track.id == *id)
+                    .ok_or_else(|| DomainError::UnknownTrack(id.clone()))?;
+                if let Some(instrument) = track
+                    .instrument
+                    .as_ref()
+                    .filter(|device| device.id == device_id)
+                {
+                    return Ok(crate::DeviceRef::Instrument(instrument));
+                }
+                &track.effects
+            }
+            EffectOwner::Bus { id } => {
+                &self
+                    .mixer
+                    .buses
+                    .iter()
+                    .find(|bus| bus.id == *id)
+                    .ok_or_else(|| DomainError::UnknownMixBus(id.clone()))?
+                    .effects
+            }
+            EffectOwner::Master => &self.mixer.master_effects,
+        };
+        effects
+            .iter()
+            .find(|effect| effect.id == device_id)
+            .map(crate::DeviceRef::Effect)
+            .ok_or_else(|| DomainError::UnknownDevice {
+                owner: owner.clone(),
+                device_id: device_id.into(),
+            })
+    }
+
     pub(crate) fn effects_mut(
         &mut self,
         owner: &EffectOwner,

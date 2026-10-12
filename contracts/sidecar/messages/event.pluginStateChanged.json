@@ -1,9 +1,12 @@
 {
   "kind": "event",
   "event": {
-    "type": "trackPluginStateChanged",
+    "type": "pluginStateChanged",
     "projectId": "project-1",
-    "trackId": "track-1",
+    "owner": {
+      "kind": "track",
+      "id": "track-1"
+    },
     "deviceId": "device-1",
     "state": {
       "parameterValues": [

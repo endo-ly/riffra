@@ -113,8 +113,8 @@ OutputWriter outputWriter;
 
 std::string line(const juce::var& value) { return juce::JSON::toString(value, true).toStdString(); }
 
-std::string deviceKey(const juce::String& trackId, const juce::String& deviceId) {
-    return (trackId + ":" + deviceId).toStdString();
+std::string deviceKey(const juce::String& projectId, const juce::String& deviceId) {
+    return (projectId + ":" + deviceId).toStdString();
 }
 
 }  // namespace
@@ -125,12 +125,12 @@ void writeControlEnvelope(const juce::var& envelope) {
 
 void writeEvent(const SidecarEventSpec& event) {
     auto encoded = line(encodeEvent(event));
-    if (const auto* changed = std::get_if<TrackPluginStateChangedSpec>(&event)) {
-        outputWriter.enqueueState("track-state:" + deviceKey(changed->trackId, changed->deviceId),
-                                  std::move(encoded));
-    } else if (const auto* parameter = std::get_if<TrackPluginParameterChangedSpec>(&event)) {
+    if (const auto* changed = std::get_if<PluginStateChangedSpec>(&event)) {
         outputWriter.enqueueState(
-            "track-parameter:" + deviceKey(parameter->trackId, parameter->deviceId) + ":" +
+            "plugin-state:" + deviceKey(changed->projectId, changed->deviceId), std::move(encoded));
+    } else if (const auto* parameter = std::get_if<PluginParameterChangedSpec>(&event)) {
+        outputWriter.enqueueState(
+            "plugin-parameter:" + deviceKey(parameter->projectId, parameter->deviceId) + ":" +
                 std::to_string(parameter->parameterIndex),
             std::move(encoded));
     } else if (std::holds_alternative<AudioStatusSpec>(event)) {

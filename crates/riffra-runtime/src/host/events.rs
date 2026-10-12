@@ -2,8 +2,8 @@ use crate::api::output::{
     AudioStatus, ProjectActivationResult, ProjectState, RuntimeProjectionStatus,
 };
 use crate::model::{
-    AudioMeterFrame, RecordingFinalized, RuntimeRestarted, RuntimeStartupFinished,
-    TrackPluginParameterChanged, TrackPluginStateChanged, TransportStatus,
+    AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingFinalized,
+    RuntimeRestarted, RuntimeStartupFinished, TransportStatus,
 };
 use riffra_control::HostEventFrame;
 use riffra_core::CanonicalState;
@@ -36,9 +36,9 @@ pub enum HostEvent {
     /// A native runtime generation was replaced.
     RuntimeRestarted(RuntimeRestarted),
     /// Plugin state captured from an open native plugin editor.
-    TrackPluginStateChanged(TrackPluginStateChanged),
+    PluginStateChanged(PluginStateChanged),
     /// One parameter changed in an open native plugin editor.
-    TrackPluginParameterChanged(TrackPluginParameterChanged),
+    PluginParameterChanged(PluginParameterChanged),
 }
 
 impl HostEvent {
@@ -63,13 +63,12 @@ impl HostEvent {
             Self::TransportStatus(value) => ("transport-status", serde_json::to_value(value)),
             Self::RecordingFinalized(value) => ("recording-finalized", serde_json::to_value(value)),
             Self::RuntimeRestarted(value) => ("runtime-restarted", serde_json::to_value(value)),
-            Self::TrackPluginStateChanged(value) => {
-                ("track-plugin-state-changed", serde_json::to_value(value))
+            Self::PluginStateChanged(value) => {
+                ("plugin-state-changed", serde_json::to_value(value))
             }
-            Self::TrackPluginParameterChanged(value) => (
-                "track-plugin-parameter-changed",
-                serde_json::to_value(value),
-            ),
+            Self::PluginParameterChanged(value) => {
+                ("plugin-parameter-changed", serde_json::to_value(value))
+            }
         };
         Ok(HostEventFrame::new(event, payload?))
     }
@@ -375,7 +374,7 @@ impl HostEventSink for HostEventHub {
 fn is_plugin_persistence_event(event: &str) -> bool {
     matches!(
         event,
-        "runtime-restarted" | "track-plugin-state-changed" | "track-plugin-parameter-changed"
+        "runtime-restarted" | "plugin-state-changed" | "plugin-parameter-changed"
     )
 }
 

@@ -107,7 +107,7 @@ public:
                       bool commitImmediately = true);
     RealtimeRequest commitPreparedSnapshot(juce::String& error);
     void discardPreparedSnapshot() noexcept;
-    [[nodiscard]] bool preparedTrackReusesRuntimeDevices(const juce::String& trackId) const;
+    [[nodiscard]] bool preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const;
     [[nodiscard]] bool hasPreparedSnapshot() const;
     /// Destroys the graphs the audio thread has retired. Only the thread that
     /// constructed the engine destroys graphs; other callers reclaim nothing.
@@ -165,33 +165,37 @@ public:
     // Committed-graph controls. Control threads.
     /// Applies a transient gain/pan change to the committed graph without changing
     /// the canonical session or rebuilding the graph.
-    bool setTrackMixControl(const juce::String& trackId, std::optional<float> gainDb,
-                            std::optional<float> pan, juce::String& error) noexcept;
-    bool setDeviceBypassed(const juce::String& trackId, const juce::String& deviceId, bool bypassed,
-                           juce::String& error) noexcept;
-    bool setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
+    bool setSendLevelControl(const juce::String& sendId, float levelDb,
+                             juce::String& error) noexcept;
+    bool setChannelMixControl(const EffectOwnerSpec& deviceOwner, std::optional<float> gainDb,
+                              std::optional<float> pan, juce::String& error) noexcept;
+    bool setDeviceBypassed(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
+                           bool bypassed, juce::String& error) noexcept;
+    bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                             int parameterIndex, float value, juce::String& error) noexcept;
-    bool setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
+    bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
-    bool setDevicePersistedState(const juce::String& trackId, const juce::String& deviceId,
+    bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                                  const PluginStateSpec& persistedState, juce::String& error);
-    [[nodiscard]] std::optional<TrackDeviceStatusSpec> deviceStatus(const juce::String& trackId,
-                                                                    const juce::String& deviceId,
-                                                                    juce::String& error) const;
-    [[nodiscard]] std::optional<TrackDeviceParametersSpec> deviceParameterStatus(
-        const juce::String& trackId, const juce::String& deviceId, juce::String& error);
-    [[nodiscard]] std::optional<TrackDeviceProgramsSpec> deviceProgramStatus(
-        const juce::String& trackId, const juce::String& deviceId, juce::String& error) const;
-    [[nodiscard]] PluginRack* findDevice(const juce::String& trackId,
+    [[nodiscard]] std::optional<DeviceStatusSpec> deviceStatus(const EffectOwnerSpec& deviceOwner,
+                                                               const juce::String& deviceId,
+                                                               juce::String& error) const;
+    [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterStatus(
+        const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error);
+    [[nodiscard]] std::optional<DeviceProgramsSpec> deviceProgramStatus(
+        const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
+        juce::String& error) const;
+    [[nodiscard]] PluginRack* findDevice(const EffectOwnerSpec& deviceOwner,
                                          const juce::String& deviceId) noexcept;
-    bool mirrorEditorDeviceState(const juce::String& trackId, const juce::String& deviceId,
+    bool mirrorEditorDeviceState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                                  const PluginStateSpec& persistedState,
                                  juce::String& error) noexcept;
-    bool mirrorEditorDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
-                                     int parameterIndex, float value, juce::String& error) noexcept;
-    [[nodiscard]] std::optional<PluginStateSpec> devicePersistedState(const juce::String& trackId,
-                                                                      const juce::String& deviceId,
-                                                                      juce::String& error) const;
+    bool mirrorEditorDeviceParameter(const EffectOwnerSpec& deviceOwner,
+                                     const juce::String& deviceId, int parameterIndex, float value,
+                                     juce::String& error) noexcept;
+    [[nodiscard]] std::optional<PluginStateSpec> devicePersistedState(
+        const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
+        juce::String& error) const;
 
     /// Resets the processing state of every VST3 instrument and effect chain of the active
     /// graph. Plugin activation belongs to the message thread, so call this there while no
@@ -372,7 +376,7 @@ private:
         const PreparedTimeline& timeline, std::int64_t rangeStart, bool playing) noexcept;
     /// Finds a plugin rack in the committed graph. The caller holds the registry lock.
     [[nodiscard]] static PluginRack* findCommittedRack(const ControlGraphRegistry::State& graphs,
-                                                       const juce::String& trackId,
+                                                       const EffectOwnerSpec& deviceOwner,
                                                        const juce::String& deviceId,
                                                        const char* noun, juce::String& error);
 

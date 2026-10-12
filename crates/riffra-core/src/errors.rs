@@ -30,6 +30,12 @@ pub enum DomainError {
     /// A mixer operation references an unregistered channel.
     #[error("unknown mix bus '{0}'")]
     UnknownMixBus(String),
+    /// A channel does not contain the requested device.
+    #[error("unknown device '{device_id}'")]
+    UnknownDevice {
+        owner: crate::EffectOwner,
+        device_id: String,
+    },
     /// A channel cannot be removed while routing still references it.
     #[error("mix bus '{bus_id}' is referenced by {reference_ids:?}")]
     MixBusInUse {

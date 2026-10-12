@@ -26,7 +26,7 @@ pub(super) enum PluginPersistenceCommand {
 #[serde(rename_all = "camelCase")]
 struct PluginStateEvent {
     project_id: String,
-    track_id: String,
+    owner: riffra_core::EffectOwner,
     device_id: String,
     parameter_values: Vec<f32>,
     state_data: Option<String>,
@@ -37,7 +37,7 @@ struct PluginStateEvent {
 #[serde(rename_all = "camelCase")]
 struct PluginParameterEvent {
     project_id: String,
-    track_id: String,
+    owner: riffra_core::EffectOwner,
     device_id: String,
     parameter_index: i32,
     value: f32,
@@ -58,8 +58,8 @@ pub(super) struct QueuedPluginChange {
 
 #[derive(Hash, Eq, PartialEq)]
 enum PluginChangeKey {
-    State(String, String, String),
-    Parameter(String, String, String, i32),
+    State(String, riffra_core::EffectOwner, String),
+    Parameter(String, riffra_core::EffectOwner, String, i32),
 }
 
 impl PluginStatePersistenceCoordinator {
@@ -149,12 +149,12 @@ fn collect_plugin_change(
     let order = *next_order;
     *next_order = (*next_order).saturating_add(1);
     match frame.event.as_str() {
-        "track-plugin-state-changed" => {
+        "plugin-state-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginStateEvent>(frame.payload) {
                 pending.insert(
                     PluginChangeKey::State(
                         change.project_id.clone(),
-                        change.track_id.clone(),
+                        change.owner.clone(),
                         change.device_id.clone(),
                     ),
                     QueuedPluginChange {
@@ -165,12 +165,12 @@ fn collect_plugin_change(
                 );
             }
         }
-        "track-plugin-parameter-changed" => {
+        "plugin-parameter-changed" => {
             if let Ok(change) = serde_json::from_value::<PluginParameterEvent>(frame.payload) {
                 pending.insert(
                     PluginChangeKey::Parameter(
                         change.project_id.clone(),
-                        change.track_id.clone(),
+                        change.owner.clone(),
                         change.device_id.clone(),
                         change.parameter_index,
                     ),
@@ -249,9 +249,7 @@ impl HostState {
         let committed = writer
             .commit(|mut app| match &queued.change {
                 PendingPluginChange::State(change) => app.persist_plugin_state(
-                    &riffra_core::EffectOwner::Track {
-                        id: (change.track_id).to_owned(),
-                    },
+                    &change.owner,
                     &change.device_id,
                     change.parameter_values.clone(),
                     change.state_data.clone(),
@@ -264,9 +262,7 @@ impl HostState {
                         ));
                     }
                     app.set_device_parameter(
-                        &riffra_core::EffectOwner::Track {
-                            id: (change.track_id).to_owned(),
-                        },
+                        &change.owner,
                         &change.device_id,
                         change.parameter_index as usize,
                         change.value,
@@ -321,10 +317,10 @@ mod tests {
             collect_plugin_change(
                 &mut pending,
                 riffra_control::HostEventFrame::new(
-                    "track-plugin-parameter-changed",
+                    "plugin-parameter-changed",
                     serde_json::json!({
                         "projectId": project_id,
-                        "trackId": "track:1",
+                        "owner": {"kind":"track", "id":"track:1"},
                         "deviceId": "device:1",
                         "parameterIndex": 1,
                         "value": value,
@@ -336,10 +332,10 @@ mod tests {
         collect_plugin_change(
             &mut pending,
             riffra_control::HostEventFrame::new(
-                "track-plugin-parameter-changed",
+                "plugin-parameter-changed",
                 serde_json::json!({
                     "projectId": "project:b",
-                    "trackId": "track:1",
+                    "owner": {"kind":"track", "id":"track:1"},
                     "deviceId": "device:1",
                     "parameterIndex": 1,
                     "value": 0.75,
@@ -351,13 +347,17 @@ mod tests {
         assert_eq!(pending.len(), 2);
         assert!(pending.contains_key(&PluginChangeKey::Parameter(
             "project:a".into(),
-            "track:1".into(),
+            riffra_core::EffectOwner::Track {
+                id: "track:1".into()
+            },
             "device:1".into(),
             1,
         )));
         assert!(pending.contains_key(&PluginChangeKey::Parameter(
             "project:b".into(),
-            "track:1".into(),
+            riffra_core::EffectOwner::Track {
+                id: "track:1".into()
+            },
             "device:1".into(),
             1,
         )));
@@ -370,10 +370,10 @@ mod tests {
         collect_plugin_change(
             &mut pending,
             riffra_control::HostEventFrame::new(
-                "track-plugin-parameter-changed",
+                "plugin-parameter-changed",
                 serde_json::json!({
                     "projectId": "project:a",
-                    "trackId": "track:1",
+                    "owner": {"kind":"track", "id":"track:1"},
                     "deviceId": "device:1",
                     "parameterIndex": 1,
                     "value": 0.5,
@@ -418,9 +418,9 @@ mod tests {
     }
     fn parameter_change(project_id: &str, value: f32) -> riffra_control::HostEventFrame {
         riffra_control::HostEventFrame::new(
-            "track-plugin-parameter-changed",
+            "plugin-parameter-changed",
             serde_json::json!({
-                "projectId": project_id, "trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0, "value": value,
+                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "parameterIndex": 0, "value": value,
             }),
         )
     }
@@ -483,17 +483,17 @@ mod tests {
         let writer = state.project.write();
         let previous = writer.project().core.canonical_state();
         let storage = writer.project().storage.clone();
-        state
-            .events
-            .emit(crate::HostEvent::TrackPluginParameterChanged(
-                crate::model::TrackPluginParameterChanged {
-                    project_id: previous.project_id.clone(),
-                    track_id: "track:1".into(),
-                    device_id: "device:1".into(),
-                    parameter_index: 0,
-                    value: 0.5,
+        state.events.emit(crate::HostEvent::PluginParameterChanged(
+            crate::model::PluginParameterChanged {
+                project_id: previous.project_id.clone(),
+                owner: riffra_core::EffectOwner::Track {
+                    id: "track:1".into(),
                 },
-            ));
+                device_id: "device:1".into(),
+                parameter_index: 0,
+                value: 0.5,
+            },
+        ));
 
         let result = super::super::project::dispatch(
             &state,
@@ -543,17 +543,17 @@ mod tests {
         let mut writer = state.project.write();
         let previous = writer.project().core.canonical_state();
         for (device_id, value) in [("deleted", 0.25), ("device:1", 0.75)] {
-            state
-                .events
-                .emit(crate::HostEvent::TrackPluginParameterChanged(
-                    crate::model::TrackPluginParameterChanged {
-                        project_id: previous.project_id.clone(),
-                        track_id: "track:1".into(),
-                        device_id: device_id.into(),
-                        parameter_index: 0,
-                        value,
+            state.events.emit(crate::HostEvent::PluginParameterChanged(
+                crate::model::PluginParameterChanged {
+                    project_id: previous.project_id.clone(),
+                    owner: riffra_core::EffectOwner::Track {
+                        id: "track:1".into(),
                     },
-                ));
+                    device_id: device_id.into(),
+                    parameter_index: 0,
+                    value,
+                },
+            ));
         }
         // Act: both attempts must fail before the active Project changes.
         for _ in 0..2 {

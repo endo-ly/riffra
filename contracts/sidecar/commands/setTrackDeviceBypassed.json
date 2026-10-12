@@ -1,9 +1,0 @@
-{
-  "command": {
-    "bypassed": true,
-    "deviceId": "device-1",
-    "trackId": "track-1",
-    "type": "setTrackDeviceBypassed"
-  },
-  "requestId": 1
-}

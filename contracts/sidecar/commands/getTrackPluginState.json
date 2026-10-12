@@ -1,8 +1,0 @@
-{
-  "command": {
-    "deviceId": "device-1",
-    "trackId": "track-1",
-    "type": "getTrackPluginState"
-  },
-  "requestId": 1
-}

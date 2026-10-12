@@ -9,6 +9,14 @@
 
 namespace riffra {
 
+enum class EffectOwnerKindSpec { track, bus, master };
+
+struct EffectOwnerSpec final {
+    EffectOwnerKindSpec kind = EffectOwnerKindSpec::track;
+    juce::String id;
+    bool operator==(const EffectOwnerSpec&) const = default;
+};
+
 enum class TrackKindSpec { audio, instrument };
 enum class FadeShapeSpec { linear, equalPower, smooth };
 enum class TakeVariantSpec { raw, processed };

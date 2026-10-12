@@ -138,10 +138,19 @@ void TimelineEngine::discardPreparedSnapshot() noexcept {
     });
 }
 
-bool TimelineEngine::preparedTrackReusesRuntimeDevices(const juce::String& trackId) const {
-    return graphRegistry.access([&trackId](const ControlGraphRegistry::State& graphs) {
-        const auto* track =
-            graphs.pending != nullptr ? graphs.pending->findTrack(trackId) : nullptr;
+bool TimelineEngine::preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& deviceOwner) const {
+    return graphRegistry.access([&](const ControlGraphRegistry::State& graphs) {
+        if (graphs.pending == nullptr || graphs.latestCommitted == nullptr) return false;
+        if (deviceOwner.kind == EffectOwnerKindSpec::master)
+            return graphs.pending->mixer.masterEffects ==
+                   graphs.latestCommitted->mixer.masterEffects;
+        if (deviceOwner.kind == EffectOwnerKindSpec::bus) {
+            const auto* candidate = graphs.pending->mixer.findBus(deviceOwner.id);
+            const auto* current = graphs.latestCommitted->mixer.findBus(deviceOwner.id);
+            return candidate != nullptr && current != nullptr &&
+                   candidate->effects == current->effects;
+        }
+        const auto* track = graphs.pending->findTrack(deviceOwner.id);
         return track != nullptr && track->reuseRuntimeDevices;
     });
 }
@@ -492,14 +501,10 @@ TimelineEngine::ActiveProjectMeterIdentity TimelineEngine::activeProjectMeterIde
         });
 }
 
-bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
-                                        const std::optional<float> gainDb,
-                                        const std::optional<float> pan,
-                                        juce::String& error) noexcept {
-    if (trackId.isEmpty()) {
-        error = "A track id is required.";
-        return false;
-    }
+bool TimelineEngine::setChannelMixControl(const EffectOwnerSpec& deviceOwner,
+                                          const std::optional<float> gainDb,
+                                          const std::optional<float> pan,
+                                          juce::String& error) noexcept {
     if (!gainDb.has_value() && !pan.has_value()) {
         error = "At least one of gainDb or pan is required.";
         return false;
@@ -514,7 +519,22 @@ bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
             error = "The active Timeline graph is unavailable.";
             return false;
         }
-        auto* track = graphs.latestCommitted->findTrack(trackId);
+        if (deviceOwner.kind == EffectOwnerKindSpec::master) {
+            error = "master uses the master gain preview";
+            return false;
+        }
+        if (deviceOwner.kind == EffectOwnerKindSpec::bus) {
+            auto* bus = graphs.latestCommitted->mixer.findBus(deviceOwner.id);
+            if (bus == nullptr) {
+                error = "mix bus is unavailable";
+                return false;
+            }
+            if (gainDb)
+                bus->gainDb.store(juce::jlimit(-90.0f, 24.0f, *gainDb), std::memory_order_release);
+            if (pan) bus->pan.store(juce::jlimit(-1.0f, 1.0f, *pan), std::memory_order_release);
+            return true;
+        }
+        auto* track = graphs.latestCommitted->findTrack(deviceOwner.id);
         if (track == nullptr) {
             error = "The requested Track is not present in the active Timeline graph.";
             return false;
@@ -525,6 +545,26 @@ bool TimelineEngine::setTrackMixControl(const juce::String& trackId,
         if (pan.has_value())
             runtime.pan.store(juce::jlimit(-1.0f, 1.0f, *pan), std::memory_order_release);
         return true;
+    });
+}
+
+bool TimelineEngine::setSendLevelControl(const juce::String& sendId, const float levelDb,
+                                         juce::String& error) noexcept {
+    if (!std::isfinite(levelDb)) {
+        error = "send level must be finite";
+        return false;
+    }
+    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
+        if (graphs.latestCommitted != nullptr)
+            for (auto& route : graphs.latestCommitted->mixer.trackRoutes)
+                if (route->sendId == sendId && sendId.isNotEmpty()) {
+                    route->gain.store(
+                        juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, levelDb)),
+                        std::memory_order_release);
+                    return true;
+                }
+        error = "send is unavailable";
+        return false;
     });
 }
 

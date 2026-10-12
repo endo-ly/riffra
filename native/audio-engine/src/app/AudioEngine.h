@@ -37,7 +37,7 @@ private:
     AudioDeviceController deviceController;
     MidiInputService midiInputs;
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    juce::String trackPluginEditorTrackId;
+    EffectOwnerSpec pluginEditorOwner;
     juce::String trackPluginEditorDeviceId;
     std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;

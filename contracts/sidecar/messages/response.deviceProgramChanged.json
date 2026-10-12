@@ -2,7 +2,7 @@
   "kind": "response",
   "requestId": 1,
   "response": {
-    "type": "trackDeviceProgramChanged",
+    "type": "deviceProgramChanged",
     "state": {
       "parameterValues": [
         0.25,

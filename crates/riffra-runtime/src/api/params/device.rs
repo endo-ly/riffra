@@ -12,6 +12,14 @@ pub struct PluginPathParams {
     pub plugin_path: String,
 }
 
+/// Inserts an effect into a Track, Bus, or Master chain.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct EffectAddParams {
+    pub owner: riffra_core::EffectOwner,
+    pub plugin_path: String,
+}
+
 /// Opens a validated VST3 outside the Project.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -22,14 +30,14 @@ pub struct PluginAuditionParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EffectReorderParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceBypassParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub bypassed: bool,
 }
@@ -37,7 +45,7 @@ pub struct DeviceBypassParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceParameterSetParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_index: u32,
     pub value: f32,
@@ -46,7 +54,7 @@ pub struct DeviceParameterSetParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeviceParameterGetParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_index: u32,
 }
@@ -56,7 +64,7 @@ pub struct DeviceParameterGetParams {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
 pub struct PluginPresetSetParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub preset: Option<String>,
     pub preset_index: Option<u32>,
@@ -65,7 +73,7 @@ pub struct PluginPresetSetParams {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginStateSetParams {
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub state: PluginStateSnapshot,
 }
