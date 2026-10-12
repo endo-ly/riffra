@@ -205,17 +205,38 @@ HostLifecycle（read）→ startup_gate → ProjectCell.writer → RuntimeReconc
 ```text
 Audio Track
 Timeline Audio ──┐
-Live Audio ────────────────────────────┴─ Pre-FX → Effect Chain → Track output compensation → master mix
+Live Audio ─────┴─ Track Effect Chain → Pre-Fader Send → Gain / Pan / Automation → Post-Fader Send
 
 Instrument Track
 Timeline MIDI ──┐
-Live MIDI ──────┴─ Instrument Runtime → Effect Chain → Track output compensation → master mix
+Live MIDI ──────┴─ Instrument Runtime → Track Effect Chain → 同じTrackの分岐・ミックス処理
+
+Track主出力 ──→ Groupの合流・Effect・Gain/Pan ──┐
+Track主出力 ───────────────────────────────────┤
+Track Send ──→ Returnの合流・Effect・Gain/Pan ──┴─ Master Effect → Master Gain → 制作Mix
 ```
+
+Group・Return・MasterのEffectsはTrackと同じPluginChainを使う。Rustは保存状態と接続先を含むExecution Graphを投影し、NativeはそのGraphからStereoの準備済みMixerを作る。GroupとReturnは音声合流・Effect・ミックス処理を共有し、Track固有の音源・MIDI・録音処理を持たない。構成と音声環境が一致するDeviceは現役Graphから共有し、GainやSend Levelの変更で作り直さない。
+
+入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
+
+Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは加算し、Muteを優先する。
+
+| 操作        | 可聴経路                                                             |
+| ----------- | -------------------------------------------------------------------- |
+| Track Mute  | 主出力と、そのTrackの全Sendを止める                                  |
+| Group Mute  | GroupからMasterへの出力を止める。Groupへ入る前のTrack Sendは維持する |
+| Return Mute | そのReturnのMaster向け出力を止める                                   |
+| Track Solo  | そのTrackの主出力、所属Group、そのTrack由来のSendを通す              |
+| Group Solo  | 所属Trackの主出力と、そのTrack由来のSendを通す                       |
+| Return Solo | そのReturnへのSendとWet出力を通し、Dry主出力を抑制する               |
+
+Master FXは制作Mixを処理する。Metronome・Preview・Plugin Auditionは制作Mixの後で合成し、RealtimeのSafety Limiter・Feedback Protectionなどは最終出力へ維持する。Offlineも同じ制作Graphを使い、指定されたTailとGlobal Fadeを適用する。
 
 MIDI とライブ入力の扱いは次の通り。
 
 - MIDI イベントは投影時に時系列へ整列し、再生時はカーソル周辺の必要範囲のみ取り出す。ループは事前展開せず、境界の Note Off と次周の Note On を同一スケジューラで処理する
-- Timeline と Live は同一 Track DSP を同一時間文脈で通り、Track 出力にソース固有の準備済み PDC を適用する。ライブ演奏の対象（Computer Keyboard が有効な間、または Play Surface を表示中の Focused Instrument Track）のみ、遅延バッファの更新を続けながらトラック間補償遅延を迂回する
+- TimelineとLiveは同一Track DSPを通る。ライブ演奏対象と監視中の入力では補償バッファの更新を維持しながら経路の補償遅延を迂回し、共有Busを通すことによる不要な監視遅延を避ける
 - ライブ MIDI は固定容量のキューで受け、超過分は破棄して診断値へ記録する
 - Audio Track の入力監視は、その Track の Effect Chain を一度だけ通る
 - Audio Track の入力を監視するかは、モニタリング設定（`on`、またはアーム中の `auto`）から投影時に決め、グラフの `monitorInput` として渡す。Instrument Track の低遅延監視（アーム中、またはライブ演奏の対象）は実行中に変わるため、サイドカーが判断する
@@ -277,41 +298,13 @@ Audio Status の診断値は、コールバック計測（累計回数・累計�
 
 フィードバック保護の検知中は `FeedbackProtection` ミュートを保持する。解除は安全確認後の明示リセット操作で行い、他の所有者のミュートは維持する。
 
-### 5.5 Track mix preview とメーター
+### 5.5 Mixer previewとメーター
 
-Track の Gain、Pan、Mute、Solo、Record Arm は `CreativeSession.arrangement.tracks` が正本であり、Master Gain は `CreativeSession.settings.masterDb` が正本である。Mixer は既存の Canonical state を編集するためのUIであり、Mixer専用の Track、Master、Bus、Effect Chain の正準モデルを持たない。
+正準MixerはArrangementに所属し、Master GainはSessionSettingsが保持する。Track・BusのGain/PanとSend LevelはNativeの現役Graphへ一時プレビューし、確定時にCoreの通常Mutationを行う。プレビューは音声ブロックでatomicsから読み込み、保存、履歴、投影入力には戻さない。
 
-Gain と Pan の連続操作は、確定前の値を `setTrackMix` として Native の現行 `TrackRuntime` へ一時適用する。Native は次の Audio block の先頭で atomics を読み込み、プレビュー値を保存、履歴、Undo/Redo、Recovery state、Runtime 投影の入力へ戻さない。操作の確定時にのみ Host の `updateTrack` が Canonical state を変更し、次の投影で実行状態を再構築する。
+Master Gainの一時値も、次のGraph公開で正準値に戻る。サイドカー再起動や音声環境変更では、最新正準状態を投影してMixer全体を復元する。
 
-Master Gain の正準値は `ExecutionGraph.masterGainDb` を通じてサイドカーへ渡し、音声スレッドがグラフを公開したブロックで出力へ適用する。`previewMasterGainDb` はドラッグ中の一時値であり、次のグラフ公開で正準値に戻る。デバイス環境の変更やサイドカー再起動後も、正準グラフの再投影で同じ値を復元する。
-
-```text
-Desktop Mixer
-   │  previewTrackMix（Host generation付き）
-   ▼
-Rust Host / AudioSupervisor
-   │  setTrackMix（ack）
-   ▼
-Native TrackRuntime atomics ── Audio block ── Track出力
-   │                                      │
-   │                                      └─ Peak/RMS accumulator
-   ▼
-audioMeters（約50 ms、Project ID付き） ── HostEventHub ── Desktop meter store
-```
-
-Mute と Solo は、トラック出力をマスターへ加算するかどうかだけを決める。インストゥルメント、エフェクト、遅延補正の処理は続くため、ミュート解除時も残響やシンセの状態を維持したまま鳴る。
-
-各ブロックの処理は次の3段階で行う。
-
-1. 音声スレッドがライブ MIDI を振り分け、物理入力をコピーし、録音キャプチャを書き込む
-2. 呼び出し元とワーカーがトラックを分担し、クリップ、インストゥルメント、エフェクト、出力補償とミックスを各トラックのステレオバッファへ描く
-3. 全トラックの完了後、音声スレッドがグラフのトラック順にマスターへ加算し、メトロノームとプレビューを混ぜる
-
-ワーカー数は論理 CPU 数から2を引いた値を0〜7に収める。リアルタイム優先度のワーカーは Engine の寿命にわたって保持し、デバイスの開始・停止では作り直さない。オフラインレンダーも同じ処理経路を通り、マスターへの加算順が固定されるため、ワーカー数や処理順によらず出力はビット単位で一致する。
-
-Track Meter は Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に測る。Audio callback は固定された atomics の peak hold とブロック内のRMS集計だけを行い、ロック、ヒープ確保、IPCを行わない。Master の左右Peakは Safety limiter と最終ハードクリップ後の出力から測り、Limiter gain reduction、Hard clip、Feedback protection は同じ `audioMeters` frame の診断値として転送する。
-
-Meter frame は最新値で十分な通知として既存の coalescing event 経路を使う。各 frame は Runtime 投影の `projectId` を持ち、Host または Project の世代が変わったときは古い preview と meter frame を破棄する。Desktop は Active Project と一致する `projectId` の frame だけを表示状態へ反映する。
+Meter accumulatorは音声スレッドが更新し、Meter threadが約50 msごとにTrack・Busの左右Peak/RMSとMaster出力Peakを通知する。Rustは投影と一致するProject・世代のFrameだけを転送し、Desktopは専用のexternal storeから表示する。高頻度の測定値はSessionやAudio Statusへ複製しない。
 
 ### 5.6 音声スレッドの所有権
 
@@ -465,12 +458,16 @@ Sonalloy Bundleのインポートでは、HostがManifest・ファイル一覧�
 
 VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/jobs/`）のジョブとして実行される。
 
-- **種類**: `Scan`、`Render`。`kind` が結果ペイロードの型を固定する（`BackgroundJobStatus` は tagged union）
+- **種類**: `Scan`、`Render`、`RenderStems`。`kind`が結果ペイロードの型を固定する（`BackgroundJobStatus`はtagged union）
 - **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態は確定し、`Running` への復帰はない
 - ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
 - Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
 
 Offline RenderはNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+
+完成WAVのSample Peakを実サンプルから測定し、Masteringを適用しない書き出しでもFFmpegのラウドネス測定を試みる。測定のために音声Graphを再実行しない。FFmpegの利用不可は通常Renderの成功と区別し、測定不能の理由を結果へ含める。
+
+単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通す。External Audioの依存元は処理を維持し、他Trackの主出力とSendは混ぜない。Stemは開始・終了・Sample Rate・Frame数を共有し、個別Masteringを行わない。共有Compressorなど非線形FXでは、Stemを加算した結果と全体Mixの厳密な一致を保証しない。
 
 ---
 
