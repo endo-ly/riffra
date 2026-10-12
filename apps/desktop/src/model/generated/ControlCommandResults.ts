@@ -39,6 +39,7 @@ export type ControlCommandResults = {
   'timebase.set-map': OutputValue<'arrangementMutation'>;
   'loop-range.set': OutputValue<'arrangementMutation'>;
   'punch-range.set': OutputValue<'arrangementMutation'>;
+  'automation.get': OutputValue<'automationLanes'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;
   'audio-clip.list': OutputValue<'audioClips'>;
@@ -174,6 +175,7 @@ export type ControlCommandResults = {
   'take.comparison.stop': OutputValue<'audioStatus'>;
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
+  'render.stems': OutputValue<'job'>;
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
   'analysis.start': OutputValue<'analysis'>;

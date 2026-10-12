@@ -27,7 +27,9 @@ use riffra_core::application::{
     MusicalHarmonyEventView, MusicalMidiNoteView, MusicalNoteListView, MusicalRegionView,
     SessionInspection,
 };
-use riffra_core::{AssetId, AudioClip, CreativeSession, HarmonyChord, HistoryState, MidiClip};
+use riffra_core::{
+    AssetId, AudioClip, AutomationLane, CreativeSession, HarmonyChord, HistoryState, MidiClip,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -43,6 +45,7 @@ pub enum ControlOutput {
     History(HistoryState),
     ArrangementMutation(ArrangementMutationResult),
     BatchMutation(BatchMutationResult),
+    AutomationLanes(Vec<AutomationLane>),
     Tracks(Vec<TrackSummary>),
     AudioClips(Vec<AudioClip>),
     MidiClips(Vec<MidiClip>),

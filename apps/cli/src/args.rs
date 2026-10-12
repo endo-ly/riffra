@@ -1485,6 +1485,8 @@ pub struct RangeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AutomationCommand {
+    /// Read one Track's automation lanes without loading the full session.
+    Get(AutomationGetArgs),
     /// Replace a Track's automation lane for one parameter with the supplied points.
     ///
     /// points is a JSON array of objects holding id, tick, and value. id must be non-empty and
@@ -1497,6 +1499,16 @@ pub enum AutomationCommand {
     Set(AutomationSetArgs),
     /// Delete a Track's automation lane for one parameter.
     Clear(AutomationClearArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationGetArgs {
+    /// Id of the Track whose automation lanes are read.
+    #[arg(long)]
+    pub track_id: String,
+    /// Return only this automated Track parameter.
+    #[arg(long, value_parser = ["volume", "pan"])]
+    pub parameter: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -2215,6 +2227,12 @@ pub enum RenderCommand {
     /// without --timeout-ms waits until a terminal state, and only a supplied --timeout-ms ends
     /// the wait early.
     Start(RenderStartArgs),
+    /// Render several Tracks to aligned WAV stems under one job and directory.
+    ///
+    /// Exactly one of --all-tracks or --track-ids is required. --all-tracks
+    /// skips Tracks without unmuted Clips; explicit IDs must be unique and
+    /// refer to Tracks with renderable Clips. Range options match render start.
+    Stems(RenderStemsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2234,6 +2252,25 @@ pub struct RenderStartArgs {
     /// Render only this Track as a stem instead of the full mix.
     #[arg(long)]
     pub track_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RenderStemsArgs {
+    /// Render each Track that contains at least one unmuted Clip.
+    #[arg(long)]
+    pub all_tracks: bool,
+    /// Comma-separated Track IDs to render; cannot be combined with --all-tracks.
+    #[arg(long, value_delimiter = ',')]
+    pub track_ids: Vec<String>,
+    /// Render range: `entire-arrangement` (default) or `loop-range`; supplying --start and --end switches to a time-selection render.
+    #[arg(long, default_value = "entire-arrangement", value_parser = ["entire-arrangement", "loop-range"])]
+    pub range: String,
+    /// Time-selection start as an arrangement-absolute musical position; must be provided together with --end.
+    #[arg(long)]
+    pub start: Option<String>,
+    /// Time-selection end as an arrangement-absolute musical position; must be provided together with --start.
+    #[arg(long)]
+    pub end: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2839,6 +2876,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RangeCommand::Set(args) => Canonical::PunchRangeSet(range(args)?).into(),
         },
         CliCommand::Automation { command } => match command {
+            AutomationCommand::Get(args) => Canonical::AutomationGet(AutomationGetParams {
+                track_id: args.track_id,
+                parameter: optional_text("/parameter", args.parameter)?,
+            })
+            .into(),
             AutomationCommand::Set(args) => Canonical::AutomationSet(AutomationSetParams {
                 track_id: args.track_id,
                 parameter: text("/parameter", args.parameter)?,
@@ -3139,6 +3181,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         },
         CliCommand::Render { command } => match command {
             RenderCommand::Start(args) => render_start(args)?,
+            RenderCommand::Stems(args) => render_stems(args)?,
         },
         CliCommand::Job { command } => match command {
             JobCommand::Get(args) => Runtime::JobGet(IdParams { id: args.id }).into(),
@@ -3219,17 +3262,46 @@ fn range(args: RangeArgs) -> Result<RangeParams, CommandDecodeError> {
 }
 
 fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
-    let has_start = args.start.is_some();
-    let has_end = args.end.is_some();
+    let range = render_range(args.range, args.start, args.end, "/options/range")?;
+    Ok(Runtime::RenderStart(RenderStartParams {
+        options: Some(RenderOptions {
+            range,
+            normalize: args.normalize.unwrap_or(false),
+            track_id: args.track_id,
+        }),
+    })
+    .into())
+}
+
+fn render_stems(args: RenderStemsArgs) -> Result<ControlCommand, RequestError> {
+    if args.all_tracks == !args.track_ids.is_empty() {
+        return Err("exactly one of --all-tracks or --track-ids is required".into());
+    }
+    Ok(Runtime::RenderStems(RenderStemsParams {
+        all_tracks: args.all_tracks,
+        track_ids: args.track_ids,
+        range: render_range(args.range, args.start, args.end, "/range")?,
+    })
+    .into())
+}
+
+fn render_range(
+    range: String,
+    start: Option<String>,
+    end: Option<String>,
+    pointer: &str,
+) -> Result<RenderRange, RequestError> {
+    let has_start = start.is_some();
+    let has_end = end.is_some();
     if has_start != has_end {
         return Err("--start and --end must be provided together".into());
     }
-    let range = match (args.range.as_str(), args.start, args.end) {
+    Ok(match (range.as_str(), start, end) {
         ("entire-arrangement", None, None) => RenderRange::EntireArrangement,
         ("loop-range", None, None) => RenderRange::LoopRange,
         ("entire-arrangement", Some(start), Some(end)) => RenderRange::TimeSelection {
-            start: text("/options/range/start", start)?,
-            end: text("/options/range/end", end)?,
+            start: text(&format!("{pointer}/start"), start)?,
+            end: text(&format!("{pointer}/end"), end)?,
         },
         ("loop-range", _, _) => {
             return Err("--range loop-range cannot be combined with --start or --end".into());
@@ -3239,15 +3311,7 @@ fn render_start(args: RenderStartArgs) -> Result<ControlCommand, RequestError> {
                 format!("--range must be entire-arrangement or loop-range (got {other})").into(),
             );
         }
-    };
-    Ok(Runtime::RenderStart(RenderStartParams {
-        options: Some(RenderOptions {
-            range,
-            normalize: args.normalize.unwrap_or(false),
-            track_id: args.track_id,
-        }),
     })
-    .into())
 }
 
 fn note_input<T: DeserializeOwned>(
@@ -3475,6 +3539,71 @@ mod tests {
     struct Wire {
         name: String,
         params: Value,
+    }
+
+    #[test]
+    fn automation_get_accepts_an_optional_parameter_filter() {
+        let all_lanes = wire(
+            Cli::try_parse_from(["riffra", "automation", "get", "--track-id", "track:1"]).unwrap(),
+        );
+        let pan_lane = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "get",
+                "--track-id",
+                "track:1",
+                "--parameter",
+                "pan",
+            ])
+            .unwrap(),
+        );
+
+        assert_eq!(all_lanes.name, "automation.get");
+        assert_eq!(all_lanes.params["trackId"], "track:1");
+        assert!(all_lanes.params["parameter"].is_null());
+        assert_eq!(pan_lane.params["parameter"], "pan");
+    }
+
+    #[test]
+    fn render_stems_maps_track_ids_and_shared_time_range() {
+        let command = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "render",
+                "stems",
+                "--track-ids",
+                "track:1,track:2",
+                "--start",
+                "9:1",
+                "--end",
+                "13:1",
+            ])
+            .unwrap(),
+        );
+
+        assert_eq!(command.name, "render.stems");
+        assert_eq!(command.params["allTracks"], false);
+        assert_eq!(command.params["trackIds"], json!(["track:1", "track:2"]));
+        assert_eq!(command.params["range"]["kind"], "timeSelection");
+        assert_eq!(command.params["range"]["start"], "9:1");
+        assert_eq!(command.params["range"]["end"], "13:1");
+
+        let missing_selection = Cli::try_parse_from(["riffra", "render", "stems"])
+            .unwrap()
+            .request();
+        let conflicting_selection = Cli::try_parse_from([
+            "riffra",
+            "render",
+            "stems",
+            "--all-tracks",
+            "--track-ids",
+            "track:1",
+        ])
+        .unwrap()
+        .request();
+        assert!(missing_selection.is_err());
+        assert!(conflicting_selection.is_err());
     }
 
     #[test]

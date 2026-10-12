@@ -19,9 +19,12 @@ use riffra_core::{
 use riffra_runtime::api::output::{
     AudioAnalysis, BackgroundJobStatus, DropoutInformation, JobKind, JobState, LibraryAsset,
     MissingDependency, PluginEntry, PluginFormat, PluginRole, PluginScanState, ProjectExport,
-    RecordingAsset, RecordingCapture, RecordingCaptureStatus, RenderResult, ScanIssue, ScanReport,
+    RecordingAsset, RecordingCapture, RecordingCaptureStatus, RenderResult, RenderStem,
+    RenderStemsResult, ScanIssue, ScanReport,
 };
-use riffra_runtime::api::params::{AudioDriverConfig, RenderOptions, RenderRange};
+use riffra_runtime::api::params::{
+    AudioDriverConfig, RenderOptions, RenderRange, RenderStemsParams,
+};
 use riffra_runtime::api::{ControlCommand, ControlOutput, typescript_result_map};
 use riffra_runtime::{
     ArrangementMutationResult, AudioAccessMode, AudioChannelInfo, AudioDevicePairing,
@@ -146,6 +149,9 @@ fn export_types() {
     RenderOptions::export_all(&cfg).expect("RenderOptions bindings");
     RenderRange::export_all(&cfg).expect("RenderRange bindings");
     RenderResult::export_all(&cfg).expect("RenderResult bindings");
+    RenderStem::export_all(&cfg).expect("RenderStem bindings");
+    RenderStemsResult::export_all(&cfg).expect("RenderStemsResult bindings");
+    RenderStemsParams::export_all(&cfg).expect("RenderStemsParams bindings");
     ScanIssue::export_all(&cfg).expect("ScanIssue bindings");
     ScanReport::export_all(&cfg).expect("ScanReport bindings");
     RecordingCaptureStatus::export_all(&cfg).expect("RecordingCaptureStatus bindings");

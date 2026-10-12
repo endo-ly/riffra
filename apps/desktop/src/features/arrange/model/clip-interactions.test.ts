@@ -65,7 +65,7 @@ describe('clip interaction calculations', () => {
     expect(trackIdAtPointer([], 100, 'audio:1')).toBe('audio:1');
   });
 
-  it('moves a selection by one track row and clamps its timeline position', () => {
+  it('preserves the selection spacing when a negative move reaches Tick zero', () => {
     expect(
       buildClipMovesFromDelta(
         [
@@ -79,7 +79,7 @@ describe('clip interaction calculations', () => {
       ),
     ).toEqual([
       { clipId: 'clip:1', startTick: 0, trackId: 'audio:2' },
-      { clipId: 'clip:2', startTick: 40, trackId: 'audio:3' },
+      { clipId: 'clip:2', startTick: 80, trackId: 'audio:3' },
     ]);
   });
 

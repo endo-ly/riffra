@@ -145,6 +145,22 @@ pub struct RenderStartParams {
     pub options: Option<RenderOptions>,
 }
 
+/// Selects Tracks and a shared time range for one multi-stem render job.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct RenderStemsParams {
+    /// Render every Track with at least one unmuted Clip.
+    #[serde(default)]
+    pub all_tracks: bool,
+    /// Track IDs to render when `allTracks` is false.
+    #[serde(default)]
+    pub track_ids: Vec<String>,
+    /// Shared arrangement range for every stem.
+    #[serde(default)]
+    pub range: RenderRange,
+}
+
 /// Analyzes an Asset or a file; exactly one source is required.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

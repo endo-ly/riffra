@@ -25,6 +25,8 @@ pub enum JobState {
 pub enum JobKind {
     Scan,
     Render,
+    /// A single job that produces several aligned Track stems.
+    RenderStems,
 }
 
 /// Typed view of a background job, produced from the job registry at the IPC
@@ -46,6 +48,14 @@ pub enum BackgroundJobStatus {
         message: String,
         result: Option<RenderResult>,
     },
+    /// One job that produces a set of aligned Track stems.
+    RenderStems {
+        id: String,
+        state: JobState,
+        progress: Option<f32>,
+        message: String,
+        result: Option<RenderStemsResult>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -64,6 +74,44 @@ pub struct RenderResult {
     pub track_id: Option<String>,
     pub state: String,
     pub message: String,
+}
+
+/// Result metadata for an aligned set of rendered Track stems.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderStemsResult {
+    /// Directory containing the WAV files and `render.json`.
+    pub directory: String,
+    /// Project that supplied the rendered canonical state.
+    pub project_id: String,
+    /// Canonical sequence captured when the job started.
+    pub source_sequence: u64,
+    /// Shared WAV sample rate.
+    pub sample_rate: u32,
+    /// Shared start Tick.
+    pub start_tick: u64,
+    /// Shared end Tick before render tail.
+    pub end_tick: u64,
+    /// Shared frame count, including any render tail.
+    pub frames: u64,
+    /// Stems in canonical Track order.
+    pub stems: Vec<RenderStem>,
+    /// Tracks skipped by an all-Tracks request because they had no unmuted Clips.
+    pub skipped_track_ids: Vec<String>,
+}
+
+/// The WAV and source Track represented by one stem result.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderStem {
+    /// Canonical Track ID.
+    pub track_id: String,
+    /// Track name at render time.
+    pub track_name: String,
+    /// Asset registered for this WAV.
+    pub asset_id: AssetId,
+    /// Full path to the WAV file.
+    pub path: String,
 }
 
 /// Measured loudness of the completed WAV, with deviations from the requested target.

@@ -84,7 +84,8 @@ impl AttachedBackend {
             let state = match ControlOutput::try_from(result) {
                 Ok(ControlOutput::Job(Some(
                     BackgroundJobStatus::Scan { state, .. }
-                    | BackgroundJobStatus::Render { state, .. },
+                    | BackgroundJobStatus::Render { state, .. }
+                    | BackgroundJobStatus::RenderStems { state, .. },
                 ))) => state,
                 Ok(ControlOutput::Job(None)) => {
                     return Err(format!("background job was not found: {job_id}"));

@@ -42,10 +42,12 @@ export function buildClipMovesFromDelta<T extends Pick<AudioClip, 'id' | 'startT
   const originIndex = trackIds.indexOf(originTrackId);
   const targetIndex = trackIds.indexOf(pendingTrackId);
   const trackDelta = targetIndex - originIndex;
+  const minimumStartTick = Math.min(...selected.map((clip) => clip.startTick));
+  const effectiveDeltaTick = Math.max(deltaTick, -minimumStartTick);
 
   return selected.map((clip) => ({
     clipId: clip.id,
-    startTick: Math.max(0, clip.startTick + deltaTick),
+    startTick: clip.startTick + effectiveDeltaTick,
     trackId:
       trackIds[
         Math.max(0, Math.min(trackIds.length - 1, trackIds.indexOf(clip.trackId) + trackDelta))
