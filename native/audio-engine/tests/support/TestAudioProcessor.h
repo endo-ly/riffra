@@ -20,10 +20,12 @@ struct ProcessorTrace final {
     bool released = false;
     bool failProgramChange = false;
     int processBlockCount = 0;
+    int resetCount = 0;
     int currentProgram = 0;
     std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
+    float inputPeak = 0.0f;
 };
 
 class TestProcessor final : public juce::AudioProcessor {
@@ -40,6 +42,7 @@ public:
         trace.blockSize = samplesPerBlock;
     }
     void releaseResources() override { trace.released = true; }
+    void reset() override { ++trace.resetCount; }
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
         return layout.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
                layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
@@ -48,6 +51,9 @@ public:
         if (trace.onProcess) trace.onProcess();
         trace.processed = trace.prepared;
         ++trace.processBlockCount;
+        trace.inputPeak =
+            std::max(trace.inputPeak, std::max(buffer.getMagnitude(0, 0, buffer.getNumSamples()),
+                                               buffer.getMagnitude(1, 0, buffer.getNumSamples())));
         buffer.applyGain(2.0f);
     }
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }

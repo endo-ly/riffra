@@ -218,7 +218,7 @@ Track Send ──→ Returnの合流・Effect・Gain/Pan ──┴─ Master Eff
 
 Group・Return・MasterのEffectsはTrackと同じPluginChainを使う。Rustは保存状態と接続先を含むExecution Graphを投影し、NativeはそのGraphからStereoの準備済みMixerを作る。GroupとReturnは音声合流・Effect・ミックス処理を共有し、Track固有の音源・MIDI・録音処理を持たない。構成と音声環境が一致するDeviceは現役Graphから共有し、GainやSend Levelの変更で作り直さない。
 
-入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。低遅延監視による補償バイパスはTimeline素材を持たないTrackのMaster直結主出力に限り、Group・Returnなど合流後のPDCを個別Trackの監視状態で切り替えない。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
+入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。低遅延監視中は、Track Effect直前に分かれているTimeline音声だけをその経路のPDC分遅らせ、ライブ入力はMixer routeの補償を迂回する。MIDIクリップはScheduler上のイベント位置を同量遅らせ、Post-Effects takeは出力段の補償へ加算するため、Track Effect Chainを複製せずにライブ監視の応答を保ちながらTimeline素材を同期できる。Group出力のPDCは、すべての入力Trackが低遅延監視経路として接続されている場合にだけ迂回する。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
 
 Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは加算し、Muteを優先する。
 
@@ -463,7 +463,7 @@ VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/job
 - ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
 - Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
 
-Offline RenderはNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
 
 書き出し時は、入力されたMixdown設定が正準設定と異なる場合だけ設定を確定し、そのMutationの結果を受け取ってからRender Jobを開始する。同じ設定での書き出しは正準状態を変更しない。
 

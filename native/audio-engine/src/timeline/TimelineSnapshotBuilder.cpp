@@ -133,8 +133,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->solo = trackSpec.solo;
         prepared->hasSolo = prepared->hasSolo || track->runtime->solo;
         track->runtime->monitorInput = trackSpec.monitorInput;
-        track->runtime->hasTimelineContent =
-            !trackSpec.audioClips.empty() || !trackSpec.midiClips.empty();
         track->runtime->audioInputChannel =
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
@@ -431,12 +429,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             for (const auto change : originalTimebaseChanges)
                 prepared->timebaseChangeSamples.push_back(
                     change + track->runtime->externalAudioSource->routeLatencySamples);
-        track->runtime->postEffectDelayBuffer.setSize(
-            2,
-            static_cast<int>(track->runtime->postEffectCompensationDelaySamples + maximumBlockSize +
-                             1),
-            false, true, false);
-        track->runtime->postEffectDelayBuffer.clear();
     }
     if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
@@ -544,6 +536,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                    const bool allowLowLatencyBypass, const juce::String& sendId) {
         auto route = std::make_unique<MixerRoute>();
         route->track = &track;
+        route->destinationBus = destination;
         route->source = preFader ? &track.preFaderOutputBuffer : &track.trackOutputBuffer;
         route->destination = destination != nullptr ? &destination->input : &mixer.masterInput;
         route->gain.store(gain);
@@ -553,6 +546,10 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (destination != nullptr) {
             destination->hasInput = true;
             destination->hasAudibleInput = destination->hasAudibleInput || audible;
+            if (allowLowLatencyBypass)
+                destination->lowLatencySources.push_back(&track);
+            else
+                destination->hasNonLowLatencyInput = true;
             destination->inputLatency =
                 std::max(destination->inputLatency, track.routeLatencySamples);
         } else {
@@ -565,14 +562,17 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto& spec = graph.tracks[index];
         auto& track = *prepared.tracks[index]->runtime;
         const auto* group = spec.outputBusId ? busSpec(*spec.outputBusId) : nullptr;
+        const auto hasEnabledSend =
+            std::any_of(graph.mixer.sends.begin(), graph.mixer.sends.end(),
+                        [&](const auto& send) { return send.trackId == spec.id && send.enabled; });
         const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
         track.mainOutputAudible =
             mainSelected && !spec.muted && (group == nullptr || !group->muted);
-        const auto liveOnlyDirectOutput = !spec.outputBusId && spec.audioClips.empty() &&
-                                          spec.midiClips.empty() &&
-                                          !spec.externalAudioSourceTrackId.has_value();
+        const auto lowLatencyPdcCandidate = (track.instrumentTrack || track.monitorInput) &&
+                                            !hasEnabledSend &&
+                                            !spec.externalAudioSourceTrackId.has_value();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
-                      1.0f, mainSelected && !spec.muted, liveOnlyDirectOutput, {});
+                      1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});
         for (const auto& send : graph.mixer.sends) {
             if (send.trackId != spec.id || !send.enabled) continue;
             const auto* target = busSpec(send.returnBusId);
@@ -606,15 +606,40 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             target != mixer.buses.end() ? (*target)->inputLatency : mixer.masterInputLatency;
         if (!prepareDelay(route->delay, targetLatency - route->track->routeLatencySamples))
             return false;
+        if (route->allowLowLatencyBypass) {
+            const auto downstreamEffectLatency =
+                route->destinationBus != nullptr ? route->destinationBus->effects->latencySamples()
+                                                 : 0;
+            route->track->timelinePdcDelaySamples = std::max<std::int64_t>(
+                0, mixer.masterInputLatency - route->track->routeLatencySamples -
+                       downstreamEffectLatency);
+        }
     }
     for (auto& bus : mixer.buses) {
         auto route = std::make_unique<MixerRoute>();
+        route->sourceBus = bus.get();
         route->source = &bus->output;
         route->destination = &mixer.masterInput;
         route->audible = bus->hasInput;
         const auto delaySamples = bus->hasInput ? mixer.masterInputLatency - bus->outputLatency : 0;
         if (!prepareDelay(route->delay, delaySamples)) return false;
         mixer.busRoutes.push_back(std::move(route));
+    }
+    for (auto& track : prepared.tracks) {
+        auto& runtime = *track->runtime;
+        if (runtime.postEffectCompensationDelaySamples + runtime.timelinePdcDelaySamples +
+                prepared.preparedBlockSize >=
+            std::numeric_limits<int>::max()) {
+            error = "timeline clip compensation exceeds the supported buffer size";
+            return false;
+        }
+        runtime.prepareTimelineInputDelay(static_cast<int>(runtime.timelinePdcDelaySamples));
+        runtime.postEffectDelayBuffer.setSize(
+            2,
+            static_cast<int>(runtime.postEffectCompensationDelaySamples +
+                             runtime.timelinePdcDelaySamples + prepared.preparedBlockSize + 1),
+            false, true, false);
+        runtime.postEffectDelayBuffer.clear();
     }
     const auto finalLatency = mixer.masterInputLatency + mixer.masterEffects->latencySamples();
     prepared.summary.maximumLatencySamples = static_cast<std::uint64_t>(finalLatency);

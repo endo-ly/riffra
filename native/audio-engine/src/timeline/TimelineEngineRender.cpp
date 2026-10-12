@@ -172,9 +172,11 @@ void TimelineEngine::scheduleMidi(const PreparedTimeline& prepared, Track& track
     juce::ignoreUnused(prepared);
     auto& runtime = *track.runtime;
     runtime.midiBuffer.clear();
-    MidiScheduler::schedule(runtime.midiClips, rangeStart, sampleCount, runtime.midiBuffer);
+    const auto pdcDelay = runtime.lowLatencyPdcBypassActive() ? runtime.timelinePdcDelaySamples : 0;
+    const auto midiRangeStart = rangeStart - pdcDelay;
+    MidiScheduler::schedule(runtime.midiClips, midiRangeStart, sampleCount, runtime.midiBuffer);
     runtime.instrumentEventCount = MidiScheduler::scheduleInstrumentEvents(
-        runtime.midiClips, rangeStart, sampleCount, runtime.instrumentEvents.data(),
+        runtime.midiClips, midiRangeStart, sampleCount, runtime.instrumentEvents.data(),
         runtime.instrumentEventOrdering.data(), runtime.instrumentEvents.size());
 }
 
@@ -359,14 +361,29 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   sampleCount);
     }
+    for (auto& bus : graph->mixer.buses) {
+        bus->input.clear(0, sampleCount);
+        bus->process(sampleCount);
+    }
+    graph->mixer.masterInput.clear(0, sampleCount);
+    graph->mixer.masterEffects->process(graph->mixer.masterInput.getArrayOfReadPointers(), 2,
+                                        graph->mixer.masterOutput.getArrayOfWritePointers(), 2,
+                                        sampleCount);
 }
 
 void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
                                     const int sampleCount, const float transportGainStart,
                                     const float transportGainStep) noexcept {
     auto& runtime = *track.runtime;
-    const auto postEffectDelay =
-        std::max<std::int64_t>(0, runtime.postEffectCompensationDelaySamples);
+    const auto lowLatencyPdcBypassActive = runtime.lowLatencyPdcBypassActive();
+    if (lowLatencyPdcBypassActive != runtime.postEffectLowLatencyBypassActive) {
+        runtime.postEffectDelayBuffer.clear();
+        runtime.postEffectDelayWritePosition = 0;
+        runtime.postEffectLowLatencyBypassActive = lowLatencyPdcBypassActive;
+    }
+    const auto postEffectDelay = std::max<std::int64_t>(
+        0, runtime.postEffectCompensationDelaySamples +
+               (lowLatencyPdcBypassActive ? runtime.timelinePdcDelaySamples : 0));
     const auto postEffectDelaySize = runtime.postEffectDelayBuffer.getNumSamples();
     auto volumeCursor = runtime.volumeAutomation.cursorAt(rangeStart);
     auto panCursor = runtime.panAutomation.cursorAt(rangeStart);
@@ -525,6 +542,8 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.routedOutputBuffer.clear();
         runtime.postEffectDelayBuffer.clear();
         runtime.postEffectDelayWritePosition = 0;
+        runtime.postEffectLowLatencyBypassActive = false;
+        runtime.resetTimelineInputDelay();
     }
 }
 

@@ -375,6 +375,14 @@ void TimelineEngine::applyLowLatencyMonitoring(const RealtimeState& state) noexc
         runtime.setLowLatencyMonitoring(
             runtime.instrumentTrack ? (runtime.armed || runtime.key == state.liveMidiTargetTrackKey)
                                     : runtime.monitorInput);
+        runtime.setLowLatencyPdcBypassActive(false);
+    }
+    for (const auto& route : state.graph->mixer.trackRoutes) {
+        if (!route->allowLowLatencyBypass || route->track == nullptr) continue;
+        const auto downstreamIsLowLatency =
+            route->destinationBus == nullptr || route->destinationBus->lowLatency();
+        route->track->setLowLatencyPdcBypassActive(route->track->lowLatencyMonitoring() &&
+                                                   downstreamIsLowLatency);
     }
 }
 

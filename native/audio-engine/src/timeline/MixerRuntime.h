@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -25,11 +26,17 @@ public:
     void reset() noexcept {
         buffer.clear();
         position = 0;
+        lowLatencyActive = false;
     }
 
     void add(const juce::AudioBuffer<float>& source, juce::AudioBuffer<float>& destination,
              const int sampleCount, const float gain, const bool audible,
              const bool lowLatency) noexcept {
+        if (lowLatency != lowLatencyActive) {
+            buffer.clear();
+            position = 0;
+            lowLatencyActive = lowLatency;
+        }
         if (delaySamples == 0) {
             if (audible)
                 for (int channel = 0; channel < 2; ++channel)
@@ -54,6 +61,7 @@ private:
     juce::AudioBuffer<float> buffer;
     int delaySamples = 0;
     int position = 0;
+    bool lowLatencyActive = false;
 };
 
 /// Prepared effect processing and mix controls shared by Groups and Returns.
@@ -69,9 +77,17 @@ struct MixerChannel final {
     bool audible = true;
     bool hasInput = false;
     bool hasAudibleInput = false;
+    bool hasNonLowLatencyInput = false;
+    std::vector<TrackRuntime*> lowLatencySources;
     std::int64_t inputLatency = 0;
     std::int64_t outputLatency = 0;
     TrackMeterAccumulator meter;
+    [[nodiscard]] bool lowLatency() const noexcept {
+        return hasInput && !hasNonLowLatencyInput && !lowLatencySources.empty() &&
+               std::all_of(lowLatencySources.begin(), lowLatencySources.end(),
+                           [](const auto* source) { return source->lowLatencyMonitoring(); });
+    }
+
     void process(const int sampleCount) noexcept {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
                          sampleCount);
@@ -93,6 +109,8 @@ struct MixerChannel final {
 struct MixerRoute final {
     juce::String sendId;
     TrackRuntime* track = nullptr;
+    MixerChannel* destinationBus = nullptr;
+    MixerChannel* sourceBus = nullptr;
     juce::AudioBuffer<float>* source = nullptr;
     juce::AudioBuffer<float>* destination = nullptr;
     std::atomic<float> gain{1.0f};
@@ -101,8 +119,9 @@ struct MixerRoute final {
     MixRouteDelay delay;
 
     void mix(const int sampleCount) noexcept {
-        const auto lowLatency = allowLowLatencyBypass && track != nullptr &&
-                                track->lowLatencyMonitoring() && !track->hasTimelineContent;
+        const auto lowLatency = sourceBus != nullptr ? sourceBus->lowLatency()
+                                                     : allowLowLatencyBypass && track != nullptr &&
+                                                           track->lowLatencyPdcBypassActive();
         delay.add(*source, *destination, sampleCount, gain.load(std::memory_order_acquire), audible,
                   lowLatency);
     }

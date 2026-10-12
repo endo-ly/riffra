@@ -117,8 +117,11 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
         TimelineEngine::mixRange(track, job.rangeStart, 0, job.sampleCount);
         TimelineEngine::scheduleMidi(*job.graph, track, job.rangeStart, job.sampleCount);
         runtime.processedBuffer.clear(0, job.sampleCount);
-        if (!runtime.instrumentTrack)
+        if (!runtime.instrumentTrack) {
+            runtime.processTimelineInputDelay(runtime.mixBuffer, job.sampleCount,
+                                              runtime.lowLatencyPdcBypassActive());
             TimelineEngine::mergeTimelineAndLiveInput(track, job.sampleCount);
+        }
         if (runtime.instrumentTrack)
             TimelineEngine::processInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    &runtime.midiBuffer, job.rangeStart);

@@ -711,7 +711,7 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
     }
 }
 
-TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
+TEST(MixerRoutingTest, LowLatencyMonitoringKeepsTimelinePdcAcrossMasterAndGroupRoutes) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;
     test::TemporaryDirectory directory;
@@ -737,6 +737,9 @@ TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
     monitoredTrack.outputBusId = "bus:group";
     monitoredTrack.panLaw = "unityCenterStereo";
     monitoredTrack.audioClips.push_back(makeClip("clip:monitored"));
+    auto processedClip = makeClip("clip:processed");
+    processedClip.takeVariant = TakeVariantSpec::processed;
+    monitoredTrack.audioClips.push_back(processedClip);
     auto highLatencyTrack = makeAudioTrack("track:high-latency");
     highLatencyTrack.panLaw = "unityCenterStereo";
     highLatencyTrack.audioClips.push_back(makeClip("clip:high-latency"));
@@ -770,8 +773,7 @@ TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
         engine.mix(inputs.data(), 1, output.getArrayOfWritePointers(), 2,
                    static_cast<int>(input.size()));
 
-        // Assert: neither signal bypasses the shared Group or Master PDC.
-        EXPECT_NEAR(output.getSample(0, 8), 0.0f, 0.0001f);
+        // Assert: live input bypasses inter-route PDC while the clip remains aligned.
         auto livePeak = 0.0f;
         auto livePeakSample = -1;
         auto firstLiveSample = -1;
@@ -785,11 +787,103 @@ TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
         }
         EXPECT_GT(livePeak, 0.01f)
             << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
-        EXPECT_EQ(firstLiveSample, 25)
+        EXPECT_EQ(firstLiveSample, throughGroup ? 9 : 1)
             << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
         EXPECT_NEAR(output.getSample(0, 500 + 8), 0.0f, 0.0001f);
         EXPECT_GT(output.getSample(0, 500 + 24), 0.01f);
     }
+}
+
+TEST(MixerRoutingTest, WarmsAndResetsBusReturnAndMasterEffects) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    MixBusSpec group;
+    group.id = "bus:group";
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    snapshot.graph.mixer.buses = {group, returnBus};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error)) << error;
+    auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    ASSERT_EQ(graph->mixer.buses.size(), 2u);
+
+    std::array<ProcessorTrace, 3> traces;
+    for (std::size_t index = 0; index < graph->mixer.buses.size(); ++index)
+        ASSERT_TRUE(TimelineEngineTestPeer::addChainDevice(
+            *graph->mixer.buses[index]->effects, "fx:bus:" + juce::String(index),
+            std::make_unique<TestProcessor>(traces[index]), 48'000.0, 32, error))
+            << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::addChainDevice(*graph->mixer.masterEffects, "fx:master",
+                                                       std::make_unique<TestProcessor>(traces[2]),
+                                                       48'000.0, 32, error))
+        << error;
+    const std::array<int, 3> resetCounts{traces[0].resetCount, traces[1].resetCount,
+                                         traces[2].resetCount};
+
+    // Act
+    engine.warmUpPluginDevices(32);
+
+    // Assert: every mixer chain received silence without being reset early.
+    for (std::size_t index = 0; index < traces.size(); ++index) {
+        EXPECT_EQ(traces[index].processBlockCount, 1);
+        EXPECT_FLOAT_EQ(traces[index].inputPeak, 0.0f);
+        EXPECT_EQ(traces[index].resetCount, resetCounts[index]);
+    }
+
+    // Act: the render boundary resets all warmed plugin state.
+    engine.resetPluginDevices();
+
+    // Assert
+    for (std::size_t index = 0; index < traces.size(); ++index)
+        EXPECT_EQ(traces[index].resetCount, resetCounts[index] + 1);
+}
+
+TEST(MixerRoutingTest, LowLatencyMidiMonitoringKeepsTimelineEventsAtPdcOffset) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto instrumentTrack = makeInstrumentTrack("track:instrument");
+    instrumentTrack.armed = true;
+    instrumentTrack.midiClips.push_back(
+        MidiClipSpec{"midi:timeline", 0, 960, false, false, {{0, 120, 60, 100, 1}}, {}});
+    auto latencyTrack = makeAudioTrack("track:latency");
+    latencyTrack.effects = {{"fx:latency:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                            {"fx:latency:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                            {"fx:latency:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {instrumentTrack, latencyTrack};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error)) << error;
+    InstrumentTrace trace;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(rack->prepareTimelineMidiCapacity(2, error)) << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:instrument",
+                                                               "instrument:live", std::move(rack)));
+    ASSERT_EQ(TimelineEngineTestPeer::committedGraph(engine)->summary.maximumLatencySamples, 24u);
+    ASSERT_EQ(engine.enqueueTargetedMidi("track:instrument", juce::MidiMessage::noteOn(1, 72, 0.8f),
+                                         error),
+              RealtimeRequest::accepted)
+        << error;
+
+    // Act
+    ASSERT_TRUE(engine.play());
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert: live MIDI is immediate while the clip remains PDC-aligned.
+    EXPECT_EQ(trace.midiSamplePositions, (std::vector<int>{0, 24}));
 }
 
 TEST(MixerRoutingTest, DisconnectedBusEffectsDoNotChangeMasterLatency) {

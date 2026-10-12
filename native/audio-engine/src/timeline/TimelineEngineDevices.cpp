@@ -199,6 +199,8 @@ void TimelineEngine::resetPluginDevices() noexcept {
                 if (auto* rack = runtime.instrument()->vst3Rack()) rack->reset();
             runtime.effects().reset();
         }
+        for (const auto& bus : graph->mixer.buses) bus->effects->reset();
+        graph->mixer.masterEffects->reset();
     });
 }
 
