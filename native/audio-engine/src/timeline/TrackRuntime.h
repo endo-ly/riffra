@@ -202,6 +202,7 @@ public:
     // Prepared timeline state. The snapshot builder allocates these buffers;
     // realtime code only clears and processes their existing storage.
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+    bool hasTimelineContent = false;
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> processedBuffer;
     juce::AudioBuffer<float> trackOutputBuffer;

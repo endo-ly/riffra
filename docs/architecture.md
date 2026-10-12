@@ -218,7 +218,7 @@ Track Send ──→ Returnの合流・Effect・Gain/Pan ──┴─ Master Eff
 
 Group・Return・MasterのEffectsはTrackと同じPluginChainを使う。Rustは保存状態と接続先を含むExecution Graphを投影し、NativeはそのGraphからStereoの準備済みMixerを作る。GroupとReturnは音声合流・Effect・ミックス処理を共有し、Track固有の音源・MIDI・録音処理を持たない。構成と音声環境が一致するDeviceは現役Graphから共有し、GainやSend Levelの変更で作り直さない。
 
-入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
+入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。低遅延監視による補償バイパスはTimeline素材を持たないTrackのMaster直結主出力に限り、Group・Returnなど合流後のPDCを個別Trackの監視状態で切り替えない。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
 
 Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは加算し、Muteを優先する。
 
@@ -300,7 +300,7 @@ Audio Status の診断値は、コールバック計測（累計回数・累計�
 
 ### 5.5 Mixer previewとメーター
 
-正準MixerはArrangementに所属し、Master GainはSessionSettingsが保持する。Track・BusのGain/PanとSend LevelはNativeの現役Graphへ一時プレビューし、確定時にCoreの通常Mutationを行う。プレビューは音声ブロックでatomicsから読み込み、保存、履歴、投影入力には戻さない。
+正準MixerはArrangementに所属し、Master GainはSessionSettingsが保持する。Track・BusのGain/Panと有効なSend LevelはNativeの現役Graphへ一時プレビューし、確定時にCoreの通常Mutationを行う。無効SendのLevelはプレビューせず正準値だけを更新し、有効化時にその値を実行グラフへ反映する。プレビューは音声ブロックでatomicsから読み込み、保存、履歴、投影入力には戻さない。
 
 Master Gainの一時値も、次のGraph公開で正準値に戻る。サイドカー再起動や音声環境変更では、最新正準状態を投影してMixer全体を復元する。
 
@@ -464,6 +464,8 @@ VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/job
 - Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
 
 Offline RenderはNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+
+書き出し時は、入力されたMixdown設定が正準設定と異なる場合だけ設定を確定し、そのMutationの結果を受け取ってからRender Jobを開始する。同じ設定での書き出しは正準状態を変更しない。
 
 完成WAVのSample Peakを実サンプルから測定し、Masteringを適用しない書き出しでもFFmpegのラウドネス測定を試みる。測定のために音声Graphを再実行しない。FFmpegの利用不可は通常Renderの成功と区別し、測定不能の理由を結果へ含める。
 

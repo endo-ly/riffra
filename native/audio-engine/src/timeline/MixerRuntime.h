@@ -2,7 +2,6 @@
 
 #include <JuceHeader.h>
 
-#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -73,16 +72,6 @@ struct MixerChannel final {
     std::int64_t inputLatency = 0;
     std::int64_t outputLatency = 0;
     TrackMeterAccumulator meter;
-    std::vector<TrackRuntime*> sources;
-
-    [[nodiscard]] bool lowLatency() const noexcept {
-        // A shared Bus can bypass its output compensation only when every
-        // structurally connected source is under low-latency monitoring.
-        return !sources.empty() &&
-               std::all_of(sources.begin(), sources.end(),
-                           [](const auto* source) { return source->lowLatencyMonitoring(); });
-    }
-
     void process(const int sampleCount) noexcept {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
                          sampleCount);
@@ -104,16 +93,18 @@ struct MixerChannel final {
 struct MixerRoute final {
     juce::String sendId;
     TrackRuntime* track = nullptr;
-    MixerChannel* bus = nullptr;
     juce::AudioBuffer<float>* source = nullptr;
     juce::AudioBuffer<float>* destination = nullptr;
     std::atomic<float> gain{1.0f};
     bool audible = true;
+    bool allowLowLatencyBypass = false;
     MixRouteDelay delay;
 
     void mix(const int sampleCount) noexcept {
+        const auto lowLatency = allowLowLatencyBypass && track != nullptr &&
+                                track->lowLatencyMonitoring() && !track->hasTimelineContent;
         delay.add(*source, *destination, sampleCount, gain.load(std::memory_order_acquire), audible,
-                  track != nullptr ? track->lowLatencyMonitoring() : bus->lowLatency());
+                  lowLatency);
     }
 };
 

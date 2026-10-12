@@ -133,6 +133,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->solo = trackSpec.solo;
         prepared->hasSolo = prepared->hasSolo || track->runtime->solo;
         track->runtime->monitorInput = trackSpec.monitorInput;
+        track->runtime->hasTimelineContent =
+            !trackSpec.audioClips.empty() || !trackSpec.midiClips.empty();
         track->runtime->audioInputChannel =
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
@@ -539,18 +541,18 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
     };
     const auto addTrackRoute = [&](TrackRuntime& track, MixerChannel* destination,
                                    const bool preFader, const float gain, const bool audible,
-                                   const juce::String& sendId) {
+                                   const bool allowLowLatencyBypass, const juce::String& sendId) {
         auto route = std::make_unique<MixerRoute>();
         route->track = &track;
         route->source = preFader ? &track.preFaderOutputBuffer : &track.trackOutputBuffer;
         route->destination = destination != nullptr ? &destination->input : &mixer.masterInput;
         route->gain.store(gain);
         route->audible = audible;
+        route->allowLowLatencyBypass = allowLowLatencyBypass;
         route->sendId = sendId;
         if (destination != nullptr) {
             destination->hasInput = true;
             destination->hasAudibleInput = destination->hasAudibleInput || audible;
-            destination->sources.push_back(&track);
             destination->inputLatency =
                 std::max(destination->inputLatency, track.routeLatencySamples);
         } else {
@@ -566,15 +568,18 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
         track.mainOutputAudible =
             mainSelected && !spec.muted && (group == nullptr || !group->muted);
+        const auto liveOnlyDirectOutput = !spec.outputBusId && spec.audioClips.empty() &&
+                                          spec.midiClips.empty() &&
+                                          !spec.externalAudioSourceTrackId.has_value();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
-                      1.0f, mainSelected && !spec.muted, {});
+                      1.0f, mainSelected && !spec.muted, liveOnlyDirectOutput, {});
         for (const auto& send : graph.mixer.sends) {
             if (send.trackId != spec.id || !send.enabled) continue;
             const auto* target = busSpec(send.returnBusId);
-            addTrackRoute(track, mixer.findBus(send.returnBusId),
-                          send.position == SendPositionSpec::preFader,
-                          juce::Decibels::decibelsToGain(static_cast<float>(send.levelDb)),
-                          !spec.muted && audibility.sendRoute(spec.solo, target->solo), send.id);
+            addTrackRoute(
+                track, mixer.findBus(send.returnBusId), send.position == SendPositionSpec::preFader,
+                juce::Decibels::decibelsToGain(static_cast<float>(send.levelDb)),
+                !spec.muted && audibility.sendRoute(spec.solo, target->solo), false, send.id);
         }
     }
     for (auto& bus : mixer.buses) {
@@ -604,7 +609,6 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
     }
     for (auto& bus : mixer.buses) {
         auto route = std::make_unique<MixerRoute>();
-        route->bus = bus.get();
         route->source = &bus->output;
         route->destination = &mixer.masterInput;
         route->audible = bus->hasInput;

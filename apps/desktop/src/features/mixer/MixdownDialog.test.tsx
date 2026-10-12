@@ -11,12 +11,51 @@ import { MixdownDialog } from './MixdownDialog';
 
 afterEach(cleanup);
 
+it('starts an unchanged mixdown render without committing a settings mutation', async () => {
+  const session = defaultSession();
+  const api = new FakeNativeApi();
+  const setMixdown = vi.fn(async () => {
+    throw new Error('unchanged settings must not be committed');
+  });
+  api.setMixdown = setMixdown;
+  const startRenderJob = vi.fn(async () => ({
+    kind: 'render' as const,
+    id: 'job:render',
+    state: 'running' as const,
+    progress: 0,
+    message: 'rendering',
+    result: null,
+  }));
+  api.startRenderJob = startRenderJob;
+  api.getBackgroundJob = vi.fn(async () => ({
+    kind: 'render' as const,
+    id: 'job:render',
+    state: 'running' as const,
+    progress: 0,
+    message: 'rendering',
+    result: null,
+  }));
+  render(
+    <MixdownDialog
+      session={session}
+      api={api}
+      applyCanonicalState={() => true}
+      onClose={() => undefined}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Save and render' }));
+
+  await waitFor(() => expect(startRenderJob).toHaveBeenCalledOnce());
+  expect(setMixdown).not.toHaveBeenCalled();
+});
+
 it.each(['measured', 'unavailable'] as const)(
   'saves canonical mastering targets and displays the completed %s WAV',
   async (state) => {
     const session = defaultSession();
     const api = new FakeNativeApi();
-    api.setMixdown = vi.fn(async (settings) => {
+    const setMixdown = vi.fn(async (settings) => {
       session.settings.mixdown = structuredClone(settings);
       return {
         canonical: canonicalState(structuredClone(session)),
@@ -24,6 +63,7 @@ it.each(['measured', 'unavailable'] as const)(
         projection: { state: 'notRequired' as const },
       };
     });
+    api.setMixdown = setMixdown;
     const result: RenderResult = {
       mastering:
         state === 'measured'
@@ -59,7 +99,7 @@ it.each(['measured', 'unavailable'] as const)(
       state: 'completed',
       message: 'completed',
     };
-    api.startRenderJob = vi.fn(async () => ({
+    const startRenderJob = vi.fn(async () => ({
       kind: 'render' as const,
       id: 'job:render',
       state: 'running' as const,
@@ -67,6 +107,7 @@ it.each(['measured', 'unavailable'] as const)(
       message: 'rendering',
       result: null,
     }));
+    api.startRenderJob = startRenderJob;
     api.getBackgroundJob = vi.fn(async () => ({
       kind: 'render' as const,
       id: 'job:render',
@@ -107,6 +148,11 @@ it.each(['measured', 'unavailable'] as const)(
       expect(session.settings.mixdown.mastering?.truePeakDb).toBe(-2);
     } else expect(session.settings.mixdown.mastering).toBeNull();
     await screen.findByText('C:/renders/final.wav');
+    expect(setMixdown).toHaveBeenCalledOnce();
+    expect(startRenderJob).toHaveBeenCalledOnce();
+    expect(setMixdown.mock.invocationCallOrder[0]).toBeLessThan(
+      startRenderJob.mock.invocationCallOrder[0],
+    );
     if (state === 'measured') {
       expect(screen.getByText('-16.12 LUFS')).toBeInTheDocument();
       expect(screen.getByText('-2.08 dBTP')).toBeInTheDocument();

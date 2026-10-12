@@ -365,10 +365,8 @@ void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
                                     const int sampleCount, const float transportGainStart,
                                     const float transportGainStep) noexcept {
     auto& runtime = *track.runtime;
-    const auto lowLatency = runtime.lowLatencyMonitoring();
     const auto postEffectDelay =
-        lowLatency ? std::int64_t{0}
-                   : std::max<std::int64_t>(0, runtime.postEffectCompensationDelaySamples);
+        std::max<std::int64_t>(0, runtime.postEffectCompensationDelaySamples);
     const auto postEffectDelaySize = runtime.postEffectDelayBuffer.getNumSamples();
     auto volumeCursor = runtime.volumeAutomation.cursorAt(rangeStart);
     auto panCursor = runtime.panAutomation.cursorAt(rangeStart);

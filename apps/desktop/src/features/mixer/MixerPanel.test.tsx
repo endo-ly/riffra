@@ -119,12 +119,21 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   await waitFor(() => expect(screen.getByLabelText('Main output')).toHaveValue('bus:group'));
   fireEvent.change(screen.getByLabelText('Add Send'), { target: { value: 'bus:return' } });
   const slider = await screen.findByLabelText('Send send:1 level');
+  const enabled = screen.getByRole('checkbox', { name: 'Enabled' });
+  fireEvent.click(enabled);
+  await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(false));
+  expect(api.updateSend).toHaveBeenCalledWith('send:1', { enabled: false });
   fireEvent.change(slider, { target: { value: '-12' } });
-  expect(api.updateSend).not.toHaveBeenCalled();
+  expect(api.updateSend).toHaveBeenCalledTimes(1);
   fireEvent.pointerUp(slider);
   fireEvent.blur(slider);
   await waitFor(() => expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12));
-  expect(api.updateSend).toHaveBeenCalledTimes(1);
+  expect(api.updateSend).toHaveBeenCalledTimes(2);
+  expect(api.previewSendLevel).not.toHaveBeenCalled();
+  fireEvent.click(enabled);
+  await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(true));
+  expect(api.updateSend).toHaveBeenCalledWith('send:1', { enabled: true });
+  expect(session.arrangement.mixer.sends[0].levelDb).toBe(-12);
   fireEvent.change(screen.getByLabelText('Send send:1 position'), {
     target: { value: 'preFader' },
   });

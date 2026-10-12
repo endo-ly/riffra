@@ -733,41 +733,63 @@ TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
     };
     auto monitoredTrack = makeAudioTrack("track:monitored");
     monitoredTrack.monitorInput = true;
+    monitoredTrack.audioInput = AudioInputSpec{0};
     monitoredTrack.outputBusId = "bus:group";
     monitoredTrack.panLaw = "unityCenterStereo";
     monitoredTrack.audioClips.push_back(makeClip("clip:monitored"));
-    auto timelineTrack = makeAudioTrack("track:timeline");
-    timelineTrack.outputBusId = "bus:group";
-    timelineTrack.panLaw = "unityCenterStereo";
-    timelineTrack.audioClips.push_back(makeClip("clip:timeline"));
     auto highLatencyTrack = makeAudioTrack("track:high-latency");
     highLatencyTrack.panLaw = "unityCenterStereo";
     highLatencyTrack.audioClips.push_back(makeClip("clip:high-latency"));
     highLatencyTrack.effects = {{"fx:high:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
                                 {"fx:high:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
                                 {"fx:high:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
-    snapshot.graph.tracks = {monitoredTrack, timelineTrack, highLatencyTrack};
+    snapshot.graph.tracks = {monitoredTrack, highLatencyTrack};
     MixBusSpec group;
     group.id = "bus:group";
     group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
     snapshot.graph.mixer.buses.push_back(group);
 
-    TimelineEngine engine(true);
-    juce::String error;
-    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
-    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
-    ASSERT_NE(graph, nullptr);
-    EXPECT_EQ(graph->summary.maximumLatencySamples, 24u);
-    ASSERT_TRUE(engine.play());
-    juce::AudioBuffer<float> output(2, 704);
-    output.clear();
+    for (const auto throughGroup : {true, false}) {
+        auto candidate = snapshot;
+        if (!throughGroup) candidate.graph.tracks[0].outputBusId.reset();
+        TimelineEngine engine;
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+        ASSERT_NE(graph, nullptr);
+        EXPECT_EQ(graph->summary.maximumLatencySamples, 24u);
+        ASSERT_TRUE(engine.seekToTick(0));
+        ASSERT_TRUE(engine.play());
+        std::array<float, 704> input{};
+        std::fill_n(input.begin(), 64, 0.5f);
+        const std::array<const float*, 1> inputs{input.data()};
+        juce::AudioBuffer<float> output(2, static_cast<int>(input.size()));
+        output.clear();
 
-    // Act
-    engine.mix(output.getArrayOfWritePointers(), 2, 704);
+        // Act: one monitored Track carries live input and a Timeline clip.
+        engine.mix(inputs.data(), 1, output.getArrayOfWritePointers(), 2,
+                   static_cast<int>(input.size()));
 
-    // Assert: one monitored source must not bypass PDC for its mixed Bus.
-    EXPECT_NEAR(output.getSample(0, 500 + 8), 0.0f, 0.0001f);
-    EXPECT_GT(output.getSample(0, 500 + 24), 0.01f);
+        // Assert: neither signal bypasses the shared Group or Master PDC.
+        EXPECT_NEAR(output.getSample(0, 8), 0.0f, 0.0001f);
+        auto livePeak = 0.0f;
+        auto livePeakSample = -1;
+        auto firstLiveSample = -1;
+        for (int sample = 0; sample < 128; ++sample) {
+            const auto level = std::abs(output.getSample(0, sample));
+            if (firstLiveSample < 0 && level > 0.001f) firstLiveSample = sample;
+            if (level > livePeak) {
+                livePeak = level;
+                livePeakSample = sample;
+            }
+        }
+        EXPECT_GT(livePeak, 0.01f)
+            << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
+        EXPECT_EQ(firstLiveSample, 25)
+            << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
+        EXPECT_NEAR(output.getSample(0, 500 + 8), 0.0f, 0.0001f);
+        EXPECT_GT(output.getSample(0, 500 + 24), 0.01f);
+    }
 }
 
 TEST(MixerRoutingTest, DisconnectedBusEffectsDoNotChangeMasterLatency) {

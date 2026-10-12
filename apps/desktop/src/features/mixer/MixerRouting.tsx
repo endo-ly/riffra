@@ -36,7 +36,13 @@ function SendLevel({
     },
     [],
   );
+  useEffect(() => {
+    if (send.enabled) return;
+    version.current++;
+    window.clearTimeout(timer.current);
+  }, [send.enabled]);
   const preview = (value: number) => {
+    if (!send.enabled) return;
     window.clearTimeout(timer.current);
     const request = ++version.current;
     timer.current = window.setTimeout(() => {
@@ -57,7 +63,7 @@ function SendLevel({
       .catch(() => undefined)
       .then(async () => {
         if (request !== version.current) return;
-        await api.previewSendLevel(send.id, value).catch(() => undefined);
+        if (send.enabled) await api.previewSendLevel(send.id, value).catch(() => undefined);
         if (request !== version.current) return;
         commit(
           api.updateSend(send.id, { levelDb: value }).catch((error) => {

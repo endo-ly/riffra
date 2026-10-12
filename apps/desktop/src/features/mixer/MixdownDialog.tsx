@@ -5,6 +5,7 @@ import type {
   CanonicalState,
   CreativeSession,
   LoudnessMastering,
+  MixdownSettings,
   RenderRange,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
@@ -15,6 +16,23 @@ interface Props {
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (state: CanonicalState) => boolean;
   onClose: () => void;
+}
+
+function sameMixdownSettings(left: MixdownSettings, right: MixdownSettings) {
+  const sameMastering =
+    left.mastering === null || right.mastering === null
+      ? left.mastering === right.mastering
+      : left.mastering.integratedLufs === right.mastering.integratedLufs &&
+        left.mastering.truePeakDb === right.mastering.truePeakDb &&
+        left.mastering.loudnessRangeLu === right.mastering.loudnessRangeLu;
+  return (
+    left.musicalEndTick === right.musicalEndTick &&
+    left.tailSeconds === right.tailSeconds &&
+    left.fadeOutSeconds === right.fadeOutSeconds &&
+    left.sampleRate === right.sampleRate &&
+    left.blockSize === right.blockSize &&
+    sameMastering
+  );
 }
 
 function Measurements({
@@ -114,14 +132,17 @@ export function MixdownDialog(props: Props) {
     setSaving(true);
     setError(null);
     try {
-      const result = await props.api.setMixdown({
+      const settings: MixdownSettings = {
         ...canonical,
         tailSeconds: tail,
         fadeOutSeconds: fade,
         mastering: enabled ? target : null,
-      });
-      if (!alive.current || !props.applyCanonicalState(result.canonical)) return;
-      if (result.projection.state === 'failed') throw new Error(result.projection.message);
+      };
+      if (!sameMixdownSettings(settings, canonical)) {
+        const result = await props.api.setMixdown(settings);
+        if (!alive.current || !props.applyCanonicalState(result.canonical)) return;
+        if (result.projection.state === 'failed') throw new Error(result.projection.message);
+      }
       if (render) {
         const renderRange: RenderRange =
           range === 'loopRange' ? { kind: range } : { kind: 'entireArrangement' };
