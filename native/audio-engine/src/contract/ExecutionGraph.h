@@ -221,7 +221,7 @@ struct MixBusSpec final {
     MixBusKindSpec kind = MixBusKindSpec::group;
     double gainDb = 0.0;
     double pan = 0.0;
-    juce::String panLaw = "equalPower";
+    juce::String panLaw = "unityCenterStereo";
     bool muted = false;
     bool solo = false;
     std::vector<PluginDeviceSpec> effects;

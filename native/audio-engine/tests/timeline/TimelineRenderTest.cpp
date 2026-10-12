@@ -535,7 +535,6 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
     snapshot.graph.tracks = {first, second};
     MixBusSpec group;
     group.id = "bus:group";
-    group.panLaw = "unityCenterStereo";
     group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
     auto returnBus = group;
     returnBus.id = "bus:return";
@@ -587,10 +586,15 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
                            juce::String("fx:return")},
                  std::pair{EffectOwnerSpec{EffectOwnerKindSpec::master, {}},
                            juce::String("fx:master")}}) {
+            const auto originalState = engine.devicePersistedState(owner, id, error);
+            ASSERT_TRUE(originalState.has_value()) << error;
             ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.75f, error)) << error;
             auto state = engine.devicePersistedState(owner, id, error);
             ASSERT_TRUE(state.has_value()) << error;
-            ASSERT_FALSE(state->parameterValues.empty());
+            ASSERT_EQ(state->parameterValues.size(), originalState->parameterValues.size());
+            for (std::size_t index = 1; index < state->parameterValues.size(); ++index)
+                EXPECT_NEAR(state->parameterValues[index], originalState->parameterValues[index],
+                            0.001f);
             EXPECT_NEAR(state->parameterValues[0], 0.75f, 0.001f);
             ASSERT_TRUE(state->stateData.has_value());
             ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.25f, error));
@@ -600,6 +604,19 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
             ASSERT_TRUE(engine.setDeviceBypassed(owner, id, true, error));
             EXPECT_TRUE(engine.devicePersistedState(owner, id, error)->bypassed);
         }
+        for (auto& busSpec : candidate.graph.mixer.buses) {
+            for (auto& effect : busSpec.effects)
+                effect.state = *engine.devicePersistedState(
+                    EffectOwnerSpec{EffectOwnerKindSpec::bus, busSpec.id}, effect.id, error);
+        }
+        for (auto& effect : candidate.graph.mixer.masterEffects)
+            effect.state = *engine.devicePersistedState(
+                EffectOwnerSpec{EffectOwnerKindSpec::master, {}}, effect.id, error);
+        candidate.graph.mixer.buses[0].gainDb = -9.0;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        graph = TimelineEngineTestPeer::committedGraph(engine);
+        EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
+        EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
         ASSERT_TRUE(engine.setChannelMixControl(
             EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"}, -9.0f, 0.2f, error));
         ASSERT_TRUE(engine.setSendLevelControl("send:first", -12.0f, error));
@@ -634,7 +651,6 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
     snapshot.graph.tracks = {first, second};
     MixBusSpec group;
     group.id = "bus:group";
-    group.panLaw = "unityCenterStereo";
     auto returnBus = group;
     returnBus.id = "bus:return";
     returnBus.kind = MixBusKindSpec::returnBus;

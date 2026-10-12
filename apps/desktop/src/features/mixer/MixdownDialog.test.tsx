@@ -1,0 +1,122 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { RenderResult } from '@/model/domain';
+import { canonicalState, defaultSession } from '@/native/browser-defaults';
+import { FakeNativeApi } from '@/native/native-api-fake';
+import { toAssetId } from '@/native/contracts';
+import { MixdownDialog } from './MixdownDialog';
+
+afterEach(cleanup);
+
+it.each(['measured', 'unavailable'] as const)(
+  'saves canonical mastering targets and displays the completed %s WAV',
+  async (state) => {
+    const session = defaultSession();
+    const api = new FakeNativeApi();
+    api.setMixdown = vi.fn(async (settings) => {
+      session.settings.mixdown = structuredClone(settings);
+      return {
+        canonical: canonicalState(structuredClone(session)),
+        createdEntityIds: {},
+        projection: { state: 'notRequired' as const },
+      };
+    });
+    const result: RenderResult = {
+      mastering:
+        state === 'measured'
+          ? {
+              target: { integratedLufs: -16, truePeakDb: -2, loudnessRangeLu: 11 },
+              input: { integratedLufs: -21, truePeakDb: -7, loudnessRangeLu: 4 },
+              deviation: { integratedLufs: -0.12, truePeakDb: -0.08, loudnessRangeLu: -7 },
+              normalizationType: 'linear',
+              truePeakCorrectionDb: 0,
+            }
+          : null,
+      measurements: {
+        samplePeakDbfs: state === 'measured' ? -3.01 : 1.94,
+        loudness:
+          state === 'measured'
+            ? {
+                state,
+                measurement: { integratedLufs: -16.12, truePeakDb: -2.08, loudnessRangeLu: 4 },
+              }
+            : { state, reason: 'ffmpeg is unavailable' },
+      },
+      warnings: state === 'measured' ? [] : ['sample peak exceeds 0 dbfs'],
+      assetId: toAssetId('asset:output'),
+      path: 'C:/renders/final.wav',
+      sampleRate: 48000,
+      frames: 192000,
+      durationMs: 4000,
+      clipCount: 1,
+      rangeStartMs: 0,
+      rangeEndMs: 4000,
+      normalized: false,
+      trackId: null,
+      state: 'completed',
+      message: 'completed',
+    };
+    api.startRenderJob = vi.fn(async () => ({
+      kind: 'render' as const,
+      id: 'job:render',
+      state: 'running' as const,
+      progress: 0,
+      message: 'rendering',
+      result: null,
+    }));
+    api.getBackgroundJob = vi.fn(async () => ({
+      kind: 'render' as const,
+      id: 'job:render',
+      state: 'completed' as const,
+      progress: 1,
+      message: 'completed',
+      result,
+    }));
+    function Harness() {
+      const [current, setCurrent] = useState(structuredClone(session));
+      return (
+        <MixdownDialog
+          session={current}
+          api={api}
+          applyCanonicalState={(canonical) => {
+            setCurrent(canonical.session);
+            return true;
+          }}
+          onClose={() => undefined}
+        />
+      );
+    }
+    render(<Harness />);
+    fireEvent.change(screen.getByLabelText('Tail (seconds)'), { target: { value: '3' } });
+    if (state === 'measured') {
+      fireEvent.click(screen.getByLabelText('Loudness Mastering'));
+      fireEvent.change(screen.getByLabelText('Target Integrated LUFS'), {
+        target: { value: '-16' },
+      });
+      fireEvent.change(screen.getByLabelText('True Peak ceiling (dBTP)'), {
+        target: { value: '-2' },
+      });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save and render' }));
+    await waitFor(() => expect(session.settings.mixdown.tailSeconds).toBe(3));
+    if (state === 'measured') {
+      expect(session.settings.mixdown.mastering?.integratedLufs).toBe(-16);
+      expect(session.settings.mixdown.mastering?.truePeakDb).toBe(-2);
+    } else expect(session.settings.mixdown.mastering).toBeNull();
+    await screen.findByText('C:/renders/final.wav');
+    if (state === 'measured') {
+      expect(screen.getByText('-16.12 LUFS')).toBeInTheDocument();
+      expect(screen.getByText('-2.08 dBTP')).toBeInTheDocument();
+      expect(screen.getByText('4.00 LU')).toBeInTheDocument();
+      expect(screen.getByText('-3.01 dBFS')).toBeInTheDocument();
+      expect(screen.getByText(/True Peak correction/)).toHaveTextContent('Deviation -0.12 LUFS');
+    } else {
+      expect(screen.getByText('ffmpeg is unavailable')).toBeInTheDocument();
+      expect(screen.getByText('1.94 dBFS')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('sample peak exceeds 0 dbfs');
+    }
+  },
+);

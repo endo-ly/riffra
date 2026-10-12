@@ -43,9 +43,8 @@ public:
             for (int channel = 0; channel < 2; ++channel) {
                 const auto value = audible ? source.getSample(channel, sample) * gain : 0.0f;
                 buffer.setSample(channel, position, value);
-                destination.addSample(
-                    channel, sample,
-                    lowLatency || delaySamples == 0 ? value : buffer.getSample(channel, read));
+                destination.addSample(channel, sample,
+                                      lowLatency ? value : buffer.getSample(channel, read));
             }
             position = read;
         }
@@ -60,7 +59,6 @@ private:
 /// Prepared effect processing and mix controls shared by Groups and Returns.
 struct MixerChannel final {
     juce::String id;
-    MixBusKindSpec kind = MixBusKindSpec::group;
     std::vector<PluginDeviceSpec> effectSpecs;
     std::shared_ptr<PluginChain> effects = std::make_shared<PluginChain>();
     juce::AudioBuffer<float> input;

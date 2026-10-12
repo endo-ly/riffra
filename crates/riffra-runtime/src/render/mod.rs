@@ -231,16 +231,21 @@ fn render_timeline_with_renderer(
     if !plan.output_path.is_file() {
         return Err("Native Offline Render completed without producing its WAV output.".into());
     }
-    let mastering = if let Some(target) = &session.settings.mixdown.mastering {
-        Some(Box::new(mastering::master(
-            &plan.output_path,
-            target,
-            plan.sample_rate,
-            cancelled,
-        )?))
-    } else {
-        None
-    };
+    let (mastering, mastered_measurement) =
+        if let Some(target) = &session.settings.mixdown.mastering {
+            let (report, measurement) =
+                mastering::master(&plan.output_path, target, plan.sample_rate, cancelled)?;
+            (Some(Box::new(report)), Some(measurement))
+        } else {
+            (None, None)
+        };
+    let (measurements, warnings) = mastering::measure_output(
+        &plan.output_path,
+        plan.sample_rate,
+        mastered_measurement,
+        session.settings.mixdown.mastering.as_ref(),
+        cancelled,
+    )?;
 
     let timebase = &session.arrangement.timebase;
     let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
@@ -285,6 +290,8 @@ fn render_timeline_with_renderer(
     pending.asset_id = Some(rendered_asset_id.clone());
 
     let result = RenderResult {
+        measurements,
+        warnings,
         mastering,
         asset_id: rendered_asset_id,
         path: plan.output_path.to_string_lossy().into_owned(),
@@ -563,7 +570,15 @@ fn render_stems_with_renderer(
             return Err("Rendered stems do not have a shared frame count.".into());
         }
         frames = Some(stem_frames);
-        completed.push((track, plan.source_ids, plan.output_path));
+        let (measurements, warnings) =
+            mastering::measure_output(&plan.output_path, sample_rate, None, None, cancelled)?;
+        completed.push((
+            track,
+            plan.source_ids,
+            plan.output_path,
+            measurements,
+            warnings,
+        ));
     }
 
     if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
@@ -575,7 +590,7 @@ fn render_stems_with_renderer(
         RenderRange::TimeSelection { .. } => "timeSelection",
     };
     let mut stems = Vec::with_capacity(completed.len());
-    for (track, source_ids, output_path) in completed {
+    for (track, source_ids, output_path, measurements, warnings) in completed {
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
@@ -612,6 +627,8 @@ fn render_stems_with_renderer(
         };
         pending.register(asset_id.clone(), output_path.clone());
         stems.push(RenderStem {
+            measurements,
+            warnings,
             track_id: track.id.clone(),
             track_name: track.name.clone(),
             asset_id,
@@ -716,6 +733,9 @@ fn build_render_plan_with_conditions(
         for track in &mut render_session.arrangement.tracks {
             track.muted = track.id != track_id;
             track.solo = false;
+        }
+        for bus in &mut render_session.arrangement.mixer.buses {
+            bus.solo = false;
         }
     }
 
@@ -833,12 +853,31 @@ fn build_render_plan_with_conditions(
 }
 
 fn audible_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
-    let has_solo = session.arrangement.tracks.iter().any(|track| track.solo);
-    session
-        .arrangement
+    let arrangement = &session.arrangement;
+    let has_solo = arrangement.tracks.iter().any(|track| track.solo)
+        || arrangement.mixer.buses.iter().any(|bus| bus.solo);
+    arrangement
         .tracks
         .iter()
-        .filter(|track| !track.muted && (!has_solo || track.solo))
+        .filter(|track| {
+            if track.muted {
+                return false;
+            }
+            let group = track
+                .output_bus_id
+                .as_ref()
+                .and_then(|id| arrangement.mixer.buses.iter().find(|bus| &bus.id == id));
+            let selected =
+                !has_solo || track.solo || group.is_some_and(|bus| bus.solo && !bus.muted);
+            let dry = selected && group.is_none_or(|bus| !bus.muted);
+            dry || arrangement.mixer.sends.iter().any(|send| {
+                send.track_id == track.id
+                    && send.enabled
+                    && arrangement.mixer.buses.iter().any(|bus| {
+                        bus.id == send.return_bus_id && !bus.muted && (selected || bus.solo)
+                    })
+            })
+        })
         .map(|track| track.id.as_str())
         .collect()
 }
@@ -1257,6 +1296,48 @@ mod tests {
             44_100,
             33_075,
         ));
+        let plugin_path = std::env::var("RIFFRA_TEST_EFFECT_PATH")
+            .expect("RIFFRA_TEST_EFFECT_PATH must point to riffra-test-effect");
+        let fx = |id: &str| {
+            riffra_core::EffectDevice::new(id.into(), id.into(), plugin_path.clone()).unwrap()
+        };
+        session.arrangement.tracks[1].output_bus_id = Some("bus:group".into());
+        session.arrangement.mixer.buses = vec![
+            riffra_core::MixBus {
+                id: "bus:group".into(),
+                name: "Group".into(),
+                kind: riffra_core::MixBusKind::Group,
+                gain_db: 0.0,
+                pan: 0.0,
+                pan_law: riffra_core::PanLaw::UnityCenterStereo,
+                muted: false,
+                solo: false,
+                effects: vec![fx("fx:group")],
+            },
+            riffra_core::MixBus {
+                id: "bus:return".into(),
+                name: "Return".into(),
+                kind: riffra_core::MixBusKind::Return,
+                gain_db: 0.0,
+                pan: 0.0,
+                pan_law: riffra_core::PanLaw::UnityCenterStereo,
+                muted: false,
+                solo: false,
+                effects: vec![fx("fx:return")],
+            },
+        ];
+        session.arrangement.mixer.sends = ["audio", "midi"]
+            .into_iter()
+            .map(|id| riffra_core::Send {
+                id: format!("send:{id}"),
+                track_id: id.into(),
+                return_bus_id: "bus:return".into(),
+                level_db: -6.0,
+                position: riffra_core::SendPosition::PostFader,
+                enabled: true,
+            })
+            .collect();
+        session.arrangement.mixer.master_effects = vec![fx("fx:master")];
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
         let worker = RenderWorker::new(executable.into());
         let mut pending = render_stems_with_cancellation(
@@ -1301,6 +1382,54 @@ mod tests {
             frame_counts.insert(metadata.frame_count);
         }
         assert_eq!(frame_counts, BTreeSet::from([pending.result.frames]));
+        let mix = render_timeline_with_cancellation(
+            &worker,
+            &root,
+            &catalog,
+            &session,
+            2,
+            RenderOptions::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let samples = |path: &Path| {
+            let bytes = fs::read(path).unwrap();
+            let wav = riffra_host::parse_wav(&bytes).unwrap();
+            bytes[wav.data_offset..wav.data_offset + wav.data_len]
+                .chunks_exact(usize::from(wav.bits_per_sample / 8))
+                .map(|sample| {
+                    crate::analysis::decode_sample(sample, wav.format, wav.bits_per_sample).unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        let mix_samples = samples(Path::new(&mix.path));
+        let stem_samples = pending
+            .result
+            .stems
+            .iter()
+            .map(|stem| samples(Path::new(&stem.path)))
+            .collect::<Vec<_>>();
+        assert_eq!(mix.frames, pending.result.frames);
+        let maximum_error = mix_samples
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| {
+                (sample - stem_samples.iter().map(|stem| stem[index]).sum::<f64>()).abs()
+            })
+            .fold(0.0_f64, f64::max);
+        assert!(
+            maximum_error < 0.0001,
+            "linear mixer stems differ from the complete mix by {maximum_error}"
+        );
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(pending.result.directory.clone() + "/render.json").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest["stems"][0]["measurements"],
+            serde_json::to_value(&pending.result.stems[0].measurements).unwrap()
+        );
+        assert!(mix.measurements.sample_peak_dbfs.is_some());
         pending.output.commit();
         fs::remove_dir_all(root).unwrap();
     }

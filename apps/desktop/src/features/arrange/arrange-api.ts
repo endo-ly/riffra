@@ -1,5 +1,6 @@
 import type {
   ArrangeApi,
+  RenderApi,
   AudioApi,
   AnalysisApi,
   JobApi,
@@ -10,6 +11,7 @@ import type {
 
 /** Native capabilities required by the Arrange workspace shell. */
 export type ArrangeWorkspaceApi = ArrangeApi &
+  RenderApi &
   Pick<
     AudioApi,
     | 'getAudioStatus'
@@ -23,7 +25,7 @@ export type ArrangeWorkspaceApi = ArrangeApi &
     | 'setMasterGainDb'
   > &
   Pick<AnalysisApi, 'analyzeAsset'> &
-  Pick<JobApi, 'scanVst3Folder'> &
+  Pick<JobApi, 'scanVst3Folder' | 'getBackgroundJob' | 'cancelBackgroundJob'> &
   Pick<NativeEventApi, 'onTransportStatus'> &
   Pick<ProjectApi, 'importMidiBytes'> &
   Pick<TransportApi, 'seekTimeline'>;

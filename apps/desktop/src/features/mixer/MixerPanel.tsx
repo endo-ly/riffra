@@ -7,6 +7,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import { useState } from 'react';
+import { MixdownDialog } from './MixdownDialog';
 import { MixerRouting } from './MixerRouting';
 import { MixerBusChannelStrip } from './MixerBusChannelStrip';
 import { MixerMasterChannelStrip } from './MixerMasterChannelStrip';
@@ -34,6 +35,7 @@ export function MixerPanel(props: MixerPanelProps) {
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<MixBusKind>('group');
   const [error, setError] = useState<string | null>(null);
+  const [mixdownOpen, setMixdownOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const commit = (operation: Promise<ArrangementMutationResult>) => {
     setError(null);
@@ -187,6 +189,7 @@ export function MixerPanel(props: MixerPanelProps) {
       </div>
 
       <MixerMasterChannelStrip
+        onOpenMixdown={() => setMixdownOpen(true)}
         onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'master' })}
         missingDeviceIds={props.missingDeviceIds}
         session={props.session}
@@ -198,6 +201,15 @@ export function MixerPanel(props: MixerPanelProps) {
         <p className={styles.error} role="alert">
           {error}
         </p>
+      )}
+      {mixdownOpen && (
+        <MixdownDialog
+          key={props.session.sessionId}
+          session={props.session}
+          api={props.api}
+          applyCanonicalState={props.applyCanonicalState}
+          onClose={() => setMixdownOpen(false)}
+        />
       )}
       {routingTrack && (
         <MixerRouting

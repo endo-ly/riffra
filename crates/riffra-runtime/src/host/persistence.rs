@@ -261,11 +261,18 @@ impl HostState {
                             "plugin parameter value is invalid".into(),
                         ));
                     }
-                    app.set_device_parameter(
+                    let state = self
+                        .audio
+                        .get_plugin_state(&change.owner, &change.device_id)
+                        .map_err(|error| {
+                            riffra_core::ApplicationError::InvalidCommand(error.to_string())
+                        })?;
+                    app.persist_plugin_state(
                         &change.owner,
                         &change.device_id,
-                        change.parameter_index as usize,
-                        change.value,
+                        state.parameter_values,
+                        state.state_data,
+                        state.bypassed,
                     )
                 }
             })
@@ -416,11 +423,11 @@ mod tests {
         );
         (root, host)
     }
-    fn parameter_change(project_id: &str, value: f32) -> riffra_control::HostEventFrame {
+    fn plugin_state_change(project_id: &str, value: f32) -> riffra_control::HostEventFrame {
         riffra_control::HostEventFrame::new(
-            "plugin-parameter-changed",
+            "plugin-state-changed",
             serde_json::json!({
-                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "parameterIndex": 0, "value": value,
+                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "parameterValues": [value], "stateData": null, "bypassed": false,
             }),
         )
     }
@@ -438,7 +445,7 @@ mod tests {
             .unwrap();
         let own_snapshot = committed.snapshot.clone();
         let weak = Arc::downgrade(&state);
-        let frame = parameter_change(&own_snapshot.canonical.project_id, 0.75);
+        let frame = plugin_state_change(&own_snapshot.canonical.project_id, 0.75);
         let periodic = std::thread::spawn(move || {
             let mut pending = HashMap::new();
             collect_plugin_change(&mut pending, frame, &mut 0);
@@ -483,15 +490,16 @@ mod tests {
         let writer = state.project.write();
         let previous = writer.project().core.canonical_state();
         let storage = writer.project().storage.clone();
-        state.events.emit(crate::HostEvent::PluginParameterChanged(
-            crate::model::PluginParameterChanged {
+        state.events.emit(crate::HostEvent::PluginStateChanged(
+            crate::model::PluginStateChanged {
                 project_id: previous.project_id.clone(),
                 owner: riffra_core::EffectOwner::Track {
                     id: "track:1".into(),
                 },
                 device_id: "device:1".into(),
-                parameter_index: 0,
-                value: 0.5,
+                parameter_values: vec![0.5],
+                state_data: None,
+                bypassed: false,
             },
         ));
 
@@ -543,15 +551,16 @@ mod tests {
         let mut writer = state.project.write();
         let previous = writer.project().core.canonical_state();
         for (device_id, value) in [("deleted", 0.25), ("device:1", 0.75)] {
-            state.events.emit(crate::HostEvent::PluginParameterChanged(
-                crate::model::PluginParameterChanged {
+            state.events.emit(crate::HostEvent::PluginStateChanged(
+                crate::model::PluginStateChanged {
                     project_id: previous.project_id.clone(),
                     owner: riffra_core::EffectOwner::Track {
                         id: "track:1".into(),
                     },
                     device_id: device_id.into(),
-                    parameter_index: 0,
-                    value,
+                    parameter_values: vec![value],
+                    state_data: None,
+                    bypassed: false,
                 },
             ));
         }
@@ -573,7 +582,7 @@ mod tests {
             let changes = receiver.recv().unwrap();
             assert_eq!(changes.len(), 2);
             assert!(
-                matches!(&changes[1].change, PendingPluginChange::Parameter(change) if change.value == 0.75)
+                matches!(&changes[1].change, PendingPluginChange::State(change) if change.parameter_values == [0.75])
             );
         }
         drop(writer);

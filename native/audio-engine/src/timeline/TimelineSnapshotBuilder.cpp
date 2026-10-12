@@ -24,6 +24,18 @@ juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     return std::visit([](const auto& value) { return value.id; }, *instrument);
 }
 
+bool matchesExecutedEffects(const PluginChain& chain,
+                            const std::vector<PluginDeviceSpec>& effects) {
+    for (const auto& effect : effects) {
+        const auto* rack = chain.findDevice(effect.id);
+        if (rack == nullptr) return false;
+        juce::String error;
+        const auto state = rack->persistedState(error);
+        if (!state || *state != effect.state) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 TimelineSnapshotBuilder::TimelineSnapshotBuilder(TimelineEngine& engine) noexcept
@@ -200,7 +212,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
             track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
             track->reuseRuntimeDevices =
-                existing->effects == track->effects && existing->instrument == track->instrument &&
+                (existing->effects == track->effects ||
+                 matchesExecutedEffects(existing->runtime->effects(), track->effects)) &&
+                existing->instrument == track->instrument &&
                 existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
             if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
         });
@@ -454,7 +468,6 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
     for (const auto& spec : graph.mixer.buses) {
         auto bus = std::make_unique<MixerChannel>();
         bus->id = spec.id;
-        bus->kind = spec.kind;
         bus->effectSpecs = spec.effects;
         bus->gainDb.store(static_cast<float>(spec.gainDb));
         bus->pan.store(static_cast<float>(spec.pan));
@@ -470,7 +483,9 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 previous->outputSampleRate != sampleRate)
                 return;
             const auto* existing = previous->mixer.findBus(spec.id);
-            if (existing != nullptr && existing->effectSpecs == spec.effects) {
+            if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
+                (existing->effectSpecs == spec.effects ||
+                 matchesExecutedEffects(*existing->effects, spec.effects))) {
                 bus->effects = existing->effects;
                 reused = true;
             }
@@ -488,7 +503,9 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto* previous = graphs.latestCommitted;
         if (previous != nullptr && !graphs.devicesNeedReprepare &&
             previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
-            previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs) {
+            sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
+            (previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs ||
+             matchesExecutedEffects(*previous->mixer.masterEffects, mixer.masterEffectSpecs))) {
             mixer.masterEffects = previous->mixer.masterEffects;
             masterReused = true;
         }

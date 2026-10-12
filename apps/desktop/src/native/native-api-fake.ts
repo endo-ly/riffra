@@ -10,7 +10,6 @@ import type {
   MissingDependency,
   RecordingAsset,
   RecordingStatus,
-  RenderResult,
   RuntimeProjectionStatus,
   ScanReport,
   HostConnectionState,
@@ -22,7 +21,6 @@ import type {
   TransportStatus,
 } from '@/model/domain';
 import { defaultSession } from './browser-defaults';
-import { toAssetId } from './contracts';
 import type { NativeApi, HostConnectionBootstrap, HostConnectionChangedEvent } from './native-api';
 
 type ResponseValue = unknown | ((...arguments_: unknown[]) => unknown);
@@ -370,9 +368,16 @@ export class FakeNativeApi implements NativeApi {
   installAppUpdate() {
     return this.command('installAppUpdate', []);
   }
-  renderTimeline(...args: Parameters<NativeApi['renderTimeline']>) {
-    return this.command('renderTimeline', args);
+  setMixdown(...args: Parameters<NativeApi['setMixdown']>) {
+    return this.command('setMixdown', args);
   }
+  startRenderJob(...args: Parameters<NativeApi['startRenderJob']>) {
+    return this.command('startRenderJob', args);
+  }
+  startStemRenderJob(...args: Parameters<NativeApi['startStemRenderJob']>) {
+    return this.command('startStemRenderJob', args);
+  }
+
   probeAudioDevices(...args: Parameters<NativeApi['probeAudioDevices']>) {
     return this.command('probeAudioDevices', args);
   }
@@ -1051,24 +1056,6 @@ export class FakeNativeApi implements NativeApi {
         return Promise.resolve(null);
       case 'scanVst3Folder':
         return Promise.resolve({ plugins: this.plugins, issues: [] });
-      case 'renderTimeline': {
-        const result: RenderResult = {
-          mastering: null,
-          assetId: toAssetId('asset:018f85b9-5fe1-7ef2-91d8-e6b4e665d41a'),
-          path: 'C:\\Riffra\\render.wav',
-          sampleRate: 48_000,
-          frames: 48_000,
-          durationMs: 1_000,
-          clipCount: 0,
-          rangeStartMs: 0,
-          rangeEndMs: 1_000,
-          normalized: false,
-          trackId: null,
-          state: 'completed',
-          message: 'fake render',
-        };
-        return Promise.resolve(result);
-      }
       default:
         break;
     }
@@ -1118,6 +1105,7 @@ export class FakeNativeApi implements NativeApi {
 
 const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'setMasterGainDb',
+  'setMixdown',
   'relinkMissingDependency',
   'restoreRecoveryGeneration',
   'undoSession',

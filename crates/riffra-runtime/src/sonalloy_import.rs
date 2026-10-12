@@ -622,7 +622,12 @@ mod tests {
         mastered_session.settings.mixdown.mastering = Some(target.clone());
         let mastered = render(&package_root, &mastered_session);
         let report = mastered.mastering.as_ref().unwrap();
-        assert!(report.output.true_peak_db <= target.true_peak_db);
+        let crate::api::output::LoudnessReadout::Measured { measurement } =
+            &mastered.measurements.loudness
+        else {
+            panic!("mastered output has no measurements")
+        };
+        assert!(measurement.true_peak_db <= target.true_peak_db);
         assert!(report.deviation.integrated_lufs.abs() < 0.1);
         let actual = samples(Path::new(&mastered.path));
         assert_eq!(actual.len(), sonalloy_master_samples.len());

@@ -21,7 +21,7 @@ impl<S: SessionStorage + ?Sized> Application<'_, S> {
                 kind,
                 gain_db: 0.0,
                 pan: 0.0,
-                pan_law: Default::default(),
+                pan_law: crate::PanLaw::UnityCenterStereo,
                 muted: false,
                 solo: false,
                 effects: Vec::new(),

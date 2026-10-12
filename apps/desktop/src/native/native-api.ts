@@ -28,7 +28,8 @@ import type {
   ProjectState,
   RecordingAsset,
   RenderOptions,
-  RenderResult,
+  MixdownSettings,
+  RenderStemsParams,
   ScanReport,
   ArrangementMutationResult,
   ProjectTimebase,
@@ -177,7 +178,9 @@ export interface AnalysisApi {
 }
 
 export interface RenderApi {
-  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
+  setMixdown(settings: MixdownSettings): Promise<ArrangementMutationResult>;
+  startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
+  startStemRenderJob(params: RenderStemsParams): Promise<BackgroundJobStatus>;
 }
 
 export interface AudioApi {

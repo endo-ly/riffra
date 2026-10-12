@@ -288,31 +288,47 @@ pub fn set_device_parameter(
     value: f32,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if !value.is_finite() {
-        return Err("Track Device parameter value must be finite.".into());
+        return Err("device parameter value must be finite".into());
     }
     let value = value.clamp(0.0, 1.0);
     let session = current_session(context)?;
-    let index = usize::try_from(parameter_index)
-        .map_err(|_| AdapterError::command("device parameter index is invalid"))?;
     let device = session
         .arrangement
         .device(owner, device_id)
         .map_err(|error| AdapterError::command(error.to_string()))?;
-    let plugin = device
-        .plugin()
-        .ok_or_else(|| AdapterError::command("built-in instruments do not expose parameters"))?;
-    let previous = plugin.parameter_values.get(index).copied().unwrap_or(0.0);
-    context
-        .audio
-        .set_device_parameter(owner, device_id, parameter_index, value)?;
-    let committed =
-        context.commit(|mut app| app.set_device_parameter(owner, device_id, index, value));
+    if device.plugin().is_none() {
+        return Err(AdapterError::command(
+            "built-in instruments do not expose parameters",
+        ));
+    }
+    let previous = context.audio.get_plugin_state(owner, device_id)?;
+    let index = usize::try_from(parameter_index)
+        .map_err(|_| AdapterError::command("device parameter index is invalid"))?;
+    if index >= previous.parameter_values.len() {
+        return Err(AdapterError::command("device parameter index is invalid"));
+    }
+    let committed: Result<_, AdapterError> = (|| {
+        context
+            .audio
+            .set_device_parameter(owner, device_id, parameter_index, value)?;
+        let state = context.audio.get_plugin_state(owner, device_id)?;
+        context.commit(|mut app| {
+            app.persist_plugin_state(
+                owner,
+                device_id,
+                state.parameter_values,
+                state.state_data,
+                state.bypassed,
+            )
+        })
+    })();
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
-            let _ = context
-                .audio
-                .set_device_parameter(owner, device_id, parameter_index, previous);
+            if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
+            {
+                tracing::error!(%rollback_error, device_id, "plugin parameter rollback failed");
+            }
             Err(error)
         }
     }

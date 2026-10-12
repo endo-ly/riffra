@@ -13,6 +13,7 @@ interface MixerMasterChannelStripProps {
   api: Pick<ArrangeWorkspaceApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onOpenDevices: () => void;
+  onOpenMixdown: () => void;
   missingDeviceIds: readonly string[];
   disabled?: boolean;
 }
@@ -67,15 +68,20 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
         <small>STEREO OUTPUT</small>
       </div>
 
-      <button type="button" className={styles.fxSummary} onClick={props.onOpenDevices}>
-        FX {props.session.arrangement.mixer.masterEffects.length}
-        {props.session.arrangement.mixer.masterEffects.some(
-          (device) =>
-            device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
-        )
-          ? ' · MISSING'
-          : ''}
-      </button>
+      <div className={styles.masterActions}>
+        <button type="button" className={styles.fxSummary} onClick={props.onOpenDevices}>
+          FX {props.session.arrangement.mixer.masterEffects.length}
+          {props.session.arrangement.mixer.masterEffects.some(
+            (device) =>
+              device.plugin.disabledPlaceholder || props.missingDeviceIds.includes(device.id),
+          )
+            ? ' · MISSING'
+            : ''}
+        </button>
+        <button type="button" onClick={props.onOpenMixdown}>
+          Mixdown…
+        </button>
+      </div>
       <div className={styles.masterMixControl}>
         <MixerMeter master mode="peak" />
 

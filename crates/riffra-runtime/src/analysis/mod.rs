@@ -158,7 +158,10 @@ pub(crate) fn decode_sample(bytes: &[u8], format: u16, bits: u16) -> Result<f64,
             _ => return Err("Unsupported WAV sample width.".into()),
         }
     };
-    Ok(sample.clamp(-1.0, 1.0))
+    if !sample.is_finite() {
+        return Err("wav contains a non-finite sample".into());
+    }
+    Ok(sample)
 }
 
 fn spectrum_peak(samples: &[f64], sample_rate: u32) -> Option<f64> {

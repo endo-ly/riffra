@@ -61,6 +61,8 @@ pub enum BackgroundJobStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderResult {
+    pub measurements: AudioMeasurements,
+    pub warnings: Vec<String>,
     pub mastering: Option<Box<MasteringReport>>,
     pub asset_id: AssetId,
     pub path: String,
@@ -104,6 +106,9 @@ pub struct RenderStemsResult {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderStem {
+    /// Measurements of this completed WAV; no individual loudness mastering is applied.
+    pub measurements: AudioMeasurements,
+    pub warnings: Vec<String>,
     /// Canonical Track ID.
     pub track_id: String,
     /// Track name at render time.
@@ -120,7 +125,6 @@ pub struct RenderStem {
 pub struct MasteringReport {
     pub target: riffra_core::LoudnessMastering,
     pub input: LoudnessMeasurement,
-    pub output: LoudnessMeasurement,
     pub deviation: LoudnessMeasurement,
     pub normalization_type: String,
     pub true_peak_correction_db: f64,
@@ -133,4 +137,21 @@ pub struct LoudnessMeasurement {
     pub integrated_lufs: f64,
     pub true_peak_db: f64,
     pub loudness_range_lu: f64,
+}
+
+/// Measurements taken from the completed WAV, without re-rendering its graph.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeasurements {
+    /// Actual PCM sample peak. `None` represents digital silence (negative infinity).
+    pub sample_peak_dbfs: Option<f64>,
+    pub loudness: LoudnessReadout,
+}
+
+/// FFmpeg loudness measurements, or the reason they could not be obtained.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum LoudnessReadout {
+    Measured { measurement: LoudnessMeasurement },
+    Unavailable { reason: String },
 }

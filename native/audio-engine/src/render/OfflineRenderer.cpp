@@ -75,11 +75,14 @@ bool normalizeFile(const juce::File& source, const juce::File& destination,
 }
 
 bool hostsPlugins(const ExecutionGraph& graph) noexcept {
-    return std::any_of(graph.tracks.begin(), graph.tracks.end(), [](const auto& track) {
-        return !track.effects.empty() ||
-               (track.instrument.has_value() &&
-                std::holds_alternative<Vst3InstrumentSpec>(*track.instrument));
-    });
+    return !graph.mixer.masterEffects.empty() ||
+           std::any_of(graph.mixer.buses.begin(), graph.mixer.buses.end(),
+                       [](const auto& bus) { return !bus.effects.empty(); }) ||
+           std::any_of(graph.tracks.begin(), graph.tracks.end(), [](const auto& track) {
+               return !track.effects.empty() ||
+                      (track.instrument.has_value() &&
+                       std::holds_alternative<Vst3InstrumentSpec>(*track.instrument));
+           });
 }
 
 // Plugins such as disk-streaming samplers keep loading their content after instantiation and
