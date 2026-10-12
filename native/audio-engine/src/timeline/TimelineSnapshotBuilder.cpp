@@ -565,12 +565,17 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto hasEnabledSend =
             std::any_of(graph.mixer.sends.begin(), graph.mixer.sends.end(),
                         [&](const auto& send) { return send.trackId == spec.id && send.enabled; });
+        const auto hasExternalAudioDependents =
+            std::any_of(prepared.tracks.begin(), prepared.tracks.end(), [&](const auto& candidate) {
+                return candidate->runtime->externalAudioSource == &track;
+            });
         const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
         track.mainOutputAudible =
             mainSelected && !spec.muted && (group == nullptr || !group->muted);
-        const auto lowLatencyPdcCandidate = (track.instrumentTrack || track.monitorInput) &&
-                                            !hasEnabledSend &&
-                                            !spec.externalAudioSourceTrackId.has_value();
+        const auto lowLatencyPdcCandidate =
+            (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
+            !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
+            spec.volumeAutomation.empty() && spec.panAutomation.empty();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
                       1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});
         for (const auto& send : graph.mixer.sends) {

@@ -794,6 +794,74 @@ TEST(MixerRoutingTest, LowLatencyMonitoringKeepsTimelinePdcAcrossMasterAndGroupR
     }
 }
 
+TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("restricted-low-latency.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    enum class Restriction { externalAudioSource, volumeAutomation, panAutomation };
+    for (const auto restriction : {Restriction::externalAudioSource, Restriction::volumeAutomation,
+                                   Restriction::panAutomation}) {
+        SCOPED_TRACE(static_cast<int>(restriction));
+        auto snapshot = makeTestSnapshot();
+        auto monitoredTrack = makeAudioTrack("track:monitored");
+        monitoredTrack.monitorInput = true;
+        monitoredTrack.audioInput = AudioInputSpec{0};
+        AudioClipSpec clip;
+        clip.id = "clip:monitored";
+        clip.path = source.getFullPathName();
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        monitoredTrack.audioClips.push_back(clip);
+        if (restriction == Restriction::volumeAutomation)
+            monitoredTrack.volumeAutomation = {{0, -6.0}};
+        if (restriction == Restriction::panAutomation) monitoredTrack.panAutomation = {{0, 0.5}};
+
+        auto highLatencyTrack = makeAudioTrack("track:high-latency");
+        highLatencyTrack.audioClips.push_back(clip);
+        highLatencyTrack.audioClips.back().id = "clip:high-latency";
+        highLatencyTrack.effects = {{"fx:high:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                    {"fx:high:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                    {"fx:high:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+        snapshot.graph.tracks = {monitoredTrack};
+        if (restriction == Restriction::externalAudioSource) {
+            auto consumer = makeInstrumentTrack("track:consumer");
+            consumer.externalAudioSourceTrackId = monitoredTrack.id;
+            const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
+                                                 .getSiblingFile("sonalloy-bundle")
+                                                 .getChildFile("basic/instruments/duck");
+            consumer.instrument = InternalInstrumentSpec{
+                "instrument:consumer", false,
+                instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
+                instrumentDirectory.getFullPathName()};
+            snapshot.graph.tracks.push_back(consumer);
+        }
+        snapshot.graph.tracks.push_back(highLatencyTrack);
+
+        TimelineEngine engine;
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+
+        // Assert: normal route PDC remains responsible for the full dependent or automated path.
+        const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+        ASSERT_NE(graph, nullptr);
+        ASSERT_GE(graph->summary.maximumLatencySamples, 24u);
+        const auto monitored =
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
+                         [](const auto& track) { return track->id == "track:monitored"; });
+        ASSERT_NE(monitored, graph->tracks.end());
+        EXPECT_TRUE((*monitored)->runtime->lowLatencyMonitoring());
+        EXPECT_FALSE((*monitored)->runtime->lowLatencyPdcBypassActive());
+        EXPECT_EQ((*monitored)->runtime->timelinePdcDelaySamples, 0);
+    }
+}
+
 TEST(MixerRoutingTest, WarmsAndResetsBusReturnAndMasterEffects) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;
