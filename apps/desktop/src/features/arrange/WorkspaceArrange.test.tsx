@@ -8,6 +8,7 @@ import { useArrangeLowerAreaController } from './hooks/useArrangeLowerAreaContro
 import { WorkspaceArrange } from './WorkspaceArrange';
 import { useArrangementTransport } from '@/features/transport/hooks/useArrangementTransport';
 import {
+  type AudioClipMove,
   type ArrangementMutationResult,
   type CreativeSession,
   type RuntimeProjectionStatus,
@@ -103,6 +104,48 @@ function mutationResult(session: CreativeSession): ArrangementMutationResult {
     createdEntityIds: {},
     projection: { state: 'notRequired' },
   };
+}
+
+function offGridAudioMoveSession(): CreativeSession {
+  const session = defaultSession();
+  for (const [id, name] of [
+    ['track:source', 'Source'],
+    ['track:target', 'Target'],
+  ]) {
+    session.arrangement.tracks.push({
+      panLaw: 'equalPower',
+      id,
+      name,
+      kind: 'audio',
+      gainDb: 0,
+      pan: 0,
+      muted: false,
+      solo: false,
+      armed: false,
+      monitoring: 'off',
+      midiInput: {},
+      effects: [],
+    });
+  }
+  session.arrangement.audioClips.push({
+    id: 'clip:off-grid',
+    name: 'Off-grid clip',
+    trackId: 'track:source',
+    assetId: toAssetId('asset:audio'),
+    startTick: 1_100,
+    sourceRange: { start: 0, end: 48_000 },
+    sourceSampleRate: 48_000,
+    timelineDuration: { frames: 48_000, sampleRate: 48_000 },
+    gainDb: 0,
+    pan: 0,
+    fadeIn: { frames: 0, sampleRate: 48_000 },
+    fadeOut: { frames: 0, sampleRate: 48_000 },
+    loopEnabled: false,
+    muted: false,
+    fadeShape: 'equalPower',
+    takeVariant: 'raw',
+  });
+  return session;
 }
 
 describe('WorkspaceArrange', () => {
@@ -1383,6 +1426,67 @@ describe('WorkspaceArrange', () => {
       ).toBeInTheDocument(),
     );
     expect(api.calls).not.toContain('moveAudioClips');
+  });
+
+  it('preserves an off-grid clip tick when dragging it vertically to another track', async () => {
+    const session = offGridAudioMoveSession();
+    let movedClips: AudioClipMove[] = [];
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.setResponse('moveAudioClips', (moves: AudioClipMove[]) => {
+      movedClips = moves;
+      return mutationResult(session);
+    });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-arrange-track]')];
+    rows.forEach((row, index) => {
+      vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+        top: index * 70,
+        bottom: (index + 1) * 70,
+      } as DOMRect);
+    });
+    const clip = container.querySelector<HTMLElement>('[data-clip-id="clip:off-grid"]')!;
+
+    fireEvent.pointerDown(clip, { pointerId: 1, clientX: 100, clientY: 35 });
+    fireEvent.pointerMove(clip, { pointerId: 1, clientX: 102, clientY: 85 });
+    fireEvent.pointerMove(clip, { pointerId: 1, clientX: 107, clientY: 115 });
+    fireEvent.pointerUp(clip, { pointerId: 1, clientX: 107, clientY: 115 });
+
+    await waitFor(() => expect(api.calls).toContain('moveAudioClips'));
+    expect(movedClips).toEqual([
+      { clipId: 'clip:off-grid', startTick: 1_100, trackId: 'track:target' },
+    ]);
+  });
+
+  it('recognizes a horizontal move after the clip has moved vertically', async () => {
+    const session = offGridAudioMoveSession();
+    let movedClips: AudioClipMove[] = [];
+    const api = new FakeNativeApi({ bootstrapState: { canonical: canonicalState(session) } });
+    api.setResponse('moveAudioClips', (moves: AudioClipMove[]) => {
+      movedClips = moves;
+      return mutationResult(session);
+    });
+    const { container } = render(<Harness api={api} initialSession={session} />);
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-arrange-track]')];
+    rows.forEach((row, index) => {
+      vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+        top: index * 70,
+        bottom: (index + 1) * 70,
+      } as DOMRect);
+    });
+    const clip = container.querySelector<HTMLElement>('[data-clip-id="clip:off-grid"]')!;
+
+    fireEvent.pointerDown(clip, { pointerId: 1, clientX: 100, clientY: 35 });
+    fireEvent.pointerMove(clip, { pointerId: 1, clientX: 102, clientY: 105 });
+    fireEvent.pointerMove(clip, { pointerId: 1, clientX: 132, clientY: 105 });
+    fireEvent.pointerUp(clip, { pointerId: 1, clientX: 132, clientY: 105 });
+
+    await waitFor(() => expect(api.calls).toContain('moveAudioClips'));
+    expect(movedClips).toHaveLength(1);
+    expect(movedClips[0]).toMatchObject({
+      clipId: 'clip:off-grid',
+      trackId: 'track:target',
+    });
+    expect(movedClips[0].startTick).not.toBe(1_100);
   });
 
   it('adds a Track from the context menu on the empty area below the Tracks', async () => {

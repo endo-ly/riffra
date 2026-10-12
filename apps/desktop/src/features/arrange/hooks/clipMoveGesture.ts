@@ -80,6 +80,7 @@ export function usePointerGesture() {
 
 interface ClipMoveStartEvent {
   clientX: number;
+  clientY: number;
   pointerId: number;
   altKey: boolean;
   currentTarget: HTMLElement;
@@ -150,23 +151,59 @@ export function bindClipMoveGesture<T extends MoveableClip>(
     onMove,
   } = options;
   const originX = event.clientX;
+  const originY = event.clientY;
   const originTick = clip.startTick;
   const element = event.currentTarget;
   const originLeft = element.style.left;
   let pendingTick = originTick;
   let pendingTrack = clip.trackId;
   let duplicate = event.altKey;
+  let horizontalIntent = false;
+  let verticalIntent = false;
+  let horizontalOriginX = originX;
+  let previousX = originX;
+  let previousY = originY;
   element.setPointerCapture?.(event.pointerId);
 
   const move = (pointer: PointerEvent) => {
-    pendingTick = snapTick(
-      originTick + (pointer.clientX - originX) / pixelsPerTick,
-      pointer.altKey,
-    );
+    const horizontalDelta = pointer.clientX - originX;
+    const verticalDelta = pointer.clientY - originY;
+    const horizontalStep = pointer.clientX - previousX;
+    const verticalStep = pointer.clientY - previousY;
+    if (!horizontalIntent) {
+      if (verticalIntent) {
+        if (Math.abs(verticalStep) >= Math.abs(horizontalStep)) {
+          horizontalOriginX = pointer.clientX;
+        } else if (Math.abs(pointer.clientX - horizontalOriginX) >= 4) {
+          horizontalIntent = true;
+        }
+      } else if (
+        Math.abs(horizontalDelta) >= 4 &&
+        Math.abs(horizontalDelta) >= Math.abs(verticalDelta) / 2
+      ) {
+        horizontalIntent = true;
+      } else if (
+        Math.abs(verticalDelta) >= 4 &&
+        Math.abs(verticalDelta) >= Math.abs(horizontalDelta) * 2
+      ) {
+        verticalIntent = true;
+        horizontalOriginX = pointer.clientX;
+      }
+    }
+    pendingTick = horizontalIntent
+      ? snapTick(
+          originTick +
+            (verticalIntent ? pointer.clientX - horizontalOriginX : horizontalDelta) /
+              pixelsPerTick,
+          pointer.altKey,
+        )
+      : originTick;
     duplicate = pointer.altKey;
     element.style.left = `${pendingTick * pixelsPerTick}px`;
-    setSnapGuide(pendingTick);
+    setSnapGuide(horizontalIntent ? pendingTick : null);
     pendingTrack = trackIdAtPointer(trackRows, pointer.clientY, clip.trackId);
+    previousX = pointer.clientX;
+    previousY = pointer.clientY;
   };
   const finish = () => {
     element.style.left = originLeft;
