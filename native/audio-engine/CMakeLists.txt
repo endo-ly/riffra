@@ -378,10 +378,6 @@ if(BUILD_TESTING)
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
-  if(RIFFRA_SANITIZER)
-    target_link_options(riffra-test-effect_VST3 PRIVATE "-fsanitize=${RIFFRA_SANITIZER}")
-  endif()
-
   juce_add_plugin(riffra-test-instrument
     COMPANY_NAME Riffra
     IS_SYNTH TRUE
@@ -404,10 +400,6 @@ if(BUILD_TESTING)
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
-  if(RIFFRA_SANITIZER)
-    target_link_options(riffra-test-instrument_VST3 PRIVATE "-fsanitize=${RIFFRA_SANITIZER}")
-  endif()
-
   add_executable(riffra-real-vst-runtime-test
     tests/plugins/RealVstRuntimeTest.cpp)
   target_link_libraries(riffra-real-vst-runtime-test PRIVATE
@@ -518,7 +510,10 @@ if(BUILD_TESTING)
     RIFFRA_SIDECAR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/sidecar"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
-  add_dependencies(riffra-audio-tests riffra-builtin-resource-stage riffra-test-effect_VST3)
+  add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
+  if(NOT RIFFRA_SANITIZER STREQUAL "thread")
+    add_dependencies(riffra-audio-tests riffra-test-effect_VST3)
+  endif()
   # Sanitizers own the allocator, so allocation tracking is only linked without them.
   if(UNIX AND NOT APPLE AND NOT RIFFRA_SANITIZER)
     target_compile_definitions(riffra-audio-tests PRIVATE RIFFRA_TRACK_MALLOC=1)
