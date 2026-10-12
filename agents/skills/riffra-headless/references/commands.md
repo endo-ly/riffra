@@ -367,9 +367,12 @@ riffra --attach automation set `
   --track-id track:01j... --parameter pan `
   --points-json '[{"id":"p1","tick":3840,"value":-0.5},{"id":"p2","tick":7680,"value":0.5}]'
 
+riffra --attach automation get --track-id track:01j...
+riffra --attach automation get --track-id track:01j... --parameter volume
 riffra --attach automation clear --track-id track:01j... --parameter volume
 ```
 
+- `automation get`は対象Trackの全レーンをvolume、panの順で返す。`--parameter`を指定するとそのレーンだけを返し、未設定なら空配列を返す。Track IDが見つからない場合は入力エラーになる
 - `value`の意味は`parameter`で決まる。`volume`はdB(-90..24へclamp)、`pan`は-1.0..1.0へclampされる。0..1の正規化値ではない
 - 各点は`id`(レーン内で一意、空は不可)、`tick`(u64)、`value`を持つ。同一tickの重複は失敗し、点はtick順に正規化される。1レーンの上限は16,384点である
 - `tick`はTimeline上の絶対位置である。`bar:beat`からの変換は`session inspect`で得た`ppq`と拍子を用いて行い、PPQを固定値として扱わない

@@ -1485,6 +1485,8 @@ pub struct RangeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AutomationCommand {
+    /// Read one Track's automation lanes without loading the full session.
+    Get(AutomationGetArgs),
     /// Replace a Track's automation lane for one parameter with the supplied points.
     ///
     /// points is a JSON array of objects holding id, tick, and value. id must be non-empty and
@@ -1497,6 +1499,16 @@ pub enum AutomationCommand {
     Set(AutomationSetArgs),
     /// Delete a Track's automation lane for one parameter.
     Clear(AutomationClearArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationGetArgs {
+    /// Id of the Track whose automation lanes are read.
+    #[arg(long)]
+    pub track_id: String,
+    /// Return only this automated Track parameter.
+    #[arg(long, value_parser = ["volume", "pan"])]
+    pub parameter: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -2839,6 +2851,11 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             RangeCommand::Set(args) => Canonical::PunchRangeSet(range(args)?).into(),
         },
         CliCommand::Automation { command } => match command {
+            AutomationCommand::Get(args) => Canonical::AutomationGet(AutomationGetParams {
+                track_id: args.track_id,
+                parameter: optional_text("/parameter", args.parameter)?,
+            })
+            .into(),
             AutomationCommand::Set(args) => Canonical::AutomationSet(AutomationSetParams {
                 track_id: args.track_id,
                 parameter: text("/parameter", args.parameter)?,
@@ -3475,6 +3492,30 @@ mod tests {
     struct Wire {
         name: String,
         params: Value,
+    }
+
+    #[test]
+    fn automation_get_accepts_an_optional_parameter_filter() {
+        let all_lanes = wire(
+            Cli::try_parse_from(["riffra", "automation", "get", "--track-id", "track:1"]).unwrap(),
+        );
+        let pan_lane = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "get",
+                "--track-id",
+                "track:1",
+                "--parameter",
+                "pan",
+            ])
+            .unwrap(),
+        );
+
+        assert_eq!(all_lanes.name, "automation.get");
+        assert_eq!(all_lanes.params["trackId"], "track:1");
+        assert!(all_lanes.params["parameter"].is_null());
+        assert_eq!(pan_lane.params["parameter"], "pan");
     }
 
     #[test]

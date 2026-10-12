@@ -251,6 +251,7 @@ control_commands! {
         TimebaseSetMap = "timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
         LoopRangeSet = "loop-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         PunchRangeSet = "punch-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
+        AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
 
@@ -460,6 +461,28 @@ mod tests {
             // Assert
             assert_eq!(policy.scope, scope, "{name}");
         }
+    }
+
+    #[test]
+    fn automation_get_is_a_project_scoped_canonical_read() {
+        let command = ControlCommand::decode(
+            "automation.get",
+            json!({"trackId": "track:1", "parameter": "volume"}),
+        )
+        .unwrap();
+
+        assert_eq!(
+            command.policy().executor,
+            CommandExecutor::Canonical {
+                access: CanonicalAccess::Read,
+            }
+        );
+        assert_eq!(
+            command.policy().scope,
+            CommandScope::Project {
+                long_running: false,
+            }
+        );
     }
 
     #[test]

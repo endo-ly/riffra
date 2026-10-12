@@ -237,6 +237,7 @@ impl HostState {
             | CanonicalCommand::TimebaseSetMap(_)
             | CanonicalCommand::LoopRangeSet(_)
             | CanonicalCommand::PunchRangeSet(_)
+            | CanonicalCommand::AutomationGet(_)
             | CanonicalCommand::AutomationSet(_)
             | CanonicalCommand::AutomationClear(_)
             | CanonicalCommand::AudioClipList(_)

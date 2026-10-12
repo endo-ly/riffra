@@ -39,6 +39,7 @@ export type ControlCommandResults = {
   'timebase.set-map': OutputValue<'arrangementMutation'>;
   'loop-range.set': OutputValue<'arrangementMutation'>;
   'punch-range.set': OutputValue<'arrangementMutation'>;
+  'automation.get': OutputValue<'automationLanes'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;
   'audio-clip.list': OutputValue<'audioClips'>;

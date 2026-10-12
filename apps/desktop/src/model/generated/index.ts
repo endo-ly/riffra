@@ -38,6 +38,7 @@ export type { AudioStatus } from './AudioStatus';
 export type { AudioTakeVariant } from './AudioTakeVariant';
 export type { AudioTrackLoad } from './AudioTrackLoad';
 export type { AutomationClearParams } from './AutomationClearParams';
+export type { AutomationGetParams } from './AutomationGetParams';
 export type { AutomationLane } from './AutomationLane';
 export type { AutomationParameter } from './AutomationParameter';
 export type { AutomationPoint } from './AutomationPoint';

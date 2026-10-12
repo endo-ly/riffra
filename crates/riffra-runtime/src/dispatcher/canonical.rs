@@ -8,7 +8,10 @@ use riffra_core::application::{
     MusicalMidiNotePatch, MusicalNoteListRequest, MusicalNoteScope, MusicalNoteTransformRequest,
     SessionSettingsPatch, inspect_canonical_state,
 };
-use riffra_core::{CanonicalState, MidiInputRoute, TimelineTick, TrackPatch};
+use riffra_core::{
+    AutomationLane, AutomationParameter, CanonicalState, CreativeSession, MidiInputRoute,
+    TimelineTick, TrackPatch,
+};
 
 impl HostDispatcher<'_> {
     pub(super) fn run_canonical<S: riffra_core::SessionStorage + ?Sized>(
@@ -274,6 +277,9 @@ impl HostDispatcher<'_> {
                 )?,
                 application,
             ),
+            CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
+                automation_lanes(&canonical.session, params)?,
+            )),
             CanonicalCommand::AutomationSet(params) => self.created(
                 application.set_track_automation_with_created_ids(
                     &params.track_id,
@@ -662,5 +668,118 @@ impl HostDispatcher<'_> {
                 self.replace_missing_plugin(application, params)
             }
         }
+    }
+}
+
+fn automation_lanes(
+    session: &CreativeSession,
+    params: crate::api::params::AutomationGetParams,
+) -> Result<Vec<AutomationLane>, DispatchError> {
+    if !session
+        .arrangement
+        .tracks
+        .iter()
+        .any(|track| track.id == params.track_id)
+    {
+        return Err(DispatchError::invalid_request("track was not found"));
+    }
+
+    let mut lanes = session
+        .arrangement
+        .automation_lanes
+        .iter()
+        .filter(|lane| {
+            lane.track_id == params.track_id
+                && params
+                    .parameter
+                    .is_none_or(|parameter| lane.parameter == parameter)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    lanes.sort_by_key(|lane| match lane.parameter {
+        AutomationParameter::Volume => 0,
+        AutomationParameter::Pan => 1,
+    });
+    Ok(lanes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::params::AutomationGetParams;
+    use riffra_core::{AutomationPoint, TimelineTick, Track};
+
+    #[test]
+    fn automation_read_filters_by_track_and_parameter_in_stable_order() {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:1".into(), "Audio".into()));
+        session.arrangement.automation_lanes = vec![
+            AutomationLane {
+                id: "pan".into(),
+                track_id: "track:1".into(),
+                parameter: AutomationParameter::Pan,
+                points: vec![AutomationPoint {
+                    id: "pan-point".into(),
+                    tick: TimelineTick(20),
+                    value: 0.5,
+                }],
+            },
+            AutomationLane {
+                id: "other-track".into(),
+                track_id: "track:2".into(),
+                parameter: AutomationParameter::Volume,
+                points: Vec::new(),
+            },
+            AutomationLane {
+                id: "volume".into(),
+                track_id: "track:1".into(),
+                parameter: AutomationParameter::Volume,
+                points: vec![AutomationPoint {
+                    id: "volume-point".into(),
+                    tick: TimelineTick(10),
+                    value: -6.0,
+                }],
+            },
+        ];
+
+        let lanes = automation_lanes(
+            &session,
+            AutomationGetParams {
+                track_id: "track:1".into(),
+                parameter: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            lanes
+                .iter()
+                .map(|lane| lane.id.as_str())
+                .collect::<Vec<_>>(),
+            ["volume", "pan"]
+        );
+
+        let filtered = automation_lanes(
+            &session,
+            AutomationGetParams {
+                track_id: "track:1".into(),
+                parameter: Some(AutomationParameter::Pan),
+            },
+        )
+        .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "pan");
+        assert!(
+            automation_lanes(
+                &session,
+                AutomationGetParams {
+                    track_id: "track:missing".into(),
+                    parameter: None,
+                }
+            )
+            .is_err()
+        );
     }
 }
