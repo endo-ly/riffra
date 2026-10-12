@@ -87,24 +87,7 @@ pub(crate) fn project_graph(
                         }),
                     });
 
-            let effects = track
-                .effects
-                .iter()
-                .filter_map(|device| {
-                    plugin_state(
-                        &device.id,
-                        &device.plugin,
-                        device.bypassed,
-                        resources,
-                        &mut diagnostics,
-                    )
-                    .map(|state| GraphPluginDevice {
-                        id: device.id.clone(),
-                        path: device.plugin.path.clone(),
-                        state,
-                    })
-                })
-                .collect();
+            let effects = project_effects(&track.effects, resources, &mut diagnostics);
 
             let audio_clips = arrangement
                 .audio_clips
@@ -202,6 +185,7 @@ pub(crate) fn project_graph(
             GraphTrack {
                 pan_law: track.pan_law,
                 external_audio_source_track_id: track.external_audio_source_track_id.clone(),
+                output_bus_id: track.output_bus_id.clone(),
                 id: track.id.clone(),
                 kind: match track.kind {
                     TrackKind::Audio => GraphTrackKind::Audio,
@@ -230,8 +214,32 @@ pub(crate) fn project_graph(
         })
         .collect();
 
+    let mixer = GraphMixer {
+        master_effects: project_effects(
+            &arrangement.mixer.master_effects,
+            resources,
+            &mut diagnostics,
+        ),
+        buses: arrangement
+            .mixer
+            .buses
+            .iter()
+            .map(|bus| GraphMixBus {
+                id: bus.id.clone(),
+                kind: bus.kind,
+                gain_db: bus.gain_db,
+                pan: bus.pan,
+                pan_law: bus.pan_law,
+                muted: bus.muted,
+                solo: bus.solo,
+                effects: project_effects(&bus.effects, resources, &mut diagnostics),
+            })
+            .collect(),
+        sends: arrangement.mixer.sends.clone(),
+    };
     (
         ExecutionGraph {
+            mixer,
             mixdown: GraphMixdown {
                 musical_end_tick: session.settings.mixdown.musical_end_tick,
                 tail_seconds: session.settings.mixdown.tail_seconds,
@@ -253,6 +261,30 @@ pub(crate) fn project_graph(
         },
         diagnostics,
     )
+}
+
+fn project_effects(
+    effects: &[riffra_core::EffectDevice],
+    resources: &ResolvedResources,
+    diagnostics: &mut ProjectionDiagnostics,
+) -> Vec<GraphPluginDevice> {
+    effects
+        .iter()
+        .filter_map(|device| {
+            plugin_state(
+                &device.id,
+                &device.plugin,
+                device.bypassed,
+                resources,
+                diagnostics,
+            )
+            .map(|state| GraphPluginDevice {
+                id: device.id.clone(),
+                path: device.plugin.path.clone(),
+                state,
+            })
+        })
+        .collect()
 }
 
 /// Decides whether a Track monitors its physical audio input: an Audio Track
@@ -383,6 +415,37 @@ mod tests {
             .unwrap(),
         );
         session.arrangement.tracks = vec![audio, instrument, built_in];
+        session.arrangement.tracks[0].output_bus_id = Some("bus:group".into());
+        for (id, kind) in [
+            ("bus:group", riffra_core::MixBusKind::Group),
+            ("bus:return", riffra_core::MixBusKind::Return),
+        ] {
+            session.arrangement.mixer.buses.push(riffra_core::MixBus {
+                id: id.into(),
+                name: id.into(),
+                kind,
+                gain_db: -2.0,
+                pan: 0.2,
+                pan_law: riffra_core::PanLaw::UnityCenterStereo,
+                muted: false,
+                solo: false,
+                effects: vec![plugin_device(&format!("{id}:fx"), "FX", "fx.vst3", false)],
+            });
+        }
+        session.arrangement.mixer.master_effects.push(plugin_device(
+            "device:master",
+            "FX",
+            "fx.vst3",
+            false,
+        ));
+        session.arrangement.mixer.sends.push(riffra_core::Send {
+            id: "send:audio".into(),
+            track_id: "track:audio".into(),
+            return_bus_id: "bus:return".into(),
+            level_db: -8.0,
+            position: riffra_core::SendPosition::PostFader,
+            enabled: true,
+        });
 
         let audio_asset_id = riffra_core::mint_asset_id();
         let mut audio_clip = AudioClip::full_source(
@@ -516,6 +579,11 @@ mod tests {
         );
         assert!(graph.metronome_enabled);
         assert_eq!(graph.master_gain_db, -6.0);
+        assert_eq!(graph.tracks[0].output_bus_id.as_deref(), Some("bus:group"));
+        assert_eq!(graph.mixer.buses.len(), 2);
+        assert_eq!(graph.mixer.buses[1].effects[0].id, "bus:return:fx");
+        assert_eq!(graph.mixer.master_effects[0].id, "device:master");
+        assert_eq!(graph.mixer.sends, session.arrangement.mixer.sends);
         assert_eq!(graph.tracks.len(), 3);
         assert_eq!(graph.tracks[0].kind, GraphTrackKind::Audio);
         assert_eq!(graph.tracks[0].gain_db, -3.0);

@@ -36,6 +36,7 @@ fn snapshot() -> TimelineSnapshot {
         project_id: "project-1".into(),
         revision: 3,
         graph: ExecutionGraph {
+            mixer: crate::execution::GraphMixer::default(),
             mixdown: crate::execution::GraphMixdown::default(),
             timebase: GraphTimebase {
                 ppq: 960,

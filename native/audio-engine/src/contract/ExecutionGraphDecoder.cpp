@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "ContractReader.h"
+#include "MixerGraphValidation.h"
 
 namespace riffra {
 namespace {
@@ -380,7 +381,7 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
         value, path,
         {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput", "audioInput",
          "midiInput", "volumeAutomation", "panAutomation", "effects", "instrument", "audioClips",
-         "midiClips", "panLaw", "externalAudioSourceTrackId"},
+         "midiClips", "panLaw", "externalAudioSourceTrackId", "outputBusId"},
         error);
     juce::String kind;
     juce::var audioInput;
@@ -394,6 +395,7 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     if (!reader.string("id", output.id) || !reader.string("kind", kind) ||
         !reader.string("panLaw", output.panLaw) ||
         !reader.optionalString("externalAudioSourceTrackId", output.externalAudioSourceTrackId) ||
+        !reader.optionalString("outputBusId", output.outputBusId) ||
         !reader.number("gainDb", output.gainDb) || !reader.number("pan", output.pan) ||
         !reader.boolean("muted", output.muted) || !reader.boolean("solo", output.solo) ||
         !reader.boolean("armed", output.armed) ||
@@ -468,22 +470,89 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
     return true;
 }
 
+bool decodeEffects(const juce::Array<juce::var>& values, const juce::String& path,
+                   std::vector<PluginDeviceSpec>& output, juce::String& error) {
+    for (int index = 0; index < values.size(); ++index) {
+        PluginDeviceSpec device;
+        if (!decodePluginDevice(values[index], element(path, index), device, error)) return false;
+        output.push_back(std::move(device));
+    }
+    return true;
+}
+
+bool decodeMixer(const juce::var& value, const juce::String& path, MixerSpec& output,
+                 juce::String& error) {
+    ContractReader reader(value, path, {"masterEffects", "buses", "sends"}, error);
+    juce::Array<juce::var> effects, buses, sends;
+    if (!reader.array("masterEffects", effects) || !reader.array("buses", buses) ||
+        !reader.array("sends", sends) || !reader.finish() ||
+        !decodeEffects(effects, child(path, "masterEffects"), output.masterEffects, error))
+        return false;
+    for (int index = 0; index < buses.size(); ++index) {
+        const auto location = element(child(path, "buses"), index);
+        ContractReader bus(buses[index], location,
+                           {"id", "kind", "gainDb", "pan", "panLaw", "muted", "solo", "effects"},
+                           error);
+        MixBusSpec spec;
+        juce::String kind;
+        juce::Array<juce::var> chain;
+        int decodedKind = 0;
+        if (!bus.string("id", spec.id) || !bus.string("kind", kind) ||
+            !bus.number("gainDb", spec.gainDb) || !bus.number("pan", spec.pan) ||
+            !bus.string("panLaw", spec.panLaw) || !bus.boolean("muted", spec.muted) ||
+            !bus.boolean("solo", spec.solo) || !bus.array("effects", chain) || !bus.finish() ||
+            !readEnum(kind, child(location, "kind"), {{"group", 0}, {"return", 1}}, decodedKind,
+                      error) ||
+            !decodeEffects(chain, child(location, "effects"), spec.effects, error))
+            return false;
+        spec.kind = static_cast<MixBusKindSpec>(decodedKind);
+        if (spec.gainDb < -90.0 || spec.gainDb > 24.0 || spec.pan < -1.0 || spec.pan > 1.0)
+            return fail(error, location, "mix controls are outside their ranges");
+        if (spec.panLaw != "equalPower" && spec.panLaw != "unityCenterStereo")
+            return fail(error, child(location, "panLaw"), "unknown pan law");
+        output.buses.push_back(std::move(spec));
+    }
+    for (int index = 0; index < sends.size(); ++index) {
+        const auto location = element(child(path, "sends"), index);
+        ContractReader send(sends[index], location,
+                            {"id", "trackId", "returnBusId", "levelDb", "position", "enabled"},
+                            error);
+        SendSpec spec;
+        juce::String position;
+        int decodedPosition = 0;
+        if (!send.string("id", spec.id) || !send.string("trackId", spec.trackId) ||
+            !send.string("returnBusId", spec.returnBusId) ||
+            !send.number("levelDb", spec.levelDb) || !send.string("position", position) ||
+            !send.boolean("enabled", spec.enabled) || !send.finish() ||
+            !readEnum(position, child(location, "position"), {{"preFader", 0}, {"postFader", 1}},
+                      decodedPosition, error))
+            return false;
+        spec.position = static_cast<SendPositionSpec>(decodedPosition);
+        if (spec.levelDb < -90.0 || spec.levelDb > 24.0)
+            return fail(error, child(location, "levelDb"), "must be between -90 and 24");
+        output.sends.push_back(std::move(spec));
+    }
+    return true;
+}
+
 bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGraph& output,
                  juce::String& error) {
     ContractReader reader(value, path,
                           {"timebase", "loopRange", "punchRange", "metronomeEnabled",
-                           "masterGainDb", "tracks", "mixdown"},
+                           "masterGainDb", "tracks", "mixdown", "mixer"},
                           error);
     juce::var timebase;
     juce::var loopRange;
     juce::var punchRange;
     juce::var mixdown;
+    juce::var mixer;
     juce::Array<juce::var> tracks;
     if (!reader.object("timebase", timebase) || !reader.object("loopRange", loopRange) ||
         !reader.value("punchRange", punchRange) ||
         !reader.boolean("metronomeEnabled", output.metronomeEnabled) ||
         !reader.number("masterGainDb", output.masterGainDb) || !reader.array("tracks", tracks) ||
-        !reader.object("mixdown", mixdown) || !reader.finish())
+        !reader.object("mixdown", mixdown) || !reader.object("mixer", mixer) || !reader.finish() ||
+        !decodeMixer(mixer, child(path, "mixer"), output.mixer, error))
         return false;
     ContractReader mixReader(mixdown, child(path, "mixdown"),
                              {"musicalEndTick", "tailSeconds", "fadeOutSeconds"}, error);
@@ -511,7 +580,7 @@ bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGrap
             return false;
         output.tracks.push_back(std::move(track));
     }
-    return true;
+    return validateMixerGraph(output, error);
 }
 
 }  // namespace

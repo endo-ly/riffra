@@ -42,6 +42,10 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     ASSERT_TRUE(decodeTimelineSnapshot(fixture("timeline-snapshot-full.json"), full, error))
         << error.toStdString();
     EXPECT_EQ(full.graph.tracks.size(), 3u);
+    EXPECT_EQ(full.graph.mixer.buses.size(), 2u);
+    EXPECT_EQ(full.graph.tracks[0].outputBusId, "bus:group");
+    EXPECT_EQ(full.graph.mixer.sends[0].position, SendPositionSpec::preFader);
+    EXPECT_EQ(full.graph.mixer.masterEffects[0].state.stateData, "master-state");
     EXPECT_EQ(full.graph.tracks[1].instrument->index(), 1u);
     EXPECT_EQ(full.graph.tracks[0].kind, TrackKindSpec::audio);
     EXPECT_EQ(full.graph.tracks[1].kind, TrackKindSpec::instrument);
@@ -85,6 +89,9 @@ TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth)
         {},
         {"graph"},
         {"graph", "timebase"},
+        {"graph", "mixer"},
+        {"graph", "mixer", "buses", "#0"},
+        {"graph", "mixer", "sends", "#0"},
         {"graph", "tracks", "#0"},
         {"graph", "tracks", "#0", "audioClips", "#0"},
         {"graph", "tracks", "#1"},

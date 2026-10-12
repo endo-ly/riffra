@@ -20,6 +20,28 @@ pub(crate) struct ExecutionGraph {
     pub(crate) metronome_enabled: bool,
     pub(crate) master_gain_db: f64,
     pub(crate) tracks: Vec<GraphTrack>,
+    pub(crate) mixer: GraphMixer,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphMixer {
+    pub(crate) master_effects: Vec<GraphPluginDevice>,
+    pub(crate) buses: Vec<GraphMixBus>,
+    pub(crate) sends: Vec<riffra_core::Send>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphMixBus {
+    pub(crate) id: String,
+    pub(crate) kind: riffra_core::MixBusKind,
+    pub(crate) gain_db: f64,
+    pub(crate) pan: f64,
+    pub(crate) pan_law: riffra_core::PanLaw,
+    pub(crate) muted: bool,
+    pub(crate) solo: bool,
+    pub(crate) effects: Vec<GraphPluginDevice>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -57,6 +79,7 @@ pub(crate) struct GraphTrack {
     pub(crate) pan: f64,
     pub(crate) pan_law: riffra_core::PanLaw,
     pub(crate) external_audio_source_track_id: Option<String>,
+    pub(crate) output_bus_id: Option<String>,
     pub(crate) muted: bool,
     pub(crate) solo: bool,
     pub(crate) armed: bool,
@@ -256,6 +279,7 @@ mod tests {
             GraphTrack {
                 pan_law: riffra_core::PanLaw::EqualPower,
                 external_audio_source_track_id: None,
+                output_bus_id: None,
                 id: format!("track-{}", matches!(kind, GraphTrackKind::Instrument)),
                 kind,
                 gain_db: 1.5,
@@ -416,10 +440,53 @@ mod tests {
             data1: 7,
             data2: 64,
         });
+        audio.output_bus_id = Some("bus:group".into());
+        let mixer = GraphMixer {
+            master_effects: vec![GraphPluginDevice {
+                id: "device:master".into(),
+                path: "fx.vst3".into(),
+                state: state(Some("master-state"), false),
+            }],
+            buses: vec![
+                GraphMixBus {
+                    id: "bus:group".into(),
+                    kind: riffra_core::MixBusKind::Group,
+                    gain_db: -2.0,
+                    pan: 0.0,
+                    pan_law: riffra_core::PanLaw::UnityCenterStereo,
+                    muted: false,
+                    solo: false,
+                    effects: Vec::new(),
+                },
+                GraphMixBus {
+                    id: "bus:return".into(),
+                    kind: riffra_core::MixBusKind::Return,
+                    gain_db: 0.0,
+                    pan: 0.0,
+                    pan_law: riffra_core::PanLaw::UnityCenterStereo,
+                    muted: false,
+                    solo: false,
+                    effects: vec![GraphPluginDevice {
+                        id: "device:return".into(),
+                        path: "fx.vst3".into(),
+                        state: state(None, true),
+                    }],
+                },
+            ],
+            sends: vec![riffra_core::Send {
+                id: "send:audio".into(),
+                track_id: audio.id.clone(),
+                return_bus_id: "bus:return".into(),
+                level_db: -9.0,
+                position: riffra_core::SendPosition::PreFader,
+                enabled: true,
+            }],
+        };
         TimelineSnapshot {
             project_id: "project-full".into(),
             revision: 23,
             graph: ExecutionGraph {
+                mixer,
                 mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {
                     ppq: 960,
@@ -454,6 +521,7 @@ mod tests {
             project_id: "project-minimal".into(),
             revision: 0,
             graph: ExecutionGraph {
+                mixer: GraphMixer::default(),
                 mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {
                     ppq: 960,

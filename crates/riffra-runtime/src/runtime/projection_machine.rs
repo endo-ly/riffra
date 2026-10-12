@@ -833,6 +833,7 @@ mod tests {
                 project_id: "project:test".into(),
                 revision,
                 graph: crate::execution::ExecutionGraph {
+                    mixer: crate::execution::GraphMixer::default(),
                     mixdown: crate::execution::GraphMixdown::default(),
                     timebase: crate::execution::GraphTimebase {
                         ppq: 960,

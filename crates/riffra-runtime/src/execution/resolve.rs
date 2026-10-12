@@ -54,6 +54,19 @@ pub(crate) fn resolve(
         }
     }
 
+    for effect in session
+        .arrangement
+        .mixer
+        .buses
+        .iter()
+        .flat_map(|bus| &bus.effects)
+        .chain(&session.arrangement.mixer.master_effects)
+    {
+        if !effect.plugin.disabled_placeholder && Path::new(&effect.plugin.path).exists() {
+            existing_plugin_paths.insert(effect.plugin.path.clone());
+        }
+    }
+
     ResolvedResources {
         audio_paths,
         existing_plugin_paths,
