@@ -202,6 +202,7 @@ public:
     [[nodiscard]] TimelineStatus status() const;
     /// Consumes the latest post-fader stereo meter snapshot for each active track.
     [[nodiscard]] std::vector<TrackMeterSpec> meterSnapshot();
+    [[nodiscard]] std::vector<BusMeterSpec> busMeterSnapshot();
     /// Returns the Project identity and meter epoch of the active graph.
     [[nodiscard]] ActiveProjectMeterIdentity activeProjectMeterIdentity() const;
 
@@ -353,8 +354,8 @@ private:
     static void mixTrackOutput(Track& track, bool audible, std::int64_t rangeStart, int sampleCount,
                                float transportGainStart = 1.0f,
                                float transportGainStep = 0.0f) noexcept;
-    static void addTrackOutputs(const PreparedTimeline& timeline, float* const* outputChannels,
-                                int channelCount, int destinationStart, int sampleCount) noexcept;
+    void mixProductionOutput(PreparedTimeline& timeline, float* const* outputChannels,
+                             int channelCount, int destinationStart, int sampleCount) noexcept;
     static void scheduleMidi(const PreparedTimeline& prepared, Track& track,
                              std::int64_t rangeStart, int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;

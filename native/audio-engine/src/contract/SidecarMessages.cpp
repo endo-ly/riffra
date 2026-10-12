@@ -232,6 +232,16 @@ juce::var encodeTrackMeter(const TrackMeterSpec& meter) {
         .build();
 }
 
+juce::var encodeBusMeter(const BusMeterSpec& meter) {
+    return ObjectBuilder{}
+        .set("busId", meter.busId)
+        .set("peakLeft", meter.peakLeft)
+        .set("peakRight", meter.peakRight)
+        .set("rmsLeft", meter.rmsLeft)
+        .set("rmsRight", meter.rmsRight)
+        .build();
+}
+
 ObjectBuilder audioMetersFields(const AudioMetersSpec& meters) {
     ObjectBuilder builder;
     builder.set("projectId", optionalString(meters.projectId))
@@ -247,7 +257,8 @@ ObjectBuilder audioMetersFields(const AudioMetersSpec& meters) {
         .set("feedbackSuspected", meters.feedbackSuspected)
         .set("previewing", meters.previewing)
         .set("instrumentPreviewing", meters.instrumentPreviewing)
-        .set("trackMeters", array(meters.trackMeters, encodeTrackMeter));
+        .set("trackMeters", array(meters.trackMeters, encodeTrackMeter))
+        .set("busMeters", array(meters.busMeters, encodeBusMeter));
     return builder;
 }
 

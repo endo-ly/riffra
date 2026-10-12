@@ -47,6 +47,7 @@ export type { BackgroundJobStatus } from './BackgroundJobStatus';
 export type { BatchMutationResult } from './BatchMutationResult';
 export type { BatchOperation } from './BatchOperation';
 export type { BootstrapState } from './BootstrapState';
+export type { BusAudioMeter } from './BusAudioMeter';
 export type { CanonicalCommand } from './CanonicalCommand';
 export type { CanonicalState } from './CanonicalState';
 export type { ClipAddAssetParams } from './ClipAddAssetParams';

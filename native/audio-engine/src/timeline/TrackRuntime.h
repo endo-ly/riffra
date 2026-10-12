@@ -206,9 +206,8 @@ public:
     juce::AudioBuffer<float> processedBuffer;
     juce::AudioBuffer<float> trackOutputBuffer;
     juce::AudioBuffer<float> routedOutputBuffer;
-    juce::AudioBuffer<float> masterDelayBuffer;
-    std::int64_t masterDelaySamples = 0;
-    std::int64_t masterDelayWritePosition = 0;
+    juce::AudioBuffer<float> preFaderOutputBuffer;
+    bool mainOutputAudible = true;
     std::int64_t routeLatencySamples = 0;
     TrackRuntime* externalAudioSource = nullptr;
     bool unityCenterStereo = false;
@@ -220,11 +219,8 @@ public:
     juce::AudioBuffer<float> postEffectClipBuffer;
     juce::AudioBuffer<float> liveInputBuffer;
     RecordingCaptureTrackState recordingCapture;
-    juce::AudioBuffer<float> delayBuffer;
     juce::AudioBuffer<float> postEffectDelayBuffer;
-    std::int64_t delayWritePosition = 0;
     std::int64_t postEffectDelayWritePosition = 0;
-    std::int64_t compensationDelaySamples = 0;
     std::int64_t postEffectCompensationDelaySamples = 0;
     std::int64_t pluginDelaySamples = 0;
     std::int64_t pluginTailSamples = 0;

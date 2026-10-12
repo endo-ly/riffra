@@ -507,11 +507,12 @@ if(BUILD_TESTING)
     GTest::gtest_main
   )
   target_compile_definitions(riffra-audio-tests PRIVATE
+    RIFFRA_TEST_EFFECT_BUNDLE_PATH="${RIFFRA_TEST_EFFECT_BUNDLE}"
     RIFFRA_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/execution-graph"
     RIFFRA_SIDECAR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/sidecar"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
-  add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
+  add_dependencies(riffra-audio-tests riffra-builtin-resource-stage riffra-test-effect_VST3)
   # Sanitizers own the allocator, so allocation tracking is only linked without them.
   if(UNIX AND NOT APPLE AND NOT RIFFRA_SANITIZER)
     target_compile_definitions(riffra-audio-tests PRIVATE RIFFRA_TRACK_MALLOC=1)

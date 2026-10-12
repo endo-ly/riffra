@@ -187,6 +187,7 @@ fn meter_frame(meters: WireAudioMeters) -> Option<AudioMeterFrame> {
         hard_clip_samples: meters.hard_clip_samples,
         invalid_samples: meters.invalid_samples,
         feedback_suspected: meters.feedback_suspected,
+        bus_meters: meters.bus_meters,
         track_meters: meters
             .track_meters
             .into_iter()

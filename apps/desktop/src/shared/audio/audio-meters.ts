@@ -18,6 +18,7 @@ const initialMeters: AudioMeters = {
   invalidSamples: 0,
   feedbackSuspected: false,
   trackMeters: [],
+  busMeters: [],
 };
 
 let currentMeters = initialMeters;
@@ -40,6 +41,20 @@ function sameMeters(left: AudioMeters, right: AudioMeters): boolean {
     left.invalidSamples === right.invalidSamples &&
     left.feedbackSuspected === right.feedbackSuspected
   ) {
+    if (
+      left.busMeters.length !== right.busMeters.length ||
+      !left.busMeters.every((meter, index) => {
+        const other = right.busMeters[index];
+        return (
+          meter.busId === other?.busId &&
+          meter.peakLeft === other.peakLeft &&
+          meter.peakRight === other.peakRight &&
+          meter.rmsLeft === other.rmsLeft &&
+          meter.rmsRight === other.rmsRight
+        );
+      })
+    )
+      return false;
     if (left.trackMeters === right.trackMeters) return true;
     if (left.trackMeters.length !== right.trackMeters.length) return false;
     return left.trackMeters.every((meter, index) => {

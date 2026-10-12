@@ -150,6 +150,7 @@ AudioMetersSpec AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pip
     const auto identityBefore = timeline.activeProjectMeterIdentity();
     const auto transientMeters = pipeline.consumeTransientMeters(identityBefore.meterEpoch);
     auto trackMeters = timeline.meterSnapshot();
+    auto busMeters = timeline.busMeterSnapshot();
     const auto identityAfter = timeline.activeProjectMeterIdentity();
     const auto identityStable = identityBefore.projectId == identityAfter.projectId &&
                                 identityBefore.meterEpoch == identityAfter.meterEpoch;
@@ -170,7 +171,10 @@ AudioMetersSpec AudioStatusBuilder::currentMeters(const AudioRenderPipeline& pip
     meters.feedbackSuspected = pipeline.isFeedbackSuspected();
     meters.previewing = pipeline.isPreviewing();
     meters.instrumentPreviewing = pipeline.isInstrumentPreviewing();
-    if (identityStable) meters.trackMeters = std::move(trackMeters);
+    if (identityStable) {
+        meters.trackMeters = std::move(trackMeters);
+        meters.busMeters = std::move(busMeters);
+    }
     return meters;
 }
 

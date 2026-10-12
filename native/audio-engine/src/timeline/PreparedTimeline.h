@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+#include "MixerRuntime.h"
 #include "TimelineTimebase.h"
 #include "TrackRuntime.h"
 #include "contract/ExecutionGraph.h"
@@ -92,6 +93,7 @@ struct PreparedTimeline final {
     float masterGainDb = 0.0f;
     bool hasSolo = false;
     GraphSummary summary;
+    MixerRuntime mixer;
     std::vector<std::unique_ptr<Track>> tracks;
     std::vector<std::vector<Track*>> processingStages;
     std::int64_t mixEndSample = 0;

@@ -190,7 +190,7 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
     for (auto& stage : prepared.processingStages)
         pool->run(stage, {TrackStageKind::playback, &prepared, rangeStart, destinationStart,
                           sampleCount, transportGainStart, transportGainStep, true});
-    addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    mixProductionOutput(prepared, outputChannels, channelCount, destinationStart, sampleCount);
     if (prepared.fadeOutSamples > 0) {
         const auto fadeStart = prepared.mixEndSample - prepared.fadeOutSamples;
         for (int sample = 0; sample < sampleCount; ++sample) {
@@ -292,7 +292,7 @@ void TimelineEngine::processLiveInstrumentTracks(
     for (auto& stage : prepared.processingStages)
         pool->run(stage, {TrackStageKind::live, &prepared, rangeStart, destinationStart,
                           sampleCount, 1.0f, 0.0f, false});
-    addTrackOutputs(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    mixProductionOutput(prepared, outputChannels, channelCount, destinationStart, sampleCount);
 }
 
 void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -366,9 +366,6 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
                                     const float transportGainStep) noexcept {
     auto& runtime = *track.runtime;
     const auto lowLatency = runtime.lowLatencyMonitoring();
-    const auto processedDelay =
-        lowLatency ? std::int64_t{0} : std::max<std::int64_t>(0, runtime.compensationDelaySamples);
-    const auto processedDelaySize = runtime.delayBuffer.getNumSamples();
     const auto postEffectDelay =
         lowLatency ? std::int64_t{0}
                    : std::max<std::int64_t>(0, runtime.postEffectCompensationDelaySamples);
@@ -439,18 +436,6 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
             }
             float left = runtime.processedBuffer.getSample(0, processed);
             float right = runtime.processedBuffer.getSample(1, processed);
-            if (processedDelaySize > 0) {
-                const auto write = runtime.delayWritePosition;
-                runtime.delayBuffer.setSample(0, static_cast<int>(write), left);
-                runtime.delayBuffer.setSample(1, static_cast<int>(write), right);
-                if (processedDelay > 0) {
-                    const auto read =
-                        (write - processedDelay + processedDelaySize) % processedDelaySize;
-                    left = runtime.delayBuffer.getSample(0, static_cast<int>(read));
-                    right = runtime.delayBuffer.getSample(1, static_cast<int>(read));
-                }
-                runtime.delayWritePosition = (write + 1) % processedDelaySize;
-            }
             auto postEffectLeft = runtime.postEffectClipBuffer.getSample(0, processed);
             auto postEffectRight = runtime.postEffectClipBuffer.getSample(1, processed);
             if (postEffectDelaySize > 0) {
@@ -472,24 +457,22 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
             right += postEffectRight;
             const auto sampleGain =
                 juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
+            runtime.preFaderOutputBuffer.setSample(0, processed,
+                                                   audible ? left * sampleGain : 0.0f);
+            runtime.preFaderOutputBuffer.setSample(1, processed,
+                                                   audible ? right * sampleGain : 0.0f);
             runtime.routedOutputBuffer.setSample(0, processed, left * leftGain);
             runtime.routedOutputBuffer.setSample(1, processed, right * rightGain);
             auto masterLeft = left * leftGain;
             auto masterRight = right * rightGain;
-            if (runtime.masterDelaySamples > 0) {
-                const auto size = runtime.masterDelayBuffer.getNumSamples();
-                const auto write = runtime.masterDelayWritePosition;
-                runtime.masterDelayBuffer.setSample(0, static_cast<int>(write), masterLeft);
-                runtime.masterDelayBuffer.setSample(1, static_cast<int>(write), masterRight);
-                const auto read = (write - runtime.masterDelaySamples + size) % size;
-                masterLeft = runtime.masterDelayBuffer.getSample(0, static_cast<int>(read));
-                masterRight = runtime.masterDelayBuffer.getSample(1, static_cast<int>(read));
-                runtime.masterDelayWritePosition = (write + 1) % size;
-            }
             auto contributionLeft = audible ? masterLeft * sampleGain : 0.0f;
             auto contributionRight = audible ? masterRight * sampleGain : 0.0f;
             runtime.trackOutputBuffer.setSample(0, processed, contributionLeft);
             runtime.trackOutputBuffer.setSample(1, processed, contributionRight);
+            if (!runtime.mainOutputAudible) {
+                contributionLeft = 0.0f;
+                contributionRight = 0.0f;
+            }
             peakLeft = std::max(peakLeft, std::abs(contributionLeft));
             peakRight = std::max(peakRight, std::abs(contributionRight));
             sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;
@@ -510,16 +493,22 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
     }
 }
 
-void TimelineEngine::addTrackOutputs(const PreparedTimeline& prepared, float* const* outputChannels,
-                                     const int channelCount, const int destinationStart,
-                                     const int sampleCount) noexcept {
-    for (const auto& track : prepared.tracks) {
-        for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
-            if (outputChannels[channel] == nullptr) continue;
-            juce::FloatVectorOperations::add(
-                outputChannels[channel] + destinationStart,
-                track->runtime->trackOutputBuffer.getReadPointer(channel), sampleCount);
-        }
+void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* const* outputChannels,
+                                         const int channelCount, const int destinationStart,
+                                         const int sampleCount) noexcept {
+    auto& mixer = prepared.mixer;
+    mixer.masterInput.clear(0, sampleCount);
+    for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
+    for (auto& route : mixer.trackRoutes) route->mix(sampleCount);
+    pool->runMixer(mixer.parallelChannels, sampleCount);
+    for (auto& route : mixer.busRoutes) route->mix(sampleCount);
+    mixer.masterEffects->process(mixer.masterInput.getArrayOfReadPointers(), 2,
+                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount);
+    for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
+        if (outputChannels[channel] != nullptr)
+            juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,
+                                             mixer.masterOutput.getReadPointer(channel),
+                                             sampleCount);
     }
 }
 
@@ -529,6 +518,7 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
 }
 
 void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcept {
+    prepared.mixer.reset();
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
         auto& runtime = *track.runtime;
@@ -539,10 +529,6 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.midiBuffer.clear();
         runtime.instrumentEventCount = 0;
         runtime.routedOutputBuffer.clear();
-        runtime.masterDelayBuffer.clear();
-        runtime.masterDelayWritePosition = 0;
-        runtime.delayBuffer.clear();
-        runtime.delayWritePosition = 0;
         runtime.postEffectDelayBuffer.clear();
         runtime.postEffectDelayWritePosition = 0;
     }
@@ -664,12 +650,15 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     const auto processStoppedRange = [&](const int destinationStart, const int rangeSamples,
                                          const std::int64_t rangeStart) noexcept {
         if (rangeSamples <= 0) return;
-        for (auto& trackPtr : active->tracks)
-            trackPtr->runtime->postEffectClipBuffer.clear(0, rangeSamples);
-        processLiveAudioTracks(*active, inputChannels, inputChannelCount, rangeStart,
-                               destinationStart, rangeSamples);
-        processLiveInstrumentTracks(*active, outputChannels, channelCount, rangeStart,
-                                    destinationStart, rangeSamples);
+        for (int offset = 0; offset < rangeSamples;) {
+            const auto chunk = std::min(rangeSamples - offset, active->preparedBlockSize);
+            for (auto& track : active->tracks) track->runtime->postEffectClipBuffer.clear(0, chunk);
+            processLiveAudioTracks(*active, inputChannels, inputChannelCount, rangeStart + offset,
+                                   destinationStart + offset, chunk);
+            processLiveInstrumentTracks(*active, outputChannels, channelCount, rangeStart + offset,
+                                        destinationStart + offset, chunk);
+            offset += chunk;
+        }
     };
 
     const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
@@ -705,7 +694,7 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     auto capturedSamplesInCallback = 0;
     auto consumed = blockPlaybackOffset;
     while (consumed < sampleCount) {
-        auto chunk = sampleCount - consumed;
+        auto chunk = std::min(sampleCount - consumed, active->preparedBlockSize);
         if (realtime.renderTransportState == RenderTransportState::stopped) {
             appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
             processStoppedRange(consumed, sampleCount - consumed, position);

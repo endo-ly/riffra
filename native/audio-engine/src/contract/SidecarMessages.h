@@ -191,6 +191,14 @@ struct TrackMeterSpec final {
     double rmsRight = 0.0;
 };
 
+struct BusMeterSpec final {
+    juce::String busId;
+    double peakLeft = 0.0;
+    double peakRight = 0.0;
+    double rmsLeft = 0.0;
+    double rmsRight = 0.0;
+};
+
 struct AudioMetersSpec final {
     std::optional<juce::String> projectId;
     double inputPeak = 0.0;
@@ -206,6 +214,7 @@ struct AudioMetersSpec final {
     bool previewing = false;
     bool instrumentPreviewing = false;
     std::vector<TrackMeterSpec> trackMeters;
+    std::vector<BusMeterSpec> busMeters;
 };
 
 struct TransportStatusSpec final {

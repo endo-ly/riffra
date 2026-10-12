@@ -448,13 +448,9 @@ public:
         if (found == graph->tracks.end()) return false;
         auto& track = *(*found);
         if (track.runtime == nullptr) return false;
-        track.runtime->compensationDelaySamples = samples;
-        track.runtime->postEffectCompensationDelaySamples = samples;
-        const auto bufferSize = static_cast<int>(samples + track.runtime->preparedBlockSize + 1);
-        track.runtime->delayBuffer.setSize(2, bufferSize, false, true, false);
-        track.runtime->delayBuffer.clear();
-        track.runtime->postEffectDelayBuffer.setSize(2, bufferSize, false, true, false);
-        track.runtime->postEffectDelayBuffer.clear();
+        for (auto& route : graph->mixer.trackRoutes)
+            if (route->track == track.runtime.get())
+                route->delay.prepare(static_cast<int>(samples));
         return true;
     }
 
@@ -737,7 +733,7 @@ public:
         {
             auto* const graph = committedGraph(engine);
             if (graph == nullptr || graph->tracks.empty()) return false;
-            graph->tracks.front()->runtime->compensationDelaySamples = 4;
+            for (auto& route : graph->mixer.trackRoutes) route->delay.prepare(4);
         }
         if (!(engine.enqueueTargetedMidi("track:pdc", juce::MidiMessage::noteOn(1, 72, 0.8f),
                                          error) == RealtimeRequest::accepted))

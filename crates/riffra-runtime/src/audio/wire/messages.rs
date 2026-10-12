@@ -267,6 +267,7 @@ pub(crate) struct WireAudioMeters {
     pub(crate) previewing: bool,
     pub(crate) instrument_previewing: bool,
     pub(crate) track_meters: Vec<WireTrackMeter>,
+    pub(crate) bus_meters: Vec<crate::model::BusAudioMeter>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

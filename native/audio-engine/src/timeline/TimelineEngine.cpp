@@ -471,6 +471,20 @@ std::vector<TrackMeterSpec> TimelineEngine::meterSnapshot() {
         });
 }
 
+std::vector<BusMeterSpec> TimelineEngine::busMeterSnapshot() {
+    return visitActiveGraph(
+        std::vector<BusMeterSpec>{}, [](const PreparedTimeline& graph, const RealtimeFrame&) {
+            std::vector<BusMeterSpec> meters;
+            meters.reserve(graph.mixer.buses.size());
+            for (const auto& bus : graph.mixer.buses) {
+                const auto snapshot = bus->meter.consume();
+                meters.push_back({bus->id, snapshot.peakLeft, snapshot.peakRight, snapshot.rmsLeft,
+                                  snapshot.rmsRight});
+            }
+            return meters;
+        });
+}
+
 TimelineEngine::ActiveProjectMeterIdentity TimelineEngine::activeProjectMeterIdentity() const {
     return visitActiveGraph(
         ActiveProjectMeterIdentity{}, [](const PreparedTimeline& graph, const RealtimeFrame&) {
