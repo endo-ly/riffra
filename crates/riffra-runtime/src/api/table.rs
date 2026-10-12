@@ -400,6 +400,7 @@ control_commands! {
         ProjectRestoreGeneration = "project.restore-generation" (ProjectRestoreParams) -> ArrangementMutation, project;
 
         RenderStart = "render.start" (RenderStartParams) -> Job, project;
+        RenderStems = "render.stems" (RenderStemsParams) -> Job, project;
         JobGet = "job.get" (IdParams) -> Job, host;
         JobCancel = "job.cancel" (IdParams) -> Job, host;
         AnalysisStart = "analysis.start" (AnalysisParams) -> Analysis, host;

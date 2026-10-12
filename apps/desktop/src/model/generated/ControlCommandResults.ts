@@ -175,6 +175,7 @@ export type ControlCommandResults = {
   'take.comparison.stop': OutputValue<'audioStatus'>;
   'project.restore-generation': OutputValue<'arrangementMutation'>;
   'render.start': OutputValue<'job'>;
+  'render.stems': OutputValue<'job'>;
   'job.get': OutputValue<'job'>;
   'job.cancel': OutputValue<'job'>;
   'analysis.start': OutputValue<'analysis'>;

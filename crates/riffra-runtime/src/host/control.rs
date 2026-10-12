@@ -988,6 +988,9 @@ impl HostState {
             RuntimeCommand::RenderStart(params) => {
                 ControlOutput::Job(Some(self.start_render(current.session, params.options)?))
             }
+            RuntimeCommand::RenderStems(params) => {
+                ControlOutput::Job(Some(self.start_render_stems(current, params)?))
+            }
             RuntimeCommand::JobGet(params) => ControlOutput::Job(
                 self.jobs
                     .status(&params.id)
@@ -1205,6 +1208,62 @@ impl HostState {
             }
         })
         .map_err(|error| command_error(format!("render job could not start: {error}")))?;
+        jobs::to_background_status(status).map_err(command_error)
+    }
+
+    fn start_render_stems(
+        &self,
+        current: CanonicalState,
+        params: crate::api::params::RenderStemsParams,
+    ) -> Result<BackgroundJobStatus, ProtocolError> {
+        let selection =
+            render::select_stem_tracks(&current.session, params.all_tracks, &params.track_ids)
+                .map_err(command_error)?;
+        let data_root = self.data_root.clone();
+        let built_in_instruments = Arc::clone(&self.built_in_instruments);
+        let worker = self.render_worker.clone();
+        let jobs = self.jobs.clone();
+        let (id, status) = jobs.start(JobKind::RenderStems);
+        let Some(cancelled) = jobs.cancellation_flag(&id) else {
+            return Err(command_error("render stems job could not be registered"));
+        };
+        let job_id = id.clone();
+        let worker_jobs = jobs.clone();
+        jobs.spawn_worker(&id, "riffra-render-stems-job", move || {
+            worker_jobs.set_running(
+                &job_id,
+                "Rendering aligned stems for the canonical arrangement.",
+            );
+            match render::render_stems_with_cancellation(
+                &worker,
+                render::StemRenderContext {
+                    data_root: &data_root,
+                    built_in_instruments: built_in_instruments.as_ref(),
+                    session: &current.session,
+                    project_id: &current.project_id,
+                    source_sequence: current.sequence,
+                    created_at_ms: riffra_host::now_ms(),
+                    selection,
+                    range: params.range,
+                },
+                cancelled.as_ref(),
+            ) {
+                Ok(pending) => match jobs::serialize_result(&pending.result) {
+                    Ok(value) => {
+                        let mut output = pending.output;
+                        worker_jobs.complete_if_not_cancelled(
+                            &job_id,
+                            value,
+                            "Offline stem render completed.",
+                            move || output.commit(),
+                        );
+                    }
+                    Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+                },
+                Err(error) => jobs::fail(&worker_jobs, &data_root, &job_id, error),
+            }
+        })
+        .map_err(|error| command_error(format!("render stems job could not start: {error}")))?;
         jobs::to_background_status(status).map_err(command_error)
     }
 

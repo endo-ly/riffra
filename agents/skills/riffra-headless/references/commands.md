@@ -588,9 +588,20 @@ riffra --attach job cancel --id job:01j...
 
 - `render start` は `--range entire-arrangement` (既定) または `--range loop-range` を指定できる。音楽座標の部分Renderは `--start <bar:beat> --end <bar:beat>` を両方指定し、`--track-id` と併用できる。[`--normalize true|false`] も指定できる。`--range loop-range` と `--start` / `--end` は併用しない
 - `render start` の `--expected-sequence` はRender対象のCanonical snapshotを固定する。ConflictならWAVを作成せず、最新状態をInspectしてからRenderし直す
+- `render stems` は一度の要求で複数Trackを同じ時間基準のWAVへ書き出す。選択方法は `--all-tracks` と `--track-ids <ID1>,<ID2>` のどちらか一方を必ず指定する。`--range`、`--start`、`--end` の使い方は `render start` と同じで、`render stems` に個別正規化の `--normalize` はない
+
+```powershell
+riffra --attach --expected-sequence 43 render stems --all-tracks
+riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --end 13:1
+```
+
+- `--all-tracks` は正準Track順に処理し、ミュートされていないClipがないTrackを除外する。除外IDは結果の `skippedTrackIds` に含まれる。明示したIDは重複不可で、存在しないTrackや音声化できるClipがないTrackはジョブ開始前にエラーになる
+- 全WAVで開始Tick、終了Tick、Sample Rate、フレーム数を揃える。Sample Rate設定があればそれを使い、なければ通常のミックスで音が出る素材を基準に一度だけ決める。Block SizeとTailも共通にし、個別の正規化とMasteringは行わない
+- 1つの `renderStems` ジョブが `renders/render-<unique-id>/stem-001.wav` などのWAVと `render.json` を作成する。結果にはProject ID、元のSequence、共通のレンダリング条件、Track ID・名前・Asset ID・ファイルパスの対応が含まれる。各WAVはAssetとして登録され、ジョブが失敗またはキャンセルで終わる場合は登録とファイルを削除する
+- `render stems` の `--expected-sequence` はレンダリング対象のCanonical snapshotを固定する。Conflictなら出力せず、最新状態をInspectしてから再実行する
 - 応答は `type: "job"` のジョブ ID。ワンショットAttached CLIの`job wait`は`--timeout-ms`を指定しなければterminal stateまで待ち、指定した場合だけその時間で打ち切る。内部では既存の`job.get`を繰り返し呼び、`completed`、`failed`、`cancelled`のいずれかになった時点の結果を返す。interactiveでは`job.get`を呼び出し側で繰り返し、進行中の停止には`job cancel`を使う。Control ProtocolでJobを操作するコマンドは`job.get`と`job.cancel`である
 - Runtimeから意味のある進捗率を取得できない間の`progress`は`null`である
-- 出力は `renders/render-{ms}/timeline.wav` と manifest として書き出される
+- `render start` の出力は `renders/render-{ms}/timeline.wav` と manifest、`render stems` の出力は `renders/render-<unique-id>/` 配下の連番WAVと `render.json` である
 
 `plugin scan-start` も同様に非同期ジョブ(`job get` で追跡)である。同期版の `plugin scan` は完了まで応答を返さない。
 

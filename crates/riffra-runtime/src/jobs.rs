@@ -1,4 +1,6 @@
-use crate::api::output::{BackgroundJobStatus, JobKind, JobState, RenderResult, ScanReport};
+use crate::api::output::{
+    BackgroundJobStatus, JobKind, JobState, RenderResult, RenderStemsResult, ScanReport,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -16,6 +18,7 @@ impl JobKind {
         match self {
             Self::Scan => "scan",
             Self::Render => "render",
+            Self::RenderStems => "render-stems",
         }
     }
 }
@@ -70,6 +73,16 @@ pub fn to_background_status(status: JobStatus) -> Result<BackgroundJobStatus, St
                 .map(serde_json::from_value::<RenderResult>)
                 .transpose()
                 .map_err(|error| format!("render result could not be decoded: {error}"))?,
+        },
+        JobKind::RenderStems => BackgroundJobStatus::RenderStems {
+            id,
+            state,
+            progress,
+            message,
+            result: result
+                .map(serde_json::from_value::<RenderStemsResult>)
+                .transpose()
+                .map_err(|error| format!("render stems result could not be decoded: {error}"))?,
         },
     })
 }
@@ -141,18 +154,50 @@ impl JobRegistry {
     }
 
     pub fn complete(&self, id: &str, result: Value, message: impl Into<String>) {
-        self.update(id, |status, record| {
-            if record.cancelled.load(Ordering::Acquire) {
-                status.state = JobState::Cancelled;
-                status.message = "Job cancelled; no partial result was promoted.".into();
-                status.result = None;
-            } else {
-                status.state = JobState::Completed;
-                status.progress = Some(1.0);
-                status.message = message.into();
-                status.result = Some(result);
-            }
-        });
+        self.complete_if_not_cancelled(id, result, message, || {});
+    }
+
+    /// Completes the job and promotes its output while cancellation is excluded.
+    ///
+    /// # Returns
+    /// `true` when the job completed and `promote` ran; `false` when cancellation
+    /// or a terminal state prevented promotion.
+    pub(crate) fn complete_if_not_cancelled(
+        &self,
+        id: &str,
+        result: Value,
+        message: impl Into<String>,
+        promote: impl FnOnce(),
+    ) -> bool {
+        let Some(record) = self
+            .records
+            .lock()
+            .ok()
+            .and_then(|records| records.get(id).cloned())
+        else {
+            return false;
+        };
+        let Ok(mut status) = record.status.lock() else {
+            return false;
+        };
+        if record.cancelled.load(Ordering::Acquire) || status.state == JobState::Cancelling {
+            status.state = JobState::Cancelled;
+            status.message = "Job cancelled; no partial result was promoted.".into();
+            status.result = None;
+            return false;
+        }
+        if matches!(
+            status.state,
+            JobState::Cancelled | JobState::Completed | JobState::Failed
+        ) {
+            return false;
+        }
+        promote();
+        status.state = JobState::Completed;
+        status.progress = Some(1.0);
+        status.message = message.into();
+        status.result = Some(result);
+        true
     }
 
     pub fn fail(&self, id: &str, message: impl Into<String>) {
@@ -300,10 +345,59 @@ mod tests {
         assert_eq!(status.state, JobState::Queued);
         registry.set_running(&id, "running");
         registry.cancel(&id).expect("job should exist");
-        registry.complete(&id, serde_json::json!({"path":"output.wav"}), "done");
+        let promoted = Arc::new(AtomicBool::new(false));
+        let promotion = Arc::clone(&promoted);
+        assert!(!registry.complete_if_not_cancelled(
+            &id,
+            serde_json::json!({"path":"output.wav"}),
+            "done",
+            move || promotion.store(true, Ordering::Release),
+        ));
         let status = registry.status(&id).unwrap();
         assert_eq!(status.state, JobState::Cancelled);
         assert!(status.result.is_none());
+        assert!(!promoted.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn an_uncancelled_stem_job_promotes_its_result_before_completion() {
+        let registry = JobRegistry::default();
+        let (id, _) = registry.start(JobKind::RenderStems);
+        registry.set_running(&id, "rendering");
+        let promoted = Arc::new(AtomicBool::new(false));
+        let promotion = Arc::clone(&promoted);
+        let result = RenderStemsResult {
+            directory: "renders/render-1".into(),
+            project_id: "project-1".into(),
+            source_sequence: 4,
+            sample_rate: 48_000,
+            start_tick: 0,
+            end_tick: 480,
+            frames: 1_024,
+            stems: Vec::new(),
+            skipped_track_ids: Vec::new(),
+        };
+
+        assert!(registry.complete_if_not_cancelled(
+            &id,
+            serialize_result(&result).unwrap(),
+            "done",
+            move || promotion.store(true, Ordering::Release),
+        ));
+
+        let BackgroundJobStatus::RenderStems {
+            state,
+            result: Some(actual),
+            ..
+        } = to_background_status(registry.status(&id).unwrap()).unwrap()
+        else {
+            panic!("render stems jobs preserve their typed result");
+        };
+        assert_eq!(state, JobState::Completed);
+        assert_eq!(actual.project_id, result.project_id);
+        assert_eq!(actual.sample_rate, result.sample_rate);
+        assert_eq!(actual.frames, result.frames);
+        assert!(promoted.load(Ordering::Acquire));
     }
 
     #[test]
