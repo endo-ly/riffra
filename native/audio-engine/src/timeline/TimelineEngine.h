@@ -355,7 +355,7 @@ private:
     static void processLiveInstrumentTrack(const PreparedTimeline& timeline, Track& track,
                                            int sampleCount, std::int64_t rangeStart,
                                            bool playing) noexcept;
-    static void mixTrackOutput(Track& track, bool audible, std::int64_t rangeStart, int sampleCount,
+    static void mixTrackOutput(Track& track, std::int64_t rangeStart, int sampleCount,
                                float transportGainStart = 1.0f,
                                float transportGainStep = 0.0f) noexcept;
     void mixProductionOutput(PreparedTimeline& timeline, float* const* outputChannels,

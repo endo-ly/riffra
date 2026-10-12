@@ -141,7 +141,7 @@ AudioProtocolTest.ControlOutputDiscardsQueuedTelemetry
 
 録音は、ループ・Punch・複数 Track ごとのセグメント境界とファイル構造を `TimelineRecordingTest` と `RecordingSessionTest` / `ArrangeRecordingSessionTest` で確認する。1回の録音完了シナリオで音声ファイルと Manifest の両方を検証する。
 
-Mixerは`riffra-test-effect`を使い、異なるEffectレイテンシのTrack・Group・Return・Masterが合流しても重複加算や時間ずれがないこと、Mute・加算的Solo・Pre/Post分岐、ミックス設定変更時のDevice再利用をNativeで確認する。Bus・MasterのParameter・Bypass・保存状態は同じDevice APIを通して検証し、Rustでは正準保存と再読込まで確認する。
+Mixerは`riffra-test-effect`を使い、異なるEffectレイテンシのTrack・Group・Return・Masterが合流しても重複加算や時間ずれがないこと、Mute・加算的Solo・Pre/Post分岐、ミックス設定変更時のDevice再利用をNativeで確認する。Return SoloはPre/Post Sendの両方を通し、Group Soloは所属TrackのSendを有効にしない。低遅延監視Trackと通常Trackが混在するBusでは通常経路のPDCを維持し、未接続BusのEffectレイテンシはMasterへ反映せず、Mute・Soloを切り替えても構造上の経路レイテンシを変えない。Bus・MasterのParameter・Bypass・保存状態は同じDevice APIを通して検証し、Rustでは正準保存と再読込まで確認する。
 
 Renderの結合テストは実Native workerでGroup・Return・Master FXを通した全体MixとStemを作り、フレーム数、線形FXでの加算一致、Manifestの測定値を確認する。Float WAVの0 dBFS超のSample PeakとFFmpegのラウドネス測定・二段階Masteringは完成ファイルで確認する。FFmpegの測定不能をゼロ値や通常Render失敗へ置き換えない。
 

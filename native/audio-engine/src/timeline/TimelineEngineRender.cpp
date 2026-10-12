@@ -361,7 +361,7 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     }
 }
 
-void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std::int64_t rangeStart,
+void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
                                     const int sampleCount, const float transportGainStart,
                                     const float transportGainStep) noexcept {
     auto& runtime = *track.runtime;
@@ -457,22 +457,18 @@ void TimelineEngine::mixTrackOutput(Track& track, const bool audible, const std:
             right += postEffectRight;
             const auto sampleGain =
                 juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
-            runtime.preFaderOutputBuffer.setSample(0, processed,
-                                                   audible ? left * sampleGain : 0.0f);
-            runtime.preFaderOutputBuffer.setSample(1, processed,
-                                                   audible ? right * sampleGain : 0.0f);
+            runtime.preFaderOutputBuffer.setSample(0, processed, left * sampleGain);
+            runtime.preFaderOutputBuffer.setSample(1, processed, right * sampleGain);
             runtime.routedOutputBuffer.setSample(0, processed, left * leftGain);
             runtime.routedOutputBuffer.setSample(1, processed, right * rightGain);
             auto masterLeft = left * leftGain;
             auto masterRight = right * rightGain;
-            auto contributionLeft = audible ? masterLeft * sampleGain : 0.0f;
-            auto contributionRight = audible ? masterRight * sampleGain : 0.0f;
-            runtime.trackOutputBuffer.setSample(0, processed, contributionLeft);
-            runtime.trackOutputBuffer.setSample(1, processed, contributionRight);
-            if (!runtime.mainOutputAudible) {
-                contributionLeft = 0.0f;
-                contributionRight = 0.0f;
-            }
+            const auto postFaderLeft = masterLeft * sampleGain;
+            const auto postFaderRight = masterRight * sampleGain;
+            runtime.trackOutputBuffer.setSample(0, processed, postFaderLeft);
+            runtime.trackOutputBuffer.setSample(1, processed, postFaderRight);
+            const auto contributionLeft = runtime.mainOutputAudible ? postFaderLeft : 0.0f;
+            const auto contributionRight = runtime.mainOutputAudible ? postFaderRight : 0.0f;
             peakLeft = std::max(peakLeft, std::abs(contributionLeft));
             peakRight = std::max(peakRight, std::abs(contributionRight));
             sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;

@@ -136,9 +136,8 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   job.sampleCount);
     }
-    const auto audible = !runtime.muted;
-    TimelineEngine::mixTrackOutput(track, audible, job.rangeStart, job.sampleCount,
-                                   job.transportGainStart, job.transportGainStep);
+    TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
+                                   job.transportGainStep);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();

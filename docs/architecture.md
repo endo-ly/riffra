@@ -228,7 +228,7 @@ Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは�
 | Group Mute  | GroupからMasterへの出力を止める。Groupへ入る前のTrack Sendは維持する |
 | Return Mute | そのReturnのMaster向け出力を止める                                   |
 | Track Solo  | そのTrackの主出力、所属Group、そのTrack由来のSendを通す              |
-| Group Solo  | 所属Trackの主出力と、そのTrack由来のSendを通す                       |
+| Group Solo  | 所属Trackの主出力とGroup出力を通す                                   |
 | Return Solo | そのReturnへのSendとWet出力を通し、Dry主出力を抑制する               |
 
 Master FXは制作Mixを処理する。Metronome・Preview・Plugin Auditionは制作Mixの後で合成し、RealtimeのSafety Limiter・Feedback Protectionなどは最終出力へ維持する。Offlineも同じ制作Graphを使い、指定されたTailとGlobal Fadeを適用する。

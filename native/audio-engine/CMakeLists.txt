@@ -378,6 +378,9 @@ if(BUILD_TESTING)
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+  if(RIFFRA_SANITIZER)
+    target_link_options(riffra-test-effect_VST3 PRIVATE "-fsanitize=${RIFFRA_SANITIZER}")
+  endif()
 
   juce_add_plugin(riffra-test-instrument
     COMPANY_NAME Riffra
@@ -401,6 +404,9 @@ if(BUILD_TESTING)
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+  if(RIFFRA_SANITIZER)
+    target_link_options(riffra-test-instrument_VST3 PRIVATE "-fsanitize=${RIFFRA_SANITIZER}")
+  endif()
 
   add_executable(riffra-real-vst-runtime-test
     tests/plugins/RealVstRuntimeTest.cpp)

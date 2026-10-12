@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -67,13 +68,18 @@ struct MixerChannel final {
     std::atomic<float> pan{0.0f};
     bool unityCenterStereo = true;
     bool audible = true;
+    bool hasInput = false;
+    bool hasAudibleInput = false;
     std::int64_t inputLatency = 0;
     std::int64_t outputLatency = 0;
     TrackMeterAccumulator meter;
     std::vector<TrackRuntime*> sources;
 
     [[nodiscard]] bool lowLatency() const noexcept {
-        return std::any_of(sources.begin(), sources.end(),
+        // A shared Bus can bypass its output compensation only when every
+        // structurally connected source is under low-latency monitoring.
+        return !sources.empty() &&
+               std::all_of(sources.begin(), sources.end(),
                            [](const auto* source) { return source->lowLatencyMonitoring(); });
     }
 

@@ -665,7 +665,7 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
     const std::array<Case, 8> cases{{
         {false, false, false, false, false, false, 3.0f},
         {true, false, false, false, false, false, 2.0f},
-        {false, true, false, false, false, false, 2.0f},
+        {false, true, false, false, false, false, 1.0f},
         {false, false, true, false, false, false, 1.5f},
         {true, false, true, false, false, false, 2.5f},
         {false, false, false, true, false, false, 1.0f},
@@ -698,6 +698,7 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
         candidate.graph.tracks[1].muted = true;
         candidate.graph.tracks[0].gainDb = -6.020599913;
         candidate.graph.mixer.sends[0].position = position;
+        candidate.graph.mixer.buses[1].solo = true;
         TimelineEngine engine(true);
         juce::String error;
         ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
@@ -705,11 +706,116 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
         juce::AudioBuffer<float> output(2, 704);
         output.clear();
         engine.mix(output.getArrayOfWritePointers(), 2, 704);
-        EXPECT_NEAR(
-            output.getSample(0, 532),
-            0.25f / std::sqrt(2.0f) * (position == SendPositionSpec::preFader ? 1.5f : 1.0f),
-            0.002f);
+        const auto expected = position == SendPositionSpec::preFader ? 1.0f : 0.5f;
+        EXPECT_NEAR(output.getSample(0, 532), 0.25f / std::sqrt(2.0f) * expected, 0.002f);
     }
+}
+
+TEST(MixerRoutingTest, MixedLowLatencyAndTimelineInputsKeepBusPdc) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("mixed-low-latency.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    const auto makeClip = [&source](const juce::String& id) {
+        AudioClipSpec clip;
+        clip.id = id;
+        clip.path = source.getFullPathName();
+        clip.startTick = 20;
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        return clip;
+    };
+    auto monitoredTrack = makeAudioTrack("track:monitored");
+    monitoredTrack.monitorInput = true;
+    monitoredTrack.outputBusId = "bus:group";
+    monitoredTrack.panLaw = "unityCenterStereo";
+    monitoredTrack.audioClips.push_back(makeClip("clip:monitored"));
+    auto timelineTrack = makeAudioTrack("track:timeline");
+    timelineTrack.outputBusId = "bus:group";
+    timelineTrack.panLaw = "unityCenterStereo";
+    timelineTrack.audioClips.push_back(makeClip("clip:timeline"));
+    auto highLatencyTrack = makeAudioTrack("track:high-latency");
+    highLatencyTrack.panLaw = "unityCenterStereo";
+    highLatencyTrack.audioClips.push_back(makeClip("clip:high-latency"));
+    highLatencyTrack.effects = {{"fx:high:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                {"fx:high:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                {"fx:high:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {monitoredTrack, timelineTrack, highLatencyTrack};
+    MixBusSpec group;
+    group.id = "bus:group";
+    group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.mixer.buses.push_back(group);
+
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 24u);
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> output(2, 704);
+    output.clear();
+
+    // Act
+    engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+    // Assert: one monitored source must not bypass PDC for its mixed Bus.
+    EXPECT_NEAR(output.getSample(0, 500 + 8), 0.0f, 0.0001f);
+    EXPECT_GT(output.getSample(0, 500 + 24), 0.01f);
+}
+
+TEST(MixerRoutingTest, DisconnectedBusEffectsDoNotChangeMasterLatency) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:source");
+    snapshot.graph.tracks.push_back(track);
+    MixBusSpec group;
+    group.id = "bus:group";
+    group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    returnBus.effects.front().id = "fx:return";
+    snapshot.graph.mixer.buses = {group, returnBus};
+    snapshot.graph.mixer.sends = {
+        {"send:source", track.id, returnBus.id, 0.0, SendPositionSpec::postFader, false}};
+
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 0u);
+
+    // Act: connect the Group and enable the Return Send.
+    snapshot.graph.tracks[0].outputBusId = group.id;
+    snapshot.graph.mixer.sends[0].enabled = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    graph = TimelineEngineTestPeer::committedGraph(engine);
+
+    // Assert: either connected Bus effect contributes eight samples.
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 8u);
+
+    // Act: Mute and Solo change audibility, not the structural PDC paths.
+    snapshot.graph.tracks[0].muted = true;
+    snapshot.graph.mixer.buses[0].muted = true;
+    snapshot.graph.mixer.buses[1].solo = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    graph = TimelineEngineTestPeer::committedGraph(engine);
+
+    // Assert
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 8u);
 }
 
 }  // namespace riffra
