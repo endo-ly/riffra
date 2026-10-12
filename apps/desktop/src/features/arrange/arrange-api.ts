@@ -17,7 +17,8 @@ export type ArrangeWorkspaceApi = ArrangeApi &
     | 'setLiveMidiTarget'
     | 'panicMidiTrack'
     | 'previewAsset'
-    | 'previewTrackMix'
+    | 'previewChannelMix'
+    | 'previewSendLevel'
     | 'previewMasterGainDb'
     | 'setMasterGainDb'
   > &

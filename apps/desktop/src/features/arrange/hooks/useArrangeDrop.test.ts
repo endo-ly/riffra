@@ -27,7 +27,7 @@ function dropApi(overrides: Partial<Parameters<typeof useArrangeDrop>[0]['api']>
     addTrack: vi.fn(async () => mutation({ tracks: ['track:new'] })),
     applyInstrument: vi.fn(async () => mutation()),
     setTrackVst3Instrument: vi.fn(async () => mutation()),
-    addTrackEffect: vi.fn(async () => mutation()),
+    addEffect: vi.fn(async () => mutation()),
     ...overrides,
   };
 }
@@ -264,13 +264,16 @@ describe('useArrangeDrop', () => {
       );
     });
     await waitFor(() =>
-      expect(api.addTrackEffect).toHaveBeenCalledWith('track:keys', 'C:/VST3/Verb.vst3'),
+      expect(api.addEffect).toHaveBeenCalledWith(
+        { kind: 'track', id: 'track:keys' },
+        'C:/VST3/Verb.vst3',
+      ),
     );
 
     act(() => {
       result.current.handleDrop(browserDropEvent(RIFFRA_PLUGIN_MIME, payload));
     });
     await waitFor(() => expect(setMessage).toHaveBeenCalledWith('Drop an effect on a Track.'));
-    expect(api.addTrackEffect).toHaveBeenCalledTimes(1);
+    expect(api.addEffect).toHaveBeenCalledTimes(1);
   });
 });

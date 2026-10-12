@@ -400,8 +400,8 @@ export class FakeNativeApi implements NativeApi {
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
   }
-  previewTrackMix(...args: Parameters<NativeApi['previewTrackMix']>) {
-    return this.command('previewTrackMix', args);
+  previewChannelMix(...args: Parameters<NativeApi['previewChannelMix']>) {
+    return this.command('previewChannelMix', args);
   }
   setEmergencyMute(...args: Parameters<NativeApi['setEmergencyMute']>) {
     return this.command('setEmergencyMute', args);
@@ -517,41 +517,65 @@ export class FakeNativeApi implements NativeApi {
   clearTrackInstrument(...args: Parameters<NativeApi['clearTrackInstrument']>) {
     return this.command('clearTrackInstrument', args);
   }
-  addTrackEffect(...args: Parameters<NativeApi['addTrackEffect']>) {
-    return this.command('addTrackEffect', args);
+  addMixBus(...args: Parameters<NativeApi['addMixBus']>) {
+    return this.command('addMixBus', args);
   }
-  removeTrackEffect(...args: Parameters<NativeApi['removeTrackEffect']>) {
-    return this.command('removeTrackEffect', args);
+  updateMixBus(...args: Parameters<NativeApi['updateMixBus']>) {
+    return this.command('updateMixBus', args);
   }
-  reorderTrackEffects(...args: Parameters<NativeApi['reorderTrackEffects']>) {
-    return this.command('reorderTrackEffects', args);
+  removeMixBus(...args: Parameters<NativeApi['removeMixBus']>) {
+    return this.command('removeMixBus', args);
   }
-  setTrackDeviceBypassed(...args: Parameters<NativeApi['setTrackDeviceBypassed']>) {
-    return this.command('setTrackDeviceBypassed', args);
+  setTrackOutput(...args: Parameters<NativeApi['setTrackOutput']>) {
+    return this.command('setTrackOutput', args);
   }
-  setTrackDeviceParameter(...args: Parameters<NativeApi['setTrackDeviceParameter']>) {
-    return this.command('setTrackDeviceParameter', args);
+  addSend(...args: Parameters<NativeApi['addSend']>) {
+    return this.command('addSend', args);
   }
-  inspectTrackDevice(...args: Parameters<NativeApi['inspectTrackDevice']>) {
-    return this.command('inspectTrackDevice', args);
+  updateSend(...args: Parameters<NativeApi['updateSend']>) {
+    return this.command('updateSend', args);
   }
-  listTrackDeviceParameters(...args: Parameters<NativeApi['listTrackDeviceParameters']>) {
-    return this.command('listTrackDeviceParameters', args);
+  removeSend(...args: Parameters<NativeApi['removeSend']>) {
+    return this.command('removeSend', args);
   }
-  getTrackDeviceParameter(...args: Parameters<NativeApi['getTrackDeviceParameter']>) {
-    return this.command('getTrackDeviceParameter', args);
+  previewSendLevel(...args: Parameters<NativeApi['previewSendLevel']>) {
+    return this.command('previewSendLevel', args);
   }
-  listTrackPluginPresets(...args: Parameters<NativeApi['listTrackPluginPresets']>) {
-    return this.command('listTrackPluginPresets', args);
+  addEffect(...args: Parameters<NativeApi['addEffect']>) {
+    return this.command('addEffect', args);
   }
-  getTrackPluginPreset(...args: Parameters<NativeApi['getTrackPluginPreset']>) {
-    return this.command('getTrackPluginPreset', args);
+  removeEffect(...args: Parameters<NativeApi['removeEffect']>) {
+    return this.command('removeEffect', args);
   }
-  setTrackPluginPreset(...args: Parameters<NativeApi['setTrackPluginPreset']>) {
-    return this.command('setTrackPluginPreset', args);
+  reorderEffects(...args: Parameters<NativeApi['reorderEffects']>) {
+    return this.command('reorderEffects', args);
   }
-  openTrackPluginEditor(...args: Parameters<NativeApi['openTrackPluginEditor']>) {
-    return this.command('openTrackPluginEditor', args);
+  setDeviceBypassed(...args: Parameters<NativeApi['setDeviceBypassed']>) {
+    return this.command('setDeviceBypassed', args);
+  }
+  setDeviceParameter(...args: Parameters<NativeApi['setDeviceParameter']>) {
+    return this.command('setDeviceParameter', args);
+  }
+  inspectDevice(...args: Parameters<NativeApi['inspectDevice']>) {
+    return this.command('inspectDevice', args);
+  }
+  listDeviceParameters(...args: Parameters<NativeApi['listDeviceParameters']>) {
+    return this.command('listDeviceParameters', args);
+  }
+  getDeviceParameter(...args: Parameters<NativeApi['getDeviceParameter']>) {
+    return this.command('getDeviceParameter', args);
+  }
+  listPluginPresets(...args: Parameters<NativeApi['listPluginPresets']>) {
+    return this.command('listPluginPresets', args);
+  }
+  getPluginPreset(...args: Parameters<NativeApi['getPluginPreset']>) {
+    return this.command('getPluginPreset', args);
+  }
+  setPluginPreset(...args: Parameters<NativeApi['setPluginPreset']>) {
+    return this.command('setPluginPreset', args);
+  }
+  openPluginEditor(...args: Parameters<NativeApi['openPluginEditor']>) {
+    return this.command('openPluginEditor', args);
   }
   removeTrack(...args: Parameters<NativeApi['removeTrack']>) {
     return this.command('removeTrack', args);
@@ -1125,12 +1149,19 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'applyInstrument',
   'setTrackVst3Instrument',
   'clearTrackInstrument',
-  'addTrackEffect',
-  'removeTrackEffect',
-  'reorderTrackEffects',
-  'setTrackDeviceBypassed',
-  'setTrackDeviceParameter',
-  'setTrackPluginPreset',
+  'addMixBus',
+  'updateMixBus',
+  'removeMixBus',
+  'setTrackOutput',
+  'addSend',
+  'updateSend',
+  'removeSend',
+  'addEffect',
+  'removeEffect',
+  'reorderEffects',
+  'setDeviceBypassed',
+  'setDeviceParameter',
+  'setPluginPreset',
   'removeTrack',
   'duplicateTrack',
   'reorderTrack',
@@ -1172,8 +1203,9 @@ const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
   'installAppUpdate',
   'previewMasterGainDb',
-  'previewTrackMix',
-  'openTrackPluginEditor',
+  'previewSendLevel',
+  'previewChannelMix',
+  'openPluginEditor',
   'playTimeline',
   'stopTimeline',
   'goToStartTimeline',

@@ -79,7 +79,7 @@
 .channel {
   flex: 0 0 108px;
   display: grid;
-  grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(64px, 1fr) auto;
   gap: var(--space-0-5);
   padding: var(--space-1);
   border-top: 3px solid var(--track-color, var(--color-border-strong));
@@ -374,7 +374,7 @@
   grid-column: 2;
   grid-row: 2;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: var(--space-1-5);
   padding: var(--space-1-5);
   border-top: 3px solid var(--color-accent);
@@ -502,4 +502,69 @@
   .masterChannel {
     padding: var(--space-2-5);
   }
+}
+
+.busControls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.busControls input {
+  width: 100px;
+}
+.routeButton {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.routingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-confirm);
+  display: grid;
+  place-items: center;
+  background: var(--color-bg-scrim);
+}
+.routingDialog {
+  width: min(580px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-bg-surface-raised);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-dialog);
+}
+.routingDialog header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.routingDialog label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.routingDialog fieldset {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border-default);
+}
+.error {
+  grid-column: 1 / -1;
+  color: var(--color-status-danger);
+  margin: var(--space-2);
+}
+
+.busChannel {
+  grid-template-rows: auto auto auto minmax(64px, 1fr) auto;
 }

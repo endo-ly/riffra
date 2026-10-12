@@ -1,33 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ArrangementMutationResult, CanonicalState, Track } from '@/model/domain';
+import type { ArrangementMutationResult, CanonicalState, Track, MixBus } from '@/model/domain';
 import type { ArrangeApi, AudioApi } from '@/native/native-api';
-type TrackMixApi = Pick<ArrangeApi, 'updateTrack'> & Pick<AudioApi, 'previewTrackMix'>;
+type ChannelMixApi = Pick<ArrangeApi, 'updateTrack' | 'updateMixBus'> &
+  Pick<AudioApi, 'previewChannelMix'>;
 type MixParameter = 'gainDb' | 'pan';
 const mixParameters: readonly MixParameter[] = ['gainDb', 'pan'];
 interface PendingCommit {
   interactionId: number;
   value: number;
 }
-interface UseTrackMixControlOptions {
+interface UseChannelMixControlOptions {
   sessionId: string;
-  track: Track;
-  api: TrackMixApi;
+  channel: Track | MixBus;
+  api: ChannelMixApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
-/** Coordinates one Track's transient preview and one-shot canonical commit. */
-export function useTrackMixControl({
+/** Coordinates one channel's transient preview and one-shot canonical commit. */
+export function useChannelMixControl({
   sessionId,
-  track,
+  channel,
   api,
   applyCanonicalState,
   onError,
   disabled = false,
-}: UseTrackMixControlOptions) {
-  const [gainDb, setGainDb] = useState(track.gainDb);
-  const [pan, setPan] = useState(track.pan);
-  const canonical = useRef({ gainDb: track.gainDb, pan: track.pan });
+}: UseChannelMixControlOptions) {
+  const [gainDb, setGainDb] = useState(channel.gainDb);
+  const [pan, setPan] = useState(channel.pan);
+  const canonical = useRef({ gainDb: channel.gainDb, pan: channel.pan });
   const previewTimers = useRef<Partial<Record<MixParameter, number>>>({});
   const previewVersions = useRef<Record<MixParameter, number>>({ gainDb: 0, pan: 0 });
   const previewChain = useRef<Promise<void>>(Promise.resolve());
@@ -37,7 +38,7 @@ export function useTrackMixControl({
   const disposed = useRef(false);
   const cancelled = useRef<Partial<Record<MixParameter, boolean>>>({});
   const activeSessionId = useRef(sessionId);
-  const activeTrackId = useRef(track.id);
+  const activeChannelId = useRef(channel.id);
   const clearPreviewTimer = useCallback((parameter: MixParameter) => {
     const timer = previewTimers.current[parameter];
     if (timer !== undefined) {
@@ -55,11 +56,17 @@ export function useTrackMixControl({
         .catch(() => undefined)
         .then(() => {
           if (disposed.current || previewVersions.current[parameter] !== previewVersion) return;
-          return api.previewTrackMix(track.id, { [parameter]: value });
+          return api.previewChannelMix(
+            {
+              kind: channel.kind === 'group' || channel.kind === 'return' ? 'bus' : 'track',
+              id: channel.id,
+            },
+            { [parameter]: value },
+          );
         })
         .catch(() => undefined);
     },
-    [api, track.id],
+    [api, channel.id, channel.kind],
   );
   const setDraft = useCallback((parameter: MixParameter, value: number) => {
     if (parameter === 'gainDb') setGainDb(value);
@@ -77,10 +84,10 @@ export function useTrackMixControl({
   );
   useEffect(() => {
     const sessionChanged = activeSessionId.current !== sessionId;
-    const trackChanged = activeTrackId.current !== track.id;
+    const trackChanged = activeChannelId.current !== channel.id;
     if (sessionChanged || trackChanged) {
       activeSessionId.current = sessionId;
-      activeTrackId.current = track.id;
+      activeChannelId.current = channel.id;
       cancelled.current = {};
       editing.current = {};
       mixParameters.forEach((parameter) => {
@@ -91,7 +98,7 @@ export function useTrackMixControl({
       previewChain.current = Promise.resolve();
       pendingCommit.current = {};
     }
-    const nextValues = { gainDb: track.gainDb, pan: track.pan };
+    const nextValues = { gainDb: channel.gainDb, pan: channel.pan };
     mixParameters.forEach((parameter) => {
       const previousValue = canonical.current[parameter];
       const nextValue = nextValues[parameter];
@@ -110,9 +117,9 @@ export function useTrackMixControl({
     queuePreview,
     sessionId,
     setDraft,
-    track.gainDb,
-    track.id,
-    track.pan,
+    channel.gainDb,
+    channel.id,
+    channel.pan,
   ]);
   useEffect(() => {
     disposed.current = false;
@@ -160,12 +167,17 @@ export function useTrackMixControl({
         await previewChain.current.catch(() => undefined);
         if (disposed.current) return;
         if (value === canonical.current[parameter]) return;
-        const result: ArrangementMutationResult = await api.updateTrack(track.id, patch);
+        const result: ArrangementMutationResult = await (channel.kind === 'group' ||
+        channel.kind === 'return'
+          ? api.updateMixBus(channel.id, patch)
+          : api.updateTrack(channel.id, patch));
         if (disposed.current) return;
         if (!applyCanonicalState(result.canonical)) return;
-        const committed = result.canonical.session.arrangement.tracks.find(
-          (candidate) => candidate.id === track.id,
-        );
+        const committed = (
+          channel.kind === 'group' || channel.kind === 'return'
+            ? result.canonical.session.arrangement.mixer.buses
+            : result.canonical.session.arrangement.tracks
+        ).find((candidate) => candidate.id === channel.id);
         if (committed) {
           canonical.current = { gainDb: committed.gainDb, pan: committed.pan };
           if (!editing.current.gainDb) setGainDb(committed.gainDb);
@@ -194,7 +206,8 @@ export function useTrackMixControl({
       onError,
       queuePreview,
       restoreCanonicalRuntime,
-      track.id,
+      channel.id,
+      channel.kind,
     ],
   );
   const cancel = useCallback(

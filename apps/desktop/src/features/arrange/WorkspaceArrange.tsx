@@ -15,6 +15,7 @@ import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
 import { AutomationLaneView } from './timeline/AutomationLaneView';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
+import { resolveDeviceTarget } from './devices/device-target';
 import { DevicesPanel } from './devices/DevicesPanel';
 import { ArrangeLowerArea } from './ArrangeLowerArea';
 import { ArrangeOverlays, type ArrangeConfirmRequest } from './ArrangeOverlays';
@@ -188,6 +189,16 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   });
   const selectedClipIds = props.selection.kind === 'clips' ? props.selection.clipIds : [];
   const selectedTrackId = props.selection.kind === 'track' ? props.selection.trackId : null;
+  const deviceTarget = useMemo(() => {
+    const selection = props.selection;
+    if (selection.kind === 'master') return resolveDeviceTarget(arrangement, { kind: 'master' });
+    if (selection.kind === 'bus')
+      return resolveDeviceTarget(arrangement, { kind: 'bus', id: selection.busId });
+    if (selection.kind === 'track')
+      return resolveDeviceTarget(arrangement, { kind: 'track', id: selection.trackId });
+    return null;
+  }, [arrangement, props.selection]);
+
   const focusedTrackId = props.focusedTrackId;
   const focusedTrack = arrangement.tracks.find((track) => track.id === focusedTrackId) ?? null;
   const trackClipCounts = useMemo(() => {
@@ -820,8 +831,8 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
         devices={
           <DevicesPanel
-            key={`${props.session.sessionId}:${selectedTrackId ?? ''}:${props.hostGeneration ?? 0}`}
-            track={arrangement.tracks.find((track) => track.id === selectedTrackId) ?? null}
+            key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${props.hostGeneration ?? 0}`}
+            target={deviceTarget}
             projectId={props.session.sessionId}
             api={props.api}
             applyCanonicalState={props.applyCanonicalState}
@@ -837,6 +848,26 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <MixerPanel
             session={props.session}
             selectedTrackId={selectedTrackId}
+            selectedOwner={deviceTarget?.owner ?? null}
+            onSelectOwner={(owner) =>
+              props.setSelection(
+                owner.kind === 'master'
+                  ? { kind: 'master' }
+                  : owner.kind === 'bus'
+                    ? { kind: 'bus', busId: owner.id }
+                    : { kind: 'track', trackId: owner.id },
+              )
+            }
+            onOpenOwnerDevices={(owner) => {
+              props.setSelection(
+                owner.kind === 'master'
+                  ? { kind: 'master' }
+                  : owner.kind === 'bus'
+                    ? { kind: 'bus', busId: owner.id }
+                    : { kind: 'track', trackId: owner.id },
+              );
+              lower.openDevices();
+            }}
             missingDeviceIds={missingDeviceIds}
             api={props.api}
             applyCanonicalState={props.applyCanonicalState}

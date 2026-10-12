@@ -1,4 +1,11 @@
-import type { ArrangementMutationResult } from '@/model/domain';
+import type {
+  ArrangementMutationResult,
+  EffectOwner,
+  MixBusKind,
+  MixBusPatch,
+  SendPatch,
+  SendPosition,
+} from '@/model/domain';
 import { dispatchControl } from '../invoke';
 
 export async function applyInstrument(
@@ -19,80 +26,110 @@ export async function clearTrackInstrument(trackId: string): Promise<Arrangement
   return dispatchControl({ command: 'instrument.clear', params: { trackId } });
 }
 
-export async function addTrackEffect(
-  trackId: string,
+export async function addEffect(
+  owner: EffectOwner,
   pluginPath: string,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'effect.add', params: { trackId, pluginPath } });
+  return dispatchControl({ command: 'effect.add', params: { owner, pluginPath } });
 }
 
-export async function removeTrackEffect(
-  trackId: string,
+export async function removeEffect(
+  owner: EffectOwner,
   deviceId: string,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'effect.remove', params: { trackId, deviceId } });
+  return dispatchControl({ command: 'effect.remove', params: { owner, deviceId } });
 }
 
-export async function reorderTrackEffects(
-  trackId: string,
+export async function reorderEffects(
+  owner: EffectOwner,
   orderedDeviceIds: string[],
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
     command: 'effect.reorder',
-    params: { trackId, deviceIds: orderedDeviceIds },
+    params: { owner, deviceIds: orderedDeviceIds },
   });
 }
 
-export async function setTrackDeviceBypassed(
-  trackId: string,
+export async function setDeviceBypassed(
+  owner: EffectOwner,
   deviceId: string,
   bypassed: boolean,
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'device.bypass', params: { trackId, deviceId, bypassed } });
+  return dispatchControl({ command: 'device.bypass', params: { owner, deviceId, bypassed } });
 }
 
-export async function setTrackDeviceParameter(
-  trackId: string,
+export async function setDeviceParameter(
+  owner: EffectOwner,
   deviceId: string,
   parameterIndex: number,
   value: number,
 ): Promise<ArrangementMutationResult> {
   return dispatchControl({
     command: 'device.parameter.set',
-    params: { trackId, deviceId, parameterIndex, value },
+    params: { owner, deviceId, parameterIndex, value },
   });
 }
 
-export async function openTrackPluginEditor(trackId: string, deviceId: string): Promise<void> {
-  await dispatchControl({ command: 'plugin.editor.open', params: { trackId, deviceId } });
+export async function openPluginEditor(owner: EffectOwner, deviceId: string): Promise<void> {
+  await dispatchControl({ command: 'plugin.editor.open', params: { owner, deviceId } });
 }
 
-export function inspectTrackDevice(trackId: string, deviceId: string) {
-  return dispatchControl({ command: 'device.inspect', params: { trackId, deviceId } });
+export function inspectDevice(owner: EffectOwner, deviceId: string) {
+  return dispatchControl({ command: 'device.inspect', params: { owner, deviceId } });
 }
 
-export function listTrackDeviceParameters(trackId: string, deviceId: string) {
-  return dispatchControl({ command: 'device.parameter.list', params: { trackId, deviceId } });
+export function listDeviceParameters(owner: EffectOwner, deviceId: string) {
+  return dispatchControl({ command: 'device.parameter.list', params: { owner, deviceId } });
 }
 
-export function getTrackDeviceParameter(trackId: string, deviceId: string, parameterIndex: number) {
+export function getDeviceParameter(owner: EffectOwner, deviceId: string, parameterIndex: number) {
   return dispatchControl({
     command: 'device.parameter.get',
-    params: { trackId, deviceId, parameterIndex },
+    params: { owner, deviceId, parameterIndex },
   });
 }
 
-export function listTrackPluginPresets(trackId: string, deviceId: string) {
-  return dispatchControl({ command: 'plugin.preset.list', params: { trackId, deviceId } });
+export function listPluginPresets(owner: EffectOwner, deviceId: string) {
+  return dispatchControl({ command: 'plugin.preset.list', params: { owner, deviceId } });
 }
 
-export function getTrackPluginPreset(trackId: string, deviceId: string) {
-  return dispatchControl({ command: 'plugin.preset.get', params: { trackId, deviceId } });
+export function getPluginPreset(owner: EffectOwner, deviceId: string) {
+  return dispatchControl({ command: 'plugin.preset.get', params: { owner, deviceId } });
 }
 
-export function setTrackPluginPreset(trackId: string, deviceId: string, presetIndex: number) {
+export function setPluginPreset(owner: EffectOwner, deviceId: string, presetIndex: number) {
   return dispatchControl({
     command: 'plugin.preset.set',
-    params: { trackId, deviceId, presetIndex },
+    params: { owner, deviceId, presetIndex },
   });
+}
+
+export function addMixBus(name: string, kind: MixBusKind) {
+  return dispatchControl({ command: 'mixer.bus.add', params: { name, kind } });
+}
+export function updateMixBus(busId: string, patch: MixBusPatch) {
+  return dispatchControl({ command: 'mixer.bus.update', params: { busId, patch } });
+}
+export function removeMixBus(busId: string) {
+  return dispatchControl({ command: 'mixer.bus.remove', params: { busId } });
+}
+export function setTrackOutput(trackId: string, busId: string | null) {
+  return dispatchControl({ command: 'mixer.output.set', params: { trackId, busId } });
+}
+export function addSend(
+  trackId: string,
+  returnBusId: string,
+  levelDb: number,
+  position: SendPosition,
+) {
+  return dispatchControl({
+    command: 'mixer.send.add',
+    params: { trackId, returnBusId, levelDb, position },
+  });
+}
+export function updateSend(sendId: string, patch: SendPatch) {
+  return dispatchControl({ command: 'mixer.send.update', params: { sendId, patch } });
+}
+export function removeSend(sendId: string) {
+  return dispatchControl({ command: 'mixer.send.remove', params: { sendId } });
 }

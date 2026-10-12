@@ -4,17 +4,17 @@ import type {
   CanonicalState,
   InstrumentLibraryItem,
   PluginEntry,
-  Track,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { applyArrangementMutation } from '@/shared/session/apply-arrangement-mutation';
 import { DeviceParameterEditor } from './DeviceParameterEditor';
 import { DeviceChain } from './DeviceChain';
+import type { DeviceTarget } from './device-target';
 import styles from './Devices.module.css';
 
 interface DevicesPanelProps {
   projectId: string;
-  track: Track | null;
+  target: DeviceTarget | null;
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   instruments: InstrumentLibraryItem[];
@@ -28,15 +28,17 @@ interface DevicesPanelProps {
 export function DevicesPanel(props: DevicesPanelProps) {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { track } = props;
+  const { target } = props;
+  const track = target?.track;
   const device =
     track?.instrument?.id === selectedDeviceId
       ? track.instrument
-      : track?.effects.find((item) => item.id === selectedDeviceId);
+      : target?.effects.find((item) => item.id === selectedDeviceId);
   useEffect(() => {
     if (!device) setSelectedDeviceId(null);
   }, [device]);
-  useEffect(() => setSelectedDeviceId(null), [props.projectId, track?.id]);
+  const ownerKey = target ? JSON.stringify(target.owner) : '';
+  useEffect(() => setSelectedDeviceId(null), [props.projectId, ownerKey]);
   const plugin =
     device &&
     ('plugin' in device ? device.plugin : device.source.type === 'vst3' ? device.source : null);
@@ -60,25 +62,25 @@ export function DevicesPanel(props: DevicesPanelProps) {
     <div className={styles.panel} aria-label="Devices">
       <header className={styles.header}>
         <strong>DEVICES</strong>
-        <span>{track?.name ?? 'Select a Track'}</span>
+        <span>{target?.name ?? 'Select a channel'}</span>
       </header>
-      {track ? (
+      {target ? (
         <DeviceChain
           {...props}
-          track={track}
+          target={target}
           selectedDeviceId={selectedDeviceId}
           onSelectDevice={setSelectedDeviceId}
           commit={commit}
           runOperation={runOperation}
         />
       ) : (
-        <p>Select a Track to edit its devices.</p>
+        <p>Select a channel to edit its devices.</p>
       )}
-      {track && device && plugin && !unavailable && (
+      {target && device && plugin && !unavailable && (
         <DeviceParameterEditor
-          key={`${props.projectId}:${track.id}:${device.id}:${plugin.path}`}
+          key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
           api={props.api}
-          trackId={track.id}
+          owner={target.owner}
           deviceId={device.id}
           stateData={plugin.stateData}
           parameterValues={plugin.parameterValues}

@@ -3,9 +3,10 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Profiler, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DeviceParameterInfo, Track } from '@/model/domain';
+import type { CreativeSession, EffectOwner, DeviceParameterInfo, Track } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
+import { resolveDeviceTarget } from './device-target';
 import { DevicesPanel } from './DevicesPanel';
 
 afterEach(cleanup);
@@ -61,7 +62,7 @@ const parameters: DeviceParameterInfo[] = [
 function runtimeApi() {
   return new FakeNativeApi({
     responses: {
-      inspectTrackDevice: {
+      inspectDevice: {
         id: effect.id,
         name: effect.name,
         source: 'vst3',
@@ -70,23 +71,33 @@ function runtimeApi() {
         parameterCount: 2,
         statePersisted: false,
       },
-      listTrackDeviceParameters: parameters,
-      listTrackPluginPresets: [
+      listDeviceParameters: parameters,
+      listPluginPresets: [
         { index: 0, name: 'Init' },
         { index: 1, name: 'Soft' },
       ],
-      getTrackPluginPreset: { index: 0, name: 'Init' },
+      getPluginPreset: { index: 0, name: 'Init' },
     },
   });
 }
-function Harness({ api, initialTrack = track }: { api: FakeNativeApi; initialTrack?: Track }) {
-  const initial = defaultSession();
-  initial.arrangement.tracks = [structuredClone(initialTrack)];
+function Harness({
+  api,
+  initialTrack = track,
+  initialSession,
+  owner = { kind: 'track', id: track.id },
+}: {
+  api: FakeNativeApi;
+  initialTrack?: Track;
+  initialSession?: CreativeSession;
+  owner?: EffectOwner;
+}) {
+  const initial = initialSession ?? defaultSession();
+  if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
   const [session, setSession] = useState(initial);
   return (
     <DevicesPanel
       projectId={session.sessionId}
-      track={session.arrangement.tracks[0]}
+      target={resolveDeviceTarget(session.arrangement, owner)}
       api={api}
       applyCanonicalState={(canonical) => {
         setSession(canonical.session);
@@ -103,106 +114,129 @@ function Harness({ api, initialTrack = track }: { api: FakeNativeApi; initialTra
 }
 
 describe('DevicesPanel', () => {
-  it('commits the final slider value once, uses choices/defaults, and refreshes after presets', async () => {
-    const api = runtimeApi();
-    const currentSession = defaultSession();
-    currentSession.arrangement.tracks = [structuredClone(track)];
-    const currentParameters = structuredClone(parameters);
-    let releaseModeMetadata!: () => void;
-    const modeMetadata = new Promise<void>((resolve) => {
-      releaseModeMetadata = resolve;
-    });
-    let refreshingMode = false;
-    const enabledDuringRefresh: boolean[] = [];
-    const parameterReads = vi.fn(async () => {
-      if (currentParameters[1].value === 1) await modeMetadata;
-      return structuredClone(currentParameters);
-    });
-    api.listTrackDeviceParameters = parameterReads;
-    api.setTrackDeviceParameter = vi.fn(async (_trackId, _deviceId, index, value) => {
-      currentParameters[index] = {
-        ...currentParameters[index],
-        value,
-        displayValue: String(value),
-      };
-      currentSession.arrangement.tracks[0].effects[0].plugin.parameterValues[index] = value;
-      if (index === 1) refreshingMode = true;
-      return {
-        canonical: canonicalState(structuredClone(currentSession)),
-        createdEntityIds: {},
-        projection: { state: 'notRequired' as const },
-      };
-    });
-    api.setTrackPluginPreset = vi.fn(async () => {
-      currentParameters.forEach((parameter) => {
-        parameter.value = parameter.defaultValue;
+  it.each(['track', 'bus', 'master'] as const)(
+    'commits parameters, presets and editor actions on %s',
+    async (kind) => {
+      const api = runtimeApi();
+      const currentSession = defaultSession();
+      currentSession.arrangement.tracks = [structuredClone(track)];
+      const owner: EffectOwner =
+        kind === 'master' ? { kind } : { kind, id: kind === 'track' ? track.id : 'bus:1' };
+      if (kind === 'bus')
+        currentSession.arrangement.mixer.buses.push({
+          id: 'bus:1',
+          name: 'Group',
+          kind: 'group',
+          gainDb: 0,
+          pan: 0,
+          panLaw: 'equalPower',
+          muted: false,
+          solo: false,
+          effects: [structuredClone(effect)],
+        });
+      if (kind === 'master')
+        currentSession.arrangement.mixer.masterEffects = [structuredClone(effect)];
+      const currentEffect = resolveDeviceTarget(currentSession.arrangement, owner)!.effects[0];
+
+      const currentParameters = structuredClone(parameters);
+      let releaseModeMetadata!: () => void;
+      const modeMetadata = new Promise<void>((resolve) => {
+        releaseModeMetadata = resolve;
       });
-      currentSession.arrangement.tracks[0].effects[0].plugin.parameterValues =
-        currentParameters.map((parameter) => parameter.value);
-      api.getTrackPluginPreset = vi.fn().mockResolvedValue({ index: 1, name: 'Soft' });
-      return {
-        canonical: canonicalState(structuredClone(currentSession)),
-        createdEntityIds: {},
-        projection: { state: 'notRequired' as const },
-      };
-    });
-    api.openTrackPluginEditor = vi.fn().mockResolvedValue(undefined);
-    render(
-      <Profiler
-        id="device-editor"
-        onRender={() => {
-          const reset = screen.queryByRole('button', { name: 'Reset Level' });
-          if (refreshingMode && reset) enabledDuringRefresh.push(!reset.hasAttribute('disabled'));
-        }}
-      >
-        <Harness api={api} />
-      </Profiler>,
-    );
-    expect(screen.getByText('Audio Input →')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
-    const slider = await screen.findByLabelText('Level');
-    expect(screen.getByText('-6 dB')).toBeInTheDocument();
-    fireEvent.change(slider, { target: { value: '0.7' } });
-    expect(api.setTrackDeviceParameter).not.toHaveBeenCalled();
-    fireEvent.pointerUp(slider);
-    fireEvent.blur(slider);
-    await waitFor(() => expect(api.setTrackDeviceParameter).toHaveBeenCalledTimes(1));
-    expect(api.setTrackDeviceParameter).toHaveBeenLastCalledWith(track.id, effect.id, 0, 0.7);
-    await waitFor(() => expect(screen.getByLabelText('Mode')).toBeEnabled());
-    fireEvent.change(screen.getByLabelText('Mode'), { target: { value: '1' } });
-    await waitFor(() =>
-      expect(api.setTrackDeviceParameter).toHaveBeenLastCalledWith(track.id, effect.id, 1, 1),
-    );
-    expect(screen.getByRole('button', { name: 'Reset Level' })).toBeDisabled();
-    expect(enabledDuringRefresh).not.toContain(true);
-    refreshingMode = false;
-    await act(async () => releaseModeMetadata());
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Level' }));
-    await waitFor(() =>
-      expect(api.setTrackDeviceParameter).toHaveBeenLastCalledWith(track.id, effect.id, 0, 0.25),
-    );
-    await waitFor(() => expect(screen.getByLabelText('Preset')).toBeEnabled());
-    const reads = parameterReads.mock.calls.length;
-    fireEvent.change(screen.getByLabelText('Preset'), { target: { value: '1' } });
-    await waitFor(() =>
-      expect(api.setTrackPluginPreset).toHaveBeenCalledWith(track.id, effect.id, 1),
-    );
-    await waitFor(() => expect(parameterReads.mock.calls.length).toBeGreaterThan(reads));
-    await waitFor(() => expect(screen.getByLabelText('Preset')).toHaveValue('1'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Plugin Editor' }));
-    expect(api.openTrackPluginEditor).toHaveBeenCalledWith(track.id, effect.id);
-    api.setTrackDeviceParameter = vi.fn().mockRejectedValue(new Error('Parameter rejected'));
-    fireEvent.change(screen.getByLabelText('Level'), { target: { value: '0.9' } });
-    fireEvent.pointerUp(screen.getByLabelText('Level'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Parameter rejected');
-    expect(screen.getByLabelText('Level')).toHaveValue('0.25');
-  });
+      let refreshingMode = false;
+      const enabledDuringRefresh: boolean[] = [];
+      const parameterReads = vi.fn(async () => {
+        if (currentParameters[1].value === 1) await modeMetadata;
+        return structuredClone(currentParameters);
+      });
+      api.listDeviceParameters = parameterReads;
+      api.setDeviceParameter = vi.fn(async (_trackId, _deviceId, index, value) => {
+        currentParameters[index] = {
+          ...currentParameters[index],
+          value,
+          displayValue: String(value),
+        };
+        currentEffect.plugin.parameterValues[index] = value;
+        if (index === 1) refreshingMode = true;
+        return {
+          canonical: canonicalState(structuredClone(currentSession)),
+          createdEntityIds: {},
+          projection: { state: 'notRequired' as const },
+        };
+      });
+      api.setPluginPreset = vi.fn(async () => {
+        currentParameters.forEach((parameter) => {
+          parameter.value = parameter.defaultValue;
+        });
+        currentEffect.plugin.parameterValues = currentParameters.map(
+          (parameter) => parameter.value,
+        );
+        api.getPluginPreset = vi.fn().mockResolvedValue({ index: 1, name: 'Soft' });
+        return {
+          canonical: canonicalState(structuredClone(currentSession)),
+          createdEntityIds: {},
+          projection: { state: 'notRequired' as const },
+        };
+      });
+      api.openPluginEditor = vi.fn().mockResolvedValue(undefined);
+      render(
+        <Profiler
+          id="device-editor"
+          onRender={() => {
+            const reset = screen.queryByRole('button', { name: 'Reset Level' });
+            if (refreshingMode && reset) enabledDuringRefresh.push(!reset.hasAttribute('disabled'));
+          }}
+        >
+          <Harness api={api} initialSession={structuredClone(currentSession)} owner={owner} />
+        </Profiler>,
+      );
+      if (kind === 'track') expect(screen.getByText('Audio Input →')).toBeInTheDocument();
+      else expect(screen.queryByText('Audio Input →')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+      const slider = await screen.findByLabelText('Level');
+      expect(screen.getByText('-6 dB')).toBeInTheDocument();
+      fireEvent.change(slider, { target: { value: '0.7' } });
+      expect(api.setDeviceParameter).not.toHaveBeenCalled();
+      fireEvent.pointerUp(slider);
+      fireEvent.blur(slider);
+      await waitFor(() => expect(api.setDeviceParameter).toHaveBeenCalledTimes(1));
+      expect(api.setDeviceParameter).toHaveBeenLastCalledWith(owner, effect.id, 0, 0.7);
+      await waitFor(() => expect(screen.getByLabelText('Mode')).toBeEnabled());
+      fireEvent.change(screen.getByLabelText('Mode'), { target: { value: '1' } });
+      await waitFor(() =>
+        expect(api.setDeviceParameter).toHaveBeenLastCalledWith(owner, effect.id, 1, 1),
+      );
+      expect(screen.getByRole('button', { name: 'Reset Level' })).toBeDisabled();
+      expect(enabledDuringRefresh).not.toContain(true);
+      refreshingMode = false;
+      await act(async () => releaseModeMetadata());
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled(),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Reset Level' }));
+      await waitFor(() =>
+        expect(api.setDeviceParameter).toHaveBeenLastCalledWith(owner, effect.id, 0, 0.25),
+      );
+      await waitFor(() => expect(screen.getByLabelText('Preset')).toBeEnabled());
+      const reads = parameterReads.mock.calls.length;
+      fireEvent.change(screen.getByLabelText('Preset'), { target: { value: '1' } });
+      await waitFor(() => expect(api.setPluginPreset).toHaveBeenCalledWith(owner, effect.id, 1));
+      await waitFor(() => expect(parameterReads.mock.calls.length).toBeGreaterThan(reads));
+      await waitFor(() => expect(screen.getByLabelText('Preset')).toHaveValue('1'));
+      fireEvent.click(screen.getByRole('button', { name: 'Open Plugin Editor' }));
+      expect(api.openPluginEditor).toHaveBeenCalledWith(owner, effect.id);
+      api.setDeviceParameter = vi.fn().mockRejectedValue(new Error('Parameter rejected'));
+      fireEvent.change(screen.getByLabelText('Level'), { target: { value: '0.9' } });
+      fireEvent.pointerUp(screen.getByLabelText('Level'));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Parameter rejected');
+      expect(screen.getByLabelText('Level')).toHaveValue('0.25');
+    },
+  );
 
   it('ignores a parameter response after the device is deleted and leaves inspection errors on its card', async () => {
     const api = runtimeApi();
     let resolve!: (value: DeviceParameterInfo[]) => void;
-    api.listTrackDeviceParameters = vi.fn(
+    api.listDeviceParameters = vi.fn(
       () =>
         new Promise<DeviceParameterInfo[]>((done) => {
           resolve = done;
@@ -210,7 +244,12 @@ describe('DevicesPanel', () => {
     );
     const props = {
       projectId: 'project:1',
-      track,
+      target: {
+        owner: { kind: 'track' as const, id: track.id },
+        name: track.name,
+        track,
+        effects: track.effects,
+      },
       api,
       applyCanonicalState: () => true,
       plugins: [],
@@ -222,11 +261,16 @@ describe('DevicesPanel', () => {
     };
     const { rerender } = render(<DevicesPanel {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
-    await waitFor(() => expect(api.listTrackDeviceParameters).toHaveBeenCalled());
-    rerender(<DevicesPanel {...props} track={{ ...track, effects: [] }} />);
+    await waitFor(() => expect(api.listDeviceParameters).toHaveBeenCalled());
+    rerender(
+      <DevicesPanel
+        {...props}
+        target={{ ...props.target, track: { ...track, effects: [] }, effects: [] }}
+      />,
+    );
     await act(async () => resolve(parameters));
     expect(screen.queryByLabelText('Level')).not.toBeInTheDocument();
-    api.listTrackDeviceParameters = vi.fn().mockRejectedValue(new Error('Inspection unavailable'));
+    api.listDeviceParameters = vi.fn().mockRejectedValue(new Error('Inspection unavailable'));
     rerender(<DevicesPanel {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Inspection unavailable');
@@ -256,6 +300,6 @@ describe('DevicesPanel', () => {
     expect(screen.getByRole('button', { name: 'Clear instrument' })).toBeInTheDocument();
     expect(screen.getByText('DISABLED PLACEHOLDER')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
-    expect(api.calls.filter((call) => call === 'inspectTrackDevice')).toHaveLength(0);
+    expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(0);
   });
 });

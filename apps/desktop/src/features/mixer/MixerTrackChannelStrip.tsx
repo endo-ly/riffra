@@ -5,9 +5,10 @@ import type { ArrangeApi, AudioApi } from '@/native/native-api';
 import { Icon } from '@/shared/ui/primitives';
 import { resolveTrackColor } from '@/features/arrange/model/track-colors';
 import { MixerMeter } from './MixerMeter';
-import { useTrackMixControl } from './hooks/useTrackMixControl';
+import { useChannelMixControl } from './hooks/useChannelMixControl';
 import styles from './Mixer.module.css';
-type MixerTrackApi = Pick<ArrangeApi, 'updateTrack'> & Pick<AudioApi, 'previewTrackMix'>;
+type MixerTrackApi = Pick<ArrangeApi, 'updateTrack' | 'updateMixBus'> &
+  Pick<AudioApi, 'previewChannelMix'>;
 interface MixerTrackChannelStripProps {
   sessionId: string;
   track: Track;
@@ -20,15 +21,18 @@ interface MixerTrackChannelStripProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelect: () => void;
   onOpenDevices: () => void;
+  onOpenRouting: () => void;
+  outputName: string;
+  sendCount: number;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
 export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
   const { track } = props;
   const [pendingSwitch, setPendingSwitch] = useState<'muted' | 'solo' | 'armed' | null>(null);
-  const mix = useTrackMixControl({
+  const mix = useChannelMixControl({
     sessionId: props.sessionId,
-    track,
+    channel: track,
     api: props.api,
     applyCanonicalState: props.applyCanonicalState,
     onError: props.onError,
@@ -87,6 +91,9 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
         <Icon name="module" /> FX {fxCount === 0 ? '—' : fxCount}
       </button>
 
+      <button type="button" className={styles.routeButton} onClick={props.onOpenRouting}>
+        {props.outputName} · {props.sendCount} Sends
+      </button>
       <label className={styles.panControl}>
         <span>
           PAN <output>{formatPan(mix.pan)}</output>

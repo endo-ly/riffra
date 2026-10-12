@@ -13,7 +13,11 @@ import { useClipInteractions } from './useClipInteractions';
 import { useArrangeCommands } from './useArrangeCommands';
 
 export type ArrangeSelection =
-  { kind: 'none' } | { kind: 'track'; trackId: string } | { kind: 'clips'; clipIds: string[] };
+  | { kind: 'none' }
+  | { kind: 'track'; trackId: string }
+  | { kind: 'clips'; clipIds: string[] }
+  | { kind: 'bus'; busId: string }
+  | { kind: 'master' };
 
 interface UseArrangeEditorOptions {
   session: CreativeSession;

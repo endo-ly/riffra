@@ -18,7 +18,7 @@ export function useArrangeShell(
     | 'addTrack'
     | 'applyInstrument'
     | 'setTrackVst3Instrument'
-    | 'addTrackEffect'
+    | 'addEffect'
     | 'addAudioClipToArrangement'
     | 'addMidiClipToArrangement'
   >,
@@ -51,11 +51,15 @@ export function useArrangeShell(
   const lowerView = lower.view;
 
   useEffect(() => {
-    if (selection.kind === 'track' && !selectedTrack) {
+    if (
+      (selection.kind === 'track' && !selectedTrack) ||
+      (selection.kind === 'bus' &&
+        !session?.arrangement.mixer.buses.some((bus) => bus.id === selection.busId))
+    ) {
       setSelection({ kind: 'none' });
       if (lowerView === 'devices') closeLowerArea();
     }
-  }, [selection, selectedTrack, lowerView, closeLowerArea]);
+  }, [selection, selectedTrack, session, lowerView, closeLowerArea]);
 
   useEffect(() => {
     if (

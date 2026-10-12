@@ -3,6 +3,7 @@ import styles from './Mixer.module.css';
 
 interface MixerMeterProps {
   trackId?: string;
+  busId?: string;
   master?: boolean;
   mode?: 'peak' | 'peak-rms';
 }
@@ -41,6 +42,7 @@ function meterValues(
   meters: ReturnType<typeof useAudioMeters>,
   trackId?: string,
   master?: boolean,
+  busId?: string,
 ): MeterValues | null {
   if (!meters.available) return null;
   if (master) {
@@ -49,13 +51,16 @@ function meterValues(
       peakRight: meters.outputPeakRight,
     };
   }
+  if (busId) return meters.busMeters.find((meter) => meter.busId === busId) ?? null;
   return meters.trackMeters.find((meter) => meter.trackId === trackId) ?? null;
 }
 
 export function MixerMeter({ mode = 'peak-rms', ...props }: MixerMeterProps) {
   const meters = useAudioMeters();
-  const meter = meterValues(meters, props.trackId, props.master);
-  const label = props.master ? 'Master stereo meter' : `${props.trackId ?? 'Track'} stereo meter`;
+  const meter = meterValues(meters, props.trackId, props.master, props.busId);
+  const label = props.master
+    ? 'Master stereo meter'
+    : `${props.busId ?? props.trackId ?? 'Channel'} stereo meter`;
   return (
     <div className={styles.meterGroup} aria-label={label} data-unavailable={meter === null}>
       {(['left', 'right'] as const).map((channel) => {

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArrangementMutationResult, CanonicalState } from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { setHostConnectionAvailability, setHostGeneration } from '@/native/invoke';
-import { useTrackMixControl } from './useTrackMixControl';
+import { useChannelMixControl } from './useChannelMixControl';
 
 function mutationResult(canonical: CanonicalState): ArrangementMutationResult {
   return {
@@ -34,7 +34,7 @@ function sessionWithTrack() {
   return session;
 }
 
-describe('useTrackMixControl', () => {
+describe('useChannelMixControl', () => {
   beforeEach(() => {
     setHostGeneration(0);
     setHostConnectionAvailability(true);
@@ -53,7 +53,8 @@ describe('useTrackMixControl', () => {
     const externalTrack = externalSession.arrangement.tracks[0]!;
     let resolveUpdate!: (result: ArrangementMutationResult) => void;
     const api = {
-      previewTrackMix: vi.fn().mockResolvedValue(undefined),
+      previewChannelMix: vi.fn().mockResolvedValue(undefined),
+      updateMixBus: vi.fn(),
       updateTrack: vi.fn(
         () => new Promise<ArrangementMutationResult>((resolve) => (resolveUpdate = resolve)),
       ),
@@ -62,9 +63,9 @@ describe('useTrackMixControl', () => {
 
     const { result, rerender } = renderHook(
       ({ track }) =>
-        useTrackMixControl({
+        useChannelMixControl({
           sessionId: initialSession.sessionId,
-          track,
+          channel: track,
           api,
           applyCanonicalState,
         }),
@@ -85,6 +86,10 @@ describe('useTrackMixControl', () => {
       commitPromise = result.current.commit('gainDb', -6);
     });
     await waitFor(() => expect(api.updateTrack).toHaveBeenCalledOnce());
+    expect(api.previewChannelMix).toHaveBeenCalledWith(
+      { kind: 'track', id: 'track:mixer-test' },
+      { gainDb: -6 },
+    );
 
     // Once the drag is committed the newer canonical value becomes visible.
     rerender({ track: latestTrack });

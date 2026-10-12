@@ -25,7 +25,7 @@ interface UseArrangeDropOptions {
     | 'addTrack'
     | 'applyInstrument'
     | 'setTrackVst3Instrument'
-    | 'addTrackEffect'
+    | 'addEffect'
   >;
   commit: ArrangeCommit;
   pixelsPerTick: number;
