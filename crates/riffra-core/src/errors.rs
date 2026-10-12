@@ -27,6 +27,18 @@ pub enum DomainError {
     /// A production operation references a Track that is not registered.
     #[error("unknown track '{0}'")]
     UnknownTrack(String),
+    /// A mixer operation references an unregistered channel.
+    #[error("unknown mix bus '{0}'")]
+    UnknownMixBus(String),
+    /// A channel cannot be removed while routing still references it.
+    #[error("mix bus '{bus_id}' is referenced by {reference_ids:?}")]
+    MixBusInUse {
+        bus_id: String,
+        reference_ids: Vec<String>,
+    },
+    /// Routing or channel controls violate a mixer invariant.
+    #[error("invalid mixer: {0}")]
+    InvalidMixer(String),
     /// Recording capture attempted a disallowed lifecycle transition.
     #[error("recording capture cannot transition from {from} to {to}")]
     InvalidRecordingTransition { from: String, to: String },

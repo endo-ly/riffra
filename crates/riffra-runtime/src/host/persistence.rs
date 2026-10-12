@@ -248,8 +248,10 @@ impl HostState {
         }
         let committed = writer
             .commit(|mut app| match &queued.change {
-                PendingPluginChange::State(change) => app.persist_track_plugin_state(
-                    &change.track_id,
+                PendingPluginChange::State(change) => app.persist_plugin_state(
+                    &riffra_core::EffectOwner::Track {
+                        id: (change.track_id).to_owned(),
+                    },
                     &change.device_id,
                     change.parameter_values.clone(),
                     change.state_data.clone(),
@@ -261,8 +263,10 @@ impl HostState {
                             "plugin parameter value is invalid".into(),
                         ));
                     }
-                    app.set_track_device_parameter(
-                        &change.track_id,
+                    app.set_device_parameter(
+                        &riffra_core::EffectOwner::Track {
+                            id: (change.track_id).to_owned(),
+                        },
                         &change.device_id,
                         change.parameter_index as usize,
                         change.value,

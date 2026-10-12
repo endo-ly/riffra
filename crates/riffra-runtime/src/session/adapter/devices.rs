@@ -206,8 +206,10 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     let (prepared, device_id) = context
         .prepare_core()
         .application(&context.storage)
-        .prepare_track_effect_with_created_id(
-            track_id,
+        .prepare_effect_with_created_id(
+            &riffra_core::EffectOwner::Track {
+                id: track_id.to_owned(),
+            },
             name,
             validated_path.to_string_lossy().into_owned(),
         )
@@ -228,7 +230,14 @@ pub fn remove_track_effect(
     track_id: &str,
     device_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    let committed = context.commit(|mut app| app.remove_track_effect(track_id, device_id))?;
+    let committed = context.commit(|mut app| {
+        app.remove_effect(
+            &riffra_core::EffectOwner::Track {
+                id: track_id.to_owned(),
+            },
+            device_id,
+        )
+    })?;
     Ok(committed.0)
 }
 
@@ -237,8 +246,14 @@ pub fn reorder_track_effects(
     track_id: &str,
     ordered_device_ids: &[String],
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    let committed = context
-        .commit(|mut app| app.reorder_track_effects(track_id, ordered_device_ids.to_owned()))?;
+    let committed = context.commit(|mut app| {
+        app.reorder_effects(
+            &riffra_core::EffectOwner::Track {
+                id: track_id.to_owned(),
+            },
+            ordered_device_ids.to_owned(),
+        )
+    })?;
     Ok(committed.0)
 }
 
@@ -273,8 +288,15 @@ pub fn set_track_device_bypassed(
     context
         .audio
         .set_track_device_bypassed(track_id, device_id, bypassed)?;
-    let committed =
-        context.commit(|mut app| app.set_track_device_bypassed(track_id, device_id, bypassed));
+    let committed = context.commit(|mut app| {
+        app.set_device_bypassed(
+            &riffra_core::EffectOwner::Track {
+                id: (track_id).to_owned(),
+            },
+            device_id,
+            bypassed,
+        )
+    });
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
@@ -332,8 +354,16 @@ pub fn set_track_device_parameter(
     context
         .audio
         .set_track_device_parameter(track_id, device_id, parameter_index, value)?;
-    let committed =
-        context.commit(|mut app| app.set_track_device_parameter(track_id, device_id, index, value));
+    let committed = context.commit(|mut app| {
+        app.set_device_parameter(
+            &riffra_core::EffectOwner::Track {
+                id: (track_id).to_owned(),
+            },
+            device_id,
+            index,
+            value,
+        )
+    });
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
@@ -607,12 +637,15 @@ mod tests {
         context
             .prepare_core()
             .application(&context.storage)
-            .prepare_track_effect(
-                "track:plugin",
+            .prepare_effect_with_created_id(
+                &riffra_core::EffectOwner::Track {
+                    id: "track:plugin".to_owned(),
+                },
                 "Candidate".into(),
                 r"C:\plugins\Candidate.vst3".into(),
             )
             .unwrap()
+            .0
     }
 
     #[test]
@@ -777,8 +810,10 @@ mod tests {
         let saved = core
             .write()
             .commit(|mut app| {
-                app.persist_track_plugin_state(
-                    "track:guitar",
+                app.persist_plugin_state(
+                    &riffra_core::EffectOwner::Track {
+                        id: ("track:guitar").to_owned(),
+                    },
                     "device:amp",
                     vec![0.25, 0.75],
                     Some("opaque-state".into()),

@@ -635,24 +635,38 @@ impl HostDispatcher<'_> {
             ),
             CanonicalCommand::EffectAdd(params) => self.add_effect(application, params),
             CanonicalCommand::EffectRemove(params) => self.edited(
-                application.remove_track_effect(&params.track_id, &params.device_id)?,
+                application.remove_effect(
+                    &riffra_core::EffectOwner::Track {
+                        id: params.track_id.to_owned(),
+                    },
+                    &params.device_id,
+                )?,
                 application,
             ),
             CanonicalCommand::EffectReorder(params) => self.edited(
-                application.reorder_track_effects(&params.track_id, params.device_ids)?,
+                application.reorder_effects(
+                    &riffra_core::EffectOwner::Track {
+                        id: params.track_id.to_owned(),
+                    },
+                    params.device_ids,
+                )?,
                 application,
             ),
             CanonicalCommand::DeviceBypass(params) => self.edited(
-                application.set_track_device_bypassed(
-                    &params.track_id,
+                application.set_device_bypassed(
+                    &riffra_core::EffectOwner::Track {
+                        id: (params.track_id).to_owned(),
+                    },
                     &params.device_id,
                     params.bypassed,
                 )?,
                 application,
             ),
             CanonicalCommand::DeviceParameterSet(params) => self.edited(
-                application.set_track_device_parameter(
-                    &params.track_id,
+                application.set_device_parameter(
+                    &riffra_core::EffectOwner::Track {
+                        id: (params.track_id).to_owned(),
+                    },
                     &params.device_id,
                     params.parameter_index as usize,
                     params.value,

@@ -202,6 +202,7 @@ mod tests {
 
     fn arrangement_with_clip(asset: AssetId) -> Arrangement {
         let mut arrangement = Arrangement {
+            mixer: Default::default(),
             revision: 0,
             timebase: ProjectTimebase::default(),
             loop_range: TimelineLoopRange::default(),

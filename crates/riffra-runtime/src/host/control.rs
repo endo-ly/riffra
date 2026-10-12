@@ -796,8 +796,10 @@ impl HostState {
                     }
                 };
                 let commit = context.commit(|mut app| {
-                    app.persist_track_plugin_state(
-                        &params.track_id,
+                    app.persist_plugin_state(
+                        &riffra_core::EffectOwner::Track {
+                            id: (params.track_id).to_owned(),
+                        },
                         &params.device_id,
                         state_snapshot.parameter_values.clone(),
                         state_snapshot.state_data.clone(),
@@ -833,8 +835,10 @@ impl HostState {
                     .set_track_plugin_state(&params.track_id, &params.device_id, native_state)
                     .map_err(audio_error)?;
                 let commit = context.commit(|mut app| {
-                    app.persist_track_plugin_state(
-                        &params.track_id,
+                    app.persist_plugin_state(
+                        &riffra_core::EffectOwner::Track {
+                            id: (params.track_id).to_owned(),
+                        },
                         &params.device_id,
                         params.state.parameter_values.clone(),
                         params.state.state_data.clone(),

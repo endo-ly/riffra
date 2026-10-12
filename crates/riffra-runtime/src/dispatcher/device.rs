@@ -55,8 +55,10 @@ impl HostDispatcher<'_> {
         let (name, plugin_path) =
             self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Effect)?;
         self.created(
-            application.add_track_effect_with_created_ids(
-                &params.track_id,
+            application.add_effect_with_created_ids(
+                &riffra_core::EffectOwner::Track {
+                    id: params.track_id.to_owned(),
+                },
                 name,
                 plugin_path.to_string_lossy().into_owned(),
             )?,

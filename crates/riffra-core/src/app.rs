@@ -747,7 +747,13 @@ mod tests {
             .unwrap();
 
         core.application(&storage)
-            .add_track_effect_with_created_ids(&track_id, "Gain".into(), "builtin:gain".into())
+            .add_effect_with_created_ids(
+                &crate::EffectOwner::Track {
+                    id: track_id.to_owned(),
+                },
+                "Gain".into(),
+                "builtin:gain".into(),
+            )
             .unwrap();
 
         let undone = core.undo(&storage).unwrap();
@@ -881,8 +887,10 @@ mod tests {
             .unwrap();
         let with_state = core
             .application(&storage)
-            .persist_track_plugin_state(
-                &track_id,
+            .persist_plugin_state(
+                &crate::EffectOwner::Track {
+                    id: (track_id).to_owned(),
+                },
                 "device:synth",
                 vec![0.25],
                 Some("state".into()),
