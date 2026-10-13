@@ -16,6 +16,7 @@ constexpr auto kTrackDeviceTimeout = std::chrono::seconds(10);
 
 void AudioCommandDispatcher::handle(const SetDeviceBypassedCommand& command,
                                     CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submit(
@@ -38,6 +39,7 @@ void AudioCommandDispatcher::handle(const SetDeviceBypassedCommand& command,
 
 void AudioCommandDispatcher::handle(const SetDeviceParameterCommand& command,
                                     CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submitControl(
@@ -60,6 +62,7 @@ void AudioCommandDispatcher::handle(const SetDeviceParameterCommand& command,
 }
 
 void AudioCommandDispatcher::handle(const GetDeviceCommand& command, CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submitControl(
@@ -103,6 +106,7 @@ void AudioCommandDispatcher::handle(const GetDeviceCommand& command, CommandResp
 
 void AudioCommandDispatcher::handle(const SetPluginStateCommand& command,
                                     CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submitControl(
@@ -125,6 +129,7 @@ void AudioCommandDispatcher::handle(const SetPluginStateCommand& command,
 
 void AudioCommandDispatcher::handle(const SetDeviceProgramCommand& command,
                                     CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submitControl(
@@ -151,6 +156,7 @@ void AudioCommandDispatcher::handle(const SetDeviceProgramCommand& command,
 
 void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
                                     CommandResponder responder) {
+    if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
     const auto submitted = context.runtimeLifecycle.submit(

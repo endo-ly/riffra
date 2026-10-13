@@ -242,14 +242,14 @@ MIDI 系の意味づけは次の通り。
 
 `error` と `fault` は共通の形（`kind`、`message`、`operation`、`details`）を持つ。`kind` は分類、`operation` は失敗した操作、`details` は機械可読の追加情報である。
 
-| `kind`             | 意味                                                              |
-| ------------------ | ----------------------------------------------------------------- |
-| `invalidCommand`   | `requestId` は読めたが命令をデコードできない                      |
-| `protocol`         | `requestId` も読めない行を受けた（`fault` で通知）                |
-| `noResponse`       | 命令の処理が応答せずに終わった                                    |
-| `timelineBusy`     | 投影の置換が進行中で受け付けられない。Rust は再試行可能として扱う |
-| `timelineContract` | `TimelineSnapshot` の契約違反                                     |
-| その他             | 各領域の失敗（`deviceLost`、`invalidAudioConfiguration` など）    |
+| `kind`             | 意味                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalidCommand`   | `requestId` は読めたが命令をデコードできない                                                                                                                                    |
+| `protocol`         | `requestId` も読めない行を受けた（`fault` で通知）                                                                                                                              |
+| `noResponse`       | 命令の処理が応答せずに終わった                                                                                                                                                  |
+| `timelineBusy`     | Graphのprepare・commit・discard、投影の置換、またはプラグイン試聴の初期化中で受け付けられない。Track Device命令も処理中の排他操作が終わるまで拒否し、Rustは再試行可能として扱う |
+| `timelineContract` | `TimelineSnapshot` の契約違反                                                                                                                                                   |
+| その他             | 各領域の失敗（`deviceLost`、`invalidAudioConfiguration` など）                                                                                                                  |
 
 Rust は解釈できない行を捨てない。`tracing` に記録し、`AudioStatus.diagnostics.protocolErrors` を加算し、行から `requestId` が読めればその要求を即座に失敗させる。プロセスは止めない。
 
