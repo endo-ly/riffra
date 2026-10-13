@@ -48,14 +48,14 @@ pub(crate) enum SidecarResponse {
     TimelineAck {},
     TimelineIdleAck {},
     MidiAck {},
-    TrackMixAck {},
-    TrackDeviceAck {},
-    TrackDeviceStatus(WireTrackDeviceStatus),
-    TrackDeviceParameters(WireTrackDeviceParameters),
-    TrackDevicePrograms(WireTrackDevicePrograms),
-    TrackPluginState(WireTrackPluginState),
+    MixAck {},
+    DeviceAck {},
+    DeviceStatus(WireDeviceStatus),
+    DeviceParameters(WireDeviceParameters),
+    DevicePrograms(WireDevicePrograms),
+    PluginState(WirePluginStateResponse),
     /// State of a device after it loaded the requested program.
-    TrackDeviceProgramChanged(WireTrackPluginState),
+    DeviceProgramChanged(WirePluginStateResponse),
 }
 
 impl SidecarResponse {
@@ -67,13 +67,13 @@ impl SidecarResponse {
             Self::TimelineAck {} => ExpectedResponse::TimelineAck,
             Self::TimelineIdleAck {} => ExpectedResponse::TimelineIdleAck,
             Self::MidiAck {} => ExpectedResponse::MidiAck,
-            Self::TrackMixAck {} => ExpectedResponse::TrackMixAck,
-            Self::TrackDeviceAck {} => ExpectedResponse::TrackDeviceAck,
-            Self::TrackDeviceStatus(_) => ExpectedResponse::TrackDeviceStatus,
-            Self::TrackDeviceParameters(_) => ExpectedResponse::TrackDeviceParameters,
-            Self::TrackDevicePrograms(_) => ExpectedResponse::TrackDevicePrograms,
-            Self::TrackPluginState(_) => ExpectedResponse::TrackPluginState,
-            Self::TrackDeviceProgramChanged(_) => ExpectedResponse::TrackDeviceProgramChanged,
+            Self::MixAck {} => ExpectedResponse::MixAck,
+            Self::DeviceAck {} => ExpectedResponse::DeviceAck,
+            Self::DeviceStatus(_) => ExpectedResponse::DeviceStatus,
+            Self::DeviceParameters(_) => ExpectedResponse::DeviceParameters,
+            Self::DevicePrograms(_) => ExpectedResponse::DevicePrograms,
+            Self::PluginState(_) => ExpectedResponse::PluginState,
+            Self::DeviceProgramChanged(_) => ExpectedResponse::DeviceProgramChanged,
         }
     }
 }
@@ -108,8 +108,8 @@ pub(crate) enum SidecarEvent {
     AudioMeters(WireAudioMeters),
     TransportStatus(WireTransportStatus),
     RecordingComplete(WireRecordingComplete),
-    TrackPluginStateChanged(WireTrackPluginStateChanged),
-    TrackPluginParameterChanged(WireTrackPluginParameterChanged),
+    PluginStateChanged(WirePluginStateChanged),
+    PluginParameterChanged(WirePluginParameterChanged),
     /// A failure that is not tied to a request, such as a lost device.
     Fault(SidecarError),
 }
@@ -267,6 +267,7 @@ pub(crate) struct WireAudioMeters {
     pub(crate) previewing: bool,
     pub(crate) instrument_previewing: bool,
     pub(crate) track_meters: Vec<WireTrackMeter>,
+    pub(crate) bus_meters: Vec<crate::model::BusAudioMeter>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -340,13 +341,13 @@ pub(crate) struct WirePluginState {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackPluginState {
+pub(crate) struct WirePluginStateResponse {
     pub(crate) state: WirePluginState,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceCapabilities {
+pub(crate) struct WireDeviceCapabilities {
     pub(crate) parameters: bool,
     pub(crate) state: bool,
     pub(crate) presets: bool,
@@ -355,23 +356,23 @@ pub(crate) struct WireTrackDeviceCapabilities {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceStatus {
+pub(crate) struct WireDeviceStatus {
     pub(crate) name: String,
     pub(crate) bypassed: bool,
     pub(crate) parameter_count: u32,
-    pub(crate) capabilities: WireTrackDeviceCapabilities,
+    pub(crate) capabilities: WireDeviceCapabilities,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceParameterChoice {
+pub(crate) struct WireDeviceParameterChoice {
     pub(crate) value: f32,
     pub(crate) display_value: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceParameter {
+pub(crate) struct WireDeviceParameter {
     pub(crate) index: u32,
     pub(crate) name: String,
     pub(crate) value: f32,
@@ -381,45 +382,45 @@ pub(crate) struct WireTrackDeviceParameter {
     pub(crate) label: String,
     pub(crate) discrete: bool,
     pub(crate) step_count: u32,
-    pub(crate) choices: Vec<WireTrackDeviceParameterChoice>,
+    pub(crate) choices: Vec<WireDeviceParameterChoice>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceParameters {
-    pub(crate) parameters: Vec<WireTrackDeviceParameter>,
+pub(crate) struct WireDeviceParameters {
+    pub(crate) parameters: Vec<WireDeviceParameter>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDeviceProgram {
+pub(crate) struct WireDeviceProgram {
     pub(crate) index: u32,
     pub(crate) name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackDevicePrograms {
+pub(crate) struct WireDevicePrograms {
     /// Selected program; `null` when the plugin reports none.
     #[serde(deserialize_with = "nullable")]
     pub(crate) current_index: Option<u32>,
-    pub(crate) programs: Vec<WireTrackDeviceProgram>,
+    pub(crate) programs: Vec<WireDeviceProgram>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackPluginStateChanged {
+pub(crate) struct WirePluginStateChanged {
     pub(crate) project_id: String,
-    pub(crate) track_id: String,
+    pub(crate) owner: riffra_core::EffectOwner,
     pub(crate) device_id: String,
     pub(crate) state: WirePluginState,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WireTrackPluginParameterChanged {
+pub(crate) struct WirePluginParameterChanged {
     pub(crate) project_id: String,
-    pub(crate) track_id: String,
+    pub(crate) owner: riffra_core::EffectOwner,
     pub(crate) device_id: String,
     pub(crate) parameter_index: u32,
     pub(crate) value: f32,

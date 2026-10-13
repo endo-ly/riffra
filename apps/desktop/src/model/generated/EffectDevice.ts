@@ -2,6 +2,6 @@
 import type { Vst3Plugin } from "./Vst3Plugin";
 
 /**
- * One effect in a Track's signal chain.
+ * One effect in a channel's signal chain.
  */
 export type EffectDevice = { id: string, name: string, bypassed: boolean, plugin: Vst3Plugin, };

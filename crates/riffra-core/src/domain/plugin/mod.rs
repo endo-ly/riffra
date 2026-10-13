@@ -1,6 +1,6 @@
-//! Canonical VST3 plugin state and the Track effect chain.
+//! Canonical VST3 plugin state and the channel effect chain.
 //!
-//! A Track processes its signal through an ordered list of [`EffectDevice`]s.
+//! A channel processes its signal through an ordered list of [`EffectDevice`]s.
 //! Each effect, like a VST3 instrument, persists its plugin as a
 //! [`Vst3Plugin`].
 
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ts_rs::TS;
 
-const MAX_TRACK_EFFECTS: usize = 256;
+const MAX_CHANNEL_EFFECTS: usize = 256;
 const MAX_STATE_DATA_CHARS: usize = 4_000_000;
 
 /// The persisted state of one VST3 plugin, shared by effects and VST3
@@ -25,7 +25,7 @@ pub struct Vst3Plugin {
     pub disabled_placeholder: bool,
 }
 
-/// One effect in a Track's signal chain.
+/// One effect in a channel's signal chain.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EffectDevice {
@@ -33,6 +33,30 @@ pub struct EffectDevice {
     pub name: String,
     pub bypassed: bool,
     pub plugin: Vst3Plugin,
+}
+
+/// A canonical instrument or effect borrowed from its owning channel.
+pub enum DeviceRef<'a> {
+    Instrument(&'a crate::TrackInstrument),
+    Effect(&'a EffectDevice),
+}
+
+impl DeviceRef<'_> {
+    /// Returns persisted VST3 state, if the device hosts a VST3.
+    pub fn plugin(&self) -> Option<&Vst3Plugin> {
+        match self {
+            Self::Instrument(instrument) => instrument.as_vst3(),
+            Self::Effect(effect) => Some(&effect.plugin),
+        }
+    }
+
+    /// Whether the owning channel bypasses this device.
+    pub fn bypassed(&self) -> bool {
+        match self {
+            Self::Instrument(instrument) => instrument.bypassed,
+            Self::Effect(effect) => effect.bypassed,
+        }
+    }
 }
 
 impl Vst3Plugin {
@@ -99,11 +123,11 @@ impl EffectDevice {
     }
 }
 
-/// Validates and normalizes one Track effect chain.
+/// Validates and normalizes one channel effect chain.
 pub(crate) fn validate_and_normalize_effects(effects: &mut [EffectDevice]) -> Result<(), String> {
-    if effects.len() > MAX_TRACK_EFFECTS {
+    if effects.len() > MAX_CHANNEL_EFFECTS {
         return Err(format!(
-            "A track cannot contain more than {MAX_TRACK_EFFECTS} effects."
+            "A channel cannot contain more than {MAX_CHANNEL_EFFECTS} effects."
         ));
     }
     let mut device_ids = HashSet::with_capacity(effects.len());

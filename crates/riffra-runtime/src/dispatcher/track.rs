@@ -77,7 +77,7 @@ mod tests {
                 command(
                     "device.parameter.set",
                     json!({
-                        "trackId": track_id,
+                        "owner": {"kind":"track","id":track_id},
                         "deviceId": device_id,
                         "parameterIndex": 0,
                         "value": 0.5
@@ -90,7 +90,7 @@ mod tests {
             .dispatch(
                 command(
                     "effect.add",
-                    json!({"trackId": track_id, "pluginPath": "C:/Plugins/Delay.vst3"}),
+                    json!({"owner":{"kind":"track","id":track_id}, "pluginPath": "C:/Plugins/Delay.vst3"}),
                 ),
                 None,
             )

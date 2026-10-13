@@ -16,6 +16,7 @@ pub(crate) const MAX_MIDI_NOTES_PER_CLIP: usize = 200_000;
 mod audio_clip;
 mod automation;
 mod midi_clip;
+mod mixer;
 mod track;
 
 pub use audio_clip::{AudioClip, AudioClipMove, AudioClipPatch, FadeShape};
@@ -23,6 +24,9 @@ pub use automation::{AutomationLane, AutomationParameter, AutomationPoint};
 pub use midi_clip::{
     InstrumentControlEvent, InstrumentControlEventKind, MidiClip, MidiClipMove, MidiClipPatch,
     MidiEvent, MidiEventKind, MidiNote,
+};
+pub use mixer::{
+    EffectOwner, MixBus, MixBusKind, MixBusPatch, Mixer, Send, SendPatch, SendPosition,
 };
 pub use track::{
     AudioInputRoute, MidiInputRoute, MonitoringState, PanLaw, Track, TrackKind, TrackPatch,
@@ -39,6 +43,8 @@ pub struct Arrangement {
     #[ts(optional)]
     pub punch_range: Option<TimelinePunchRange>,
     pub tracks: Vec<Track>,
+    #[serde(default)]
+    pub mixer: Mixer,
     pub audio_clips: Vec<AudioClip>,
     pub midi_clips: Vec<MidiClip>,
     pub automation_lanes: Vec<AutomationLane>,
@@ -279,6 +285,7 @@ impl Arrangement {
             .position(|track| track.id == track_id)
             .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
         self.tracks.remove(index);
+        self.mixer.sends.retain(|send| send.track_id != track_id);
         for consumer in &mut self.tracks {
             if consumer.external_audio_source_track_id.as_deref() == Some(track_id) {
                 consumer.external_audio_source_track_id = None;
@@ -1574,6 +1581,7 @@ impl Arrangement {
             }
             track.validate_and_normalize()?;
         }
+        arrangement.validate_mixer()?;
         for track in &arrangement.tracks {
             let mut visited = HashSet::new();
             let mut current = track;
@@ -1605,6 +1613,7 @@ impl Arrangement {
                 loop_range: arrangement.loop_range,
                 punch_range: arrangement.punch_range,
                 tracks: arrangement.tracks.clone(),
+                mixer: Mixer::default(),
                 audio_clips: Vec::new(),
                 midi_clips: Vec::new(),
                 automation_lanes: Vec::new(),

@@ -14,6 +14,11 @@ import type {
   AssetId,
   DeviceChannels,
   DeviceInspection,
+  EffectOwner,
+  MixBusKind,
+  MixBusPatch,
+  SendPatch,
+  SendPosition,
   DeviceParameterInfo,
   PluginPresetInfo,
   LibraryAsset,
@@ -23,7 +28,8 @@ import type {
   ProjectState,
   RecordingAsset,
   RenderOptions,
-  RenderResult,
+  MixdownSettings,
+  RenderStemsParams,
   ScanReport,
   ArrangementMutationResult,
   ProjectTimebase,
@@ -172,7 +178,9 @@ export interface AnalysisApi {
 }
 
 export interface RenderApi {
-  renderTimeline(options: RenderOptions): Promise<RenderResult | null>;
+  setMixdown(settings: MixdownSettings): Promise<ArrangementMutationResult>;
+  startRenderJob(options: RenderOptions): Promise<BackgroundJobStatus>;
+  startStemRenderJob(params: RenderStemsParams): Promise<BackgroundJobStatus>;
 }
 
 export interface AudioApi {
@@ -204,13 +212,14 @@ export interface AudioApi {
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
   /** Applies a transient Track gain/pan change without persisting a session edit. */
-  previewTrackMix(trackId: string, patch: { gainDb?: number; pan?: number }): Promise<void>;
+  previewChannelMix(owner: EffectOwner, patch: { gainDb?: number; pan?: number }): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
   setEmergencyMute(muted: boolean): Promise<AudioStatus>;
   /** Explicitly releases the Native feedback-protection latch. */
   resetFeedbackProtection(): Promise<AudioStatus>;
   /** Persists the master gain in canonical session settings. */
   setMasterGainDb(gainDb: number): Promise<ArrangementMutationResult>;
+  previewSendLevel(sendId: string, levelDb: number): Promise<void>;
   recoverAudioDevice(): Promise<AudioStatus>;
   /** Rebuilds the saved Session runtime without reopening the audio device. */
   retryStartupRuntime(): Promise<AudioStatus>;
@@ -312,38 +321,50 @@ export interface ArrangeApi {
   applyInstrument(trackId: string, instrumentId: string): Promise<ArrangementMutationResult>;
   setTrackVst3Instrument(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
   clearTrackInstrument(trackId: string): Promise<ArrangementMutationResult>;
-  addTrackEffect(trackId: string, pluginPath: string): Promise<ArrangementMutationResult>;
-  removeTrackEffect(trackId: string, deviceId: string): Promise<ArrangementMutationResult>;
-  reorderTrackEffects(
-    trackId: string,
+  addEffect(owner: EffectOwner, pluginPath: string): Promise<ArrangementMutationResult>;
+  removeEffect(owner: EffectOwner, deviceId: string): Promise<ArrangementMutationResult>;
+  reorderEffects(
+    owner: EffectOwner,
     orderedDeviceIds: string[],
   ): Promise<ArrangementMutationResult>;
-  setTrackDeviceBypassed(
-    trackId: string,
+  setDeviceBypassed(
+    owner: EffectOwner,
     deviceId: string,
     bypassed: boolean,
   ): Promise<ArrangementMutationResult>;
-  setTrackDeviceParameter(
-    trackId: string,
+  setDeviceParameter(
+    owner: EffectOwner,
     deviceId: string,
     parameterIndex: number,
     value: number,
   ): Promise<ArrangementMutationResult>;
-  inspectTrackDevice(trackId: string, deviceId: string): Promise<DeviceInspection>;
-  listTrackDeviceParameters(trackId: string, deviceId: string): Promise<DeviceParameterInfo[]>;
-  getTrackDeviceParameter(
-    trackId: string,
+  inspectDevice(owner: EffectOwner, deviceId: string): Promise<DeviceInspection>;
+  listDeviceParameters(owner: EffectOwner, deviceId: string): Promise<DeviceParameterInfo[]>;
+  getDeviceParameter(
+    owner: EffectOwner,
     deviceId: string,
     parameterIndex: number,
   ): Promise<DeviceParameterInfo>;
-  listTrackPluginPresets(trackId: string, deviceId: string): Promise<PluginPresetInfo[]>;
-  getTrackPluginPreset(trackId: string, deviceId: string): Promise<PluginPresetInfo | null>;
-  setTrackPluginPreset(
-    trackId: string,
+  listPluginPresets(owner: EffectOwner, deviceId: string): Promise<PluginPresetInfo[]>;
+  getPluginPreset(owner: EffectOwner, deviceId: string): Promise<PluginPresetInfo | null>;
+  setPluginPreset(
+    owner: EffectOwner,
     deviceId: string,
     presetIndex: number,
   ): Promise<ArrangementMutationResult>;
-  openTrackPluginEditor(trackId: string, deviceId: string): Promise<void>;
+  openPluginEditor(owner: EffectOwner, deviceId: string): Promise<void>;
+  addMixBus(name: string, kind: MixBusKind): Promise<ArrangementMutationResult>;
+  updateMixBus(busId: string, patch: MixBusPatch): Promise<ArrangementMutationResult>;
+  removeMixBus(busId: string): Promise<ArrangementMutationResult>;
+  setTrackOutput(trackId: string, busId: string | null): Promise<ArrangementMutationResult>;
+  addSend(
+    trackId: string,
+    returnBusId: string,
+    levelDb: number,
+    position: SendPosition,
+  ): Promise<ArrangementMutationResult>;
+  updateSend(sendId: string, patch: SendPatch): Promise<ArrangementMutationResult>;
+  removeSend(sendId: string): Promise<ArrangementMutationResult>;
   removeTrack(trackId: string): Promise<ArrangementMutationResult>;
   duplicateTrack(trackId: string): Promise<ArrangementMutationResult>;
   reorderTrack(trackId: string, targetIndex: number): Promise<ArrangementMutationResult>;

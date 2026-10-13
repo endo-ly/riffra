@@ -4,6 +4,7 @@ import type { AutomationLane } from "./AutomationLane";
 import type { HarmonyEvent } from "./HarmonyEvent";
 import type { Marker } from "./Marker";
 import type { MidiClip } from "./MidiClip";
+import type { Mixer } from "./Mixer";
 import type { ProjectTimebase } from "./ProjectTimebase";
 import type { RecordingPassRecord } from "./RecordingPassRecord";
 import type { RecordingSessionRecord } from "./RecordingSessionRecord";
@@ -16,4 +17,4 @@ import type { Track } from "./Track";
 /**
  * The Arrange workspace's production state.
  */
-export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, punchRange?: TimelinePunchRange, tracks: Array<Track>, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, automationLanes: Array<AutomationLane>, markers: Array<Marker>, regions: Array<TimelineRegion>, harmonyEvents: Array<HarmonyEvent>, recordingSessions: Array<RecordingSessionRecord>, recordingPasses: Array<RecordingPassRecord>, takes: Array<RecordingTakeRecord>, };
+export type Arrangement = { revision: number, timebase: ProjectTimebase, loopRange: TimelineLoopRange, punchRange?: TimelinePunchRange, tracks: Array<Track>, mixer: Mixer, audioClips: Array<AudioClip>, midiClips: Array<MidiClip>, automationLanes: Array<AutomationLane>, markers: Array<Marker>, regions: Array<TimelineRegion>, harmonyEvents: Array<HarmonyEvent>, recordingSessions: Array<RecordingSessionRecord>, recordingPasses: Array<RecordingPassRecord>, takes: Array<RecordingTakeRecord>, };

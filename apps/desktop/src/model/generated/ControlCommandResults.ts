@@ -12,6 +12,16 @@ export type ControlCommandResults = {
   'undo': OutputValue<'arrangementMutation'>;
   'redo': OutputValue<'arrangementMutation'>;
   'audio.master-gain.set': OutputValue<'arrangementMutation'>;
+  'mixer.get': OutputValue<'mixer'>;
+  'mixer.bus.list': OutputValue<'mixBuses'>;
+  'mixer.bus.add': OutputValue<'arrangementMutation'>;
+  'mixer.bus.update': OutputValue<'arrangementMutation'>;
+  'mixer.bus.remove': OutputValue<'arrangementMutation'>;
+  'mixer.output.set': OutputValue<'arrangementMutation'>;
+  'mixer.send.list': OutputValue<'sends'>;
+  'mixer.send.add': OutputValue<'arrangementMutation'>;
+  'mixer.send.update': OutputValue<'arrangementMutation'>;
+  'mixer.send.remove': OutputValue<'arrangementMutation'>;
   'track.list': OutputValue<'tracks'>;
   'track.add': OutputValue<'arrangementMutation'>;
   'track.update': OutputValue<'arrangementMutation'>;
@@ -123,7 +133,8 @@ export type ControlCommandResults = {
   'transport.go-to-start': OutputValue<'ok'>;
   'transport.seek': OutputValue<'ok'>;
   'audio.master-gain.preview': OutputValue<'ok'>;
-  'track.mix.preview': OutputValue<'ok'>;
+  'mixer.send.preview': OutputValue<'ok'>;
+  'mixer.channel.preview': OutputValue<'ok'>;
   'audio.status': OutputValue<'audioStatus'>;
   'audio.diagnostics': OutputValue<'audioDiagnostics'>;
   'audio.probe': OutputValue<'audioProbe'>;

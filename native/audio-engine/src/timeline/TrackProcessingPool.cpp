@@ -62,8 +62,12 @@ void TrackProcessingPool::processAvailableTracks() noexcept {
     const auto currentJob = job;
     for (;;) {
         const auto index = nextTrack.fetch_add(1, std::memory_order_relaxed);
-        if (index >= currentTracks.size()) return;
-        processTrackStage(*currentTracks[index], currentJob);
+        const auto count = channels.empty() ? currentTracks.size() : channels.size();
+        if (index >= count) return;
+        if (channels.empty())
+            processTrackStage(*currentTracks[index], currentJob);
+        else
+            channels[index]->process(currentJob.sampleCount);
         completedTracks.fetch_add(1, std::memory_order_acq_rel);
     }
 }
@@ -72,7 +76,21 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
                               const TrackStageJob& currentJob) noexcept {
     if (currentTracks.empty()) return;
     tracks = currentTracks;
+    channels = {};
     job = currentJob;
+    execute(currentTracks.size());
+}
+
+void TrackProcessingPool::runMixer(const std::span<MixerChannel* const> currentChannels,
+                                   const int sampleCount) noexcept {
+    if (currentChannels.empty()) return;
+    tracks = {};
+    channels = currentChannels;
+    job.sampleCount = sampleCount;
+    execute(currentChannels.size());
+}
+
+void TrackProcessingPool::execute(const std::size_t count) noexcept {
     nextTrack.store(0, std::memory_order_relaxed);
     completedTracks.store(0, std::memory_order_relaxed);
     pendingWorkers.store(static_cast<int>(workers.size()), std::memory_order_relaxed);
@@ -83,7 +101,7 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
         processAvailableTracks();
     }
     std::size_t spins = 0;
-    while (completedTracks.load(std::memory_order_acquire) != currentTracks.size() ||
+    while (completedTracks.load(std::memory_order_acquire) != count ||
            pendingWorkers.load(std::memory_order_acquire) != 0) {
         if (++spins % 64 == 0) std::this_thread::yield();
     }
@@ -93,13 +111,17 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
     auto& runtime = *track.runtime;
     const auto started = std::chrono::steady_clock::now();
     runtime.trackOutputBuffer.clear(0, job.sampleCount);
+    runtime.preFaderOutputBuffer.clear(0, job.sampleCount);
     runtime.routedOutputBuffer.clear(0, job.sampleCount);
     if (job.kind == TrackStageKind::playback) {
         TimelineEngine::mixRange(track, job.rangeStart, 0, job.sampleCount);
         TimelineEngine::scheduleMidi(*job.graph, track, job.rangeStart, job.sampleCount);
         runtime.processedBuffer.clear(0, job.sampleCount);
-        if (!runtime.instrumentTrack)
+        if (!runtime.instrumentTrack) {
+            runtime.processTimelineInputDelay(runtime.mixBuffer, job.sampleCount,
+                                              runtime.lowLatencyPdcBypassActive());
             TimelineEngine::mergeTimelineAndLiveInput(track, job.sampleCount);
+        }
         if (runtime.instrumentTrack)
             TimelineEngine::processInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    &runtime.midiBuffer, job.rangeStart);
@@ -117,9 +139,8 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
                                   job.sampleCount);
     }
-    const auto audible = !runtime.muted && (!job.graph->hasSolo || runtime.solo);
-    TimelineEngine::mixTrackOutput(track, audible, job.rangeStart, job.sampleCount,
-                                   job.transportGainStart, job.transportGainStep);
+    TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
+                                   job.transportGainStep);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();

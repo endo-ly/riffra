@@ -14,6 +14,11 @@
           "musicalEndTick": 0,
           "tailSeconds": 0.0
         },
+        "mixer": {
+          "buses": [],
+          "masterEffects": [],
+          "sends": []
+        },
         "punchRange": null,
         "timebase": {
           "ppq": 960,

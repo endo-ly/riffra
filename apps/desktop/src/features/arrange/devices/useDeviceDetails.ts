@@ -3,6 +3,7 @@ import type {
   ArrangementMutationResult,
   CanonicalState,
   DeviceInspection,
+  EffectOwner,
   DeviceParameterInfo,
   PluginPresetInfo,
 } from '@/model/domain';
@@ -19,7 +20,7 @@ interface DeviceDetails {
 
 export function useDeviceDetails(
   api: ArrangeWorkspaceApi,
-  trackId: string,
+  owner: EffectOwner,
   deviceId: string,
   parameterValues: number[],
   stateData: string | undefined,
@@ -37,15 +38,13 @@ export function useDeviceDetails(
     const request = ++sequence.current;
     setLoading(true);
     void api
-      .inspectTrackDevice(trackId, deviceId)
+      .inspectDevice(owner, deviceId)
       .then(async (inspection) => {
         if (sequence.current !== request) return;
         const [parameters, presets, currentPreset] = await Promise.all([
-          inspection.capabilities.parameters
-            ? api.listTrackDeviceParameters(trackId, deviceId)
-            : [],
-          inspection.capabilities.presets ? api.listTrackPluginPresets(trackId, deviceId) : [],
-          inspection.capabilities.presets ? api.getTrackPluginPreset(trackId, deviceId) : null,
+          inspection.capabilities.parameters ? api.listDeviceParameters(owner, deviceId) : [],
+          inspection.capabilities.presets ? api.listPluginPresets(owner, deviceId) : [],
+          inspection.capabilities.presets ? api.getPluginPreset(owner, deviceId) : null,
         ]);
         if (sequence.current === request)
           setDetails({ inspection, parameters, presets, currentPreset });
@@ -61,7 +60,7 @@ export function useDeviceDetails(
     return () => {
       sequence.current = request + 1;
     };
-  }, [api, trackId, deviceId, parameterRevision, stateData, refresh]);
+  }, [api, owner, deviceId, parameterRevision, stateData, refresh]);
 
   const mutate = async (operation: () => Promise<ArrangementMutationResult>) => {
     const request = sequence.current;
@@ -87,7 +86,7 @@ export function useDeviceDetails(
   const openEditor = async () => {
     const request = sequence.current;
     try {
-      await api.openTrackPluginEditor(trackId, deviceId);
+      await api.openPluginEditor(owner, deviceId);
     } catch (failure) {
       if (sequence.current === request && !(failure instanceof HostConnectionChangedError))
         setError(failure instanceof Error ? failure.message : String(failure));

@@ -86,7 +86,7 @@ type PlacementApi = Pick<
   | 'addTrack'
   | 'applyInstrument'
   | 'setTrackVst3Instrument'
-  | 'addTrackEffect'
+  | 'addEffect'
   | 'addAudioClipToArrangement'
   | 'addMidiClipToArrangement'
 >;
@@ -130,7 +130,7 @@ function loadOnTrack(
     case 'instrumentPlugin':
       return api.setTrackVst3Instrument(requireTrack(trackId), placement.pluginPath);
     case 'effectPlugin':
-      return api.addTrackEffect(requireTrack(trackId), placement.pluginPath);
+      return api.addEffect({ kind: 'track', id: requireTrack(trackId) }, placement.pluginPath);
     case 'audioAsset':
       return api.addAudioClipToArrangement(placement.assetId, placement.name, startTick, trackId);
     case 'midiAsset':

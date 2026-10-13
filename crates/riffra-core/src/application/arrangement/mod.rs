@@ -63,7 +63,29 @@ where
             let mut duplicate = arrangement.tracks[source_index].clone();
             duplicate.id = format!("track:{operation_id}");
             duplicate.name = format!("{} copy", duplicate.name);
+            if let Some(instrument) = &mut duplicate.instrument {
+                instrument.id = next_id("device:instrument");
+                record_created(created, "devices", instrument.id.clone());
+            }
+            for effect in &mut duplicate.effects {
+                effect.id = next_id("device:effect");
+                record_created(created, "devices", effect.id.clone());
+            }
             let duplicate_id = duplicate.id.clone();
+            let sends = arrangement
+                .mixer
+                .sends
+                .iter()
+                .filter(|send| send.track_id == track_id)
+                .cloned()
+                .map(|mut send| {
+                    send.id = next_id("send");
+                    send.track_id = duplicate_id.clone();
+                    record_created(created, "sends", send.id.clone());
+                    send
+                })
+                .collect::<Vec<_>>();
+            arrangement.mixer.sends.extend(sends);
             record_created(created, "tracks", duplicate_id.clone());
             arrangement
                 .tracks
@@ -116,6 +138,7 @@ where
                 })
                 .collect::<Vec<_>>();
             arrangement.automation_lanes.extend(automation_lanes);
+            arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })?;
         Ok(mutation)
@@ -145,18 +168,10 @@ where
                 track.name = name;
             }
             if let Some(gain_db) = patch.gain_db {
-                track.gain_db = if gain_db.is_finite() {
-                    gain_db.clamp(-90.0, 24.0)
-                } else {
-                    0.0
-                };
+                track.gain_db = gain_db;
             }
             if let Some(pan) = patch.pan {
-                track.pan = if pan.is_finite() {
-                    pan.clamp(-1.0, 1.0)
-                } else {
-                    0.0
-                };
+                track.pan = pan;
             }
             if let Some(pan_law) = patch.pan_law {
                 track.pan_law = pan_law;

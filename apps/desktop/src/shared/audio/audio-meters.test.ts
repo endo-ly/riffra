@@ -21,6 +21,7 @@ const frame: AudioMeterFrame = {
   hardClipSamples: 4,
   invalidSamples: 0,
   feedbackSuspected: false,
+  busMeters: [],
   trackMeters: [
     { trackId: 'track:meter-test', peakLeft: 0.1, peakRight: 0.2, rmsLeft: 0.05, rmsRight: 0.1 },
   ],

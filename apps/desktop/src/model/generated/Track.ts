@@ -15,4 +15,4 @@ export type Track = { id: string, name: string, kind: TrackKind, gainDb: number,
  * Presentation color as `#rrggbb`. `None` delegates automatic coloring
  * to the presentation layer.
  */
-color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrument, effects: Array<EffectDevice>, panLaw: PanLaw, externalAudioSourceTrackId?: string, };
+color?: string, audioInput?: AudioInputRoute, midiInput: MidiInputRoute, instrument?: TrackInstrument, effects: Array<EffectDevice>, outputBusId?: string, panLaw: PanLaw, externalAudioSourceTrackId?: string, };

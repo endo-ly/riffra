@@ -488,6 +488,9 @@ TEST(TimelineEngineTest, CompletesAProductionThreadedWriterRecording) {
         const auto block = std::min(kBlockSamples, kTotalSamples - mixed);
         engine.mix(inputs.data(), 1, outputs.data(), 2, block);
         mixed += block;
+        // The production writer is asynchronous and consumes at the device's
+        // realtime rate; pace this simulated callback so its bounded queue can drain.
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     const auto beforeStop = callback.recording().status();
     juce::String stopError;

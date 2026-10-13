@@ -25,16 +25,17 @@
 
 ## 2. 型定義の場所
 
-| エンティティ群                                  | 正準定義（Rust）                                                                | TypeScript                                            | C++ ミラー                                              |
-| ----------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
-| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ） |
-| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                       |
-| エフェクト / VST3（EffectDevice / Vst3Plugin）  | `crates/riffra-core/src/domain/plugin/`                                         | 同上                                                  | `native/audio-engine`（グラフ構築）                     |
-| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                       |
-| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                       |
-| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                       |
-| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                                      | 同上                                                  | `native/audio-engine`                                   |
-| Project container / 選択状態                    | `crates/riffra-host/src/project_store.rs`、`crates/riffra-runtime/src/model.rs` | 同上                                                  | —                                                       |
+| エンティティ群                                  | 正準定義（Rust）                                                                | TypeScript                                            | C++ ミラー                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------- |
+| セッション / アレンジ / クリップ / 録音レコード | `crates/riffra-core/src/domain/`                                                | `apps/desktop/src/model/generated/*.ts`（ts-rs 生成） | `native/audio-engine`（ランタイム投影に必要な部分のみ）     |
+| ミキサー（Mixer / MixBus / Send）               | `crates/riffra-core/src/domain/arrangement/mixer.rs`                            | 同上                                                  | `MixerSpec` / `MixBusSpec` / `SendSpec`（ExecutionGraph.h） |
+| 素材（Asset / Provenance）                      | `crates/riffra-core/src/domain/asset/`                                          | 同上                                                  | —                                                           |
+| エフェクト / VST3（EffectDevice / Vst3Plugin）  | `crates/riffra-core/src/domain/plugin/`                                         | 同上                                                  | `native/audio-engine`（グラフ構築）                         |
+| 録音キャプチャ / ドロップアウト                 | `apps/desktop/src-tauri/src/recording/model.rs`                                 | 同上                                                  | `native/audio-engine`（録音制御）                           |
+| 録音の read model                               | `apps/desktop/src-tauri/src/recording/repository.rs`（`RecordingAsset`）        | 同上                                                  | —                                                           |
+| バックグラウンドジョブ                          | `apps/desktop/src-tauri/src/jobs.rs`                                            | 同上                                                  | —                                                           |
+| オーディオ / デバイス状態                       | `apps/desktop/src-tauri/src/model.rs` ほか                                      | 同上                                                  | `native/audio-engine`                                       |
+| Project container / 選択状態                    | `crates/riffra-host/src/project_store.rs`、`crates/riffra-runtime/src/model.rs` | 同上                                                  | —                                                           |
 
 TypeScript は `npm run gen:types`（cargo test による ts-rs 出力 → `scripts/gen-barrel.js` のバレル生成）で常に Rust から再生成される。手書きの型は追加しない。
 
@@ -86,7 +87,7 @@ Sonalloy Bundle Format v1は`bundle.json`を入口とする。登録されたDem
 | `ProjectTimebase`                                                                            | 固定PPQとTick 0から始まるTempo・拍子変更点の列。ルーラー・スナップ・MIDI・Transport・録音・Renderが同じ区間変換を共有                                                                                                                                                                                                                                                                                                                                                                        |
 | `FrameRange` / `FrameDuration`                                                               | ソース素材のフレーム範囲／持続時間（サンプルレートを併せ持つ）                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `TimelineLoopRange` / `TimelinePunchRange`                                                   | ループ区間（無効化しても端点保持）とパンチ録音区間                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `Track`                                                                                      | Audio / Instrument の2種類。ゲイン・パン・Pan Law・ミュート・ソロ・アーム・モニタリング・物理入力・External Audioの入力元Track・Instrument・エフェクト列を保持                                                                                                                                                                                                                                                                                                                               |
+| `Track`                                                                                      | Audio / Instrument の2種類。ゲイン・パン・Pan Law・ミュート・ソロ・アーム・モニタリング・物理入力・External Audioの入力元Track・Instrument・エフェクト列・主出力先Groupを保持                                                                                                                                                                                                                                                                                                                |
 | `AudioClip`                                                                                  | 非破壊オーディオクリップ。`asset_id` + `source_range` + `timeline_duration`、ゲイン・パン・フェード・ループ・ミュート。録音テイクへの関連（recording_take_id）と`take_variant`（raw/processed）を持つ                                                                                                                                                                                                                                                                                        |
 | `MidiClip`                                                                                   | 非破壊 MIDI クリップ。`MidiNote`（ピアノロール編集対象）、`MidiEvent`（CC/ピッチベンド/チャンネルプレッシャー）と`InstrumentControlEvent`（高精度の音源制御）を持つ。すべてのノートとイベントはクリップの相対範囲内に収まり、ノートの `start_tick + duration_ticks` はクリップの `duration_ticks` 以下、MIDIイベントの位置はクリップ終端未満、音源制御イベントは終端を含む範囲に置ける。ノートとイベントはそれぞれ最大200,000件。`asset_id` は任意（セッション内で完結する MIDI は持たない） |
 | `AudioClipPatch` / `MidiClipPatch`                                                           | 部分更新。None のフィールドは現値を維持                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -97,13 +98,17 @@ Sonalloy Bundle Format v1は`bundle.json`を入口とする。登録されたDem
 | `HarmonyEvent`                                                                               | 和声コンテキストを表すArrangement全体の時間軸イベント。TimelineRegion、Track、MidiClipを所有せず、重複・入れ子・gapを許可する                                                                                                                                                                                                                                                                                                                                                                |
 | `PhrasePattern` / `PhraseNote` / `PhrasePlacement`                                           | 半音差による相対フレーズと配置を表す操作値。複数placement・repeatへ展開した後は正準セッションへ保存しない                                                                                                                                                                                                                                                                                                                                                                                    |
 | `RhythmPattern` / `RhythmStep`                                                               | Harmony realizationへ渡す反復リズム操作値。任意長、offset、duration、velocityを持ち、正準セッションへ保存しない                                                                                                                                                                                                                                                                                                                                                                              |
-| `Arrangement`                                                                                | 上記のすべてを束ねるアレンジのルート。revision（編集のたびに単調増加）、timebase、tracks、clips、automation、markers、regions、harmony_events、録音レコード群を持つ                                                                                                                                                                                                                                                                                                                          |
+| `Arrangement`                                                                                | 上記のすべてを束ねるアレンジのルート。revision（編集のたびに単調増加）、timebase、tracks、clips、automation、markers、regions、harmony_events、Mixer、録音レコード群を持つ                                                                                                                                                                                                                                                                                                                   |
 
 音源制御イベントはSustain、Pitch Bend、Mod Wheel、Aftertouch、Parameter Changeを保持する。IDとClip相対Tickに加えて定義順を保存し、Parameter Changeは音源のパラメータIDとネイティブ値を正本にする。同音程が重なるNoteもそれぞれのIDでNote On/Offを対応させる。
 
 External Audioは1つのSource TrackからInstrumentへ音声を渡す。複数Consumerを許可し、自身の参照と循環を拒否する。Sourceを削除すると接続を解除し、入力を必要とするConsumerの実行診断へ反映する。Pan Lawは通常のTrackで`equalPower`、中央Stereoを減衰させない場合に`unityCenterStereo`を選ぶ。
 
 Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness Mastering目標と比較用のSample Rate・Block Sizeを保持する。Entire Arrangementの終端は楽曲終端設定と現在のClip終端の大きい方にTailを加え、最終MixへFadeを1回適用する。
+
+MixerはArrangementに所属し、Masterのエフェクト列、Group・Returnのチャンネル、TrackからReturnへのSendを保存する。GroupはTrackの主出力先、Returnは並列Sendの宛先として区別する。Trackの主出力先が未指定の場合はMasterを表し、Master GainはSessionSettingsに保持する。Mixerが未指定のセッションは空のMixerを初期値とする。
+
+Busを削除するには、主出力先として参照するTrackと宛先として参照するSendを先に解除する。Track削除時はそのTrackのSendも削除し、Track複製時は主出力先とSend設定を引き継いでDevice・SendのIDを新しく割り当てる。
 
 ### 4.4 録音
 
@@ -138,7 +143,7 @@ Mixdown設定は楽曲終端Tick、秒単位のTailとFade、任意のLoudness M
 | `TrackInstrument`            | Instrument Trackに割り当てる音源。id、name、bypassed、実装sourceを持つ                                                                     |
 | `TrackInstrumentSource`      | `internal`（同梱definition本文とBuilt-in preset ID）または `vst3`（`Vst3Plugin`）を表す判別付きsource                                      |
 | `InternalInstrumentResource` | 同梱されたBuilt-in presetの識別子。definition本文も正準状態に保存し、resourceの絶対pathは保存しない                                        |
-| `EffectDevice`               | Trackの信号チェーンに並ぶエフェクト。id、name、bypassed、`Vst3Plugin` を持つ。`Track.effects` の順に処理する                               |
+| `EffectDevice`               | Track・Bus・Masterが所有する順序付きエフェクト列の要素。id、name、bypassed、`Vst3Plugin` を持つ                                            |
 | `Vst3Plugin`                 | VST3プラグインの永続状態。path、パラメータ値、プラグイン状態データ（不透明文字列）、欠落プラグインを無効化した状態（disabled_placeholder） |
 
 `TrackInstrument`と`EffectDevice`は別に管理し、VST3の永続状態はどちらも`Vst3Plugin`で表す。Built-in音源とVST3音源は同じInstrument RuntimeからRealtimeとOffline Renderへ接続され、Built-in音源にはVST3 editorや外部plugin pathを割り当てない。
@@ -161,6 +166,14 @@ flowchart TD
     PS[ProjectState] --> PM[ProjectSummary]
     CS --> AR[Arrangement]
     AR --> TR[Track]
+    AR --> MX[Mixer]
+    MX --> MB[MixBus]
+    MX --> SN[Send]
+    MX -->|Master| ED[EffectDevice]
+    MB --> ED
+    TR -->|主出力先Group| MB
+    SN -->|送信元| TR
+    SN -->|宛先Return| MB
     AR --> AC[AudioClip]
     AR --> MC[MidiClip]
     AR --> AU[AutomationLane]
@@ -191,34 +204,35 @@ flowchart TD
 
 `validate_and_normalize`（`CreativeSession`）と `normalize_fields`（`AudioClip`）が守る規則。ロードと保存の両方の境界で適用される。
 
-| 対象            | ルール                                                                                                                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| session_id      | 空文字禁止。新規は `session-<ms>`                                                                                                                                                          |
-| ProjectId       | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession`へ埋め込まない                                                                                      |
-| タイムベース    | `ppq` は常に `960`（`TIMELINE_PPQ`）。Tempo・拍子変更点はTick 0を必須とし、重複のない昇順。BPMは正の有限値。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                     |
-| 音楽操作値      | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する    |
-| TimelineRegion  | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                          |
-| HarmonyEvent    | idはArrangement内で一意、和声名とtonesは空文字・空集合を禁止、`end_tick > start_tick`。最大16,384件で、イベント同士の重複・入れ子・gapを許可し、`start_tick`・`end_tick`・id順に正規化する |
-| ゲイン          | マスター `-90.0..=0.0`、クリップ・トラック `-90.0..=24.0`。非有限値はエラー（マスター）または 0.0 へ正準化                                                                                 |
-| パン            | `-1.0..=1.0`、非有限値は 0.0                                                                                                                                                               |
-| フェード        | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                    |
-| エフェクト      | idとnameは空文字禁止、id はTrack内で一意、1 Trackあたり最大256件                                                                                                                           |
-| VST3 プラグイン | pathは空文字禁止。パラメータ値は `0.0..=1.0` にクランプし、非有限値は 0.0。状態データは4,000,000文字まで                                                                                   |
-| カウントイン    | `0..=8` 拍                                                                                                                                                                                 |
-| AssetId         | `asset:<UUIDv7>` のみ有効                                                                                                                                                                  |
-| 素材コンテンツ  | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                      |
-| 参照整合        | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                          |
-| 録音遷移        | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                      |
-| 更新時刻        | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                                                                                     |
+| 対象              | ルール                                                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| session_id        | 空文字禁止。新規は `session-<ms>`                                                                                                                                                          |
+| ProjectId         | `projects/` 直下のディレクトリ名としてcanonical lowercase UUIDを使う。`CreativeSession`へ埋め込まない                                                                                      |
+| タイムベース      | `ppq` は常に `960`（`TIMELINE_PPQ`）。Tempo・拍子変更点はTick 0を必須とし、重複のない昇順。BPMは正の有限値。拍子の分母は `1/2/4/8/16/32`、分子は非ゼロ                                     |
+| 音楽操作値        | `MusicalPosition` は1-originのbar/beatとbeat内の正規化分数、`MusicalDuration` は正の正規化分数、`MusicalPitch` は表記を保持したMIDI範囲内の音名。入力値はCoreで正準tick/pitchへ変換する    |
+| TimelineRegion    | idとnameは空文字禁止、`end_tick > start_tick`。Region同士の重複・入れ子・同名を許可し、セクション種別を固定しない                                                                          |
+| HarmonyEvent      | idはArrangement内で一意、和声名とtonesは空文字・空集合を禁止、`end_tick > start_tick`。最大16,384件で、イベント同士の重複・入れ子・gapを許可し、`start_tick`・`end_tick`・id順に正規化する |
+| ゲイン            | マスター `-90.0..=0.0`、クリップ・トラック `-90.0..=24.0`。Master・Track・Bus・Sendの非有限値はエラー。Bus Gain・Send LevelはTrackと同じ値域                                               |
+| パン              | Track・Busは `-1.0..=1.0`、非有限値はエラー                                                                                                                                                |
+| Mixerルーティング | Track・BusのIDはチャンネル間で一意、Send IDも一意。Trackの主出力先は既存Group、Sendは既存Trackから既存Returnへの経路に限定し、同じ組のSendは1つだけ許可する                                |
+| フェード          | fade_in / fade_out はタイムライン持続時間以下にクランプ                                                                                                                                    |
+| エフェクト        | idとnameは空文字禁止、Device IDはInstrument・Track Effects・Bus Effects・Master Effectsを通じて一意、1チャンネルあたり最大256件                                                            |
+| VST3 プラグイン   | pathは空文字禁止。パラメータ値は `0.0..=1.0` にクランプし、非有限値は 0.0。状態データは4,000,000文字まで                                                                                   |
+| カウントイン      | `0..=8` 拍                                                                                                                                                                                 |
+| AssetId           | `asset:<UUIDv7>` のみ有効                                                                                                                                                                  |
+| 素材コンテンツ    | 不変。内容変更は新しい Asset を mint する。変更可は管理メタデータのみ                                                                                                                      |
+| 参照整合          | セッションが参照する AssetId は登録済みでなければならない（未登録参照は保存・ロード拒否、`architecture.md §6.4`）                                                                          |
+| 録音遷移          | `RecordingCapture` は定義済み遷移行列のみ許可。終端状態からは戻れない                                                                                                                      |
+| 更新時刻          | `updated_at_ms` はコミット時に単調増加し、保存世代やライブラリ表示の更新時刻として使う                                                                                                     |
 
 ---
 
 ## 7. スキーマ進化の方針
 
-| 方針           | 内容                                                                                                                                                                             |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| セッション文書 | `session.json`・世代ファイル・`.riffra` の `session.json` は `{"schemaVersion": 1, "session": {...}}` 形式。版を先に読み、現行の版（`SESSION_SCHEMA_VERSION`）以外は読み込まない |
-| 現行スキーマ   | 永続化する型は未知のキーを拒否し、`Option` 以外のフィールドに既定値を持たない。欠けたキーや対応しない形のデータは正準状態へ取り込まない                                          |
-| 世代回復       | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む                                                                                 |
-| DataRoot       | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                                                                                          |
-| 言語間の同期   | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                                                                                      |
+| 方針           | 内容                                                                                                                                                                                                           |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| セッション文書 | `session.json`・世代ファイル・`.riffra` の `session.json` は `{"schemaVersion": 1, "session": {...}}` 形式。版を先に読み、現行の版（`SESSION_SCHEMA_VERSION`）以外は読み込まない                               |
+| 現行スキーマ   | 永続化する型は未知のキーを拒否し、省略可能な値と明示された初期値だけを補完する。Mixerの欠落は空の構成、Trackの主出力先の欠落はMasterとする。その他の必須キー欠落や対応しない形のデータは正準状態へ取り込まない |
+| 世代回復       | 自動回復は読み込めない世代を飛ばし、手動復元も検証と正準化に成功した世代だけを正準状態へ取り込む                                                                                                               |
+| DataRoot       | `workspace.json` と `projects/` を中心とするProjectレイアウトを保持する                                                                                                                                        |
+| 言語間の同期   | Rustを唯一の型定義元とする。TypeScriptは生成し、C++は投影プロトコルの検証テストで整合を保つ                                                                                                                    |

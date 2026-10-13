@@ -75,11 +75,11 @@ Active MIDI Clip の Track ──────→ MIDI Editor Note Preview
 
 #### Arrange Selection
 
-Timeline 上で選択している Track または Clip 群を表す。Properties の内容は Arrange Selection に追従する。Browser の表示状態は素材探索の文脈として保持される。
+Timeline上のTrack・Clip群と、Mixer上のBus・Masterの選択を表す。PropertiesはTrack・Clipの選択に追従し、Bus・Masterの編集はMixerとDevicesで行う。Browserの表示状態は素材探索の文脈として保持される。
 
 #### Devices の編集対象
 
-Devices は Arrange Selection で明示的に選択した Track を扱う。Track Header の Device 操作、Properties の Open Devices、Mixer の FX から開く。Track を切り替えると Device 選択を解除し、選択 Device を削除した場合も詳細を閉じる。選択 Track を削除した場合は Devices を閉じる。Effect の順序変更では Device の選択を維持する。
+DevicesはArrange Selectionで選択したTrack・Bus・Masterを扱う。Track HeaderのDevice操作、PropertiesのOpen Devices、各MixerチャンネルのFXから開く。所有チャンネルを切り替えるとDevice選択を解除し、選択Deviceを削除した場合は詳細を閉じる。選択Track・Busを削除した場合はDevicesを閉じる。Effectの順序変更ではDevice選択を維持する。
 
 #### Active MIDI Clip
 
@@ -459,11 +459,7 @@ Lower Area は、Resize、Collapse / Restore、Expand / Restore、Close を提�
 
 ### 5.2 Mixer
 
-Mixer は Track ごとの音量・Pan・Meter・M/S/R と、固定された Master 出力を横並びで確認する。Track 列は横スクロールし、Master 列は右側に固定する。Track を選択しても Focused Instrument Track は変更しない。FX は Effect 件数にかかわらず、その Track を選択して Devices を開く。Missing Effect は警告を表示する。
-
-Gain と Pan のドラッグ中は Native Runtime の一時プレビューへ値を集約して送り、操作の確定時に一度だけ `updateTrack` を実行する。プレビュー値は Canonical state、Undo/Redo、保存、Runtime 再起動の復元対象にしない。M/S/R は Track の Canonical state を更新する。
-
-各 Track の Meter は Effect Chain、Fader、Pan、Automation、Mute を通過した Track 出力を左右別に表示する。Master Meter は Safety limiter と最終ハードクリップ後の左右出力を表示し、Limiter gain reduction、Hard clip、Feedback protection の状態を診断欄に示す。Meter が未接続の間は値を補間せず、利用不可として表示する。
+MixerはTrack・Group・Returnと固定Masterを横並びに表示する。各チャンネルのFXから同じDevicesへ移り、Focused Instrument Trackを維持してミックスを調整する。ルーティング、Send、Mixdown、Meter、安全状態の操作仕様は[Mixer画面仕様](mixer.md)を参照する。
 
 ### 5.3 MIDI Editor
 
@@ -557,7 +553,7 @@ Zoom に応じて Bar、Beat、Subdivision の階層を視認できる密度へ�
 
 ### 5.4 Devices
 
-Devices は選択 Track の信号経路を左から右へ表示する。Instrument Track は音源、Audio Track は Audio Input が先頭になり、その後に Effect Chain が続く。
+Devicesは選択チャンネルの信号経路を左から右へ表示する。Instrument Trackは音源、Audio TrackはAudio Inputが先頭になり、その後にEffect Chainが続く。Group・Return・Masterでは同じ編集面にEffectsだけを表示し、音源の割り当て操作を表示しない。
 
 ```text
 [Instrument / Audio Input] → [Effect A] → [Effect B] → [+ Effect]
@@ -569,7 +565,7 @@ VST3 Device を選択すると、同じ汎用 Editor で Parameter と公開さ�
 
 Plugin Editor と Preset は Device が公開している場合に表示する。Plugin Editor 側の変更は正準状態へ反映され、選択中 Device の詳細も更新される。Missing と Disabled Placeholder では Parameter を問い合わせず、読み込み失敗時は Device を残して詳細欄にエラーを表示する。
 
-Devices を開いたまま Computer Keyboard で Focused Instrument Track を演奏し、音色の調整結果を確認できる。Browser は探索と Project 外の Plugin Audition を担当し、Devices 内の Picker は現在の Track への追加・変更を担当する。
+Devicesを開いたままComputer KeyboardでFocused Instrument Trackを演奏できる。Bus・Masterの選択はこの演奏先を変えない。Browserは探索とProject外のPlugin Audition、Devices内のPickerは選択チャンネルへのDevice追加・変更を担当する。
 
 ---
 

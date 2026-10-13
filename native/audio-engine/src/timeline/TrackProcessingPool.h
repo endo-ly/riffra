@@ -36,10 +36,12 @@ public:
     explicit TrackProcessingPool(int workerCount);
     ~TrackProcessingPool();
     void run(std::span<Track* const> tracks, const TrackStageJob& job) noexcept;
+    void runMixer(std::span<MixerChannel* const> channels, int sampleCount) noexcept;
 
 private:
     class Worker;
     void processAvailableTracks() noexcept;
+    void execute(std::size_t count) noexcept;
 
     std::vector<std::unique_ptr<Worker>> workers;
     std::counting_semaphore<7> wake{0};
@@ -49,6 +51,7 @@ private:
     std::atomic<std::size_t> completedTracks{0};
     std::atomic<int> pendingWorkers{0};
     std::span<Track* const> tracks;
+    std::span<MixerChannel* const> channels;
     TrackStageJob job{};
 };
 

@@ -9,6 +9,14 @@
 
 namespace riffra {
 
+enum class EffectOwnerKindSpec { track, bus, master };
+
+struct EffectOwnerSpec final {
+    EffectOwnerKindSpec kind = EffectOwnerKindSpec::track;
+    juce::String id;
+    bool operator==(const EffectOwnerSpec&) const = default;
+};
+
 enum class TrackKindSpec { audio, instrument };
 enum class FadeShapeSpec { linear, equalPower, smooth };
 enum class TakeVariantSpec { raw, processed };
@@ -191,6 +199,7 @@ struct TrackSpec final {
     bool solo = false;
     juce::String panLaw = "equalPower";
     std::optional<juce::String> externalAudioSourceTrackId;
+    std::optional<juce::String> outputBusId;
     bool armed = false;
     bool monitorInput = false;
     std::optional<AudioInputSpec> audioInput;
@@ -204,6 +213,38 @@ struct TrackSpec final {
     bool operator==(const TrackSpec&) const = default;
 };
 
+enum class MixBusKindSpec { group, returnBus };
+enum class SendPositionSpec { preFader, postFader };
+
+struct MixBusSpec final {
+    juce::String id;
+    MixBusKindSpec kind = MixBusKindSpec::group;
+    double gainDb = 0.0;
+    double pan = 0.0;
+    juce::String panLaw = "unityCenterStereo";
+    bool muted = false;
+    bool solo = false;
+    std::vector<PluginDeviceSpec> effects;
+    bool operator==(const MixBusSpec&) const = default;
+};
+
+struct SendSpec final {
+    juce::String id;
+    juce::String trackId;
+    juce::String returnBusId;
+    double levelDb = 0.0;
+    SendPositionSpec position = SendPositionSpec::postFader;
+    bool enabled = true;
+    bool operator==(const SendSpec&) const = default;
+};
+
+struct MixerSpec final {
+    std::vector<PluginDeviceSpec> masterEffects;
+    std::vector<MixBusSpec> buses;
+    std::vector<SendSpec> sends;
+    bool operator==(const MixerSpec&) const = default;
+};
+
 struct ExecutionGraph final {
     TimebaseSpec timebase;
     LoopRangeSpec loopRange;
@@ -211,6 +252,7 @@ struct ExecutionGraph final {
     bool metronomeEnabled = false;
     double masterGainDb = 0.0;
     std::vector<TrackSpec> tracks;
+    MixerSpec mixer;
     std::uint64_t musicalEndTick = 0;
     double tailSeconds = 0.0;
     double fadeOutSeconds = 0.0;

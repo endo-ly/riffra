@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CanonicalState, DeviceParameterInfo } from '@/model/domain';
+import type { CanonicalState, DeviceParameterInfo, EffectOwner } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
 import styles from './Devices.module.css';
 
 interface DeviceParameterEditorProps {
   api: ArrangeWorkspaceApi;
-  trackId: string;
+  owner: EffectOwner;
   deviceId: string;
   stateData?: string;
   parameterValues: number[];
@@ -122,7 +122,7 @@ function ParameterControl({
 export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
   const { details, loading, error, saving, mutate, openEditor } = useDeviceDetails(
     props.api,
-    props.trackId,
+    props.owner,
     props.deviceId,
     props.parameterValues,
     props.stateData,
@@ -150,7 +150,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                   onChange={(event) => {
                     const index = Number(event.currentTarget.value);
                     void mutate(() =>
-                      props.api.setTrackPluginPreset(props.trackId, props.deviceId, index),
+                      props.api.setPluginPreset(props.owner, props.deviceId, index),
                     );
                   }}
                 >
@@ -184,12 +184,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
               disabled={loading || saving}
               onCommit={(value) =>
                 mutate(() =>
-                  props.api.setTrackDeviceParameter(
-                    props.trackId,
-                    props.deviceId,
-                    parameter.index,
-                    value,
-                  ),
+                  props.api.setDeviceParameter(props.owner, props.deviceId, parameter.index, value),
                 )
               }
             />

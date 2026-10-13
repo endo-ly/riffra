@@ -135,6 +135,47 @@ public:
         return lowLatencyMonitoringState.load(std::memory_order_acquire);
     }
 
+    void setLowLatencyPdcBypassActive(const bool active) noexcept {
+        lowLatencyPdcBypassActiveState.store(active, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool lowLatencyPdcBypassActive() const noexcept {
+        return lowLatencyPdcBypassActiveState.load(std::memory_order_acquire);
+    }
+
+    void prepareTimelineInputDelay(const int samples) {
+        timelineInputDelaySamples = std::max(0, samples);
+        timelineInputDelayBuffer.setSize(2, timelineInputDelaySamples + 1, false, true, false);
+        resetTimelineInputDelay();
+    }
+
+    void processTimelineInputDelay(juce::AudioBuffer<float>& input, const int sampleCount,
+                                   const bool active) noexcept {
+        if (active != timelineInputDelayActive) {
+            timelineInputDelayBuffer.clear();
+            timelineInputDelayWritePosition = 0;
+            timelineInputDelayActive = active;
+        }
+        if (!active || timelineInputDelaySamples == 0) return;
+
+        const auto bufferSize = timelineInputDelayBuffer.getNumSamples();
+        for (int sample = 0; sample < sampleCount; ++sample) {
+            const auto read = (timelineInputDelayWritePosition + 1) % bufferSize;
+            for (int channel = 0; channel < 2; ++channel) {
+                const auto value = input.getSample(channel, sample);
+                timelineInputDelayBuffer.setSample(channel, timelineInputDelayWritePosition, value);
+                input.setSample(channel, sample, timelineInputDelayBuffer.getSample(channel, read));
+            }
+            timelineInputDelayWritePosition = read;
+        }
+    }
+
+    void resetTimelineInputDelay() noexcept {
+        timelineInputDelayBuffer.clear();
+        timelineInputDelayWritePosition = 0;
+        timelineInputDelayActive = false;
+    }
+
     /// Reserves the timeline MIDI storage owned by the instrument runtime.
     [[nodiscard]] bool prepareTimelineMidiCapacity(const std::size_t eventCapacity,
                                                    juce::String& error) noexcept {
@@ -202,13 +243,13 @@ public:
     // Prepared timeline state. The snapshot builder allocates these buffers;
     // realtime code only clears and processes their existing storage.
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+    std::int64_t timelinePdcDelaySamples = 0;
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> processedBuffer;
     juce::AudioBuffer<float> trackOutputBuffer;
     juce::AudioBuffer<float> routedOutputBuffer;
-    juce::AudioBuffer<float> masterDelayBuffer;
-    std::int64_t masterDelaySamples = 0;
-    std::int64_t masterDelayWritePosition = 0;
+    juce::AudioBuffer<float> preFaderOutputBuffer;
+    bool mainOutputAudible = true;
     std::int64_t routeLatencySamples = 0;
     TrackRuntime* externalAudioSource = nullptr;
     bool unityCenterStereo = false;
@@ -220,12 +261,10 @@ public:
     juce::AudioBuffer<float> postEffectClipBuffer;
     juce::AudioBuffer<float> liveInputBuffer;
     RecordingCaptureTrackState recordingCapture;
-    juce::AudioBuffer<float> delayBuffer;
     juce::AudioBuffer<float> postEffectDelayBuffer;
-    std::int64_t delayWritePosition = 0;
     std::int64_t postEffectDelayWritePosition = 0;
-    std::int64_t compensationDelaySamples = 0;
     std::int64_t postEffectCompensationDelaySamples = 0;
+    bool postEffectLowLatencyBypassActive = false;
     std::int64_t pluginDelaySamples = 0;
     std::int64_t pluginTailSamples = 0;
     std::size_t midiEventCapacity = 0;
@@ -290,9 +329,14 @@ private:
     std::shared_ptr<TrackDeviceRuntime> devices = std::make_shared<TrackDeviceRuntime>();
     std::atomic<bool> liveMidiActiveState{false};
     std::atomic<bool> lowLatencyMonitoringState{false};
+    std::atomic<bool> lowLatencyPdcBypassActiveState{false};
     std::atomic<int> heldNotes{0};
     std::atomic<bool> sustain{false};
     std::atomic<std::int64_t> liveTailRemainingSamples{0};
+    juce::AudioBuffer<float> timelineInputDelayBuffer;
+    int timelineInputDelaySamples = 0;
+    int timelineInputDelayWritePosition = 0;
+    bool timelineInputDelayActive = false;
 };
 
 }  // namespace riffra

@@ -1,6 +1,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -56,6 +58,8 @@ private:
 class RiffraTestProcessor final : public juce::AudioProcessor {
 private:
     juce::AudioParameterFloat* gain = nullptr;
+    std::array<std::array<float, 9>, 2> delay{};
+    int delayPosition = 0;
 
 public:
     RiffraTestProcessor()
@@ -70,10 +74,14 @@ public:
         auto* mode = new juce::AudioParameterChoice("mode", "Mode", {"Clean", "Warm", "Bright"}, 0);
         addParameter(mode);
         addParameter(new ModeDependentParameter(*mode));
+        if (!JucePlugin_IsSynth) setLatencySamples(8);
         emitProtocolPollution();
     }
 
-    void prepareToPlay(double, int) override {}
+    void prepareToPlay(double, int) override {
+        delay = {};
+        delayPosition = 0;
+    }
     void releaseResources() override {}
 
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override {
@@ -85,8 +93,20 @@ public:
         juce::ignoreUnused(midi);
         if (JucePlugin_IsSynth)
             buffer.clear();
-        else
-            buffer.applyGain(gain->get());
+        else {
+            for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+                const auto read = (delayPosition + 1) % 9;
+                for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+                    delay[static_cast<std::size_t>(channel)]
+                         [static_cast<std::size_t>(delayPosition)] =
+                             buffer.getSample(channel, sample) * gain->get();
+                    buffer.setSample(
+                        channel, sample,
+                        delay[static_cast<std::size_t>(channel)][static_cast<std::size_t>(read)]);
+                }
+                delayPosition = read;
+            }
+        }
     }
 
     juce::AudioProcessorEditor* createEditor() override { return nullptr; }
@@ -101,8 +121,19 @@ public:
     void setCurrentProgram(int) override {}
     const juce::String getProgramName(int) override { return {}; }
     void changeProgramName(int, const juce::String&) override {}
-    void getStateInformation(juce::MemoryBlock&) override {}
-    void setStateInformation(const void*, int) override {}
+    void getStateInformation(juce::MemoryBlock& state) override {
+        std::array<float, 4> values{};
+        for (int index = 0; index < 4; ++index)
+            values[static_cast<std::size_t>(index)] = getParameters()[index]->getValue();
+        state.replaceAll(values.data(), sizeof(values));
+    }
+    void setStateInformation(const void* data, const int size) override {
+        std::array<float, 4> values{};
+        if (size != sizeof(values)) return;
+        std::memcpy(values.data(), data, sizeof(values));
+        for (int index = 0; index < 4; ++index)
+            getParameters()[index]->setValueNotifyingHost(values[static_cast<std::size_t>(index)]);
+    }
 };
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new RiffraTestProcessor(); }

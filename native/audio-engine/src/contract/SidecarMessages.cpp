@@ -222,9 +222,29 @@ juce::var encodeAudioStatus(const AudioStatusSpec& status) {
     return audioStatusFields(status).build();
 }
 
+juce::var encodeEffectOwner(const EffectOwnerSpec& owner) {
+    const auto kind = owner.kind == EffectOwnerKindSpec::master ? "master"
+                      : owner.kind == EffectOwnerKindSpec::bus  ? "bus"
+                                                                : "track";
+    ObjectBuilder builder;
+    builder.set("kind", kind);
+    if (owner.kind != EffectOwnerKindSpec::master) builder.set("id", owner.id);
+    return builder.build();
+}
+
 juce::var encodeTrackMeter(const TrackMeterSpec& meter) {
     return ObjectBuilder{}
         .set("trackId", meter.trackId)
+        .set("peakLeft", meter.peakLeft)
+        .set("peakRight", meter.peakRight)
+        .set("rmsLeft", meter.rmsLeft)
+        .set("rmsRight", meter.rmsRight)
+        .build();
+}
+
+juce::var encodeBusMeter(const BusMeterSpec& meter) {
+    return ObjectBuilder{}
+        .set("busId", meter.busId)
         .set("peakLeft", meter.peakLeft)
         .set("peakRight", meter.peakRight)
         .set("rmsLeft", meter.rmsLeft)
@@ -247,7 +267,8 @@ ObjectBuilder audioMetersFields(const AudioMetersSpec& meters) {
         .set("feedbackSuspected", meters.feedbackSuspected)
         .set("previewing", meters.previewing)
         .set("instrumentPreviewing", meters.instrumentPreviewing)
-        .set("trackMeters", array(meters.trackMeters, encodeTrackMeter));
+        .set("trackMeters", array(meters.trackMeters, encodeTrackMeter))
+        .set("busMeters", array(meters.busMeters, encodeBusMeter));
     return builder;
 }
 
@@ -306,11 +327,11 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
             [](const TimelineAckSpec&) { return typeOnly("timelineAck"); },
             [](const TimelineIdleAckSpec&) { return typeOnly("timelineIdleAck"); },
             [](const MidiAckSpec&) { return typeOnly("midiAck"); },
-            [](const TrackMixAckSpec&) { return typeOnly("trackMixAck"); },
-            [](const TrackDeviceAckSpec&) { return typeOnly("trackDeviceAck"); },
-            [](const TrackDeviceStatusSpec& status) {
+            [](const MixAckSpec&) { return typeOnly("mixAck"); },
+            [](const DeviceAckSpec&) { return typeOnly("deviceAck"); },
+            [](const DeviceStatusSpec& status) {
                 return ObjectBuilder{}
-                    .set("type", "trackDeviceStatus")
+                    .set("type", "deviceStatus")
                     .set("name", status.name)
                     .set("bypassed", status.bypassed)
                     .set("parameterCount", integer(status.parameterCount))
@@ -322,12 +343,12 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                              .build())
                     .build();
             },
-            [](const TrackDeviceParametersSpec& status) {
+            [](const DeviceParametersSpec& status) {
                 return ObjectBuilder{}
-                    .set("type", "trackDeviceParameters")
+                    .set("type", "deviceParameters")
                     .set("parameters",
                          array(status.parameters,
-                               [](const TrackDeviceParameterSpec& parameter) {
+                               [](const DeviceParameterSpec& parameter) {
                                    return ObjectBuilder{}
                                        .set("index", integer(parameter.index))
                                        .set("name", parameter.name)
@@ -340,7 +361,7 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                        .set("stepCount", integer(parameter.stepCount))
                                        .set("choices",
                                             array(parameter.choices,
-                                                  [](const TrackDeviceParameterChoiceSpec& choice) {
+                                                  [](const DeviceParameterChoiceSpec& choice) {
                                                       return ObjectBuilder{}
                                                           .set("value", choice.value)
                                                           .set("displayValue", choice.displayValue)
@@ -350,14 +371,14 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                }))
                     .build();
             },
-            [](const TrackDeviceProgramsSpec& status) {
+            [](const DeviceProgramsSpec& status) {
                 return ObjectBuilder{}
-                    .set("type", "trackDevicePrograms")
+                    .set("type", "devicePrograms")
                     .set("currentIndex", status.currentIndex.has_value()
                                              ? integer(*status.currentIndex)
                                              : juce::var())
                     .set("programs", array(status.programs,
-                                           [](const TrackDeviceProgramSpec& program) {
+                                           [](const DeviceProgramSpec& program) {
                                                return ObjectBuilder{}
                                                    .set("index", integer(program.index))
                                                    .set("name", program.name)
@@ -365,15 +386,15 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                            }))
                     .build();
             },
-            [](const TrackPluginStateSpec& status) {
+            [](const PluginStateResponseSpec& status) {
                 return ObjectBuilder{}
-                    .set("type", "trackPluginState")
+                    .set("type", "pluginState")
                     .set("state", encodePluginState(status.state))
                     .build();
             },
-            [](const TrackDeviceProgramChangedSpec& changed) {
+            [](const DeviceProgramChangedSpec& changed) {
                 return ObjectBuilder{}
-                    .set("type", "trackDeviceProgramChanged")
+                    .set("type", "deviceProgramChanged")
                     .set("state", encodePluginState(changed.state))
                     .build();
             },
@@ -408,20 +429,20 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
                     .set("message", optionalString(completion.message))
                     .build();
             },
-            [](const TrackPluginStateChangedSpec& changed) {
+            [](const PluginStateChangedSpec& changed) {
                 return ObjectBuilder{}
-                    .set("type", "trackPluginStateChanged")
+                    .set("type", "pluginStateChanged")
                     .set("projectId", changed.projectId)
-                    .set("trackId", changed.trackId)
+                    .set("owner", encodeEffectOwner(changed.owner))
                     .set("deviceId", changed.deviceId)
                     .set("state", encodePluginState(changed.state))
                     .build();
             },
-            [](const TrackPluginParameterChangedSpec& changed) {
+            [](const PluginParameterChangedSpec& changed) {
                 return ObjectBuilder{}
-                    .set("type", "trackPluginParameterChanged")
+                    .set("type", "pluginParameterChanged")
                     .set("projectId", changed.projectId)
-                    .set("trackId", changed.trackId)
+                    .set("owner", encodeEffectOwner(changed.owner))
                     .set("deviceId", changed.deviceId)
                     .set("parameterIndex", integer(changed.parameterIndex))
                     .set("value", changed.value)

@@ -18,6 +18,8 @@ public:
                              juce::String& error);
 
 private:
+    bool prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
+                      PluginProcessingMode mode, juce::String& error);
     TimelineEngine& engine;
 };
 

@@ -1,0 +1,12 @@
+{
+  "command": {
+    "deviceId": "device-1",
+    "owner": {
+      "id": "track-1",
+      "kind": "track"
+    },
+    "projectId": "project-1",
+    "type": "openPluginEditor"
+  },
+  "requestId": 1
+}

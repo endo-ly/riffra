@@ -22,6 +22,25 @@ bool isInstrumentDevice(const Track& track, const juce::String& deviceId) noexce
     return track.runtime->instrumentTrack && track.instrumentDeviceId == deviceId;
 }
 
+PluginRack* findRack(PreparedTimeline& graph, const EffectOwnerSpec& owner,
+                     const juce::String& deviceId) noexcept {
+    if (owner.kind == EffectOwnerKindSpec::master)
+        return graph.mixer.masterEffects->findDevice(deviceId);
+    if (owner.kind == EffectOwnerKindSpec::bus) {
+        const auto* bus = graph.mixer.findBus(owner.id);
+        return bus != nullptr ? bus->effects->findDevice(deviceId) : nullptr;
+    }
+    auto* track = graph.findTrack(owner.id);
+    return track != nullptr ? findRack(*track, deviceId) : nullptr;
+}
+
+bool isInstrumentDevice(const PreparedTimeline& graph, const EffectOwnerSpec& owner,
+                        const juce::String& deviceId) noexcept {
+    const auto* track =
+        owner.kind == EffectOwnerKindSpec::track ? graph.findTrack(owner.id) : nullptr;
+    return track != nullptr && isInstrumentDevice(*track, deviceId);
+}
+
 }  // namespace
 
 RealtimeRequest TimelineEngine::setLiveMidiTarget(const juce::String& trackId,
@@ -180,49 +199,46 @@ void TimelineEngine::resetPluginDevices() noexcept {
                 if (auto* rack = runtime.instrument()->vst3Rack()) rack->reset();
             runtime.effects().reset();
         }
+        for (const auto& bus : graph->mixer.buses) bus->effects->reset();
+        graph->mixer.masterEffects->reset();
     });
 }
 
-PluginRack* TimelineEngine::findDevice(const juce::String& trackId,
+PluginRack* TimelineEngine::findDevice(const EffectOwnerSpec& deviceOwner,
                                        const juce::String& deviceId) noexcept {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) -> PluginRack* {
-        auto* track = graphs.latestCommitted != nullptr ? graphs.latestCommitted->findTrack(trackId)
-                                                        : nullptr;
-        return track != nullptr ? findRack(*track, deviceId) : nullptr;
+        return graphs.latestCommitted != nullptr
+                   ? findRack(*graphs.latestCommitted, deviceOwner, deviceId)
+                   : nullptr;
     });
 }
 
 PluginRack* TimelineEngine::findCommittedRack(const ControlGraphRegistry::State& graphs,
-                                              const juce::String& trackId,
+                                              const EffectOwnerSpec& deviceOwner,
                                               const juce::String& deviceId, const char* noun,
                                               juce::String& error) {
     if (graphs.latestCommitted == nullptr) {
         error = "Arrangement Graph is not loaded.";
         return nullptr;
     }
-    auto* track = graphs.latestCommitted->findTrack(trackId);
-    if (track == nullptr) {
-        error = "Track was not found.";
-        return nullptr;
-    }
-    auto* rack = findRack(*track, deviceId);
+    auto* rack = findRack(*graphs.latestCommitted, deviceOwner, deviceId);
     if (rack == nullptr)
-        error = isInstrumentDevice(*track, deviceId)
+        error = isInstrumentDevice(*graphs.latestCommitted, deviceOwner, deviceId)
                     ? juce::String("Built-in instruments do not expose plugin ") + noun + "."
-                    : juce::String("Track Device was not found.");
+                    : juce::String("Channel Device was not found.");
     return rack;
 }
 
-std::optional<TrackDeviceStatusSpec> TimelineEngine::deviceStatus(const juce::String& trackId,
-                                                                  const juce::String& deviceId,
-                                                                  juce::String& error) const {
+std::optional<DeviceStatusSpec> TimelineEngine::deviceStatus(const EffectOwnerSpec& deviceOwner,
+                                                             const juce::String& deviceId,
+                                                             juce::String& error) const {
     return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<TrackDeviceStatusSpec> {
-            const auto* rack = findCommittedRack(graphs, trackId, deviceId, "status", error);
+        [&](const ControlGraphRegistry::State& graphs) -> std::optional<DeviceStatusSpec> {
+            const auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "status", error);
             if (rack == nullptr) return std::nullopt;
             const auto rackStatus = rack->status();
             const auto parameterCount = static_cast<std::uint32_t>(rack->parameterCount());
-            return TrackDeviceStatusSpec{
+            return DeviceStatusSpec{
                 rackStatus.name,
                 rackStatus.bypassed,
                 parameterCount,
@@ -231,25 +247,25 @@ std::optional<TrackDeviceStatusSpec> TimelineEngine::deviceStatus(const juce::St
         });
 }
 
-std::optional<TrackDeviceParametersSpec> TimelineEngine::deviceParameterStatus(
-    const juce::String& trackId, const juce::String& deviceId, juce::String& error) {
+std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
+    const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) {
     return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<TrackDeviceParametersSpec> {
-            auto* rack = findCommittedRack(graphs, trackId, deviceId, "parameters", error);
+        [&](const ControlGraphRegistry::State& graphs) -> std::optional<DeviceParametersSpec> {
+            auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "parameters", error);
             if (rack == nullptr) return std::nullopt;
             if (!synchronizeDeviceParameters(*rack, error)) return std::nullopt;
-            TrackDeviceParametersSpec result;
+            DeviceParametersSpec result;
             for (const auto& parameter : rack->parameters()) {
-                TrackDeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
-                                              parameter.name,
-                                              parameter.value,
-                                              parameter.defaultValue,
-                                              parameter.automatable,
-                                              parameter.displayValue,
-                                              parameter.label,
-                                              parameter.discrete,
-                                              parameter.stepCount,
-                                              {}};
+                DeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
+                                         parameter.name,
+                                         parameter.value,
+                                         parameter.defaultValue,
+                                         parameter.automatable,
+                                         parameter.displayValue,
+                                         parameter.label,
+                                         parameter.discrete,
+                                         parameter.stepCount,
+                                         {}};
                 for (const auto& choice : parameter.choices)
                     info.choices.push_back({choice.value, choice.displayValue});
                 result.parameters.push_back(std::move(info));
@@ -258,18 +274,18 @@ std::optional<TrackDeviceParametersSpec> TimelineEngine::deviceParameterStatus(
         });
 }
 
-std::optional<TrackDeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
-    const juce::String& trackId, const juce::String& deviceId, juce::String& error) const {
+std::optional<DeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
+    const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) const {
     return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<TrackDeviceProgramsSpec> {
-            const auto* rack = findCommittedRack(graphs, trackId, deviceId, "programs", error);
+        [&](const ControlGraphRegistry::State& graphs) -> std::optional<DeviceProgramsSpec> {
+            const auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "programs", error);
             if (rack == nullptr) return std::nullopt;
             const auto programs = rack->programStatus();
             if (programs.error.has_value()) {
                 error = *programs.error;
                 return std::nullopt;
             }
-            TrackDeviceProgramsSpec result;
+            DeviceProgramsSpec result;
             if (programs.currentIndex >= 0)
                 result.currentIndex = static_cast<std::uint32_t>(programs.currentIndex);
             for (std::size_t index = 0; index < programs.names.size(); ++index)
@@ -279,89 +295,60 @@ std::optional<TrackDeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
         });
 }
 
-std::optional<PluginStateSpec> TimelineEngine::devicePersistedState(const juce::String& trackId,
-                                                                    const juce::String& deviceId,
-                                                                    juce::String& error) const {
+std::optional<PluginStateSpec> TimelineEngine::devicePersistedState(
+    const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) const {
     return graphRegistry.access(
         [&](const ControlGraphRegistry::State& graphs) -> std::optional<PluginStateSpec> {
-            const auto* rack = findCommittedRack(graphs, trackId, deviceId, "state", error);
+            const auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "state", error);
             if (rack == nullptr) return std::nullopt;
             return rack->persistedState(error);
         });
 }
 
-bool TimelineEngine::mirrorEditorDeviceState(const juce::String& trackId,
+bool TimelineEngine::mirrorEditorDeviceState(const EffectOwnerSpec& deviceOwner,
                                              const juce::String& deviceId,
                                              const PluginStateSpec& persistedState,
                                              juce::String& error) noexcept {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        auto* track = graphs.latestCommitted != nullptr ? graphs.latestCommitted->findTrack(trackId)
-                                                        : nullptr;
-        if (track == nullptr) {
-            error = graphs.latestCommitted == nullptr ? "Timeline is not loaded."
-                                                      : "Track was not found.";
-            return false;
-        }
-        auto* rack = findRack(*track, deviceId);
-        if (rack == nullptr) {
-            error = isInstrumentDevice(*track, deviceId)
-                        ? "Built-in instruments do not provide a VST3 editor state."
-                        : "Track Device was not found.";
-            return false;
-        }
+        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
+        if (rack == nullptr) return false;
         return rack->applyPersistedState(persistedState, error);
     });
 }
 
-bool TimelineEngine::mirrorEditorDeviceParameter(const juce::String& trackId,
+bool TimelineEngine::mirrorEditorDeviceParameter(const EffectOwnerSpec& deviceOwner,
                                                  const juce::String& deviceId,
                                                  const int parameterIndex, const float value,
                                                  juce::String& error) noexcept {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        auto* track = graphs.latestCommitted != nullptr ? graphs.latestCommitted->findTrack(trackId)
-                                                        : nullptr;
-        if (track == nullptr) {
-            error = graphs.latestCommitted == nullptr ? "Timeline is not loaded."
-                                                      : "Track was not found.";
-            return false;
-        }
-        auto* rack = findRack(*track, deviceId);
-        if (rack == nullptr) {
-            error = isInstrumentDevice(*track, deviceId)
-                        ? "Built-in instruments do not expose editable parameters."
-                        : "Track Device was not found.";
-            return false;
-        }
+        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
+        if (rack == nullptr) return false;
         rack->enqueueParameterChange(parameterIndex, value);
         return true;
     });
 }
 
-bool TimelineEngine::setDeviceBypassed(const juce::String& trackId, const juce::String& deviceId,
-                                       const bool bypassed, juce::String& error) noexcept {
+bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
+                                       const juce::String& deviceId, const bool bypassed,
+                                       juce::String& error) noexcept {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
         if (graphs.latestCommitted == nullptr) {
             error = "Arrangement Graph is not loaded.";
             return false;
         }
-        auto* track = graphs.latestCommitted->findTrack(trackId);
-        if (track == nullptr) {
-            error = "Track was not found.";
-            return false;
-        }
-        if (isInstrumentDevice(*track, deviceId)) {
-            if (track->runtime->instrument() == nullptr) {
-                error = "Instrument runtime is not loaded.";
-                return false;
+        if (deviceOwner.kind == EffectOwnerKindSpec::track) {
+            auto* track = graphs.latestCommitted->findTrack(deviceOwner.id);
+            if (track != nullptr && isInstrumentDevice(*track, deviceId)) {
+                if (track->runtime->instrument() == nullptr) {
+                    error = "Instrument runtime is not loaded.";
+                    return false;
+                }
+                track->runtime->instrument()->setBypassed(bypassed);
+                return true;
             }
-            track->runtime->instrument()->setBypassed(bypassed);
-            return true;
         }
-        auto* effect = track->runtime->effects().findDevice(deviceId);
-        if (effect == nullptr) {
-            error = "Track Device was not found.";
-            return false;
-        }
+        auto* effect = findCommittedRack(graphs, deviceOwner, deviceId, "bypass", error);
+        if (effect == nullptr) return false;
         effect->setBypassed(bypassed);
         return true;
     });
@@ -389,26 +376,16 @@ bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String&
     return true;
 }
 
-bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce::String& deviceId,
-                                        const int parameterIndex, const float value,
-                                        juce::String& error) noexcept {
+bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
+                                        const juce::String& deviceId, const int parameterIndex,
+                                        const float value, juce::String& error) noexcept {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
         if (graphs.latestCommitted == nullptr) {
             error = "Arrangement Graph is not loaded.";
             return false;
         }
-        auto* track = graphs.latestCommitted->findTrack(trackId);
-        if (track == nullptr) {
-            error = "Track was not found.";
-            return false;
-        }
-        auto* rack = findRack(*track, deviceId);
-        if (rack == nullptr) {
-            error = isInstrumentDevice(*track, deviceId)
-                        ? "Built-in instruments do not expose editable parameters."
-                        : "Track Device was not found.";
-            return false;
-        }
+        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
+        if (rack == nullptr) return false;
         if (parameterIndex < 0 ||
             static_cast<std::size_t>(parameterIndex) >= rack->parameterCount()) {
             error = "Track Device parameter index is invalid.";
@@ -418,7 +395,7 @@ bool TimelineEngine::setDeviceParameter(const juce::String& trackId, const juce:
     });
 }
 
-bool TimelineEngine::setDevicePersistedState(const juce::String& trackId,
+bool TimelineEngine::setDevicePersistedState(const EffectOwnerSpec& deviceOwner,
                                              const juce::String& deviceId,
                                              const PluginStateSpec& persistedState,
                                              juce::String& error) {
@@ -427,41 +404,22 @@ bool TimelineEngine::setDevicePersistedState(const juce::String& trackId,
             error = "Arrangement Graph is not loaded.";
             return false;
         }
-        auto* track = graphs.latestCommitted->findTrack(trackId);
-        if (track == nullptr) {
-            error = "Track was not found.";
-            return false;
-        }
-        auto* rack = findRack(*track, deviceId);
-        if (rack == nullptr) {
-            error = isInstrumentDevice(*track, deviceId)
-                        ? "Built-in instruments do not expose plugin state."
-                        : "Track Device was not found.";
-            return false;
-        }
+        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
+        if (rack == nullptr) return false;
         return rack->applyPersistedState(persistedState, error);
     });
 }
 
-bool TimelineEngine::setDeviceProgram(const juce::String& trackId, const juce::String& deviceId,
-                                      const int programIndex, juce::String& error) {
+bool TimelineEngine::setDeviceProgram(const EffectOwnerSpec& deviceOwner,
+                                      const juce::String& deviceId, const int programIndex,
+                                      juce::String& error) {
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
         if (graphs.latestCommitted == nullptr) {
             error = "Arrangement Graph is not loaded.";
             return false;
         }
-        auto* track = graphs.latestCommitted->findTrack(trackId);
-        if (track == nullptr) {
-            error = "Track was not found.";
-            return false;
-        }
-        auto* rack = findRack(*track, deviceId);
-        if (rack == nullptr) {
-            error = isInstrumentDevice(*track, deviceId)
-                        ? "Built-in instruments do not expose plugin programs."
-                        : "Track Device was not found.";
-            return false;
-        }
+        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
+        if (rack == nullptr) return false;
         const auto programs = rack->programStatus();
         if (programs.error.has_value()) {
             error = *programs.error;

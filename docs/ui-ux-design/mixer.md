@@ -1,70 +1,45 @@
 # Riffra Mixer 画面仕様
 
-Mixer は Arrange の Lower Area に表示する Track ミックスと Master 出力の監視面である。Timeline の構成編集、Properties の属性編集、Play Surface の演奏入力とは責務を分け、同じ Arrangement の音声経路を確認しながら調整できるようにする。
+## 1. 制作Mixを確認する
 
-## 1. 画面構造
+MixerはTrackのバランス、共有するGroup・Return、最終Masterを同じ面で操作する。Arrange ToolbarのMixerからLower Areaに開き、Track群、Group群、Return群の順に横スクロールする。Master列は右側に固定する。
 
-```text
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ MIXER                                      Track balance and stereo output    │
-├──────────────────────────────────────────────────────────────┬───────────────┤
-│ Track 1   Track 2   Track 3   Track 4   …                    │ MASTER        │
-│ ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐                       │ ┌───────────┐ │
-│ │ Pan  │  │ Pan  │  │ Pan  │  │ Pan  │                       │ │ L/R Meter│ │
-│ │Meter │  │Meter │  │Meter │  │Meter │  horizontal scroll   │ └───────────┘ │
-│ │ Gain │  │ Gain │  │ Gain │  │ Gain │                       │ Master Gain  │
-│ │ M S R│  │ M S R│  │ M S R│  │ M S R│                       │ Safety       │
-│ └──────┘  └──────┘  └──────┘  └──────┘                       │ Diagnostics  │
-└──────────────────────────────────────────────────────────────┴───────────────┘
-```
+チャンネルの選択はDevicesの編集対象を変える。MixerでTrack・Bus・Masterを選択してもFocused Instrument Trackは変わらず、演奏先を維持してミックスを調整できる。
 
-Track Channel Strip は横方向に並び、Track 列だけがスクロールする。Master Channel Strip は右側に固定し、Track 数が増えても左右の出力を常に参照できる。表示面は Lower Area の他の編集面と排他的に切り替わるが、Arrange Selection、Active MIDI Clip、Focused Instrument Track はそれぞれの状態を維持する。
+## 2. チャンネルとルーティング
 
-## 2. Track Channel Strip
+Trackには名前、種類、FX件数、主出力先とSend件数、Pan、左右Meter、Gain、Mute・Solo・Record Armを表示する。Volume・PanのAutomationがある操作にはAUTOを表示する。
 
-各 Track は次の順序で表示する。
+主出力先とSend件数のボタンからRoutingを開く。Main outputはMasterまたはGroupを選び、SendはReturn、Level、Pre/Post、Enabledを編集する。追加できるReturnだけをAdd Sendに表示し、同じTrackから同じReturnへのSendを重複させない。
 
-1. Track color、名前、Track kind
-2. FX summary（Device 数と欠落状態）
-3. Pan と左右 Meter
-4. Gain fader と dB readout
-5. Mute、Solo、Record Arm
+Group・Returnには名前と種類、FX件数とMissing状態、Pan、左右Meter、Gain、Mute・Soloを表示する。ヘッダーで種類と名前を指定して追加し、選択したBusの名前と削除を操作する。参照中のBusを削除すると、参照を解除する必要がある旨と対象IDをエラーで表示する。
 
-Track 名を選択すると Arrange Selection をその Track にする。Mixer からの選択は Focused Instrument Track を変更しないため、MIDI Editor や Play Surface の演奏先を保ったままバランスを確認できる。FX summary は Device の追加・削除を行わず、編集面を開く入口だけを提供する。
+Mute・Soloによる可聴経路は[音声アーキテクチャ](../architecture.md)を参照する。GroupのMuteと、Trackから直接分岐するSendは別の操作である。
 
-Automation Lane に Volume または Pan の点が一つ以上ある場合は、該当する操作の横に `AUTO` を表示する。Lane が空の場合は表示しない。
+## 3. FXと連続操作
 
-M、S、R はそれぞれ Track の Canonical state を更新する。更新中は対象のスイッチを保留状態として表示し、応答の Canonical state を受け取ってから確定する。
+各チャンネルのFXボタンは、同じ[Devices編集面](arrange-screen.md#54-devices)を開く。TrackではInstrumentとEffects、Bus・MasterではEffectsを扱う。欠落・無効化したプラグインはFX欄に警告し、DevicesでRe-scan・Replace・Disableを操作する。
 
-## 3. 一時プレビューと確定
+Gain、Pan、Send Levelの連続操作は、編集中の値をNativeへ一時プレビューする。PointerUp、キー操作の終了、Blurで最後の値を一度だけ正準状態へ確定する。EscapeやPointerCancelは正準値へ戻す。プレビュー値を保存やUndo/Redoへ含めず、Project・Hostを切り替えるときは前の操作の応答を破棄する。
 
-Gain と Pan の連続操作では、入力値を短い間隔でまとめて `preview_track_mix` へ送る。Native Runtime はアクティブな Track Runtime の atomics へ値を反映し、次の Audio block の先頭で読み込む。プレビューは音を確認するための一時状態であり、Canonical state、履歴、保存、Runtime 投影の結果を変更しない。
+正準値と値域は[データモデル](../data-model.md)、命令と世代管理は[IPC契約](../ipc.md)に従う。
 
-操作の終了時は保留中のプレビューを先に送信し、最後の値について `updateTrack` を一度だけ実行する。確定応答の Canonical state を Desktop が適用し、失敗または Host generation の変更が起きた場合は Canonical の Gain / Pan を Runtime へ戻す。Project または Host が切り替わったとき、古い世代のプレビュー応答は画面やRuntimeへ適用しない。
+## 4. Meterと安全状態
 
-Track の Canonical Gain は -90 dB から +24 dB、Pan は -1 から +1 の範囲で扱う。UI はこの範囲を提示し、Native と Core の入力検証も同じ意味を持つ。
+Track MeterはEffect、Fader、Pan、Automationを通った主出力を表示する。Group・Return MeterはそのチャンネルのEffect、Gain、Panを通ったMaster向け出力を表示する。左右のPeakとRMSを表示し、1.0を超えるPeakも保持する。
 
-## 4. Meter と Safety 診断
+Master MeterはMaster FX・GainとRealtime安全処理を通った最終出力を表示する。Safety欄にはLimiter前のPeak、Limiter Gain reduction、Hard clip、Feedback protectionを表示する。Master FXは安全処理を置き換えない。
 
-Track Meter は、Track の Effect Chain、出力補償、Fader、Pan、Automation、Mute を通過して Master mix へ加わる直前の左右信号を測定する。Peak は線形値をそのまま保持し、1.0 を超える値もクランプしない。RMS は同じ Audio block の二乗平均平方根として表示する。
+Meterは約50 msごとの専用購読で更新し、未接続や世代切替中の値は「—」とする。Meter更新で正準Session全体を再描画しない。
 
-Master Meter は、Master gain、Safety limiter、最終ハードクリップを通過した左右出力を測定する。Master Channel Strip は次の診断値を同じ表示面に置く。
+## 5. Mixdown設定と結果
 
-| 診断     | 意味                                         |
-| -------- | -------------------------------------------- |
-| Pre      | Safety limiter 前の最大出力レベル            |
-| Limiter  | Safety limiter が適用した最大 Gain reduction |
-| Clip     | 最終 hard clamp が発生したサンプル数         |
-| Feedback | Feedback protection が検知中かどうか         |
+MasterのMixdownから、正準のMixdown設定を編集して書き出す。Master FXとMaster Gainは制作Mixへ適用し、Loudness Masteringは完成音声のラウドネスを整える処理として区別する。
 
-Meter frame は Native からおよそ 50 ms ごとに送信する。Audio callback は atomics への peak hold のみを行い、ロック、ヒープ確保、IPC、UI状態の変更を行わない。Rust は `audioMeters` の Track / Master データを既存の Host event 経路へ転送し、Desktop のメーター購読だけが高頻度更新で再描画される。
+Loudness Masteringの有効・無効、目標Integrated LUFS、True Peak上限、目標Loudness Range、Tail、Fade outを編集する。Save settingsは設定だけを保存し、Save and renderは設定を保存してから書き出しJobを開始する。Entire arrangementまたはLoop rangeと、全Trackまたは単一Trackを選択できる。
 
-データが未接続、世代切替中、または対象 Track が現行 Runtime に存在しない場合は、前回値を補間せず `—` として表示する。
+Aligned Track stemsは選択Trackごとに同じ時間基準のWAVを作り、個別のLoudness Masteringを適用しない。共有する非線形FXでは、Stemの合計と全体Mixが一致しない場合があることを画面に示す。
 
-## 5. Canonical state との境界
+書き出し中は設定変更を止め、進捗とCancel renderを表示する。完了後は保存先、Sample Peak、True Peak、Integrated Loudness、Loudness Range、警告をJob結果から表示する。測定不能は理由を表示し、Masteringを適用した結果には目標・入力測定・偏差・True Peak補正も表示する。
 
-Track の Gain、Pan、Mute、Solo、Record Arm は `CreativeSession.arrangement.tracks` が正本である。Master Gain は `CreativeSession.settings.masterDb` が正本である。Mixer はこれらの既存フィールドを編集するだけで、Mixer専用のTrack、Master、Bus、Effect Chainモデルを追加しない。
-
-Audio Runtime が保持する Track mix preview と Meter accumulator は実行中だけ存在する。Graph の再投影、サイドカー再起動、Device 切替では最新 Canonical state から再構築し、進行中のプレビューや前世代のMeterを復元しない。
-
-通信の詳細は [IPC契約](../ipc.md)、正準状態とRuntime投影の責務は [アーキテクチャ](../architecture.md)、Lower Area との配置は [Arrange画面仕様](arrange-screen.md) と [共通画面構造](application-layout.md) を参照する。
+画面の選択、ドラフト値、ダイアログ状態はPresentation Stateに属する。Project保存へ含めるのはMixerとMixdownの正準設定だけである。

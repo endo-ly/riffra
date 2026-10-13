@@ -3,7 +3,9 @@
 use super::{DispatchError, HostDispatcher, parse_asset_id};
 use crate::api::ControlOutput;
 use crate::api::output::PluginRole;
-use crate::api::params::{MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams};
+use crate::api::params::{
+    EffectAddParams, MissingPluginReplaceParams, MissingRelinkParams, PluginPathParams,
+};
 use crate::plugins;
 use riffra_core::AssetKind;
 use std::path::{Path, PathBuf};
@@ -50,13 +52,13 @@ impl HostDispatcher<'_> {
     pub(super) fn add_effect<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
-        params: PluginPathParams,
+        params: EffectAddParams,
     ) -> Result<ControlOutput, DispatchError> {
         let (name, plugin_path) =
             self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Effect)?;
         self.created(
-            application.add_track_effect_with_created_ids(
-                &params.track_id,
+            application.add_effect_with_created_ids(
+                &params.owner,
                 name,
                 plugin_path.to_string_lossy().into_owned(),
             )?,
@@ -206,7 +208,7 @@ mod tests {
             .dispatch(
                 request(
                     "effect.add",
-                    json!({"trackId":track_id,"pluginPath":effect_path}),
+                    json!({"owner":{"kind":"track","id":track_id},"pluginPath":effect_path}),
                 ),
                 None,
             )

@@ -126,9 +126,9 @@ std::optional<PluginStateSpec> PluginChain::persistedState(const juce::String& d
 }
 
 int PluginChain::latencySamples() const noexcept {
-    auto total = 0;
+    std::int64_t total = 0;
     for (const auto& device : devices) total += std::max(0, device.rack->latencySamples());
-    return total;
+    return static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
 }
 
 int PluginChain::tailSamples() const noexcept {

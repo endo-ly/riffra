@@ -224,6 +224,16 @@ control_commands! {
         Redo = "redo" (EmptyParams) -> ArrangementMutation, mutation, project;
         MasterGainSet = "audio.master-gain.set" (MasterGainParams) -> ArrangementMutation, mutation, project;
 
+        MixerGet = "mixer.get" (EmptyParams) -> Mixer, read, project;
+        MixBusList = "mixer.bus.list" (EmptyParams) -> MixBuses, read, project;
+        MixBusAdd = "mixer.bus.add" (MixBusAddParams) -> ArrangementMutation, mutation(batch), project;
+        MixBusUpdate = "mixer.bus.update" (MixBusUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        MixBusRemove = "mixer.bus.remove" (MixBusIdParams) -> ArrangementMutation, mutation(batch), project;
+        TrackOutputSet = "mixer.output.set" (TrackOutputParams) -> ArrangementMutation, mutation(batch), project;
+        SendList = "mixer.send.list" (EmptyParams) -> Sends, read, project;
+        SendAdd = "mixer.send.add" (SendAddParams) -> ArrangementMutation, mutation(batch), project;
+        SendUpdate = "mixer.send.update" (SendUpdateParams) -> ArrangementMutation, mutation(batch), project;
+        SendRemove = "mixer.send.remove" (SendIdParams) -> ArrangementMutation, mutation(batch), project;
         TrackList = "track.list" (EmptyParams) -> Tracks, read, project;
         TrackAdd = "track.add" (TrackAddParams) -> ArrangementMutation, mutation(batch), project;
         TrackUpdate = "track.update" (TrackUpdateParams) -> ArrangementMutation, mutation(batch), project;
@@ -312,8 +322,8 @@ control_commands! {
         InstrumentApply = "instrument.apply" (InstrumentApplyParams) -> ArrangementMutation, mutation(batch), project;
         InstrumentVst3Set = "instrument.vst3.set" (PluginPathParams) -> ArrangementMutation, mutation, project(long);
         InstrumentClear = "instrument.clear" (TrackIdParams) -> ArrangementMutation, mutation(batch), project;
-        EffectAdd = "effect.add" (PluginPathParams) -> ArrangementMutation, mutation(batch), project(long);
-        EffectRemove = "effect.remove" (TrackDeviceParams) -> ArrangementMutation, mutation(batch), project;
+        EffectAdd = "effect.add" (EffectAddParams) -> ArrangementMutation, mutation(batch), project(long);
+        EffectRemove = "effect.remove" (DeviceParams) -> ArrangementMutation, mutation(batch), project;
         EffectReorder = "effect.reorder" (EffectReorderParams) -> ArrangementMutation, mutation(batch), project;
         DeviceBypass = "device.bypass" (DeviceBypassParams) -> ArrangementMutation, mutation(batch), project;
         DeviceParameterSet = "device.parameter.set" (DeviceParameterSetParams) -> ArrangementMutation, mutation(batch), project;
@@ -343,7 +353,8 @@ control_commands! {
         TransportGoToStart = "transport.go-to-start" (EmptyParams) -> Ok, project;
         TransportSeek = "transport.seek" (SeekParams) -> Ok, project;
         MasterGainPreview = "audio.master-gain.preview" (MasterGainParams) -> Ok, project;
-        TrackMixPreview = "track.mix.preview" (TrackMixParams) -> Ok, project;
+        SendLevelPreview = "mixer.send.preview" (SendLevelPreviewParams) -> Ok, project;
+        ChannelMixPreview = "mixer.channel.preview" (ChannelMixParams) -> Ok, project;
 
         AudioStatus = "audio.status" (EmptyParams) -> AudioStatus, host;
         AudioDiagnostics = "audio.diagnostics" (AudioDiagnosticsParams) -> AudioDiagnostics, host;
@@ -369,15 +380,15 @@ control_commands! {
         PluginCatalogList = "plugin.catalog.list" (EmptyParams) -> Plugins, host;
         PluginScan = "plugin.scan" (PluginScanParams) -> PluginScan, host;
         PluginScanStart = "plugin.scan.start" (PluginScanParams) -> Job, host;
-        PluginEditorOpen = "plugin.editor.open" (TrackDeviceParams) -> Ok, project;
+        PluginEditorOpen = "plugin.editor.open" (DeviceParams) -> Ok, project;
         PluginAuditionOpen = "plugin.audition.open" (PluginAuditionParams) -> AudioStatus, host;
-        DeviceInspect = "device.inspect" (TrackDeviceParams) -> DeviceInspection, project;
-        DeviceParameterList = "device.parameter.list" (TrackDeviceParams) -> DeviceParameters, project;
+        DeviceInspect = "device.inspect" (DeviceParams) -> DeviceInspection, project;
+        DeviceParameterList = "device.parameter.list" (DeviceParams) -> DeviceParameters, project;
         DeviceParameterGet = "device.parameter.get" (DeviceParameterGetParams) -> DeviceParameter, project;
-        PluginPresetList = "plugin.preset.list" (TrackDeviceParams) -> PluginPresets, project;
-        PluginPresetGet = "plugin.preset.get" (TrackDeviceParams) -> PluginPreset, project;
+        PluginPresetList = "plugin.preset.list" (DeviceParams) -> PluginPresets, project;
+        PluginPresetGet = "plugin.preset.get" (DeviceParams) -> PluginPreset, project;
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;
-        PluginStateGet = "plugin.state.get" (TrackDeviceParams) -> PluginState, project;
+        PluginStateGet = "plugin.state.get" (DeviceParams) -> PluginState, project;
         PluginStateSet = "plugin.state.set" (PluginStateSetParams) -> ArrangementMutation, project;
         MissingList = "missing.list" (EmptyParams) -> Missing, project;
 
@@ -451,7 +462,9 @@ mod tests {
         let params = |name: &str| match name {
             "audio.emergency-mute" => json!({"muted": true}),
             "instrument.preview" => json!({"instrumentId": "builtin:bass"}),
-            "effect.add" => json!({"trackId": "track:1", "pluginPath": "Reverb.vst3"}),
+            "effect.add" => {
+                json!({"owner":{"kind":"track","id":"track:1"}, "pluginPath": "Reverb.vst3"})
+            }
             _ => json!({}),
         };
 

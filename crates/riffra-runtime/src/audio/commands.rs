@@ -137,10 +137,8 @@ impl AudioSupervisor {
 
     fn request_plugin_state(&self, command: SidecarCommand) -> NativeAudioResult<GraphPluginState> {
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
-            SidecarResponse::TrackPluginState(response)
-            | SidecarResponse::TrackDeviceProgramChanged(response) => {
-                Ok(plugin_state(response.state))
-            }
+            SidecarResponse::PluginState(response)
+            | SidecarResponse::DeviceProgramChanged(response) => Ok(plugin_state(response.state)),
             response => Err(unexpected(&response)),
         }
     }
@@ -201,15 +199,15 @@ impl AudioSupervisor {
         self.request_transport(SidecarCommand::SeekTimeline { tick })
     }
 
-    pub fn set_track_device_bypassed(
+    pub fn set_device_bypassed(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
         bypassed: bool,
     ) -> NativeAudioResult<()> {
         self.request_ack(
-            SidecarCommand::SetTrackDeviceBypassed {
-                track_id: track_id.into(),
+            SidecarCommand::SetDeviceBypassed {
+                owner: owner.clone(),
                 device_id: device_id.into(),
                 bypassed,
             },
@@ -217,9 +215,9 @@ impl AudioSupervisor {
         )
     }
 
-    pub fn set_track_device_parameter(
+    pub fn set_device_parameter(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
         parameter_index: u32,
         value: f32,
@@ -230,8 +228,8 @@ impl AudioSupervisor {
             ));
         }
         self.request_ack(
-            SidecarCommand::SetTrackDeviceParameter {
-                track_id: track_id.into(),
+            SidecarCommand::SetDeviceParameter {
+                owner: owner.clone(),
                 device_id: device_id.into(),
                 parameter_index,
                 value: value.clamp(0.0, 1.0),
@@ -240,17 +238,17 @@ impl AudioSupervisor {
         )
     }
 
-    pub(crate) fn inspect_track_device(
+    pub(crate) fn inspect_device(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
     ) -> NativeAudioResult<DeviceInspection> {
-        let command = SidecarCommand::GetTrackDeviceStatus {
-            track_id: track_id.into(),
+        let command = SidecarCommand::GetDeviceStatus {
+            owner: owner.clone(),
             device_id: device_id.into(),
         };
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
-            SidecarResponse::TrackDeviceStatus(status) => Ok(DeviceInspection {
+            SidecarResponse::DeviceStatus(status) => Ok(DeviceInspection {
                 id: device_id.into(),
                 name: status.name,
                 source: "vst3".into(),
@@ -268,17 +266,17 @@ impl AudioSupervisor {
         }
     }
 
-    pub(crate) fn list_track_device_parameters(
+    pub(crate) fn list_device_parameters(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
     ) -> NativeAudioResult<Vec<DeviceParameterInfo>> {
-        let command = SidecarCommand::GetTrackDeviceParameters {
-            track_id: track_id.into(),
+        let command = SidecarCommand::GetDeviceParameters {
+            owner: owner.clone(),
             device_id: device_id.into(),
         };
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
-            SidecarResponse::TrackDeviceParameters(status) => Ok(status
+            SidecarResponse::DeviceParameters(status) => Ok(status
                 .parameters
                 .into_iter()
                 .map(|parameter| DeviceParameterInfo {
@@ -305,26 +303,26 @@ impl AudioSupervisor {
         }
     }
 
-    pub(crate) fn get_track_plugin_state(
+    pub(crate) fn get_plugin_state(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
     ) -> NativeAudioResult<GraphPluginState> {
-        self.request_plugin_state(SidecarCommand::GetTrackPluginState {
-            track_id: track_id.into(),
+        self.request_plugin_state(SidecarCommand::GetPluginState {
+            owner: owner.clone(),
             device_id: device_id.into(),
         })
     }
 
-    pub(crate) fn set_track_plugin_state(
+    pub(crate) fn set_plugin_state(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
         state: GraphPluginState,
     ) -> NativeAudioResult<()> {
         self.request_ack(
-            SidecarCommand::SetTrackPluginState {
-                track_id: track_id.into(),
+            SidecarCommand::SetPluginState {
+                owner: owner.clone(),
                 device_id: device_id.into(),
                 state,
             },
@@ -332,17 +330,17 @@ impl AudioSupervisor {
         )
     }
 
-    pub(crate) fn list_track_plugin_programs(
+    pub(crate) fn list_plugin_programs(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
     ) -> NativeAudioResult<PluginPrograms> {
-        let command = SidecarCommand::GetTrackDevicePrograms {
-            track_id: track_id.into(),
+        let command = SidecarCommand::GetDevicePrograms {
+            owner: owner.clone(),
             device_id: device_id.into(),
         };
         match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
-            SidecarResponse::TrackDevicePrograms(programs) => Ok(PluginPrograms {
+            SidecarResponse::DevicePrograms(programs) => Ok(PluginPrograms {
                 current_index: programs.current_index,
                 presets: programs
                     .programs
@@ -358,29 +356,29 @@ impl AudioSupervisor {
     }
 
     /// Selects a plugin program and returns the resulting plugin state.
-    pub(crate) fn set_track_plugin_program(
+    pub(crate) fn set_plugin_program(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
         program_index: u32,
     ) -> NativeAudioResult<GraphPluginState> {
-        self.request_plugin_state(SidecarCommand::SetTrackDeviceProgram {
-            track_id: track_id.into(),
+        self.request_plugin_state(SidecarCommand::SetDeviceProgram {
+            owner: owner.clone(),
             device_id: device_id.into(),
             program_index,
         })
     }
 
-    pub fn open_track_plugin_editor(
+    pub fn open_plugin_editor(
         &self,
         project_id: &str,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         device_id: &str,
     ) -> NativeAudioResult<()> {
         self.request_ack(
-            SidecarCommand::OpenTrackPluginEditor {
+            SidecarCommand::OpenPluginEditor {
                 project_id: project_id.into(),
-                track_id: track_id.into(),
+                owner: owner.clone(),
                 device_id: device_id.into(),
             },
             TRACK_DEVICE_COMMAND_TIMEOUT,
@@ -428,17 +426,12 @@ impl AudioSupervisor {
     ///
     /// A sidecar restart must reconstruct the Track from the canonical
     /// projection instead of restoring an in-progress GUI drag.
-    pub fn preview_track_mix(
+    pub fn preview_channel_mix(
         &self,
-        track_id: &str,
+        owner: &riffra_core::EffectOwner,
         gain_db: Option<f64>,
         pan: Option<f64>,
     ) -> NativeAudioResult<()> {
-        if track_id.trim().is_empty() {
-            return Err(NativeAudioError::native_rejected(
-                "A Track id is required for mix preview.",
-            ));
-        }
         if gain_db.is_none() && pan.is_none() {
             return Err(NativeAudioError::native_rejected(
                 "At least one Track mix value is required.",
@@ -452,10 +445,25 @@ impl AudioSupervisor {
             ));
         }
         self.request_ack(
-            SidecarCommand::SetTrackMix {
-                track_id: track_id.into(),
+            SidecarCommand::SetChannelMix {
+                owner: owner.clone(),
                 gain_db: gain_db.map(|value| value.clamp(-90.0, 24.0)),
                 pan: pan.map(|value| value.clamp(-1.0, 1.0)),
+            },
+            COMMAND_ACK_TIMEOUT,
+        )
+    }
+
+    pub(crate) fn preview_send_level(&self, send_id: &str, level_db: f64) -> NativeAudioResult<()> {
+        if !level_db.is_finite() {
+            return Err(NativeAudioError::native_rejected(
+                "send level must be finite",
+            ));
+        }
+        self.request_ack(
+            SidecarCommand::SetSendLevel {
+                send_id: send_id.into(),
+                level_db: level_db.clamp(-90.0, 24.0),
             },
             COMMAND_ACK_TIMEOUT,
         )

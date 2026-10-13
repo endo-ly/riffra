@@ -544,7 +544,7 @@ mod tests {
     fn standalone_rejects_every_runtime_command() {
         // Arrange
         let (dispatcher, root) = open("runtime-only");
-        let device = json!({"trackId": "track:1", "deviceId": "device:1"});
+        let device = json!({"owner": {"kind":"track","id":"track:1"}, "deviceId": "device:1"});
         let runtime_commands = [
             ("host.status", json!({})),
             ("host.info", json!({})),
@@ -558,8 +558,8 @@ mod tests {
             ("transport.seek", json!({"tick": 0})),
             ("audio.master-gain.preview", json!({"gainDb": 0.0})),
             (
-                "track.mix.preview",
-                json!({"trackId": "track:1", "gainDb": 0.0}),
+                "mixer.channel.preview",
+                json!({"owner":{"kind":"track","id":"track:1"}, "gainDb": 0.0}),
             ),
             ("audio.status", json!({})),
             ("audio.diagnostics", json!({})),
@@ -597,18 +597,18 @@ mod tests {
             ("device.parameter.list", device.clone()),
             (
                 "device.parameter.get",
-                json!({"trackId": "track:1", "deviceId": "device:1", "parameterIndex": 0}),
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "parameterIndex": 0}),
             ),
             ("plugin.preset.list", device.clone()),
             ("plugin.preset.get", device.clone()),
             (
                 "plugin.preset.set",
-                json!({"trackId": "track:1", "deviceId": "device:1", "presetIndex": 0}),
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "presetIndex": 0}),
             ),
             ("plugin.state.get", device.clone()),
             (
                 "plugin.state.set",
-                json!({"trackId": "track:1", "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
+                json!({"owner":{"kind":"track","id":"track:1"}, "deviceId": "device:1", "state": {"schemaVersion": 1, "pluginPath": "p.vst3", "parameterValues": []}}),
             ),
             ("missing.list", json!({})),
             ("record.start", json!({})),
@@ -850,7 +850,7 @@ mod tests {
 
         let error = execute(
             "session.apply",
-            json!({"operations":[{"command":"effect.add","params":{"trackId":track_id,"pluginPath":plugin_path.display().to_string()}}]}),
+            json!({"operations":[{"command":"effect.add","params":{"owner":{"kind":"track","id":track_id},"pluginPath":plugin_path.display().to_string()}}]}),
         )
         .unwrap_err();
         assert!(

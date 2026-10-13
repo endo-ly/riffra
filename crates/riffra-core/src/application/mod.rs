@@ -3,6 +3,7 @@
 mod arrangement;
 mod devices;
 pub(crate) mod history;
+mod mixer;
 mod music;
 mod recording;
 mod session;
@@ -292,12 +293,12 @@ fn merge_recording_session(
     merged
 }
 
-enum TrackDeviceMut<'a> {
+enum DeviceMut<'a> {
     Instrument(&'a mut TrackInstrument),
     Effect(&'a mut EffectDevice),
 }
 
-impl<'a> TrackDeviceMut<'a> {
+impl<'a> DeviceMut<'a> {
     fn set_bypassed(&mut self, bypassed: bool) {
         match self {
             Self::Instrument(instrument) => instrument.set_bypassed(bypassed),
@@ -317,42 +318,47 @@ impl<'a> TrackDeviceMut<'a> {
     }
 }
 
-fn find_track_device_mut<'a>(
+fn find_device_mut<'a>(
     session: &'a mut CreativeSession,
-    track_id: &str,
+    owner: &crate::EffectOwner,
     device_id: &str,
-) -> Result<TrackDeviceMut<'a>, ApplicationError> {
-    let track = session
-        .arrangement
-        .tracks
-        .iter_mut()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
-    if track
-        .instrument
-        .as_ref()
-        .is_some_and(|device| device.id == device_id)
-    {
-        return track
+) -> Result<DeviceMut<'a>, ApplicationError> {
+    if let crate::EffectOwner::Track { id } = owner {
+        let track = session
+            .arrangement
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == *id)
+            .ok_or_else(|| crate::DomainError::UnknownTrack(id.clone()))?;
+        if let Some(instrument) = track
             .instrument
             .as_mut()
-            .map(TrackDeviceMut::Instrument)
+            .filter(|device| device.id == device_id)
+        {
+            return Ok(DeviceMut::Instrument(instrument));
+        }
+        return track
+            .effects
+            .iter_mut()
+            .find(|device| device.id == device_id)
+            .map(DeviceMut::Effect)
             .ok_or_else(|| {
-                ApplicationError::InvalidCommand("track device is not registered".into())
+                ApplicationError::InvalidCommand("channel device is not registered".into())
             });
     }
-    track
-        .effects
+    session
+        .arrangement
+        .effects_mut(owner)?
         .iter_mut()
         .find(|device| device.id == device_id)
-        .map(TrackDeviceMut::Effect)
-        .ok_or_else(|| ApplicationError::InvalidCommand("track device is not registered".into()))
+        .map(DeviceMut::Effect)
+        .ok_or_else(|| ApplicationError::InvalidCommand("channel device is not registered".into()))
 }
 
-fn find_any_track_device_mut<'a>(
+fn find_any_device_mut<'a>(
     session: &'a mut CreativeSession,
     device_id: &str,
-) -> Result<TrackDeviceMut<'a>, ApplicationError> {
+) -> Result<DeviceMut<'a>, ApplicationError> {
     session
         .arrangement
         .tracks
@@ -363,16 +369,27 @@ fn find_any_track_device_mut<'a>(
                 .as_ref()
                 .is_some_and(|device| device.id == device_id)
             {
-                track.instrument.as_mut().map(TrackDeviceMut::Instrument)
+                track.instrument.as_mut().map(DeviceMut::Instrument)
             } else {
                 track
                     .effects
                     .iter_mut()
                     .find(|device| device.id == device_id)
-                    .map(TrackDeviceMut::Effect)
+                    .map(DeviceMut::Effect)
             }
         })
-        .ok_or_else(|| ApplicationError::InvalidCommand("track device is not registered".into()))
+        .or_else(|| {
+            session
+                .arrangement
+                .mixer
+                .buses
+                .iter_mut()
+                .flat_map(|bus| &mut bus.effects)
+                .chain(&mut session.arrangement.mixer.master_effects)
+                .find(|device| device.id == device_id)
+                .map(DeviceMut::Effect)
+        })
+        .ok_or_else(|| ApplicationError::InvalidCommand("channel device is not registered".into()))
 }
 
 fn next_id(prefix: &str) -> String {

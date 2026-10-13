@@ -79,6 +79,27 @@ pub fn collect_missing(data_root: &Path, session: &CreativeSession) -> Vec<Missi
         }
     }
 
+    for (owner, effects) in session
+        .arrangement
+        .mixer
+        .buses
+        .iter()
+        .map(|bus| (format!("bus:{}", bus.id), bus.effects.as_slice()))
+        .chain(std::iter::once((
+            "master".into(),
+            session.arrangement.mixer.master_effects.as_slice(),
+        )))
+    {
+        for device in effects {
+            collect_missing_plugin(
+                &mut missing,
+                (&device.id, &device.name),
+                &device.plugin,
+                format!("{owner}:effect:{}", device.id),
+            );
+        }
+    }
+
     missing
 }
 
@@ -158,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn track_devices_remain_in_place_as_actionable_placeholders() {
+    fn channel_devices_remain_in_place_as_actionable_placeholders() {
         let data_root = root();
         let mut session = CreativeSession::new(now_ms());
         let mut track = Track::instrument("synth".into(), "Synth".into());
@@ -175,9 +196,25 @@ mod tests {
         );
         track.effects.push(missing_device("effect:gone", "Lost FX"));
         session.arrangement.tracks.push(track);
+        session.arrangement.mixer.buses.push(riffra_core::MixBus {
+            id: "bus:group".into(),
+            name: "Group".into(),
+            kind: riffra_core::MixBusKind::Group,
+            gain_db: 0.0,
+            pan: 0.0,
+            pan_law: riffra_core::PanLaw::default(),
+            muted: false,
+            solo: false,
+            effects: vec![missing_device("effect:bus", "Bus FX")],
+        });
+        session
+            .arrangement
+            .mixer
+            .master_effects
+            .push(missing_device("effect:master", "Master FX"));
 
         let missing = collect_missing(&data_root, &session);
-        assert_eq!(missing.len(), 2);
+        assert_eq!(missing.len(), 4);
         assert!(
             missing
                 .iter()
@@ -189,6 +226,16 @@ mod tests {
                 .any(|item| item.used_by == ["track:synth:effect:effect:gone"])
         );
 
-        assert_eq!(missing.len(), 2);
+        assert!(
+            missing
+                .iter()
+                .any(|item| item.used_by == ["bus:bus:group:effect:effect:bus"])
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|item| item.used_by == ["master:effect:effect:master"])
+        );
+        assert!(session.validate_and_normalize().is_ok());
     }
 }

@@ -294,6 +294,12 @@ riffra --data-root ./riffra-data --interactive
 
 `mixdown get`と`mixdown set --settings-json <JSON|@file>`で楽曲終端Tick、Tail、Fade、Mastering目標、比較用のSample Rate・Block Sizeを参照・設定する。
 
+Masteringを有効にする場合は、`mixdown get`の設定全体を取得して`mastering`へ目標を設定する。無効化は`mastering: null`とする。
+
+```powershell
+riffra --attach mixdown set --settings-json '{"musicalEndTick":0,"tailSeconds":2,"fadeOutSeconds":0.5,"mastering":{"integratedLufs":-14,"truePeakDb":-1,"loudnessRangeLu":11},"sampleRate":48000,"blockSize":1024}'
+```
+
 ### Track と入力 Routing
 
 | コマンド                     | 主要引数                                                                                                      |
@@ -353,6 +359,22 @@ riffra --data-root ./riffra-data clip remove --midi-clip-ids-json $ids
 - `track update`は指定した項目だけを更新する
 - 1つでもSoloが有効なTrackがあるとSolo以外のTrackは無音になり、MuteとSoloが両方有効なTrackも無音になる。Clip MuteはTrackのMute/Soloとは独立にそのClipだけを消す。Soloの解除は、Soloを立てた各Trackへ`--solo false`を渡して行う
 - RenderはTrackとClipのGain、Pan、Mute、Solo、Automation、Masterをすべて反映する。`render start --track-id`のstem Renderは対象Track以外をmutedにした状態で書き出す。`--normalize true`はMaster Gain適用後のピーク正規化であり、ミックス内の相対バランスは保たれる
+
+Group・Return・Sendの正準設定は`mixer get`でまとめて参照し、`mixer bus list`と`mixer send list`で個別に一覧取得する。各操作はStandaloneとAttachedで同じControl Commandを使う。
+
+| 操作               | CLI                                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| Group / Return作成 | `mixer bus add --name <name> --kind group\|return`                                                    |
+| Bus更新            | `mixer bus update --bus-id <id> --patch-json <JSON\|@file>`                                           |
+| Bus削除            | `mixer bus remove --bus-id <id>`                                                                      |
+| Track主出力先      | `mixer output --track-id <id> --bus-id <group-id>`。`--bus-id`省略でMaster                            |
+| Send作成           | `mixer send add --track-id <id> --return-bus-id <id> --level-db <dB>`。`--pre-fader`でPre-Faderを選ぶ |
+| Send更新           | `mixer send update --send-id <id> --patch-json <JSON\|@file>`                                         |
+| Send削除           | `mixer send remove --send-id <id>`                                                                    |
+
+Busの部分更新は`name`、`gainDb`、`pan`、`panLaw`、`muted`、`solo`を受け取る。Sendの部分更新は`returnBusId`、`levelDb`、`position`（`preFader` / `postFader`）、`enabled`を受け取る。GainとSend LevelはTrack Gainと同じ範囲、PanはTrack Panと同じ範囲で正準化し、非有限値を拒否する。参照中のBusを削除する操作は失敗し、参照しているTrack・SendのIDを返す。
+
+`session apply`では`mixer.bus.add/update/remove`、`mixer.output.set`、`mixer.send.add/update/remove`を使用できる。後続操作の`busName`と`returnBusName`は、そのBatchで作成したBusも含めてIDへ解決する。同じ名前が複数ある場合はIDを指定する。
 
 #### Automation(volume / pan)
 
@@ -425,22 +447,26 @@ riffra --attach punch-range set --start 9:1 --end 13:1 --enabled true
 
 Sonalloy Bundleは`riffra --attach project import-sonalloy <BUNDLE_DIRECTORY>`で新しいProjectへ取り込む。Standaloneでも同じProjectコマンドを使う。InstrumentとアセットはProject専用Snapshotとして保存され、元Bundleを移動しても再生・Export/Importできる。不正なManifest、Hash、参照、未知イベント、960 PPQで正確に表現できないTickはインポート失敗として返す。
 
-### Track Device (Instrument / Effect)
+### Channel Device (Instrument / Effect)
 
-| コマンド                | 主要引数                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `instrument list`       | -                                                                                              |
-| `instrument apply`      | `--track-id` `--instrument-id`（catalogの`id`。Built-inは`builtin:<presetId>`）                |
-| `plugin instrument`     | `--track-id` `--plugin-path`(VST3 パス)                                                        |
-| `plugin effect`         | `--track-id` `--plugin-path`                                                                   |
-| `instrument clear`      | `--track-id`                                                                                   |
-| `effect remove`         | `--track-id` `--device-id`                                                                     |
-| `effect reorder`        | `--track-id` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
-| `device bypass`         | `--track-id` `--device-id` [`--bypassed true\|false`]                                          |
-| `device inspect`        | `--track-id` `--device-id`                                                                     |
-| `device parameter list` | `--track-id` `--device-id`                                                                     |
-| `device parameter get`  | `--track-id` `--device-id` `--parameter-index`                                                 |
-| `device parameter set`  | `--track-id` `--device-id` `--parameter-index` `--value`                                       |
+EffectsとDeviceのOwnerは、`--track-id <ID>`、`--bus-id <ID>`、`--master`のいずれか1つで指定する。Group・ReturnのOwnerはBus IDであり、Master・BusにはEffectsだけを追加できる。Instrumentの割り当ては引き続き`--track-id`を使う。表のOwner欄はこの選択を表す。
+
+Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","id":"..."}`、`{"kind":"master"}` の形で渡す。`session apply`ではTrack・Busの`owner.id`の代わりに`owner.name`を指定でき、同じBatch内で追加したチャンネルを参照する。
+
+| コマンド                | 主要引数                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------- |
+| `instrument list`       | -                                                                                           |
+| `instrument apply`      | `--track-id` `--instrument-id`（catalogの`id`。Built-inは`builtin:<presetId>`）             |
+| `plugin instrument`     | `--track-id` `--plugin-path`(VST3 パス)                                                     |
+| `effect add`            | `<owner>` `--plugin-path`                                                                   |
+| `instrument clear`      | `--track-id`                                                                                |
+| `effect remove`         | `<owner>` `--device-id`                                                                     |
+| `effect reorder`        | `<owner>` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
+| `device bypass`         | `<owner>` `--device-id` [`--bypassed true\|false`]                                          |
+| `device inspect`        | `<owner>` `--device-id`                                                                     |
+| `device parameter list` | `<owner>` `--device-id`                                                                     |
+| `device parameter get`  | `<owner>` `--device-id` `--parameter-index`                                                 |
+| `device parameter set`  | `<owner>` `--device-id` `--parameter-index` `--value`                                       |
 
 Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
@@ -461,10 +487,13 @@ device inspectはmetadataとcapabilityだけを返し、stateData本体や全par
 
 `name` で Parameter を特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
 
-`plugin effect` / `effect.add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。`effect reorder` は Instrument を含めず、Track の Effect ID 全件を一度ずつ処理順に並べる。
+`effect add` / `effect.add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。`effect reorder` は Instrument を含めず、所有チャンネルのEffect ID 全件を一度ずつ処理順に並べる。
 
 ```powershell
 riffra --attach plugin state save --track-id track:01j... --device-id device:01j... --output ./piano-state.json
+riffra --attach effect add --bus-id bus:01j... --plugin-path "C:/Plugins/Reverb.vst3"
+riffra --attach effect add --master --plugin-path "C:/Plugins/Limiter.vst3"
+riffra --attach device parameter list --master --device-id device:01j...
 riffra --attach plugin state load --track-id track:01j... --device-id device:01j... --file ./piano-state.json
 riffra --attach plugin preset list --track-id track:01j... --device-id device:01j...
 riffra --attach plugin preset get --track-id track:01j... --device-id device:01j...
@@ -604,6 +633,10 @@ riffra --attach render stems --track-ids track:bass,track:drums --start 9:1 --en
 - `render start` の出力は `renders/render-{ms}/timeline.wav` と manifest、`render stems` の出力は `renders/render-<unique-id>/` 配下の連番WAVと `render.json` である
 
 `plugin scan-start` も同様に非同期ジョブ(`job get` で追跡)である。同期版の `plugin scan` は完了まで応答を返さない。
+
+単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通り、そのTrack由来のSendだけを合成する。External Audioの依存元は音声処理を維持する。共有する非線形Effectでは、Stemの合計と全体Mixが一致しない場合がある。
+
+Job結果と`render.json`の`measurements`には完成WAVのSample Peakとラウドネス測定を含め、警告は`warnings`へ返す。通常RenderでFFmpegを利用できない場合は、成功結果のラウドネス測定に`unavailable`と理由を返す。Masteringを要求したJobのFFmpeg失敗はJob失敗になる。結果の形は[IPC契約](../../../../docs/ipc.md#6-境界-d-オフラインレンダリングriffra-render)を参照する。
 
 ### Library・解析・Preview
 

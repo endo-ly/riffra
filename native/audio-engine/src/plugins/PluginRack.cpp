@@ -344,7 +344,9 @@ bool PluginRack::isInstrument() const noexcept {
            pluginIsInstrument.load(std::memory_order_acquire);
 }
 
-int PluginRack::latencySamples() const noexcept { return preparedLatencySamples; }
+int PluginRack::latencySamples() const noexcept {
+    return bypassed.load(std::memory_order_acquire) ? 0 : preparedLatencySamples;
+}
 
 int PluginRack::tailSamples() const noexcept { return preparedTailSamples; }
 

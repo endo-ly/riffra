@@ -31,8 +31,32 @@ bool decodeEmpty(const juce::var& value, SidecarCommandSpec& output, juce::Strin
     return true;
 }
 
-bool decodeTrackDevice(ContractReader& reader, juce::String& trackId, juce::String& deviceId) {
-    return reader.string("trackId", trackId) && reader.string("deviceId", deviceId);
+bool decodeOwner(ContractReader& reader, EffectOwnerSpec& owner, juce::String& error) {
+    juce::var value;
+    if (!reader.object("owner", value)) return false;
+    const auto master = value.getProperty("kind", {}).toString() == "master";
+    ContractReader fields(value, field("owner"),
+                          master ? std::initializer_list<const char*>{"kind"}
+                                 : std::initializer_list<const char*>{"kind", "id"},
+                          error);
+    juce::String kind;
+    if (!fields.string("kind", kind) || (!master && !fields.string("id", owner.id)) ||
+        !fields.finish())
+        return false;
+    if (kind == "track")
+        owner.kind = EffectOwnerKindSpec::track;
+    else if (kind == "bus")
+        owner.kind = EffectOwnerKindSpec::bus;
+    else if (kind == "master")
+        owner.kind = EffectOwnerKindSpec::master;
+    else
+        return fail(error, field("owner.kind"), "unknown channel owner kind");
+    return true;
+}
+
+bool decodeDevice(ContractReader& reader, EffectOwnerSpec& owner, juce::String& deviceId,
+                  juce::String& error) {
+    return decodeOwner(reader, owner, error) && reader.string("deviceId", deviceId);
 }
 
 bool decodeMidiMessage(const juce::Array<juce::var>& bytes, juce::MidiMessage& message,
@@ -261,32 +285,43 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
-    if (type == "setTrackMix") {
-        auto fields = reader({"type", "trackId", "gainDb", "pan"});
-        SetTrackMixCommand command;
-        if (!fields.string("type", ignoredType) || !fields.string("trackId", command.trackId) ||
+    if (type == "setChannelMix") {
+        auto fields = reader({"type", "owner", "gainDb", "pan"});
+        SetChannelMixCommand command;
+        if (!fields.string("type", ignoredType) || !decodeOwner(fields, command.owner, error) ||
             !fields.optionalNumber("gainDb", command.gainDb) ||
             !fields.optionalNumber("pan", command.pan) || !fields.finish())
             return false;
         output = command;
         return true;
     }
-    if (type == "setTrackDeviceBypassed") {
-        auto fields = reader({"type", "trackId", "deviceId", "bypassed"});
-        SetTrackDeviceBypassedCommand command;
+    if (type == "setSendLevel") {
+        auto fields = reader({"type", "sendId", "levelDb"});
+        SetSendLevelCommand command;
+        if (!fields.string("type", ignoredType) || !fields.string("sendId", command.sendId) ||
+            !fields.number("levelDb", command.levelDb) || !fields.finish())
+            return false;
+        if (command.levelDb < -90.0 || command.levelDb > 24.0)
+            return fail(error, field("levelDb"), "must be between -90 and 24");
+        output = command;
+        return true;
+    }
+    if (type == "setDeviceBypassed") {
+        auto fields = reader({"type", "owner", "deviceId", "bypassed"});
+        SetDeviceBypassedCommand command;
         if (!fields.string("type", ignoredType) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
             !fields.boolean("bypassed", command.bypassed) || !fields.finish())
             return false;
         output = command;
         return true;
     }
-    if (type == "setTrackDeviceParameter") {
-        auto fields = reader({"type", "trackId", "deviceId", "parameterIndex", "value"});
-        SetTrackDeviceParameterCommand command;
+    if (type == "setDeviceParameter") {
+        auto fields = reader({"type", "owner", "deviceId", "parameterIndex", "value"});
+        SetDeviceParameterCommand command;
         double parameterValue = 0.0;
         if (!fields.string("type", ignoredType) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
             !fields.unsigned32("parameterIndex", command.parameterIndex) ||
             !fields.number("value", parameterValue) || !fields.finish())
             return false;
@@ -296,26 +331,26 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
-    if (type == "getTrackDeviceStatus" || type == "getTrackDeviceParameters" ||
-        type == "getTrackDevicePrograms" || type == "getTrackPluginState") {
-        auto fields = reader({"type", "trackId", "deviceId"});
-        GetTrackDeviceCommand command;
-        command.query = type == "getTrackDeviceStatus"       ? TrackDeviceQuery::status
-                        : type == "getTrackDeviceParameters" ? TrackDeviceQuery::parameters
-                        : type == "getTrackDevicePrograms"   ? TrackDeviceQuery::programs
-                                                             : TrackDeviceQuery::pluginState;
+    if (type == "getDeviceStatus" || type == "getDeviceParameters" || type == "getDevicePrograms" ||
+        type == "getPluginState") {
+        auto fields = reader({"type", "owner", "deviceId"});
+        GetDeviceCommand command;
+        command.query = type == "getDeviceStatus"       ? DeviceQuery::status
+                        : type == "getDeviceParameters" ? DeviceQuery::parameters
+                        : type == "getDevicePrograms"   ? DeviceQuery::programs
+                                                        : DeviceQuery::pluginState;
         if (!fields.string("type", ignoredType) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) || !fields.finish())
+            !decodeDevice(fields, command.owner, command.deviceId, error) || !fields.finish())
             return false;
         output = command;
         return true;
     }
-    if (type == "setTrackPluginState") {
-        auto fields = reader({"type", "trackId", "deviceId", "state"});
-        SetTrackPluginStateCommand command;
+    if (type == "setPluginState") {
+        auto fields = reader({"type", "owner", "deviceId", "state"});
+        SetPluginStateCommand command;
         juce::var state;
         if (!fields.string("type", ignoredType) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
             !fields.object("state", state) || !fields.finish())
             return false;
         juce::String stateError;
@@ -324,21 +359,21 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = std::move(command);
         return true;
     }
-    if (type == "setTrackDeviceProgram") {
-        auto fields = reader({"type", "trackId", "deviceId", "programIndex"});
-        SetTrackDeviceProgramCommand command;
+    if (type == "setDeviceProgram") {
+        auto fields = reader({"type", "owner", "deviceId", "programIndex"});
+        SetDeviceProgramCommand command;
         if (!fields.string("type", ignoredType) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
             !fields.unsigned32("programIndex", command.programIndex) || !fields.finish())
             return false;
         output = command;
         return true;
     }
-    if (type == "openTrackPluginEditor") {
-        auto fields = reader({"type", "projectId", "trackId", "deviceId"});
-        OpenTrackPluginEditorCommand command;
+    if (type == "openPluginEditor") {
+        auto fields = reader({"type", "projectId", "owner", "deviceId"});
+        OpenPluginEditorCommand command;
         if (!fields.string("type", ignoredType) || !fields.string("projectId", command.projectId) ||
-            !decodeTrackDevice(fields, command.trackId, command.deviceId) || !fields.finish())
+            !decodeDevice(fields, command.owner, command.deviceId, error) || !fields.finish())
             return false;
         output = command;
         return true;

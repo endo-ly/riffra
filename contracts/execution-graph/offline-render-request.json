@@ -42,6 +42,7 @@
         "pan": -0.25,
         "panLaw": "equalPower",
         "externalAudioSourceTrackId": null,
+        "outputBusId": "bus:group",
         "muted": false,
         "solo": true,
         "armed": true,
@@ -132,6 +133,7 @@
         "pan": -0.25,
         "panLaw": "equalPower",
         "externalAudioSourceTrackId": null,
+        "outputBusId": null,
         "muted": false,
         "solo": true,
         "armed": true,
@@ -198,6 +200,7 @@
         "pan": -0.25,
         "panLaw": "equalPower",
         "externalAudioSourceTrackId": null,
+        "outputBusId": null,
         "muted": false,
         "solo": true,
         "armed": true,
@@ -283,7 +286,68 @@
           }
         ]
       }
-    ]
+    ],
+    "mixer": {
+      "masterEffects": [
+        {
+          "id": "device:master",
+          "path": "fx.vst3",
+          "state": {
+            "stateData": "master-state",
+            "parameterValues": [
+              0.25,
+              0.75
+            ],
+            "bypassed": false
+          }
+        }
+      ],
+      "buses": [
+        {
+          "id": "bus:group",
+          "kind": "group",
+          "gainDb": -2.0,
+          "pan": 0.0,
+          "panLaw": "unityCenterStereo",
+          "muted": false,
+          "solo": false,
+          "effects": []
+        },
+        {
+          "id": "bus:return",
+          "kind": "return",
+          "gainDb": 0.0,
+          "pan": 0.0,
+          "panLaw": "unityCenterStereo",
+          "muted": false,
+          "solo": false,
+          "effects": [
+            {
+              "id": "device:return",
+              "path": "fx.vst3",
+              "state": {
+                "stateData": null,
+                "parameterValues": [
+                  0.25,
+                  0.75
+                ],
+                "bypassed": true
+              }
+            }
+          ]
+        }
+      ],
+      "sends": [
+        {
+          "id": "send:audio",
+          "trackId": "track-audio",
+          "returnBusId": "bus:return",
+          "levelDb": -9.0,
+          "position": "preFader",
+          "enabled": true
+        }
+      ]
+    }
   },
   "destination": "renders/song.wav",
   "startTick": 0,

@@ -328,7 +328,7 @@ impl DesktopEventRouter {
     fn receive(&self, generation: u64, frame: HostEventFrame) {
         if matches!(
             frame.event.as_str(),
-            "track-plugin-state-changed" | "track-plugin-parameter-changed"
+            "plugin-state-changed" | "plugin-parameter-changed"
         ) {
             return;
         }
@@ -1327,11 +1327,11 @@ fn host_event_frame(event: HostEvent) -> HostEventFrame {
         HostEvent::RuntimeRestarted(value) => {
             HostEventFrame::new("runtime-restarted", json!(value))
         }
-        HostEvent::TrackPluginStateChanged(value) => {
-            HostEventFrame::new("track-plugin-state-changed", json!(value))
+        HostEvent::PluginStateChanged(value) => {
+            HostEventFrame::new("plugin-state-changed", json!(value))
         }
-        HostEvent::TrackPluginParameterChanged(value) => {
-            HostEventFrame::new("track-plugin-parameter-changed", json!(value))
+        HostEvent::PluginParameterChanged(value) => {
+            HostEventFrame::new("plugin-parameter-changed", json!(value))
         }
     }
 }

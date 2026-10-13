@@ -27,6 +27,46 @@ impl HostDispatcher<'_> {
                 .map_err(|error| DispatchError::invalid_request(error.to_string()))
         };
         match command {
+            CanonicalCommand::MixerGet(_) => {
+                Ok(ControlOutput::Mixer(canonical.session.arrangement.mixer))
+            }
+            CanonicalCommand::MixBusList(_) => Ok(ControlOutput::MixBuses(
+                canonical.session.arrangement.mixer.buses,
+            )),
+            CanonicalCommand::SendList(_) => Ok(ControlOutput::Sends(
+                canonical.session.arrangement.mixer.sends,
+            )),
+            CanonicalCommand::MixBusAdd(params) => self.created(
+                application.add_mix_bus_with_created_ids(params.name, params.kind)?,
+                application,
+            ),
+            CanonicalCommand::MixBusUpdate(params) => self.edited(
+                application.update_mix_bus(&params.bus_id, params.patch)?,
+                application,
+            ),
+            CanonicalCommand::MixBusRemove(params) => {
+                self.edited(application.remove_mix_bus(&params.bus_id)?, application)
+            }
+            CanonicalCommand::TrackOutputSet(params) => self.edited(
+                application.set_track_output(&params.track_id, params.bus_id)?,
+                application,
+            ),
+            CanonicalCommand::SendAdd(params) => self.created(
+                application.add_send_with_created_ids(
+                    params.track_id,
+                    params.return_bus_id,
+                    params.level_db,
+                    params.position,
+                )?,
+                application,
+            ),
+            CanonicalCommand::SendUpdate(params) => self.edited(
+                application.update_send(&params.send_id, params.patch)?,
+                application,
+            ),
+            CanonicalCommand::SendRemove(params) => {
+                self.edited(application.remove_send(&params.send_id)?, application)
+            }
             CanonicalCommand::MixdownGet(_) => {
                 Ok(ControlOutput::Mixdown(canonical.session.settings.mixdown))
             }
@@ -635,24 +675,24 @@ impl HostDispatcher<'_> {
             ),
             CanonicalCommand::EffectAdd(params) => self.add_effect(application, params),
             CanonicalCommand::EffectRemove(params) => self.edited(
-                application.remove_track_effect(&params.track_id, &params.device_id)?,
+                application.remove_effect(&params.owner, &params.device_id)?,
                 application,
             ),
             CanonicalCommand::EffectReorder(params) => self.edited(
-                application.reorder_track_effects(&params.track_id, params.device_ids)?,
+                application.reorder_effects(&params.owner, params.device_ids)?,
                 application,
             ),
             CanonicalCommand::DeviceBypass(params) => self.edited(
-                application.set_track_device_bypassed(
-                    &params.track_id,
+                application.set_device_bypassed(
+                    &params.owner,
                     &params.device_id,
                     params.bypassed,
                 )?,
                 application,
             ),
             CanonicalCommand::DeviceParameterSet(params) => self.edited(
-                application.set_track_device_parameter(
-                    &params.track_id,
+                application.set_device_parameter(
+                    &params.owner,
                     &params.device_id,
                     params.parameter_index as usize,
                     params.value,

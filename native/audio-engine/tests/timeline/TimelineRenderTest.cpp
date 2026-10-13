@@ -119,7 +119,8 @@ TEST(TimelineEngineTest, AppliesTrackMixPreviewToOutputAndTrackMeter) {
     const auto beforePreviewStatus = engine.status();
     ASSERT_TRUE(beforePreviewStatus.graph.has_value());
 
-    ASSERT_TRUE(engine.setTrackMixControl("track:live", -6.0f, -1.0f, error))
+    ASSERT_TRUE(engine.setChannelMixControl(
+        EffectOwnerSpec{EffectOwnerKindSpec::track, "track:live"}, -6.0f, -1.0f, error))
         << error.toStdString();
     const auto afterPreviewStatus = engine.status();
     ASSERT_TRUE(afterPreviewStatus.graph.has_value());
@@ -170,7 +171,8 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
     const auto automatedPeak =
         juce::FloatVectorOperations::findMaximum(left.data(), static_cast<int>(left.size()));
-    ASSERT_TRUE(engine.setTrackMixControl("track:live", -24.0f, std::nullopt, error))
+    ASSERT_TRUE(engine.setChannelMixControl(
+        EffectOwnerSpec{EffectOwnerKindSpec::track, "track:live"}, -24.0f, std::nullopt, error))
         << error.toStdString();
     left.fill(0.0f);
     right.fill(0.0f);
@@ -500,6 +502,504 @@ TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
     const auto peak = std::max(rendered.getMagnitude(0, 0, sampleCount),
                                rendered.getMagnitude(1, 0, sampleCount));
     EXPECT_NEAR(peak, 0.98f, 0.02f);
+}
+
+TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("mixer.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    AudioClipSpec clip;
+    clip.id = "clip:source";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    auto first = makeAudioTrack("track:first");
+    first.panLaw = "unityCenterStereo";
+    first.outputBusId = "bus:group";
+    first.audioClips.push_back(clip);
+    first.effects.push_back({"fx:first", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
+    auto second = makeAudioTrack("track:second");
+    second.panLaw = "unityCenterStereo";
+    clip.id = "clip:second";
+    second.audioClips.push_back(clip);
+    second.effects = {{"fx:second:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                      {"fx:second:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {first, second};
+    MixBusSpec group;
+    group.id = "bus:group";
+    group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    returnBus.effects.front().id = "fx:return";
+    snapshot.graph.mixer.buses = {group, returnBus};
+    snapshot.graph.mixer.sends = {
+        {"send:first", first.id, returnBus.id, 0.0, SendPositionSpec::preFader, true}};
+    snapshot.graph.mixer.masterEffects = {{"fx:master", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+
+    for (const bool masterBypassed : {false, true}) {
+        auto candidate = snapshot;
+        candidate.graph.mixer.masterEffects.front().state.bypassed = masterBypassed;
+        TimelineEngine engine(true);
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+        ASSERT_NE(graph, nullptr);
+        const auto latency = masterBypassed ? 16 : 24;
+        EXPECT_EQ(graph->summary.maximumLatencySamples, latency);
+        ASSERT_TRUE(engine.play());
+        juce::AudioBuffer<float> output(2, 704);
+        output.clear();
+
+        // Act
+        engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+        // Assert: all dry and parallel paths arrive together, once.
+        const auto signal = 0.25f / std::sqrt(2.0f);
+        const auto expected = signal * (masterBypassed ? 0.75f : 0.375f);
+        EXPECT_NEAR(output.getSample(0, 500 + latency - 1), 0.0f, 0.0001f);
+        EXPECT_NEAR(output.getSample(0, 500 + latency), expected, 0.002f);
+        EXPECT_NEAR(output.getSample(1, 500 + latency + 32), expected, 0.002f);
+        const auto meters = engine.busMeterSnapshot();
+        ASSERT_EQ(meters.size(), 2u);
+        EXPECT_GT(meters[0].peakLeft, 0.01);
+        const auto groupEffects = graph->mixer.buses[0]->effects;
+        const auto masterEffects = graph->mixer.masterEffects;
+        candidate.graph.mixer.buses[0].gainDb = -3.0;
+        candidate.graph.mixer.sends[0].levelDb = -6.0;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        graph = TimelineEngineTestPeer::committedGraph(engine);
+        EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
+        EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        for (const auto& [owner, id] : std::array<std::pair<EffectOwnerSpec, juce::String>, 3>{
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"},
+                           juce::String("fx:group")},
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:return"},
+                           juce::String("fx:return")},
+                 std::pair{EffectOwnerSpec{EffectOwnerKindSpec::master, {}},
+                           juce::String("fx:master")}}) {
+            const auto originalState = engine.devicePersistedState(owner, id, error);
+            ASSERT_TRUE(originalState.has_value()) << error;
+            ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.75f, error)) << error;
+            auto state = engine.devicePersistedState(owner, id, error);
+            ASSERT_TRUE(state.has_value()) << error;
+            ASSERT_EQ(state->parameterValues.size(), originalState->parameterValues.size());
+            for (std::size_t index = 1; index < state->parameterValues.size(); ++index)
+                EXPECT_NEAR(state->parameterValues[index], originalState->parameterValues[index],
+                            0.001f);
+            EXPECT_NEAR(state->parameterValues[0], 0.75f, 0.001f);
+            ASSERT_TRUE(state->stateData.has_value());
+            ASSERT_TRUE(engine.setDeviceParameter(owner, id, 0, 0.25f, error));
+            ASSERT_TRUE(engine.setDevicePersistedState(owner, id, *state, error)) << error;
+            EXPECT_NEAR(engine.devicePersistedState(owner, id, error)->parameterValues[0], 0.75f,
+                        0.001f);
+            ASSERT_TRUE(engine.setDeviceBypassed(owner, id, true, error));
+            EXPECT_TRUE(engine.devicePersistedState(owner, id, error)->bypassed);
+        }
+        for (auto& busSpec : candidate.graph.mixer.buses) {
+            for (auto& effect : busSpec.effects)
+                effect.state = *engine.devicePersistedState(
+                    EffectOwnerSpec{EffectOwnerKindSpec::bus, busSpec.id}, effect.id, error);
+        }
+        for (auto& effect : candidate.graph.mixer.masterEffects)
+            effect.state = *engine.devicePersistedState(
+                EffectOwnerSpec{EffectOwnerKindSpec::master, {}}, effect.id, error);
+        candidate.graph.mixer.buses[0].gainDb = -9.0;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        graph = TimelineEngineTestPeer::committedGraph(engine);
+        EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
+        EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        ASSERT_TRUE(engine.setChannelMixControl(
+            EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"}, -9.0f, 0.2f, error));
+        ASSERT_TRUE(engine.setSendLevelControl("send:first", -12.0f, error));
+    }
+}
+
+TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
+    // Arrange
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("solo.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto first = makeAudioTrack("track:first");
+    first.panLaw = "unityCenterStereo";
+    first.outputBusId = "bus:group";
+    AudioClipSpec clip;
+    clip.id = "clip:first";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    first.audioClips.push_back(clip);
+    auto second = first;
+    second.id = "track:second";
+    second.outputBusId.reset();
+    second.gainDb = -6.020599913;
+    second.audioClips.front().id = "clip:second";
+    snapshot.graph.tracks = {first, second};
+    MixBusSpec group;
+    group.id = "bus:group";
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    snapshot.graph.mixer.buses = {group, returnBus};
+    snapshot.graph.mixer.sends = {
+        {"send:first", first.id, returnBus.id, 0.0, SendPositionSpec::postFader, true},
+        {"send:second", second.id, returnBus.id, 0.0, SendPositionSpec::postFader, true}};
+    struct Case {
+        bool trackSolo, groupSolo, returnSolo, trackMute, groupMute, returnMute;
+        float expected;
+    };
+    const std::array<Case, 8> cases{{
+        {false, false, false, false, false, false, 3.0f},
+        {true, false, false, false, false, false, 2.0f},
+        {false, true, false, false, false, false, 1.0f},
+        {false, false, true, false, false, false, 1.5f},
+        {true, false, true, false, false, false, 2.5f},
+        {false, false, false, true, false, false, 1.0f},
+        {true, false, false, false, true, false, 1.0f},
+        {false, false, false, false, false, true, 1.5f},
+    }};
+    for (const auto& testCase : cases) {
+        auto candidate = snapshot;
+        candidate.graph.tracks[0].solo = testCase.trackSolo;
+        candidate.graph.tracks[0].muted = testCase.trackMute;
+        candidate.graph.mixer.buses[0].solo = testCase.groupSolo;
+        candidate.graph.mixer.buses[0].muted = testCase.groupMute;
+        candidate.graph.mixer.buses[1].solo = testCase.returnSolo;
+        candidate.graph.mixer.buses[1].muted = testCase.returnMute;
+        TimelineEngine engine(true);
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        ASSERT_TRUE(engine.play());
+        juce::AudioBuffer<float> output(2, 704);
+        output.clear();
+
+        // Act
+        engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+        // Assert
+        EXPECT_NEAR(output.getSample(0, 532), 0.25f / std::sqrt(2.0f) * testCase.expected, 0.002f);
+    }
+    for (const auto position : {SendPositionSpec::preFader, SendPositionSpec::postFader}) {
+        auto candidate = snapshot;
+        candidate.graph.tracks[1].muted = true;
+        candidate.graph.tracks[0].gainDb = -6.020599913;
+        candidate.graph.mixer.sends[0].position = position;
+        candidate.graph.mixer.buses[1].solo = true;
+        TimelineEngine engine(true);
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        ASSERT_TRUE(engine.play());
+        juce::AudioBuffer<float> output(2, 704);
+        output.clear();
+        engine.mix(output.getArrayOfWritePointers(), 2, 704);
+        const auto expected = position == SendPositionSpec::preFader ? 1.0f : 0.5f;
+        EXPECT_NEAR(output.getSample(0, 532), 0.25f / std::sqrt(2.0f) * expected, 0.002f);
+    }
+}
+
+TEST(MixerRoutingTest, LowLatencyMonitoringKeepsTimelinePdcAcrossMasterAndGroupRoutes) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("mixed-low-latency.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    const auto makeClip = [&source](const juce::String& id) {
+        AudioClipSpec clip;
+        clip.id = id;
+        clip.path = source.getFullPathName();
+        clip.startTick = 20;
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        return clip;
+    };
+    auto monitoredTrack = makeAudioTrack("track:monitored");
+    monitoredTrack.monitorInput = true;
+    monitoredTrack.audioInput = AudioInputSpec{0};
+    monitoredTrack.outputBusId = "bus:group";
+    monitoredTrack.panLaw = "unityCenterStereo";
+    monitoredTrack.audioClips.push_back(makeClip("clip:monitored"));
+    auto processedClip = makeClip("clip:processed");
+    processedClip.takeVariant = TakeVariantSpec::processed;
+    monitoredTrack.audioClips.push_back(processedClip);
+    auto highLatencyTrack = makeAudioTrack("track:high-latency");
+    highLatencyTrack.panLaw = "unityCenterStereo";
+    highLatencyTrack.audioClips.push_back(makeClip("clip:high-latency"));
+    highLatencyTrack.effects = {{"fx:high:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                {"fx:high:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                {"fx:high:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {monitoredTrack, highLatencyTrack};
+    MixBusSpec group;
+    group.id = "bus:group";
+    group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.mixer.buses.push_back(group);
+
+    for (const auto throughGroup : {true, false}) {
+        auto candidate = snapshot;
+        if (!throughGroup) candidate.graph.tracks[0].outputBusId.reset();
+        TimelineEngine engine;
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+        ASSERT_NE(graph, nullptr);
+        EXPECT_EQ(graph->summary.maximumLatencySamples, 24u);
+        ASSERT_TRUE(engine.seekToTick(0));
+        ASSERT_TRUE(engine.play());
+        std::array<float, 704> input{};
+        std::fill_n(input.begin(), 64, 0.5f);
+        const std::array<const float*, 1> inputs{input.data()};
+        juce::AudioBuffer<float> output(2, static_cast<int>(input.size()));
+        output.clear();
+
+        // Act: one monitored Track carries live input and a Timeline clip.
+        engine.mix(inputs.data(), 1, output.getArrayOfWritePointers(), 2,
+                   static_cast<int>(input.size()));
+
+        // Assert: live input bypasses inter-route PDC while the clip remains aligned.
+        auto livePeak = 0.0f;
+        auto livePeakSample = -1;
+        auto firstLiveSample = -1;
+        for (int sample = 0; sample < 128; ++sample) {
+            const auto level = std::abs(output.getSample(0, sample));
+            if (firstLiveSample < 0 && level > 0.001f) firstLiveSample = sample;
+            if (level > livePeak) {
+                livePeak = level;
+                livePeakSample = sample;
+            }
+        }
+        EXPECT_GT(livePeak, 0.01f)
+            << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
+        EXPECT_EQ(firstLiveSample, throughGroup ? 9 : 1)
+            << "peak sample " << livePeakSample << ", throughGroup " << throughGroup;
+        EXPECT_NEAR(output.getSample(0, 500 + 8), 0.0f, 0.0001f);
+        EXPECT_GT(output.getSample(0, 500 + 24), 0.01f);
+    }
+}
+
+TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("restricted-low-latency.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    enum class Restriction { externalAudioSource, volumeAutomation, panAutomation };
+    for (const auto restriction : {Restriction::externalAudioSource, Restriction::volumeAutomation,
+                                   Restriction::panAutomation}) {
+        SCOPED_TRACE(static_cast<int>(restriction));
+        auto snapshot = makeTestSnapshot();
+        auto monitoredTrack = makeAudioTrack("track:monitored");
+        monitoredTrack.monitorInput = true;
+        monitoredTrack.audioInput = AudioInputSpec{0};
+        AudioClipSpec clip;
+        clip.id = "clip:monitored";
+        clip.path = source.getFullPathName();
+        clip.sourceSampleRate = 48'000;
+        clip.sourceEndFrame = 128;
+        clip.durationFrames = 128;
+        clip.durationSampleRate = 48'000;
+        monitoredTrack.audioClips.push_back(clip);
+        if (restriction == Restriction::volumeAutomation)
+            monitoredTrack.volumeAutomation = {{0, -6.0}};
+        if (restriction == Restriction::panAutomation) monitoredTrack.panAutomation = {{0, 0.5}};
+
+        auto highLatencyTrack = makeAudioTrack("track:high-latency");
+        highLatencyTrack.audioClips.push_back(clip);
+        highLatencyTrack.audioClips.back().id = "clip:high-latency";
+        highLatencyTrack.effects = {{"fx:high:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                    {"fx:high:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                                    {"fx:high:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+        snapshot.graph.tracks = {monitoredTrack};
+        if (restriction == Restriction::externalAudioSource) {
+            auto consumer = makeInstrumentTrack("track:consumer");
+            consumer.externalAudioSourceTrackId = monitoredTrack.id;
+            const auto instrumentDirectory = juce::File(RIFFRA_CONTRACT_FIXTURE_DIR)
+                                                 .getSiblingFile("sonalloy-bundle")
+                                                 .getChildFile("basic/instruments/duck");
+            consumer.instrument = InternalInstrumentSpec{
+                "instrument:consumer", false,
+                instrumentDirectory.getChildFile("definition.json").loadFileAsString(),
+                instrumentDirectory.getFullPathName()};
+            snapshot.graph.tracks.push_back(consumer);
+        }
+        snapshot.graph.tracks.push_back(highLatencyTrack);
+
+        TimelineEngine engine;
+        juce::String error;
+        ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+
+        // Assert: normal route PDC remains responsible for the full dependent or automated path.
+        const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+        ASSERT_NE(graph, nullptr);
+        ASSERT_GE(graph->summary.maximumLatencySamples, 24u);
+        const auto monitored =
+            std::find_if(graph->tracks.begin(), graph->tracks.end(),
+                         [](const auto& track) { return track->id == "track:monitored"; });
+        ASSERT_NE(monitored, graph->tracks.end());
+        EXPECT_TRUE((*monitored)->runtime->lowLatencyMonitoring());
+        EXPECT_FALSE((*monitored)->runtime->lowLatencyPdcBypassActive());
+        EXPECT_EQ((*monitored)->runtime->timelinePdcDelaySamples, 0);
+    }
+}
+
+TEST(MixerRoutingTest, WarmsAndResetsBusReturnAndMasterEffects) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    MixBusSpec group;
+    group.id = "bus:group";
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    snapshot.graph.mixer.buses = {group, returnBus};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error)) << error;
+    auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    ASSERT_EQ(graph->mixer.buses.size(), 2u);
+
+    std::array<ProcessorTrace, 3> traces;
+    for (std::size_t index = 0; index < graph->mixer.buses.size(); ++index)
+        ASSERT_TRUE(TimelineEngineTestPeer::addChainDevice(
+            *graph->mixer.buses[index]->effects, "fx:bus:" + juce::String(index),
+            std::make_unique<TestProcessor>(traces[index]), 48'000.0, 32, error))
+            << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::addChainDevice(*graph->mixer.masterEffects, "fx:master",
+                                                       std::make_unique<TestProcessor>(traces[2]),
+                                                       48'000.0, 32, error))
+        << error;
+    const std::array<int, 3> resetCounts{traces[0].resetCount, traces[1].resetCount,
+                                         traces[2].resetCount};
+
+    // Act
+    engine.warmUpPluginDevices(32);
+
+    // Assert: every mixer chain received silence without being reset early.
+    for (std::size_t index = 0; index < traces.size(); ++index) {
+        EXPECT_EQ(traces[index].processBlockCount, 1);
+        EXPECT_FLOAT_EQ(traces[index].inputPeak, 0.0f);
+        EXPECT_EQ(traces[index].resetCount, resetCounts[index]);
+    }
+
+    // Act: the render boundary resets all warmed plugin state.
+    engine.resetPluginDevices();
+
+    // Assert
+    for (std::size_t index = 0; index < traces.size(); ++index)
+        EXPECT_EQ(traces[index].resetCount, resetCounts[index] + 1);
+}
+
+TEST(MixerRoutingTest, LowLatencyMidiMonitoringKeepsTimelineEventsAtPdcOffset) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto instrumentTrack = makeInstrumentTrack("track:instrument");
+    instrumentTrack.armed = true;
+    instrumentTrack.midiClips.push_back(
+        MidiClipSpec{"midi:timeline", 0, 960, false, false, {{0, 120, 60, 100, 1}}, {}});
+    auto latencyTrack = makeAudioTrack("track:latency");
+    latencyTrack.effects = {{"fx:latency:1", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                            {"fx:latency:2", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}},
+                            {"fx:latency:3", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    snapshot.graph.tracks = {instrumentTrack, latencyTrack};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 32, error)) << error;
+    InstrumentTrace trace;
+    auto rack = PluginRackTestPeer::installInstrument(
+        std::make_unique<TestInstrumentProcessor>(trace), 48'000.0, 32, error);
+    ASSERT_NE(rack, nullptr) << error;
+    ASSERT_TRUE(rack->prepareTimelineMidiCapacity(2, error)) << error;
+    ASSERT_TRUE(TimelineEngineTestPeer::installTrackInstrument(engine, "track:instrument",
+                                                               "instrument:live", std::move(rack)));
+    ASSERT_EQ(TimelineEngineTestPeer::committedGraph(engine)->summary.maximumLatencySamples, 24u);
+    ASSERT_EQ(engine.enqueueTargetedMidi("track:instrument", juce::MidiMessage::noteOn(1, 72, 0.8f),
+                                         error),
+              RealtimeRequest::accepted)
+        << error;
+
+    // Act
+    ASSERT_TRUE(engine.play());
+    std::array<float, 32> left{};
+    std::array<float, 32> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    engine.mix(outputs.data(), 2, static_cast<int>(left.size()));
+
+    // Assert: live MIDI is immediate while the clip remains PDC-aligned.
+    EXPECT_EQ(trace.midiSamplePositions, (std::vector<int>{0, 24}));
+}
+
+TEST(MixerRoutingTest, DisconnectedBusEffectsDoNotChangeMasterLatency) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeTestSnapshot();
+    auto track = makeAudioTrack("track:source");
+    snapshot.graph.tracks.push_back(track);
+    MixBusSpec group;
+    group.id = "bus:group";
+    group.effects = {{"fx:group", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}}};
+    auto returnBus = group;
+    returnBus.id = "bus:return";
+    returnBus.kind = MixBusKindSpec::returnBus;
+    returnBus.effects.front().id = "fx:return";
+    snapshot.graph.mixer.buses = {group, returnBus};
+    snapshot.graph.mixer.sends = {
+        {"send:source", track.id, returnBus.id, 0.0, SendPositionSpec::postFader, false}};
+
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 0u);
+
+    // Act: connect the Group and enable the Return Send.
+    snapshot.graph.tracks[0].outputBusId = group.id;
+    snapshot.graph.mixer.sends[0].enabled = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    graph = TimelineEngineTestPeer::committedGraph(engine);
+
+    // Assert: either connected Bus effect contributes eight samples.
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 8u);
+
+    // Act: Mute and Solo change audibility, not the structural PDC paths.
+    snapshot.graph.tracks[0].muted = true;
+    snapshot.graph.mixer.buses[0].muted = true;
+    snapshot.graph.mixer.buses[1].solo = true;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    graph = TimelineEngineTestPeer::committedGraph(engine);
+
+    // Assert
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->summary.maximumLatencySamples, 8u);
 }
 
 }  // namespace riffra

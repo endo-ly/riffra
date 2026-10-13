@@ -63,6 +63,8 @@ Project管理は、DataRootのファイル境界、Coreの正準状態、Hostの
 
 Project切替テストでは、旧ProjectのUndo履歴や表示選択が新Projectへ持ち越されないことも確認する。保存処理のテストでは、Project Aの変更がProject Bの `session.json` と `generations/` に影響しないことを確認する。
 
+MixerのCoreテストでは、Bus・Sendの参照と値域、チャンネルをまたぐDevice IDの一意性、参照中のBus削除拒否、Trackの複製・削除に伴うSendの所有関係を確認する。保存・再読込とUndo/Redoはエフェクト状態を含む編集フローで確認し、保存失敗時は正準状態と履歴が変わらないことを保証する。Runtimeの一括適用テストでは、同じBatchで作成したBus・Returnを名前で参照し、全体を1回のコミットとUndoで扱えることを確認する。
+
 Project packageのテストでは、Importが現在のProjectを上書きせず新しいProjectとして追加すること、ExportがSave dialogで指定された絶対パスを成功通知へ含めることを確認する。Renderのテストでは、成果物が `DataRoot/renders/` に作られ、`DataRoot/exports/` を作成しないことを確認する。
 
 ## 4. 実行グラフ契約
@@ -138,6 +140,12 @@ AudioProtocolTest.ControlOutputDiscardsQueuedTelemetry
 | レンダー       | 空範囲の拒否、Shared PDC の維持、Render 失敗時の一時ディレクトリ整理、正規化結果、MIDI Session を持たない Asset Source を生成しないこと                                                        |
 
 録音は、ループ・Punch・複数 Track ごとのセグメント境界とファイル構造を `TimelineRecordingTest` と `RecordingSessionTest` / `ArrangeRecordingSessionTest` で確認する。1回の録音完了シナリオで音声ファイルと Manifest の両方を検証する。
+
+Mixerは`riffra-test-effect`を使い、異なるEffectレイテンシのTrack・Group・Return・Masterが合流しても重複加算や時間ずれがないこと、Mute・加算的Solo・Pre/Post分岐、ミックス設定変更時のDevice再利用をNativeで確認する。Return SoloはPre/Post Sendの両方を通し、Group Soloは所属TrackのSendを有効にしない。低遅延監視とTimeline素材を併せ持つTrackではライブ音声が低遅延で届くこと、Audio/MIDIクリップとPost-Effects takeがPDC後の位置に届くことを、Group経由とMaster直結の両方で確認する。External Audio供給元、External Audio入力を持つTrack、有効なSendを持つTrack、Volume/Panオートメーションを持つTrackでは低遅延バイパスを適用せず、通常の経路PDCを維持する。Bus合流後のPDCは入力Trackの監視状態で切り替えず、未接続BusのEffectレイテンシはMasterへ反映せず、Mute・Soloを切り替えても構造上の経路レイテンシを変えない。Offline RenderのウォームアップはBus・Return・MasterのEffect Chainにも無音を送り、その全Deviceをリセットすることを確認する。Bus・MasterのParameter・Bypass・保存状態は同じDevice APIを通して検証し、Rustでは正準保存と再読込まで確認する。
+
+Renderの結合テストは実Native workerでGroup・Return・Master FXを通した全体MixとStemを作り、フレーム数、線形FXでの加算一致、Manifestの測定値を確認する。Float WAVの0 dBFS超のSample PeakとFFmpegのラウドネス測定・二段階Masteringは完成ファイルで確認する。FFmpegの測定不能をゼロ値や通常Render失敗へ置き換えない。
+
+DesktopはMixerのチャンネル作成、主出力・Send設定、フェーダーの一度だけの確定、Bus・MasterのDevices操作とMastering設定・Job結果表示を操作シナリオで検証する。無効SendのLevel変更で音声プレビューを送らず、設定値を保持して有効化できることを確認する。Mixdown設定が未変更ならMutationなしでRender Jobを開始し、変更時は設定確定後にJobを開始することを確認する。数値・保存・DSPの検証は下層に置き、ブラウザーでは名前、フェーダー、固定Master、ダイアログへの到達と配置を確認する。
 
 ## 8. CI の構成
 

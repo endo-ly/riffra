@@ -1,5 +1,6 @@
 import type {
   AudioDeviceProbe,
+  EffectOwner,
   AudioDriverConfig,
   AudioStatus,
   AssetId,
@@ -111,13 +112,13 @@ export async function previewMasterGainDb(gainDb: number): Promise<void> {
   await dispatchControl({ command: 'audio.master-gain.preview', params: { gainDb } });
 }
 
-export async function previewTrackMix(
-  trackId: string,
+export async function previewChannelMix(
+  owner: EffectOwner,
   patch: { gainDb?: number; pan?: number },
 ): Promise<void> {
   await dispatchControl({
-    command: 'track.mix.preview',
-    params: { trackId, gainDb: patch.gainDb, pan: patch.pan },
+    command: 'mixer.channel.preview',
+    params: { owner, gainDb: patch.gainDb, pan: patch.pan },
   });
 }
 
@@ -181,4 +182,8 @@ export async function panicMidiTrack(trackId: string): Promise<AudioStatus | nul
   } catch (error) {
     return await audioCommandError('Panic MIDI Track', error);
   }
+}
+
+export async function previewSendLevel(sendId: string, levelDb: number): Promise<void> {
+  await dispatchControl({ command: 'mixer.send.preview', params: { sendId, levelDb } });
 }

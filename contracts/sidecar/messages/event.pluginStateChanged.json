@@ -1,0 +1,20 @@
+{
+  "kind": "event",
+  "event": {
+    "type": "pluginStateChanged",
+    "projectId": "project-1",
+    "owner": {
+      "kind": "track",
+      "id": "track-1"
+    },
+    "deviceId": "device-1",
+    "state": {
+      "parameterValues": [
+        0.25,
+        0.75
+      ],
+      "stateData": "opaque-state",
+      "bypassed": false
+    }
+  }
+}

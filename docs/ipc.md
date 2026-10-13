@@ -82,7 +82,6 @@ WebView から Host への操作は、すべて `dispatch_control` 1 本で送�
 | `get_bootstrap_state`                                                               | CanonicalState・ProjectState・プラグイン一覧・セーフモード・回復候補の初期状態を返す    |
 | `get_host_connection_state` / `list_local_hosts` / `switch_host` / `reconnect_host` | Host の選択・切替・再接続                                                               |
 | `import_midi_bytes`                                                                 | ドロップされた MIDI バイト列を一時ファイルへ書き出し、`asset.import-midi` で取り込む    |
-| `render_timeline`                                                                   | `render.start` でジョブを開始し、完了まで `job.get` で待って結果を返す                  |
 
 全命令は `lib.rs` の `invoke_handler` が真実源。命令は `spawn_blocking` で async ワーカーから分離して実行する。
 
@@ -150,7 +149,7 @@ DesktopのActive Projectは初期bootstrapと`ProjectActivationResult`で確定�
 | `project-state-changed`     | `ProjectState`            | Projectの作成・改名・Importによる一覧の変更                                                                                   |
 | `project-activated`         | `ProjectActivationResult` | Project切替の完了。Active Projectの一覧、CanonicalState、RecoveryStateを一括で通知する                                        |
 
-`audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`（Track ID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
+`audio-meters` は Runtime 投影が属する `projectId`、`outputPeakLeft` / `outputPeakRight`、`trackMeters`と`busMeters`（チャンネルID、左右Peak/RMS）を含む。Desktop は現在の Active Project と `projectId` が一致する frame だけを採用し、Project 切替後に旧 Project の値を描画状態へ戻さない。既存の低頻度 `audio-status` が届いても、高頻度メーターの Track データを消去しない。
 
 Desktopのイベントゲートは現在の接続世代のイベントだけをWebViewへ送る。接続切替後に旧世代のイベントは届かない。フックはこの保証を前提に購読し、コンポーネント破棄後のコールバックだけを自身で止める。購読は `src/native/api/events.ts` のラッパを使い、用途は表示更新に限る
 
@@ -193,29 +192,31 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 ### 5.4 命令と応答
 
-| 分類                | 命令                                                                                                                                  | 応答                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 状態照会            | `status`                                                                                                                              | `audioStatus`                                                       |
-| デバイス・安全      | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`previewMasterGainDb` | `audioStatus`                                                       |
-| 投影                | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `timelineAck`（prepare / commit / discard）、`timelineIdleAck`      |
-| トランスポート      | `setTransportStarting`、`playTimeline`、`stopTimeline`、`seekTimeline`                                                                | `transportAccepted`                                                 |
-| 録音                | `startArrangeRecording`、`stopArrangeRecording`                                                                                       | `audioStatus`                                                       |
-| MIDI                | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`                                                                    | `audioStatus`                                                       |
-|                     | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `midiAck`                                                           |
-| トラック/プラグイン | `setTrackMix`                                                                                                                         | `trackMixAck`                                                       |
-|                     | `setTrackDeviceBypassed`、`setTrackDeviceParameter`、`setTrackPluginState`、`openTrackPluginEditor`                                   | `trackDeviceAck`                                                    |
-|                     | `getTrackDeviceStatus`、`getTrackDeviceParameters`、`getTrackDevicePrograms`                                                          | `trackDeviceStatus`、`trackDeviceParameters`、`trackDevicePrograms` |
-|                     | `getTrackPluginState`、`setTrackDeviceProgram`                                                                                        | `trackPluginState`、`trackDeviceProgramChanged`                     |
-| プレビュー          | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`openPluginAudition`                                    | `audioStatus`                                                       |
-| テイク比較          | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                       |
+| 分類             | 命令                                                                                                                                  | 応答                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 状態照会         | `status`                                                                                                                              | `audioStatus`                                                  |
+| デバイス・安全   | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`previewMasterGainDb` | `audioStatus`                                                  |
+| 投影             | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `timelineAck`（prepare / commit / discard）、`timelineIdleAck` |
+| トランスポート   | `setTransportStarting`、`playTimeline`、`stopTimeline`、`seekTimeline`                                                                | `transportAccepted`                                            |
+| 録音             | `startArrangeRecording`、`stopArrangeRecording`                                                                                       | `audioStatus`                                                  |
+| MIDI             | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`                                                                    | `audioStatus`                                                  |
+|                  | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `midiAck`                                                      |
+| Mixer/プラグイン | `setChannelMix`、`setSendLevel`                                                                                                       | `mixAck`                                                       |
+|                  | `setDeviceBypassed`、`setDeviceParameter`、`setPluginState`、`openPluginEditor`                                                       | `deviceAck`                                                    |
+|                  | `getDeviceStatus`、`getDeviceParameters`、`getDevicePrograms`                                                                         | `deviceStatus`、`deviceParameters`、`devicePrograms`           |
+|                  | `getPluginState`、`setDeviceProgram`                                                                                                  | `pluginState`、`deviceProgramChanged`                          |
+| プレビュー       | `previewSample`、`previewInstrument`、`stopPreview`、`stopInstrumentPreview`、`openPluginAudition`                                    | `audioStatus`                                                  |
+| テイク比較       | `startTakeComparison`、`switchTakeComparisonVariant`、`stopTakeComparison`                                                            | `audioStatus`                                                  |
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
 
-`getTrackDeviceParameters` は制御側で最新の Plugin metadata を取得し、`trackDeviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。変更 ACK と metadata の読取は、対象の realtime command が含まれる block の処理完了を確認し、制御側で VST3 Edit Controller の更新を同期してから行う。音声デバイス停止中は制御側の所有者がキューを適用する。
+`getDeviceParameters` は制御側で最新の Plugin metadata を取得し、`deviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。変更 ACK と metadata の読取は、対象の realtime command が含まれる block の処理完了を確認し、制御側で VST3 Edit Controller の更新を同期してから行う。音声デバイス停止中は制御側の所有者がキューを適用する。
 
 Desktop の Devices は既存 Control Command の `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。Preset と Parameter の編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editor のイベントによる正準値更新も同じ詳細へ反映する。
 
-`setTrackMix` はアクティブな Track Runtime の Gain / Pan を一時的に更新する。`trackMixAck` は値の Canonical commit を意味しない。
+`setChannelMix`はTrack・BusのGain/Pan、`setSendLevel`はSend Levelを現役Graphへ一時適用し、`mixAck`を返す。正準値のコミットは意味しない。Hostの入口は`mixer.channel.preview`と`mixer.send.preview`で、Master Gainは`audio.master-gain.preview`を使う。
+
+Effect・Device・Plugin State・Preset・Editor操作は`owner`で所有者を指定する。Trackは`{"kind":"track","id":"..."}`、Group・Returnは`{"kind":"bus","id":"..."}`、Masterは`{"kind":"master"}`とする。Instrument割り当てと演奏はTrack専用である。Editorイベントの`pluginStateChanged`・`pluginParameterChanged`にもProject IDと同じOwner参照を含め、Hostが正準状態へ保存する。
 
 `openPluginAudition` は検証済みの VST3 を Project の外で読み込み、そのエディタを開く。音源ならライブ MIDI が Track より先に届き、エフェクトなら選択中のオーディオ入力を処理する。エフェクトが入力を鳴らしている間は、Track の入力モニタリングと同じくフィードバック保護の対象になる。出力はアレンジメントの後に加算される。エディタのウィンドウを閉じるとプラグインは破棄され、その状態は Project に入らない。
 
@@ -282,21 +283,21 @@ stopArrangeRecording → 停止を realtime 命令として受理し、受理時
 
 C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つバリアで、書き込み時に滞留中の `telemetry` を捨てる。`state` はキーごとに最新の 1 件へ合流する。`telemetry` は損失を許す。
 
-| type                                                      | レーン      | 内容                                                                                                                   |
-| --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ready`                                                   | `control`   | 起動完了、プロトコル版、初期状態                                                                                       |
-| `fault`                                                   | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                     |
-| `recordingComplete`                                       | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                     |
-| `audioStatus`                                             | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する |
-| `trackPluginStateChanged` / `trackPluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                   |
-| `audioMeters`                                             | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                  |
-| `transportStatus`                                         | `telemetry` | Transport の状態と再生位置、録音状態、適用済み命令番号、現役グラフの instrument faults。投影診断は別イベントで通知する |
+| type                                            | レーン      | 内容                                                                                                                   |
+| ----------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ready`                                         | `control`   | 起動完了、プロトコル版、初期状態                                                                                       |
+| `fault`                                         | `control`   | 要求に紐づかない構造化失敗（§5.5）                                                                                     |
+| `recordingComplete`                             | `control`   | Native の Raw / Processed / MIDI 出力の確定結果。`directory`、`success`、失敗時の `message` を持つ                     |
+| `audioStatus`                                   | `state`     | 状態・デバイス・録音・MIDI・Preview・ミュート理由・コールバック診断。Rust は `AudioStatus` へ写像して境界 B へ転送する |
+| `pluginStateChanged` / `pluginParameterChanged` | `state`     | エディタ操作等によるプラグイン状態の変化。キーはデバイス（パラメータ変化はデバイスとパラメータ番号）                   |
+| `audioMeters`                                   | `telemetry` | ピーク・リミッター診断・無効サンプル・フィードバック検知・Track Meter                                                  |
+| `transportStatus`                               | `telemetry` | Transport の状態と再生位置、録音状態、適用済み命令番号、現役グラフの instrument faults。投影診断は別イベントで通知する |
 
 `response` と `error` は `control` レーンを通る。
 
 `transportStatus` は `state`（`stopped` / `starting` / `playing` / `faulted`）、`revision`、`timelineTick`、`timelineSample`、`audioClockSample`、`sampleRate`、`appliedCommandSequence`、`recordingPhase`、`recordingStartTick`、`recordingPassOrdinal`、`armedTrackIds`、`instrumentFaults`、`clockGeneration`、`discontinuity` を持つ。`timelineSample` は保留中の Seek 先を含み、`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`instrumentFaults` は現役グラフの同じ診断情報を `AudioStatus.diagnostics.instrumentFaults` と共有する。
 
-`audioMeters` の Track Meter は左右別 Peak / RMS、Master は左右別の最終出力 Peak を持つ。Native の Meter thread が約 50 ms ごとに発行し、Rust は Runtime 投影の `projectId` を付けて `audio-meters` Host event（`AudioMeterFrame`）へ写像する。
+`audioMeters`の`trackMeters`と`busMeters`はIDと左右Peak/RMS、Masterは左右の最終出力Peakを持つ。NativeのMeter threadが約50 msごとに発行し、RustはRuntime投影の`projectId`を付けて`audio-meters` Host event（`AudioMeterFrame`）へ写像する。
 
 `AudioStatus.diagnostics.realtime` は累計の `callbackCount` と `callbackOverruns`、直近1秒の `window` を持つ。窓はオーディオクロックの固定1秒区間で閉じる。コールバックの終了サンプルが前の境界より後、次の境界以前にあるものを同じ窓に計上し、回数・処理時間・オーバーランを同じコールバック集合から求める。処理時間は各コールバックの実測値を丸ごと使う。窓は `durationMs`、窓内の `callbackCount`、`overruns`、`averageCallbackDurationUs`、`maximumCallbackDurationUs` を公開する。`trackLoads` は同じ窓のトラック別 `trackId`、`averageProcessingUs`、`maximumProcessingUs` をグラフのトラック順に返す。CLI の人向け診断は最大処理時間の降順で上位5トラックを表示する。
 
@@ -309,13 +310,18 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 ## 6. 境界 D: オフラインレンダリング（riffra-render）
 
-| 項目 | 内容                                                                                                                                                                                                                                                                                            |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 起動 | `render_timeline` 命令ごとに `riffra-runtime::render` が `RuntimeBinaries` の executable を 1 プロセス起動する。配置規則は Desktop / Headless 共通                                                                                                                                              |
-| 要求 | stdin へ JSON 1 行を書いて閉じる。`renderTimelineOffline` + `protocolVersion: 4` + `request`（`graph` / `destination` / `startTick` / `endTick` / `sampleRate` / `blockSize` / `normalize`）。Master Gain は `graph.masterGainDb` に含む                                                        |
-| 応答 | stdout へ JSON 1 行。成功は `offlineRenderComplete`（`frames`、`sampleRate`）、失敗は `error`（`operation: renderTimelineOffline`。`kind` は要求の契約違反 `renderContract`、版の不一致 `protocol`、レンダー失敗 `renderRejected`）。形は `contracts/sidecar/messages/render.*.json` で固定する |
-| 異常 | プロセス異常終了・応答の不一致・デコードできない応答はエラー扱いとし、部分的な WAV は破棄する。失敗時のエラーには stdout / stderr の末尾を抜粋として含める                                                                                                                                      |
-| 分担 | 計画（範囲・出力先 `renders/render-{ms}/timeline.wav`・manifest）はシェル側で組み立て、ワーカーは実行のみ                                                                                                                                                                                       |
+Hostのrender.start / render.stems JobがWAVごとにriffra-renderを起動し、Realtimeと同じExecution Graphを渡す。GraphはMixerのMaster Effects・Bus・SendとTrackのoutputBusId、解決済みのプラグインパス・保存状態・接続先IDを含む。Nativeは必須フィールドと実行可能な参照を厳密に検証する。Graphの共有フィクスチャはcontracts/execution-graphに置く。
+
+| 項目 | 契約                                                                                                                                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 起動 | RuntimeBinariesの実行ファイルを使用。配置規則はDesktopとHeadlessで共通                                                                                                             |
+| 要求 | stdinへJSON 1行。renderTimelineOffline、protocolVersion: 4、requestにgraph、destination、startTick、endTick、sampleRate、blockSize、tailSeconds、includeEndEvents、normalizeを含む |
+| 応答 | 成功はofflineRenderCompleteのframes・sampleRate、失敗はerror。contracts/sidecar/messages/render.*.jsonで形を固定                                                                   |
+| 異常 | プロセス異常終了・応答不一致・デコード失敗はJob失敗として扱い、部分的なWAVを破棄する                                                                                               |
+
+Hostが範囲・保存先・Asset登録・Manifestを管理し、Native workerはGraphの実行を担当する。Render Jobの結果とrender.jsonは同じ測定データを返す。measurements.samplePeakDbfsは完成WAVの実サンプルPeakで、デジタル無音をnull（負の無限大）で表す。measurements.loudnessはstateがmeasuredならIntegrated LUFS・True Peak・Loudness Rangeのmeasurement、unavailableならreasonを持つ。測定不能をゼロで埋めない。
+
+warningsはSample Peak超過、設定したTrue Peak上限やラウドネス目標からの偏差を示す。masteringは目標、入力測定、偏差、正規化方式、True Peak補正を持ち、最終出力測定を重複して保持しない。各Stemにもmeasurementsとwarningsを含める。FFmpegを利用できない通常Renderは測定不能の理由付きで成功し、Masteringを要求したJobのFFmpeg失敗はJob失敗になる。
 
 ---
 
@@ -445,11 +451,13 @@ riffra --attach --interactive
 
 - `undo` / `redo` の履歴は Standalone が自プロセス、serve / Attached が接続先 Host のものを共有する
 
-`track.mix.preview` は Host Runtime command であり、Track ID と任意の `gainDb` / `pan` を受け取る。Host の現行 sequence を応答へ含めるが、Canonical sequence、履歴、保存、Project の世代を進めない。
+Mixerの一時プレビューはHostの現行sequenceを応答へ含めるが、Canonical sequence、履歴、保存、Projectの世代を進めない。所有者と値の契約はサイドカー命令の節を参照する。
 
 ### 8.3 制作操作
 
 CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
+
+Mixerの正準状態は`mixer.get`、Bus一覧は`mixer.bus.list`、Send一覧は`mixer.send.list`で取得する。結果のタグはそれぞれ`mixer`、`mixBuses`、`sends`。Bus・Sendの追加、更新、削除とTrack主出力先の設定は通常の正準Mutationとして扱い、`arrangementMutation`を返す。`session.apply`にも含められ、作成したBusとSendのIDは`createdEntityIds`の`buses`・`sends`へ記録する。パラメーターの正本は`api/params/mixer.rs`、CLIの操作形式は`agents/skills/riffra-headless/references/commands.md`を参照する。
 
 | 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -461,7 +469,7 @@ CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core
 | Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                                         |
 | Automation             | `automation get`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                                  |
 | Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                                   |
-| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`plugin instrument/effect`、`plugin scan/scan-start`、`instrument clear`、`effect remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                             |
+| Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`plugin instrument`、`plugin scan/scan-start`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                                |
 | Runtime services       | `audio status/diagnostics/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start/stems`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
 
 軽量投影の約束: `session inspect`、`track list`、`device inspect`、`music.note.*` は構造把握用であり、本文の取得は `session get`、`plugin.state.get` に委譲する。`device inspect` の応答範囲は metadata と capability とする。

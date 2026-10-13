@@ -56,6 +56,9 @@ pub struct Track {
     #[ts(optional)]
     pub instrument: Option<TrackInstrument>,
     pub effects: Vec<EffectDevice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub output_bus_id: Option<String>,
     #[serde(default)]
     pub pan_law: PanLaw,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +114,7 @@ impl Track {
             midi_input: MidiInputRoute::default(),
             instrument: None,
             effects: Vec::new(),
+            output_bus_id: None,
         }
     }
 
@@ -127,11 +131,7 @@ impl Track {
         if self.id.trim().is_empty() || self.name.trim().is_empty() {
             return Err("Tracks require non-empty ids and names.".into());
         }
-        if !self.gain_db.is_finite() || !self.pan.is_finite() {
-            return Err(format!("Track '{}' has invalid mix values.", self.name));
-        }
-        self.gain_db = self.gain_db.clamp(-90.0, 24.0);
-        self.pan = self.pan.clamp(-1.0, 1.0);
+        super::mixer::normalize_mix(&mut self.gain_db, &mut self.pan)?;
         match self.kind {
             TrackKind::Audio if self.instrument.is_some() => {
                 return Err(format!(
@@ -194,6 +194,7 @@ mod tests {
 
     fn arrangement_with_clip(asset: AssetId) -> Arrangement {
         let mut arrangement = Arrangement {
+            mixer: Default::default(),
             revision: 0,
             timebase: ProjectTimebase::default(),
             loop_range: TimelineLoopRange::default(),

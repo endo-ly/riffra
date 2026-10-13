@@ -21,6 +21,7 @@ TEST(TrackProcessingPoolTest, ProcessesEveryTrackOnceForEachWorkerCount) {
         runtime.postEffectClipBuffer.setSize(2, 32);
         runtime.postEffectClipBuffer.clear();
         runtime.trackOutputBuffer.setSize(2, 32);
+        runtime.preFaderOutputBuffer.setSize(2, 32);
         runtime.routedOutputBuffer.setSize(2, 32);
         processingTracks.push_back(track.get());
         graph.tracks.push_back(std::move(track));

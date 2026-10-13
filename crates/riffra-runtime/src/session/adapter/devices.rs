@@ -6,21 +6,36 @@ fn plugin_device_role(
     session: &riffra_core::CreativeSession,
     device_id: &str,
 ) -> Option<crate::api::output::PluginRole> {
-    session.arrangement.tracks.iter().find_map(|track| {
-        if track
-            .instrument
-            .as_ref()
-            .is_some_and(|instrument| instrument.id == device_id)
-        {
-            return Some(crate::api::output::PluginRole::Instrument);
-        }
+    session
+        .arrangement
+        .tracks
+        .iter()
+        .find_map(|track| {
+            if track
+                .instrument
+                .as_ref()
+                .is_some_and(|instrument| instrument.id == device_id)
+            {
+                return Some(crate::api::output::PluginRole::Instrument);
+            }
 
-        track
-            .effects
-            .iter()
-            .any(|device| device.id == device_id)
-            .then_some(crate::api::output::PluginRole::Effect)
-    })
+            track
+                .effects
+                .iter()
+                .any(|device| device.id == device_id)
+                .then_some(crate::api::output::PluginRole::Effect)
+        })
+        .or_else(|| {
+            session
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .flat_map(|bus| &bus.effects)
+                .chain(&session.arrangement.mixer.master_effects)
+                .any(|effect| effect.id == device_id)
+                .then_some(crate::api::output::PluginRole::Effect)
+        })
 }
 
 fn repair_previous_arrangement<D: RuntimeDriver>(
@@ -187,9 +202,9 @@ pub fn clear_track_instrument(
     Ok(committed.0)
 }
 
-pub(crate) fn add_track_effect_with_expected_sequence(
+pub(crate) fn add_effect_with_expected_sequence(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     path: &str,
     expected_sequence: Option<u64>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
@@ -206,11 +221,7 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     let (prepared, device_id) = context
         .prepare_core()
         .application(&context.storage)
-        .prepare_track_effect_with_created_id(
-            track_id,
-            name,
-            validated_path.to_string_lossy().into_owned(),
-        )
+        .prepare_effect_with_created_id(owner, name, validated_path.to_string_lossy().into_owned())
         .map_err(AdapterError::from)?;
     let prepared = match expected_sequence {
         Some(sequence) => prepared.with_expected_sequence(sequence),
@@ -223,159 +234,118 @@ pub(crate) fn add_track_effect_with_expected_sequence(
     )
 }
 
-pub fn remove_track_effect(
+pub fn remove_effect(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    let committed = context.commit(|mut app| app.remove_track_effect(track_id, device_id))?;
+    let committed = context.commit(|mut app| app.remove_effect(owner, device_id))?;
     Ok(committed.0)
 }
 
-pub fn reorder_track_effects(
+pub fn reorder_effects(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     ordered_device_ids: &[String],
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    let committed = context
-        .commit(|mut app| app.reorder_track_effects(track_id, ordered_device_ids.to_owned()))?;
+    let committed =
+        context.commit(|mut app| app.reorder_effects(owner, ordered_device_ids.to_owned()))?;
     Ok(committed.0)
 }
 
-pub fn set_track_device_bypassed(
+pub fn set_device_bypassed(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
     bypassed: bool,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     let session = current_session(context)?;
-    let device = session
+    let previous = session
         .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .and_then(|track| {
-            track
-                .instrument
-                .as_ref()
-                .filter(|device| device.id == device_id)
-                .map(|device| device.bypassed)
-                .or_else(|| {
-                    track
-                        .effects
-                        .iter()
-                        .find(|device| device.id == device_id)
-                        .map(|device| device.bypassed)
-                })
-        })
-        .ok_or_else(|| format!("Track Device is not registered: {device_id}"))?;
-    let previous = device;
+        .device(owner, device_id)
+        .map_err(|error| AdapterError::command(error.to_string()))?
+        .bypassed();
     context
         .audio
-        .set_track_device_bypassed(track_id, device_id, bypassed)?;
-    let committed =
-        context.commit(|mut app| app.set_track_device_bypassed(track_id, device_id, bypassed));
+        .set_device_bypassed(owner, device_id, bypassed)?;
+    let committed = context.commit(|mut app| app.set_device_bypassed(owner, device_id, bypassed));
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
             let _ = context
                 .audio
-                .set_track_device_bypassed(track_id, device_id, previous);
+                .set_device_bypassed(owner, device_id, previous);
             Err(error)
         }
     }
 }
 
-pub fn set_track_device_parameter(
+pub fn set_device_parameter(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
     parameter_index: u32,
     value: f32,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
     if !value.is_finite() {
-        return Err("Track Device parameter value must be finite.".into());
+        return Err("device parameter value must be finite".into());
     }
     let value = value.clamp(0.0, 1.0);
     let session = current_session(context)?;
-    let track = session
+    let device = session
         .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .ok_or_else(|| AdapterError::command(format!("Track is not registered: {track_id}")))?;
+        .device(owner, device_id)
+        .map_err(|error| AdapterError::command(error.to_string()))?;
+    if device.plugin().is_none() {
+        return Err(AdapterError::command(
+            "built-in instruments do not expose parameters",
+        ));
+    }
+    let previous = context.audio.get_plugin_state(owner, device_id)?;
     let index = usize::try_from(parameter_index)
-        .map_err(|_| "Track Device parameter index is invalid.".to_string())?;
-    let previous = if let Some(instrument) = track
-        .instrument
-        .as_ref()
-        .filter(|instrument| instrument.id == device_id)
-    {
-        let vst3 = instrument.as_vst3().ok_or_else(|| {
-            AdapterError::command("Built-in instruments do not expose parameters.")
-        })?;
-        vst3.parameter_values.get(index).copied().unwrap_or(0.0)
-    } else {
-        track
-            .effects
-            .iter()
-            .find(|device| device.id == device_id)
-            .ok_or_else(|| {
-                AdapterError::command(format!("Track Device is not registered: {device_id}"))
-            })?
-            .plugin
-            .parameter_values
-            .get(index)
-            .copied()
-            .unwrap_or(0.0)
-    };
-    context
-        .audio
-        .set_track_device_parameter(track_id, device_id, parameter_index, value)?;
-    let committed =
-        context.commit(|mut app| app.set_track_device_parameter(track_id, device_id, index, value));
+        .map_err(|_| AdapterError::command("device parameter index is invalid"))?;
+    if index >= previous.parameter_values.len() {
+        return Err(AdapterError::command("device parameter index is invalid"));
+    }
+    let committed: Result<_, AdapterError> = (|| {
+        context
+            .audio
+            .set_device_parameter(owner, device_id, parameter_index, value)?;
+        let state = context.audio.get_plugin_state(owner, device_id)?;
+        context.commit(|mut app| {
+            app.persist_plugin_state(
+                owner,
+                device_id,
+                state.parameter_values,
+                state.state_data,
+                state.bypassed,
+            )
+        })
+    })();
     match committed {
         Ok((mutation, _)) => Ok(mutation),
         Err(error) => {
-            let _ = context.audio.set_track_device_parameter(
-                track_id,
-                device_id,
-                parameter_index,
-                previous,
-            );
+            if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
+            {
+                tracing::error!(%rollback_error, device_id, "plugin parameter rollback failed");
+            }
             Err(error)
         }
     }
 }
 
-pub fn open_track_plugin_editor(
+pub fn open_plugin_editor(
     context: &mut SessionContext<'_>,
-    track_id: &str,
+    owner: &riffra_core::EffectOwner,
     device_id: &str,
 ) -> Result<(), AdapterError> {
     let session = current_session(context)?;
-    let registered = session
+    let device = session
         .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .is_some_and(|track| {
-            track.instrument.as_ref().is_some_and(|instrument| {
-                instrument.id == device_id && instrument.as_vst3().is_some()
-            }) || track.effects.iter().any(|device| device.id == device_id)
-        });
-    if !registered {
-        return Err(format!("Track Device is not registered: {device_id}").into());
-    }
-    if session
-        .arrangement
-        .tracks
-        .iter()
-        .find(|track| track.id == track_id)
-        .and_then(|track| track.instrument.as_ref())
-        .is_some_and(|instrument| instrument.id == device_id && instrument.as_vst3().is_none())
-    {
-        return Err("Built-in instruments do not provide a plugin editor.".into());
+        .device(owner, device_id)
+        .map_err(|error| AdapterError::command(error.to_string()))?;
+    if device.plugin().is_none() {
+        return Err("built-in instruments do not provide a plugin editor".into());
     }
     drop(session);
     let project_id = context
@@ -384,7 +354,7 @@ pub fn open_track_plugin_editor(
         .map_err(|error| AdapterError::runtime(error.to_string()))?;
     context
         .audio
-        .open_track_plugin_editor(&project_id, track_id, device_id)
+        .open_plugin_editor(&project_id, owner, device_id)
         .map_err(|error| AdapterError::runtime(error.to_string()))
 }
 
@@ -607,12 +577,15 @@ mod tests {
         context
             .prepare_core()
             .application(&context.storage)
-            .prepare_track_effect(
-                "track:plugin",
+            .prepare_effect_with_created_id(
+                &riffra_core::EffectOwner::Track {
+                    id: "track:plugin".to_owned(),
+                },
                 "Candidate".into(),
                 r"C:\plugins\Candidate.vst3".into(),
             )
             .unwrap()
+            .0
     }
 
     #[test]
@@ -771,14 +744,39 @@ mod tests {
             .unwrap(),
         );
         session.arrangement.tracks.push(track);
+        let mut bus = riffra_core::MixBus {
+            id: "bus:group".into(),
+            name: "Group".into(),
+            kind: riffra_core::MixBusKind::Group,
+            gain_db: 0.0,
+            pan: 0.0,
+            pan_law: riffra_core::PanLaw::default(),
+            muted: false,
+            solo: false,
+            effects: vec![],
+        };
+        bus.effects.push(
+            EffectDevice::new("device:bus".into(), "Bus Effect".into(), "Bus.vst3".into()).unwrap(),
+        );
+        session.arrangement.mixer.buses.push(bus);
+        session.arrangement.mixer.master_effects.push(
+            EffectDevice::new(
+                "device:master".into(),
+                "Master Effect".into(),
+                "Master.vst3".into(),
+            )
+            .unwrap(),
+        );
         let core = project(&root, session);
         let store = riffra_host::SessionStore::new(&root, "01900000-0000-7000-8000-000000000001");
         store.ensure_layout().unwrap();
         let saved = core
             .write()
             .commit(|mut app| {
-                app.persist_track_plugin_state(
-                    "track:guitar",
+                app.persist_plugin_state(
+                    &riffra_core::EffectOwner::Track {
+                        id: ("track:guitar").to_owned(),
+                    },
                     "device:amp",
                     vec![0.25, 0.75],
                     Some("opaque-state".into()),
@@ -791,10 +789,44 @@ mod tests {
             &riffra_core::serialize_session_document(&saved).unwrap(),
         )
         .unwrap();
-        let device = &restored.arrangement.tracks[0].effects[0];
-        assert_eq!(device.plugin.parameter_values, [0.25, 0.75]);
-        assert_eq!(device.plugin.state_data.as_deref(), Some("opaque-state"));
-        assert!(device.bypassed);
+        assert_eq!(
+            restored.arrangement.tracks[0].effects[0]
+                .plugin
+                .parameter_values,
+            [0.25, 0.75]
+        );
+        for (owner, id) in [
+            (
+                riffra_core::EffectOwner::Bus {
+                    id: "bus:group".into(),
+                },
+                "device:bus",
+            ),
+            (riffra_core::EffectOwner::Master, "device:master"),
+        ] {
+            let _ = core
+                .write()
+                .commit(|mut app| {
+                    app.persist_plugin_state(
+                        &owner,
+                        id,
+                        vec![0.25, 0.75],
+                        Some("opaque-state".into()),
+                        true,
+                    )
+                })
+                .unwrap();
+        }
+        let restored = store.load_existing().unwrap().session;
+        for device in [
+            &restored.arrangement.tracks[0].effects[0],
+            &restored.arrangement.mixer.buses[0].effects[0],
+            &restored.arrangement.mixer.master_effects[0],
+        ] {
+            assert_eq!(device.plugin.parameter_values, [0.25, 0.75]);
+            assert_eq!(device.plugin.state_data.as_deref(), Some("opaque-state"));
+            assert!(device.bypassed);
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 }

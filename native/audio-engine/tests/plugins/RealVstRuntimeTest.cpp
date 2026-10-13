@@ -57,8 +57,9 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 1;
     }
-    const auto parameters =
-        engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    const auto parameters = engine.deviceParameterStatus(
+        riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+        "device:audio-effect", error);
     if (!parameters || parameters->parameters.size() < 4) {
         std::cerr << "test effect parameters missing: " << error << '\n';
         return 1;
@@ -73,18 +74,25 @@ int main(int argc, char** argv) {
         std::cerr << "test effect metadata mismatch\n";
         return 1;
     }
-    if (!engine.setDeviceParameter("track:audio", "device:audio-effect", 0, 0.25f, error)) {
+    if (!engine.setDeviceParameter(
+            riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+            "device:audio-effect", 0, 0.25f, error)) {
         std::cerr << error << '\n';
         return 1;
     }
-    const auto changed = engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    const auto changed = engine.deviceParameterStatus(
+        riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+        "device:audio-effect", error);
     if (!changed || changed->parameters[0].value != 0.25f) return 1;
-    if (!engine.setDeviceParameter("track:audio", "device:audio-effect", 2, 0.5f, error)) {
+    if (!engine.setDeviceParameter(
+            riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+            "device:audio-effect", 2, 0.5f, error)) {
         std::cerr << error << '\n';
         return 1;
     }
-    const auto modeChanged =
-        engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    const auto modeChanged = engine.deviceParameterStatus(
+        riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+        "device:audio-effect", error);
     if (!modeChanged || modeChanged->parameters[2].displayValue != "Warm" ||
         modeChanged->parameters[3].displayValue != "Short" ||
         modeChanged->parameters[3].choices[2].displayValue != "Long") {
@@ -94,12 +102,16 @@ int main(int argc, char** argv) {
     engine.setRealtimeOwner(riffra::RealtimeOwner::audio);
     while (engine.play().has_value()) {
     }
-    if (engine.setDeviceParameter("track:audio", "device:audio-effect", 2, 1.0f, error)) {
+    if (engine.setDeviceParameter(
+            riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+            "device:audio-effect", 2, 1.0f, error)) {
         std::cerr << "parameter command unexpectedly accepted by full queue\n";
         return 1;
     }
     engine.setRealtimeOwner(riffra::RealtimeOwner::control);
-    const auto rejected = engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+    const auto rejected = engine.deviceParameterStatus(
+        riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+        "device:audio-effect", error);
     if (!rejected || rejected->parameters[2].displayValue != "Warm") {
         std::cerr << "rejected parameter command changed plugin state\n";
         return 1;
@@ -113,12 +125,15 @@ int main(int argc, char** argv) {
                 engine.mix(output.getArrayOfWritePointers(), 2, 512);
             }
         });
-        if (!engine.setDeviceParameter("track:audio", "device:audio-effect", 2, 0.0f, error)) {
+        if (!engine.setDeviceParameter(
+                riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+                "device:audio-effect", 2, 0.0f, error)) {
             std::cerr << error << '\n';
             return 1;
         }
-        const auto realtimeChanged =
-            engine.deviceParameterStatus("track:audio", "device:audio-effect", error);
+        const auto realtimeChanged = engine.deviceParameterStatus(
+            riffra::EffectOwnerSpec{riffra::EffectOwnerKindSpec::track, "track:audio"},
+            "device:audio-effect", error);
         if (!realtimeChanged || realtimeChanged->parameters[2].displayValue != "Clean" ||
             realtimeChanged->parameters[3].displayValue != "Small" ||
             realtimeChanged->parameters[3].choices[2].displayValue != "Large") {

@@ -17,7 +17,6 @@ mod asset;
 mod host_commands;
 mod host_connection;
 mod model;
-mod render;
 #[cfg(test)]
 mod types;
 mod update_commands;
@@ -127,7 +126,6 @@ pub fn run() {
             host_connection::switch_host,
             host_connection::reconnect_host,
             asset::commands::import_midi_bytes,
-            render::commands::render_timeline,
             update_commands::check_for_app_update,
             update_commands::install_app_update
         ])

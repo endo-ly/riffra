@@ -17,6 +17,7 @@ export function defaultSession(): CreativeSession {
     updatedAtMs: Date.now(),
     projectName: null,
     arrangement: {
+      mixer: { masterEffects: [], buses: [], sends: [] },
       revision: 0,
       timebase: {
         ppq: 960,

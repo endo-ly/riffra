@@ -91,7 +91,7 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     MidiInputService midiInputs(pipeline.preview(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    juce::String trackPluginEditorTrackId;
+    EffectOwnerSpec pluginEditorOwner;
     juce::String trackPluginEditorDeviceId;
     std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
@@ -105,7 +105,7 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
         midiInputs,
         runtimeLifecycle,
         trackPluginEditor,
-        trackPluginEditorTrackId,
+        pluginEditorOwner,
         trackPluginEditorDeviceId,
         auditionEditor,
         comparisonRaw,
@@ -161,7 +161,7 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
     MidiInputService midiInputs(pipeline.preview(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    juce::String trackPluginEditorTrackId;
+    EffectOwnerSpec pluginEditorOwner;
     juce::String trackPluginEditorDeviceId;
     std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
@@ -175,7 +175,7 @@ TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
         midiInputs,
         runtimeLifecycle,
         trackPluginEditor,
-        trackPluginEditorTrackId,
+        pluginEditorOwner,
         trackPluginEditorDeviceId,
         auditionEditor,
         comparisonRaw,
@@ -217,7 +217,7 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
     MidiInputService midiInputs(pipeline.preview(), timeline);
     RuntimeLifecycleExecutor runtimeLifecycle;
     std::shared_ptr<PluginEditorHost> trackPluginEditor;
-    juce::String trackPluginEditorTrackId;
+    EffectOwnerSpec pluginEditorOwner;
     juce::String trackPluginEditorDeviceId;
     std::shared_ptr<PluginEditorHost> auditionEditor;
     juce::AudioBuffer<float> comparisonRaw;
@@ -231,7 +231,7 @@ TEST(AudioCommandDispatcherTest, StopWaitDoesNotBlockFurtherCommandDispatch) {
         midiInputs,
         runtimeLifecycle,
         trackPluginEditor,
-        trackPluginEditorTrackId,
+        pluginEditorOwner,
         trackPluginEditorDeviceId,
         auditionEditor,
         comparisonRaw,

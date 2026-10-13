@@ -5,8 +5,8 @@ use super::command_bus::{awaits_response, complete_request};
 use super::error::NativeAudioError;
 use super::wire::{
     SIDECAR_PROTOCOL_VERSION, SidecarError, SidecarEvent, SidecarMessage, SidecarResponse,
-    WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault, WireRecordingPhase,
-    WireRecoveryStatus, WireTrackPluginParameterChanged, WireTrackPluginStateChanged,
+    WireAudioMeters, WireAudioState, WireAudioStatus, WireInstrumentFault,
+    WirePluginParameterChanged, WirePluginStateChanged, WireRecordingPhase, WireRecoveryStatus,
     WireTransportState, WireTransportStatus, decode_message, diagnostic_prefix,
 };
 use crate::HostEvent;
@@ -15,8 +15,8 @@ use crate::api::output::{
     MidiDeviceInfo, RecordingStatus,
 };
 use crate::model::{
-    AudioMeterFrame, RecordingPhase, TrackAudioMeter, TrackPluginParameterChanged,
-    TrackPluginStateChanged, TransportState, TransportStatus,
+    AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingPhase, TrackAudioMeter,
+    TransportState, TransportStatus,
 };
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -187,6 +187,7 @@ fn meter_frame(meters: WireAudioMeters) -> Option<AudioMeterFrame> {
         hard_clip_samples: meters.hard_clip_samples,
         invalid_samples: meters.invalid_samples,
         feedback_suspected: meters.feedback_suspected,
+        bus_meters: meters.bus_meters,
         track_meters: meters
             .track_meters
             .into_iter()
@@ -243,10 +244,10 @@ fn transport_status(status: WireTransportStatus) -> TransportStatus {
     }
 }
 
-fn plugin_state_changed(changed: WireTrackPluginStateChanged) -> TrackPluginStateChanged {
-    TrackPluginStateChanged {
+fn plugin_state_changed(changed: WirePluginStateChanged) -> PluginStateChanged {
+    PluginStateChanged {
         project_id: changed.project_id,
-        track_id: changed.track_id,
+        owner: changed.owner,
         device_id: changed.device_id,
         parameter_values: changed.state.parameter_values,
         state_data: changed.state.state_data,
@@ -254,12 +255,10 @@ fn plugin_state_changed(changed: WireTrackPluginStateChanged) -> TrackPluginStat
     }
 }
 
-fn plugin_parameter_changed(
-    changed: WireTrackPluginParameterChanged,
-) -> TrackPluginParameterChanged {
-    TrackPluginParameterChanged {
+fn plugin_parameter_changed(changed: WirePluginParameterChanged) -> PluginParameterChanged {
+    PluginParameterChanged {
         project_id: changed.project_id,
-        track_id: changed.track_id,
+        owner: changed.owner,
         device_id: changed.device_id,
         parameter_index: changed.parameter_index,
         value: changed.value,
@@ -356,13 +355,13 @@ impl AudioSupervisor {
             | SidecarResponse::TimelineAck {}
             | SidecarResponse::TimelineIdleAck {}
             | SidecarResponse::MidiAck {}
-            | SidecarResponse::TrackMixAck {}
-            | SidecarResponse::TrackDeviceAck {}
-            | SidecarResponse::TrackDeviceStatus(_)
-            | SidecarResponse::TrackDeviceParameters(_)
-            | SidecarResponse::TrackDevicePrograms(_)
-            | SidecarResponse::TrackPluginState(_)
-            | SidecarResponse::TrackDeviceProgramChanged(_) => {}
+            | SidecarResponse::MixAck {}
+            | SidecarResponse::DeviceAck {}
+            | SidecarResponse::DeviceStatus(_)
+            | SidecarResponse::DeviceParameters(_)
+            | SidecarResponse::DevicePrograms(_)
+            | SidecarResponse::PluginState(_)
+            | SidecarResponse::DeviceProgramChanged(_) => {}
         }
     }
 
@@ -413,19 +412,18 @@ impl AudioSupervisor {
             SidecarEvent::RecordingComplete(completion) => {
                 self.record_recording_completion(completion)
             }
-            SidecarEvent::TrackPluginStateChanged(changed) => {
+            SidecarEvent::PluginStateChanged(changed) => {
                 if self.process.current_generation() == generation {
                     self.events
-                        .emit(HostEvent::TrackPluginStateChanged(plugin_state_changed(
-                            changed,
-                        )));
+                        .emit(HostEvent::PluginStateChanged(plugin_state_changed(changed)));
                 }
             }
-            SidecarEvent::TrackPluginParameterChanged(changed) => {
+            SidecarEvent::PluginParameterChanged(changed) => {
                 if self.process.current_generation() == generation {
-                    self.events.emit(HostEvent::TrackPluginParameterChanged(
-                        plugin_parameter_changed(changed),
-                    ));
+                    self.events
+                        .emit(HostEvent::PluginParameterChanged(plugin_parameter_changed(
+                            changed,
+                        )));
                 }
             }
             SidecarEvent::Fault(error) => self.apply_error(&native_error(error)),

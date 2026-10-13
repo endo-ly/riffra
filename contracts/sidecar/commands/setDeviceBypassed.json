@@ -1,0 +1,12 @@
+{
+  "command": {
+    "bypassed": true,
+    "deviceId": "device-1",
+    "owner": {
+      "id": "track-1",
+      "kind": "track"
+    },
+    "type": "setDeviceBypassed"
+  },
+  "requestId": 1
+}

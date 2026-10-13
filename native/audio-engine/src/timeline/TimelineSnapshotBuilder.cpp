@@ -7,6 +7,7 @@
 #include "ArrangementGraph.h"
 #include "MidiScheduler.h"
 #include "TrackRuntime.h"
+#include "contract/MixerGraphValidation.h"
 #include "instruments/SonalloyInstrumentRuntime.h"
 #include "instruments/Vst3InstrumentRuntime.h"
 
@@ -18,9 +19,38 @@ constexpr int kReadAheadSamples = 32768;
 // can keep sharing them; a graph that needs more receives new instances.
 constexpr std::size_t kSharedDeviceMidiCapacity = 256;
 
+struct MixerAudibility final {
+    bool hasSolo = false;
+
+    [[nodiscard]] bool mainRoute(const bool trackSolo, const bool groupSolo) const noexcept {
+        return !hasSolo || trackSolo || groupSolo;
+    }
+
+    [[nodiscard]] bool sendRoute(const bool trackSolo, const bool returnSolo) const noexcept {
+        return !hasSolo || trackSolo || returnSolo;
+    }
+
+    [[nodiscard]] bool busOutput(const bool busSolo, const bool hasInput,
+                                 const bool hasAudibleInput, const bool muted) const noexcept {
+        return hasInput && !muted && (!hasSolo || busSolo || hasAudibleInput);
+    }
+};
+
 juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     if (!instrument.has_value()) return {};
     return std::visit([](const auto& value) { return value.id; }, *instrument);
+}
+
+bool matchesExecutedEffects(const PluginChain& chain,
+                            const std::vector<PluginDeviceSpec>& effects) {
+    for (const auto& effect : effects) {
+        const auto* rack = chain.findDevice(effect.id);
+        if (rack == nullptr) return false;
+        juce::String error;
+        const auto state = rack->persistedState(error);
+        if (!state || *state != effect.state) return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -43,6 +73,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     }
 
     const auto& graph = snapshot.graph;
+    if (!validateMixerGraph(graph, error)) return false;
     const auto processingMode =
         engine.offlineMode ? PluginProcessingMode::offline : PluginProcessingMode::realtime;
     prepared = std::make_unique<PreparedTimeline>();
@@ -187,9 +218,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
         // Device instances already published are shared, never prepared again:
         // the audio thread may be processing them.
-        auto sameRuntimeTopology = false;
-        engine.graphRegistry.access([&track,
-                                     &sameRuntimeTopology](ControlGraphRegistry::State& graphs) {
+        engine.graphRegistry.access([&track](ControlGraphRegistry::State& graphs) {
             if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
             const auto* existing = graphs.latestCommitted->findTrack(track->id);
             if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
@@ -197,11 +226,12 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
                 existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
                 return;
-            sameRuntimeTopology = true;
             track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
             track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
             track->reuseRuntimeDevices =
-                existing->effects == track->effects && existing->instrument == track->instrument &&
+                (existing->effects == track->effects ||
+                 matchesExecutedEffects(existing->runtime->effects(), track->effects)) &&
+                existing->instrument == track->instrument &&
                 existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
             if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
         });
@@ -252,10 +282,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 }
             }
         }
-        if (!sameRuntimeTopology) {
-            track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
-            track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
-        }
+        track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
+        track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
 
         for (const auto& clipSpec : trackSpec.audioClips) {
             const auto path = clipSpec.path;
@@ -318,6 +346,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         track->runtime->processedBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->trackOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->routedOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
+        track->runtime->preFaderOutputBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->unityCenterStereo = trackSpec.panLaw == "unityCenterStereo";
         track->runtime->postEffectClipBuffer.setSize(2, maximumBlockSize, false, true, false);
         track->runtime->liveInputBuffer.setSize(2, maximumBlockSize, false, true, false);
@@ -366,23 +395,13 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             error = "External audio routes contain a cycle.";
             return false;
         }
-        const auto previousLatency =
-            prepared->processingStages.empty()
-                ? 0
-                : prepared->processingStages.back().front()->runtime->routeLatencySamples;
-        std::int64_t stageLatency = previousLatency;
-        for (const auto* track : stage)
-            stageLatency =
-                std::max(stageLatency, previousLatency + track->runtime->pluginDelaySamples);
         for (auto* track : stage) {
             auto& runtime = *track->runtime;
-            runtime.routeLatencySamples = stageLatency;
             const auto sourceLatency = runtime.externalAudioSource == nullptr
                                            ? 0
                                            : runtime.externalAudioSource->routeLatencySamples;
-            runtime.compensationDelaySamples =
-                stageLatency - sourceLatency - runtime.pluginDelaySamples;
-            runtime.postEffectCompensationDelaySamples = stageLatency;
+            runtime.routeLatencySamples = sourceLatency + runtime.pluginDelaySamples;
+            runtime.postEffectCompensationDelaySamples = runtime.routeLatencySamples;
             for (auto& clip : runtime.midiClips) clip.startSample += sourceLatency;
         }
         prepared->processingStages.push_back(std::move(stage));
@@ -410,24 +429,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             for (const auto change : originalTimebaseChanges)
                 prepared->timebaseChangeSamples.push_back(
                     change + track->runtime->externalAudioSource->routeLatencySamples);
-        const auto maximumLatency =
-            prepared->processingStages.back().front()->runtime->routeLatencySamples;
-        track->runtime->masterDelaySamples = maximumLatency - track->runtime->routeLatencySamples;
-        track->runtime->masterDelayBuffer.setSize(
-            2, static_cast<int>(track->runtime->masterDelaySamples + maximumBlockSize + 1), false,
-            true, false);
-        track->runtime->masterDelayBuffer.clear();
-        track->runtime->delayBuffer.setSize(
-            2, static_cast<int>(track->runtime->compensationDelaySamples + maximumBlockSize + 1),
-            false, true, false);
-        track->runtime->delayBuffer.clear();
-        track->runtime->postEffectDelayBuffer.setSize(
-            2,
-            static_cast<int>(track->runtime->postEffectCompensationDelaySamples + maximumBlockSize +
-                             1),
-            false, true, false);
-        track->runtime->postEffectDelayBuffer.clear();
     }
+    if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
@@ -459,6 +462,192 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         error = "Mix fade duration exceeds the final mix duration.";
         return false;
     }
+    return true;
+}
+
+bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
+                                           const PluginProcessingMode mode, juce::String& error) {
+    auto& mixer = prepared.mixer;
+    const auto blockSize = prepared.preparedBlockSize;
+    const auto sampleRate = prepared.outputSampleRate;
+    mixer.masterInput.setSize(2, blockSize);
+    mixer.masterOutput.setSize(2, blockSize);
+    prepared.hasSolo = std::any_of(graph.tracks.begin(), graph.tracks.end(),
+                                   [](const auto& track) { return track.solo; }) ||
+                       std::any_of(graph.mixer.buses.begin(), graph.mixer.buses.end(),
+                                   [](const auto& bus) { return bus.solo; });
+    const MixerAudibility audibility{prepared.hasSolo};
+    for (const auto& spec : graph.mixer.buses) {
+        auto bus = std::make_unique<MixerChannel>();
+        bus->id = spec.id;
+        bus->effectSpecs = spec.effects;
+        bus->gainDb.store(static_cast<float>(spec.gainDb));
+        bus->pan.store(static_cast<float>(spec.pan));
+        bus->unityCenterStereo = spec.panLaw == "unityCenterStereo";
+        bus->audible = false;
+        bus->input.setSize(2, blockSize);
+        bus->output.setSize(2, blockSize);
+        bool reused = false;
+        engine.graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
+            const auto* previous = graphs.latestCommitted;
+            if (previous == nullptr || graphs.devicesNeedReprepare ||
+                previous->preparedBlockSize != blockSize ||
+                previous->outputSampleRate != sampleRate)
+                return;
+            const auto* existing = previous->mixer.findBus(spec.id);
+            if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
+                (existing->effectSpecs == spec.effects ||
+                 matchesExecutedEffects(*existing->effects, spec.effects))) {
+                bus->effects = existing->effects;
+                reused = true;
+            }
+        });
+        if (!reused && !bus->effects->load(spec.effects, sampleRate, blockSize, mode, error,
+                                           spec.id + "/bus-effect"))
+            return false;
+        prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
+        mixer.parallelChannels.push_back(bus.get());
+        mixer.buses.push_back(std::move(bus));
+    }
+    mixer.masterEffectSpecs = graph.mixer.masterEffects;
+    bool masterReused = false;
+    engine.graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
+        const auto* previous = graphs.latestCommitted;
+        if (previous != nullptr && !graphs.devicesNeedReprepare &&
+            previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
+            sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
+            (previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs ||
+             matchesExecutedEffects(*previous->mixer.masterEffects, mixer.masterEffectSpecs))) {
+            mixer.masterEffects = previous->mixer.masterEffects;
+            masterReused = true;
+        }
+    });
+    if (!masterReused && !mixer.masterEffects->load(mixer.masterEffectSpecs, sampleRate, blockSize,
+                                                    mode, error, "master-effect"))
+        return false;
+    prepared.summary.pluginCount += static_cast<std::uint64_t>(mixer.masterEffects->size());
+    const auto busSpec = [&](const juce::String& id) -> const MixBusSpec* {
+        for (const auto& spec : graph.mixer.buses)
+            if (spec.id == id) return &spec;
+        return nullptr;
+    };
+    const auto addTrackRoute = [&](TrackRuntime& track, MixerChannel* destination,
+                                   const bool preFader, const float gain, const bool audible,
+                                   const bool allowLowLatencyBypass, const juce::String& sendId) {
+        auto route = std::make_unique<MixerRoute>();
+        route->track = &track;
+        route->destinationBus = destination;
+        route->source = preFader ? &track.preFaderOutputBuffer : &track.trackOutputBuffer;
+        route->destination = destination != nullptr ? &destination->input : &mixer.masterInput;
+        route->gain.store(gain);
+        route->audible = audible;
+        route->allowLowLatencyBypass = allowLowLatencyBypass;
+        route->sendId = sendId;
+        if (destination != nullptr) {
+            destination->hasInput = true;
+            destination->hasAudibleInput = destination->hasAudibleInput || audible;
+            if (allowLowLatencyBypass)
+                destination->lowLatencySources.push_back(&track);
+            else
+                destination->hasNonLowLatencyInput = true;
+            destination->inputLatency =
+                std::max(destination->inputLatency, track.routeLatencySamples);
+        } else {
+            mixer.masterInputLatency =
+                std::max(mixer.masterInputLatency, track.routeLatencySamples);
+        }
+        mixer.trackRoutes.push_back(std::move(route));
+    };
+    for (std::size_t index = 0; index < graph.tracks.size(); ++index) {
+        const auto& spec = graph.tracks[index];
+        auto& track = *prepared.tracks[index]->runtime;
+        const auto* group = spec.outputBusId ? busSpec(*spec.outputBusId) : nullptr;
+        const auto hasEnabledSend =
+            std::any_of(graph.mixer.sends.begin(), graph.mixer.sends.end(),
+                        [&](const auto& send) { return send.trackId == spec.id && send.enabled; });
+        const auto hasExternalAudioDependents =
+            std::any_of(prepared.tracks.begin(), prepared.tracks.end(), [&](const auto& candidate) {
+                return candidate->runtime->externalAudioSource == &track;
+            });
+        const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
+        track.mainOutputAudible =
+            mainSelected && !spec.muted && (group == nullptr || !group->muted);
+        const auto lowLatencyPdcCandidate =
+            (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
+            !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
+            spec.volumeAutomation.empty() && spec.panAutomation.empty();
+        addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
+                      1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});
+        for (const auto& send : graph.mixer.sends) {
+            if (send.trackId != spec.id || !send.enabled) continue;
+            const auto* target = busSpec(send.returnBusId);
+            addTrackRoute(
+                track, mixer.findBus(send.returnBusId), send.position == SendPositionSpec::preFader,
+                juce::Decibels::decibelsToGain(static_cast<float>(send.levelDb)),
+                !spec.muted && audibility.sendRoute(spec.solo, target->solo), false, send.id);
+        }
+    }
+    for (auto& bus : mixer.buses) {
+        const auto* spec = busSpec(bus->id);
+        bus->audible =
+            audibility.busOutput(spec->solo, bus->hasInput, bus->hasAudibleInput, spec->muted);
+        bus->outputLatency = bus->hasInput ? bus->inputLatency + bus->effects->latencySamples() : 0;
+        if (bus->hasInput)
+            mixer.masterInputLatency = std::max(mixer.masterInputLatency, bus->outputLatency);
+    }
+    const auto prepareDelay = [&](MixRouteDelay& delay, const std::int64_t samples) {
+        if (samples < 0 || samples >= std::numeric_limits<int>::max()) {
+            error = "mix route latency exceeds the supported buffer size";
+            return false;
+        }
+        delay.prepare(static_cast<int>(samples));
+        return true;
+    };
+    for (auto& route : mixer.trackRoutes) {
+        const auto target =
+            std::find_if(mixer.buses.begin(), mixer.buses.end(),
+                         [&](const auto& bus) { return route->destination == &bus->input; });
+        const auto targetLatency =
+            target != mixer.buses.end() ? (*target)->inputLatency : mixer.masterInputLatency;
+        if (!prepareDelay(route->delay, targetLatency - route->track->routeLatencySamples))
+            return false;
+        if (route->allowLowLatencyBypass) {
+            const auto downstreamEffectLatency =
+                route->destinationBus != nullptr ? route->destinationBus->effects->latencySamples()
+                                                 : 0;
+            route->track->timelinePdcDelaySamples = std::max<std::int64_t>(
+                0, mixer.masterInputLatency - route->track->routeLatencySamples -
+                       downstreamEffectLatency);
+        }
+    }
+    for (auto& bus : mixer.buses) {
+        auto route = std::make_unique<MixerRoute>();
+        route->sourceBus = bus.get();
+        route->source = &bus->output;
+        route->destination = &mixer.masterInput;
+        route->audible = bus->hasInput;
+        const auto delaySamples = bus->hasInput ? mixer.masterInputLatency - bus->outputLatency : 0;
+        if (!prepareDelay(route->delay, delaySamples)) return false;
+        mixer.busRoutes.push_back(std::move(route));
+    }
+    for (auto& track : prepared.tracks) {
+        auto& runtime = *track->runtime;
+        if (runtime.postEffectCompensationDelaySamples + runtime.timelinePdcDelaySamples +
+                prepared.preparedBlockSize >=
+            std::numeric_limits<int>::max()) {
+            error = "timeline clip compensation exceeds the supported buffer size";
+            return false;
+        }
+        runtime.prepareTimelineInputDelay(static_cast<int>(runtime.timelinePdcDelaySamples));
+        runtime.postEffectDelayBuffer.setSize(
+            2,
+            static_cast<int>(runtime.postEffectCompensationDelaySamples +
+                             runtime.timelinePdcDelaySamples + prepared.preparedBlockSize + 1),
+            false, true, false);
+        runtime.postEffectDelayBuffer.clear();
+    }
+    const auto finalLatency = mixer.masterInputLatency + mixer.masterEffects->latencySamples();
+    prepared.summary.maximumLatencySamples = static_cast<std::uint64_t>(finalLatency);
     return true;
 }
 

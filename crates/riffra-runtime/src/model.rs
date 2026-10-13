@@ -58,6 +58,17 @@ pub struct TrackAudioMeter {
     pub rms_right: f64,
 }
 
+/// Post-effect and post-fader stereo meter of a Group or Return.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BusAudioMeter {
+    pub bus_id: String,
+    pub peak_left: f64,
+    pub peak_right: f64,
+    pub rms_left: f64,
+    pub rms_right: f64,
+}
+
 /// Meter frame of the Project that owns the active graph.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -73,14 +84,15 @@ pub struct AudioMeterFrame {
     pub invalid_samples: u64,
     pub feedback_suspected: bool,
     pub track_meters: Vec<TrackAudioMeter>,
+    pub bus_meters: Vec<BusAudioMeter>,
 }
 
 /// Plugin state captured from an open native plugin editor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct TrackPluginStateChanged {
+pub struct PluginStateChanged {
     pub project_id: String,
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_values: Vec<f32>,
     pub state_data: Option<String>,
@@ -90,9 +102,9 @@ pub struct TrackPluginStateChanged {
 /// One parameter changed in an open native plugin editor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct TrackPluginParameterChanged {
+pub struct PluginParameterChanged {
     pub project_id: String,
-    pub track_id: String,
+    pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_index: u32,
     pub value: f32,

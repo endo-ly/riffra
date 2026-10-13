@@ -47,7 +47,7 @@ pub fn parse_wav(bytes: &[u8]) -> Result<WavMetadata, String> {
         }
         if id == b"fmt " && size >= 16 {
             format = Some((
-                read_u16(&bytes[start..start + 2])?,
+                wav_format(&bytes[start..end])?,
                 read_u16(&bytes[start + 2..start + 4])?,
                 read_u32(&bytes[start + 4..start + 8])?,
                 read_u16(&bytes[start + 14..start + 16])?,
@@ -88,6 +88,20 @@ fn read_u16(bytes: &[u8]) -> Result<u16, String> {
         })
 }
 
+fn wav_format(fmt: &[u8]) -> Result<u16, String> {
+    let tag = read_u16(fmt)?;
+    if tag != 0xfffe {
+        return Ok(tag);
+    }
+    let subtype = fmt
+        .get(24..40)
+        .ok_or("extensible wav format is truncated")?;
+    if subtype[2..] != [0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71] {
+        return Err("extensible wav subtype is unsupported".into());
+    }
+    read_u16(subtype)
+}
+
 fn read_u32(bytes: &[u8]) -> Result<u32, String> {
     bytes
         .get(..4)
@@ -105,6 +119,15 @@ fn read_u32(bytes: &[u8]) -> Result<u32, String> {
 /// # Errors
 /// Returns an error for unreadable files, malformed chunks, or incomplete frames.
 pub fn read_wav_metadata(path: &Path) -> Result<(u32, u64), String> {
+    let wav = read_wav_structure(path)?;
+    Ok((wav.sample_rate, wav.frame_count))
+}
+
+/// Reads WAV structure and sample offsets without loading the audio payload.
+///
+/// # Errors
+/// Returns an error for unreadable files, malformed chunks, or incomplete frames.
+pub fn read_wav_structure(path: &Path) -> Result<WavMetadata, String> {
     let mut file =
         File::open(path).map_err(|error| format!("audio could not be opened: {error}"))?;
     let file_len = file
@@ -118,6 +141,8 @@ pub fn read_wav_metadata(path: &Path) -> Result<(u32, u64), String> {
         return Err("audio is not a RIFF/WAVE file.".into());
     }
     let mut channels = None;
+    let mut format = None;
+    let mut data_offset = None;
     let mut sample_rate = None;
     let mut bits_per_sample = None;
     let mut data_len = None;
@@ -150,14 +175,25 @@ pub fn read_wav_metadata(path: &Path) -> Result<(u32, u64), String> {
         }
         match &chunk_header[..4] {
             b"fmt " if chunk_len >= 16 => {
-                let mut fmt = [0_u8; 16];
-                file.read_exact(&mut fmt)
+                let mut fmt = [0_u8; 40];
+                file.read_exact(&mut fmt[..16])
                     .map_err(|error| format!("audio format could not be read: {error}"))?;
                 channels = Some(u16::from_le_bytes([fmt[2], fmt[3]]));
+                if u16::from_le_bytes([fmt[0], fmt[1]]) == 0xfffe {
+                    if chunk_len < 40 {
+                        return Err("extensible wav format is truncated".into());
+                    }
+                    file.read_exact(&mut fmt[16..])
+                        .map_err(|error| format!("audio subtype could not be read: {error}"))?;
+                }
+                format = Some(wav_format(&fmt)?);
                 sample_rate = Some(u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]));
                 bits_per_sample = Some(u16::from_le_bytes([fmt[14], fmt[15]]));
             }
-            b"data" => data_len = Some(chunk_len),
+            b"data" => {
+                data_len = Some(chunk_len);
+                data_offset = Some(chunk_start + 8);
+            }
             _ => {}
         }
         file.seek(SeekFrom::Start(payload_end))
@@ -184,7 +220,16 @@ pub fn read_wav_metadata(path: &Path) -> Result<(u32, u64), String> {
     if data_len % frame_bytes != 0 {
         return Err("audio data does not contain complete frames.".into());
     }
-    Ok((sample_rate, data_len / frame_bytes))
+    Ok(WavMetadata {
+        format: format.ok_or("audio has no format")?,
+        channels,
+        sample_rate,
+        bits_per_sample,
+        data_offset: usize::try_from(data_offset.ok_or("audio has no sample offset")?)
+            .map_err(|_| "audio sample offset exceeds address range")?,
+        data_len: usize::try_from(data_len).map_err(|_| "audio payload exceeds address range")?,
+        frame_count: data_len / frame_bytes,
+    })
 }
 
 #[cfg(test)]
@@ -213,9 +258,32 @@ mod tests {
 
     #[test]
     fn parses_structural_metadata_and_frame_count() {
-        let metadata = parse_wav(&wav(&[0; 16], 2, 48_000, 16)).unwrap();
-        assert_eq!(metadata.sample_rate, 48_000);
-        assert_eq!(metadata.frame_count, 4);
+        let pcm = wav(&[0; 16], 2, 48_000, 16);
+        let mut float = wav(&[0; 16], 2, 48_000, 32);
+        let size = float.len() as u32 - 8 + 24;
+        float[4..8].copy_from_slice(&size.to_le_bytes());
+        float[16..20].copy_from_slice(&40_u32.to_le_bytes());
+        float[20..22].copy_from_slice(&0xfffe_u16.to_le_bytes());
+        float.splice(
+            36..36,
+            [
+                22, 0, 32, 0, 3, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38,
+                0x9b, 0x71,
+            ],
+        );
+        for (bytes, format, frames) in [(pcm, 1, 4), (float, 3, 2)] {
+            let metadata = parse_wav(&bytes).unwrap();
+            assert_eq!(metadata.sample_rate, 48_000);
+            assert_eq!(metadata.frame_count, frames);
+            assert_eq!(metadata.format, format);
+            let path = std::env::temp_dir().join(format!(
+                "riffra-wav-structure-{}-{format}.wav",
+                std::process::id()
+            ));
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(super::read_wav_structure(&path).unwrap(), metadata);
+            std::fs::remove_file(path).unwrap();
+        }
     }
 
     #[test]

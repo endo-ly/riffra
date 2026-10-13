@@ -91,7 +91,7 @@ fn unsupported(name: &str) -> DispatchError {
     DispatchError::invalid_request(format!("command '{name}' cannot be used in session apply"))
 }
 
-/// Rewrites `trackName` / `clipName` references to IDs against the batch
+/// Rewrites Track, Clip, and Bus name references to IDs against the batch
 /// candidate. A `clipName` is looked up within the Track, and the Track and
 /// Clip references are replaced by the `clipId`. Runs before decoding
 /// because the names are not params fields.
@@ -103,6 +103,57 @@ fn resolve_batch_references(
         Value::Object(params) => params,
         params => return Ok(params),
     };
+
+    if let Some(Value::Object(owner)) = params.get_mut("owner")
+        && let Some(name) = owner.remove("name")
+    {
+        if owner.contains_key("id") {
+            return Err(DispatchError::invalid_request(
+                "owner id and name cannot both be specified",
+            ));
+        }
+        let name = name
+            .as_str()
+            .ok_or_else(|| DispatchError::invalid_request("owner name must be a string"))?;
+        let ids: Vec<_> = match owner.get("kind").and_then(Value::as_str) {
+            Some("track") => canonical
+                .session
+                .arrangement
+                .tracks
+                .iter()
+                .filter(|track| track.name == name)
+                .map(|track| track.id.clone())
+                .collect(),
+            Some("bus") => canonical
+                .session
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .filter(|bus| bus.name == name)
+                .map(|bus| bus.id.clone())
+                .collect(),
+            _ => {
+                return Err(DispatchError::invalid_request(
+                    "owner name requires track or bus kind",
+                ));
+            }
+        };
+        let id = match ids.as_slice() {
+            [id] => id.clone(),
+            [] => {
+                return Err(DispatchError::invalid_request(format!(
+                    "unknown owner name '{name}'"
+                )));
+            }
+            _ => {
+                return Err(DispatchError::invalid_request(format!(
+                    "ambiguous owner name '{name}'"
+                )));
+            }
+        };
+        owner.insert("id".into(), Value::String(id));
+    }
 
     if params.contains_key("trackName") {
         if params.contains_key("trackId") {
@@ -137,6 +188,42 @@ fn resolve_batch_references(
         };
         params.remove("trackName");
         params.insert("trackId".into(), Value::String(track_id));
+    }
+
+    for (name_key, id_key) in [("busName", "busId"), ("returnBusName", "returnBusId")] {
+        if let Some(name) = params.get(name_key) {
+            if params.contains_key(id_key) {
+                return Err(DispatchError::invalid_request(format!(
+                    "{id_key} and {name_key} cannot both be specified"
+                )));
+            }
+            let name = name.as_str().ok_or_else(|| {
+                DispatchError::invalid_request(format!("{name_key} must be a string"))
+            })?;
+            let matches = canonical
+                .session
+                .arrangement
+                .mixer
+                .buses
+                .iter()
+                .filter(|bus| bus.name == name)
+                .collect::<Vec<_>>();
+            let id = match matches.as_slice() {
+                [bus] => bus.id.clone(),
+                [] => {
+                    return Err(DispatchError::invalid_request(format!(
+                        "unknown bus name '{name}'"
+                    )));
+                }
+                _ => {
+                    return Err(DispatchError::invalid_request(format!(
+                        "ambiguous bus name '{name}'"
+                    )));
+                }
+            };
+            params.remove(name_key);
+            params.insert(id_key.into(), Value::String(id));
+        }
     }
 
     if params.contains_key("clipName") {
@@ -560,14 +647,43 @@ mod tests {
                     "operations": [
                         {"command":"track.add","params":{"name":"Lead","kind":"instrument"}},
                         {"command":"music.midi-clip.create","params":{"trackName":"Lead","name":"Verse","start":"1:1","end":"5:1"}},
-                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}}
+                        {"command":"music.note.insert","params":{"trackName":"Lead","clipName":"Verse","notes":[{"pitch":"C4","position":"1:1","duration":"1/8"}]}},
+                        {"command":"mixer.bus.add","params":{"name":"Group","kind":"group"}},
+                        {"command":"mixer.bus.add","params":{"name":"Reverb","kind":"return"}},
+                        {"command":"mixer.output.set","params":{"trackName":"Lead","busName":"Group"}},
+                        {"command":"mixer.send.add","params":{"trackName":"Lead","returnBusName":"Reverb","levelDb":-6}},
+                        {"command":"effect.add","params":{"owner":{"kind":"bus","name":"Group"},"pluginPath":"Group.vst3"}},
+                        {"command":"effect.add","params":{"owner":{"kind":"master"},"pluginPath":"Master.vst3"}}
                     ]
                 }),
             ), None)
             .unwrap();
 
         assert_eq!(output_type(&result), "batchMutation");
-        assert_eq!(output_value(&result)["appliedCommands"], 3);
+        assert_eq!(output_value(&result)["appliedCommands"], 9);
+        assert_eq!(output_value(&result)["createdEntityCounts"]["buses"], 2);
+        assert_eq!(output_value(&result)["createdEntityCounts"]["sends"], 1);
+        let state = dispatcher
+            .dispatch(command("session.get", json!({})), None)
+            .unwrap();
+        let arrangement = &output_value(&state)["arrangement"];
+        assert_eq!(
+            arrangement["tracks"][0]["outputBusId"],
+            arrangement["mixer"]["buses"][0]["id"]
+        );
+        assert_eq!(
+            arrangement["mixer"]["sends"][0]["returnBusId"],
+            arrangement["mixer"]["buses"][1]["id"]
+        );
+        assert_eq!(arrangement["mixer"]["sends"][0]["position"], "postFader");
+        assert_eq!(
+            arrangement["mixer"]["buses"][0]["effects"][0]["plugin"]["path"],
+            "Group.vst3"
+        );
+        assert_eq!(
+            arrangement["mixer"]["masterEffects"][0]["plugin"]["path"],
+            "Master.vst3"
+        );
         assert_eq!(output_value(&result)["createdEntityCounts"]["tracks"], 1);
         assert_eq!(output_value(&result)["createdEntityCounts"]["midiClips"], 1);
         assert_eq!(output_value(&result)["createdEntityCounts"]["midiNotes"], 1);
@@ -604,6 +720,10 @@ mod tests {
                 .unwrap()
                 .len(),
             0
+        );
+        assert_eq!(
+            output_value(&undone)["canonical"]["session"]["arrangement"]["mixer"]["buses"],
+            json!([])
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -782,7 +902,7 @@ mod tests {
             .dispatch(
                 command(
                     "effect.add",
-                    json!({"trackId":track_id,"pluginPath":"existing.vst3"}),
+                    json!({"owner":{"kind":"track","id":track_id},"pluginPath":"existing.vst3"}),
                 ),
                 None,
             )
@@ -805,8 +925,8 @@ mod tests {
                 json!({
                     "includeCreatedIds": true,
                     "operations": [
-                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"first.vst3"}},
-                        {"command":"effect.add","params":{"trackId":track_id,"pluginPath":"second.vst3"}}
+                        {"command":"effect.add","params":{"owner":{"kind":"track","id":track_id},"pluginPath":"first.vst3"}},
+                        {"command":"effect.add","params":{"owner":{"kind":"track","id":track_id},"pluginPath":"second.vst3"}}
                     ]
                 }),
             ), None)

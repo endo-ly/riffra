@@ -60,8 +60,8 @@ pub use instrument::{
     BuiltInInstrumentCatalog, BuiltInInstrumentDefinition, BuiltInInstrumentSummary,
 };
 pub use model::{
-    AudioMeterFrame, RecordingFinalized, RecordingPhase, RuntimeRestarted, RuntimeStartupFinished,
-    TrackAudioMeter, TrackPluginParameterChanged, TrackPluginStateChanged, TransportState,
+    AudioMeterFrame, PluginParameterChanged, PluginStateChanged, RecordingFinalized,
+    RecordingPhase, RuntimeRestarted, RuntimeStartupFinished, TrackAudioMeter, TransportState,
     TransportStatus,
 };
 pub use preferences::{
