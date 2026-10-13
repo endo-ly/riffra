@@ -58,9 +58,15 @@ public:
     /// Enqueues a lifecycle task that must finish within `timeout` of starting
     /// to execute. Exceeding the timeout invokes the timeout handler once.
     [[nodiscard]] bool submit(Task task, std::chrono::milliseconds timeout);
+    /// Enqueues owner-thread work that must start before its queue deadline.
+    /// `onExpired` runs instead if the deadline passes while queued or waiting
+    /// for the owner thread.
+    [[nodiscard]] bool submitWithQueueDeadline(Task task, std::chrono::milliseconds timeout,
+                                               Task onExpired);
     /// Runs control work on the worker in the same FIFO, leaving the Message
-    /// Thread available during realtime completion waits.
-    [[nodiscard]] bool submitControl(Task task, std::chrono::milliseconds timeout);
+    /// Thread available during realtime completion waits. The task must start
+    /// before its queue deadline; `onExpired` runs if it does not.
+    [[nodiscard]] bool submitControl(Task task, std::chrono::milliseconds timeout, Task onExpired);
     /// Enqueues work whose duration is determined by captured media length.
     /// The watchdog measures the time since the last call to
     /// [`RuntimeLifecycleExecutor::reportProgress`], rather than the total
@@ -92,8 +98,13 @@ private:
         std::chrono::milliseconds timeout{0};
         bool usesProgressWatchdog = false;
         bool dispatchToOwner = true;
+        std::chrono::steady_clock::time_point queueDeadline{};
+        Task onExpired;
     };
 
+    [[nodiscard]] bool enqueue(Task task, std::chrono::milliseconds timeout,
+                               bool usesProgressWatchdog, bool dispatchToOwner,
+                               Task onExpired = {});
     void run();
     void watch();
 

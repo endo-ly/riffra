@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -55,6 +56,79 @@ TEST(RuntimeLifecycleExecutorTest, DispatchesTasksThroughConfiguredDispatcher) {
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
     EXPECT_EQ(dispatches.load(std::memory_order_acquire), 1);
     EXPECT_EQ(executions.load(std::memory_order_acquire), 1);
+}
+
+TEST(RuntimeLifecycleExecutorTest, ExpiresControlTaskBeforeExecutionAfterFifoWait) {
+    RuntimeLifecycleExecutor executor;
+    std::atomic<bool> blockerStarted{false};
+    std::atomic<bool> releaseBlocker{false};
+    std::atomic<bool> taskExecuted{false};
+    std::atomic<bool> expirationHandled{false};
+
+    ASSERT_TRUE(executor.submit(
+        [&] {
+            blockerStarted.store(true, std::memory_order_release);
+            while (!releaseBlocker.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        },
+        std::chrono::seconds(5)));
+    if (!waitForFlag(blockerStarted, std::chrono::seconds(1))) {
+        releaseBlocker.store(true, std::memory_order_release);
+        FAIL() << "Lifecycle worker did not start the blocker task.";
+    }
+
+    ASSERT_TRUE(executor.submitControl(
+        [&] { taskExecuted.store(true, std::memory_order_release); }, std::chrono::milliseconds(50),
+        [&] { expirationHandled.store(true, std::memory_order_release); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    releaseBlocker.store(true, std::memory_order_release);
+
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_FALSE(taskExecuted.load(std::memory_order_acquire));
+    EXPECT_TRUE(expirationHandled.load(std::memory_order_acquire));
+}
+
+TEST(RuntimeLifecycleExecutorTest, ExpiresOwnerTaskWhenDispatchWaitsPastQueueDeadline) {
+    std::mutex dispatchMutex;
+    std::condition_variable dispatchReady;
+    bool dispatchStarted = false;
+    bool releaseDispatch = false;
+    RuntimeLifecycleExecutor executor([&](RuntimeLifecycleExecutor::Task task) {
+        {
+            std::unique_lock lock(dispatchMutex);
+            dispatchStarted = true;
+            dispatchReady.notify_one();
+            dispatchReady.wait(lock, [&] { return releaseDispatch; });
+        }
+        task();
+    });
+    executor.setTimeoutHandler([] {});
+    std::atomic<bool> taskExecuted{false};
+    std::atomic<bool> expirationHandled{false};
+
+    ASSERT_TRUE(executor.submitWithQueueDeadline(
+        [&] { taskExecuted.store(true, std::memory_order_release); }, std::chrono::milliseconds(50),
+        [&] { expirationHandled.store(true, std::memory_order_release); }));
+    {
+        std::unique_lock lock(dispatchMutex);
+        if (!dispatchReady.wait_for(lock, std::chrono::seconds(1),
+                                    [&] { return dispatchStarted; })) {
+            releaseDispatch = true;
+            lock.unlock();
+            dispatchReady.notify_one();
+            FAIL() << "Lifecycle task was not dispatched to the owner thread.";
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+        const std::lock_guard lock(dispatchMutex);
+        releaseDispatch = true;
+    }
+    dispatchReady.notify_one();
+
+    ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
+    EXPECT_FALSE(taskExecuted.load(std::memory_order_acquire));
+    EXPECT_TRUE(expirationHandled.load(std::memory_order_acquire));
 }
 
 TEST(RuntimeLifecycleExecutorTest, NeverRunsTwoLifecycleTasksConcurrently) {

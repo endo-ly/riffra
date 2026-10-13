@@ -12,6 +12,11 @@ namespace {
 
 constexpr auto kTrackDeviceTimeout = std::chrono::seconds(10);
 
+void failExpiredTrackDeviceCommand(const std::shared_ptr<CommandResponder>& pending,
+                                   const juce::String& operation) {
+    pending->fail("runtimeLifecycle", "Track Device command expired before execution.", operation);
+}
+
 }  // namespace
 
 void AudioCommandDispatcher::handle(const SetDeviceBypassedCommand& command,
@@ -19,7 +24,7 @@ void AudioCommandDispatcher::handle(const SetDeviceBypassedCommand& command,
     if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
-    const auto submitted = context.runtimeLifecycle.submit(
+    const auto submitted = context.runtimeLifecycle.submitWithQueueDeadline(
         [this, command, pending] {
             juce::String deviceError;
             const auto changed = context.timelineEngine.setDeviceBypassed(
@@ -30,7 +35,8 @@ void AudioCommandDispatcher::handle(const SetDeviceBypassedCommand& command,
             else
                 pending->fail("trackDevice", deviceError, "track.device.bypass");
         },
-        kTrackDeviceTimeout);
+        kTrackDeviceTimeout,
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.device.bypass"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.device.bypass");
@@ -54,7 +60,8 @@ void AudioCommandDispatcher::handle(const SetDeviceParameterCommand& command,
             else
                 pending->fail("trackDevice", deviceError, "track.device.parameter");
         },
-        kTrackDeviceTimeout);
+        kTrackDeviceTimeout,
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.device.parameter"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.device.parameter");
@@ -97,7 +104,8 @@ void AudioCommandDispatcher::handle(const GetDeviceCommand& command, CommandResp
             else
                 pending->fail("trackDevice", deviceError, "track.device.inspect");
         },
-        kTrackDeviceTimeout);
+        kTrackDeviceTimeout,
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.device.inspect"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.device.inspect");
@@ -120,7 +128,8 @@ void AudioCommandDispatcher::handle(const SetPluginStateCommand& command,
             else
                 pending->fail("trackDevice", deviceError, "track.device.setPluginState");
         },
-        kTrackDeviceTimeout);
+        kTrackDeviceTimeout,
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.device.setPluginState"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.device.setPluginState");
@@ -147,7 +156,8 @@ void AudioCommandDispatcher::handle(const SetDeviceProgramCommand& command,
             else
                 pending->fail("trackDevice", deviceError, "track.device.setProgram");
         },
-        kTrackDeviceTimeout);
+        kTrackDeviceTimeout,
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.device.setProgram"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.device.setProgram");
@@ -159,7 +169,7 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
     if (rejectDeviceCommandWhileTimelineBusy(responder)) return;
     const auto pending = std::make_shared<CommandResponder>(std::move(responder));
 
-    const auto submitted = context.runtimeLifecycle.submit(
+    const auto submitted = context.runtimeLifecycle.submitWithQueueDeadline(
         [this, command, pending] {
             auto* device = context.timelineEngine.findDevice(command.owner, command.deviceId);
             if (device == nullptr) {
@@ -239,7 +249,8 @@ void AudioCommandDispatcher::handle(const OpenPluginEditorCommand& command,
             }
             pending->respond(DeviceAckSpec{});
         },
-        std::chrono::seconds(30));
+        std::chrono::seconds(30),
+        [pending] { failExpiredTrackDeviceCommand(pending, "track.pluginEditor.open"); });
     if (!submitted) {
         pending->fail("runtimeLifecycle", "The VST lifecycle executor is stopping.",
                       "track.pluginEditor.open");
