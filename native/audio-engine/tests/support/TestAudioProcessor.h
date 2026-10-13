@@ -251,6 +251,12 @@ private:
 
 class PluginRackTestPeer final {
 public:
+    static void addParameterAndPublishCount(PluginRack& rack,
+                                            juce::AudioProcessorParameter* parameter) {
+        rack.plugin->addParameter(parameter);
+        rack.updateParameterCount(*rack.plugin);
+    }
+
     static std::unique_ptr<PluginRack> install(std::unique_ptr<juce::AudioProcessor> processor,
                                                double sampleRate, int blockSize,
                                                juce::String& error, bool isInstrument = false) {

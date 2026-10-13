@@ -146,6 +146,7 @@ private:
     std::atomic<std::uint64_t> completedControlSequence{0};
     std::atomic<std::uint64_t> cancelledControlSequence{0};
     void queueParameterValue(int index, float value) noexcept;
+    [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
     bool synchronizeParameterController(juce::String& error);
     std::optional<float> parameterValueForText(int index, const juce::String& text,
                                                juce::String& error) const;

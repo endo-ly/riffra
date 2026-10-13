@@ -39,6 +39,15 @@ std::size_t PluginRack::parameterCount() const noexcept {
     return cachedParameterCount.load(std::memory_order_acquire);
 }
 
+bool PluginRack::canQueueParameterValue(const int index, juce::String& error) const noexcept {
+    const auto* queue = parameterQueue.get();
+    if (queue == nullptr || index < 0 || static_cast<std::size_t>(index) >= queue->capacity) {
+        error = "Plugin parameter change queue cannot handle this index.";
+        return false;
+    }
+    return true;
+}
+
 bool PluginRack::hasPrograms() const noexcept {
     return cachedProgramCount.load(std::memory_order_acquire) > 0;
 }
@@ -102,6 +111,7 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
         error = "Plugin parameter index is out of range.";
         return false;
     }
+    if (!canQueueParameterValue(index, error)) return false;
     enqueueParameterChange(index, value);
     return true;
 }

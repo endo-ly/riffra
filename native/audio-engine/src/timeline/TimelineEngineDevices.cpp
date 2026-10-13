@@ -419,6 +419,7 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
         error = "Select exactly one of value or display.";
         return false;
     }
+    if (!rack->canQueueParameterValue(parameterIndex, error)) return false;
     auto normalized = value;
     if (display.has_value()) {
         normalized = juce::MessageManager::callSync([&] {
