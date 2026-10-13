@@ -414,6 +414,7 @@ pub(crate) struct WirePluginStateChanged {
     pub(crate) owner: riffra_core::EffectOwner,
     pub(crate) device_id: String,
     pub(crate) state: WirePluginState,
+    pub(crate) arrangement_revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

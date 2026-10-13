@@ -32,6 +32,9 @@ public:
     using TaskDispatcher = std::function<void(Task)>;
     using TimeoutHandler = std::function<void()>;
 
+    /// Thread that executes a state task within the serialized lifecycle boundary.
+    enum class TaskThread { owner, control };
+
     enum class StateSubmitResult {
         accepted,
         coalesced,
@@ -55,6 +58,9 @@ public:
     /// Enqueues a lifecycle task that must finish within `timeout` of starting
     /// to execute. Exceeding the timeout invokes the timeout handler once.
     [[nodiscard]] bool submit(Task task, std::chrono::milliseconds timeout);
+    /// Runs control work on the worker in the same FIFO, leaving the Message
+    /// Thread available during realtime completion waits.
+    [[nodiscard]] bool submitControl(Task task, std::chrono::milliseconds timeout);
     /// Enqueues work whose duration is determined by captured media length.
     /// The watchdog measures the time since the last call to
     /// [`RuntimeLifecycleExecutor::reportProgress`], rather than the total
@@ -69,7 +75,8 @@ public:
     /// delaying lifecycle work. State events are time-bounded like lifecycle
     /// tasks.
     [[nodiscard]] StateSubmitResult submitState(std::string key, Task task,
-                                                std::chrono::milliseconds timeout);
+                                                std::chrono::milliseconds timeout,
+                                                TaskThread thread = TaskThread::owner);
     /// Installs the handler invoked when a running task exceeds its timeout.
     /// The default handler terminates the process. The handler runs on the
     /// watchdog thread and must never block.
@@ -84,6 +91,7 @@ private:
         Task task;
         std::chrono::milliseconds timeout{0};
         bool usesProgressWatchdog = false;
+        bool dispatchToOwner = true;
     };
 
     void run();

@@ -265,7 +265,7 @@ public:
         }
 
         auto rack = std::make_unique<PluginRack>();
-        rack->updateParameterCache(*processor);
+        rack->updateParameterCount(*processor);
         if (!rack->allocateParameterQueue(
                 static_cast<std::size_t>(processor->getParameters().size()), error))
             return {};
@@ -281,6 +281,7 @@ public:
                                        std::memory_order_release);
         rack->cachedHasEditor.store(processor->hasEditor(), std::memory_order_release);
         rack->plugin = std::move(processor);
+        rack->controlBuffer.setSize(2, blockSize);
         rack->preparedLatencySamples = std::max(0, rack->plugin->getLatencySamples());
         const auto tail = rack->plugin->getTailLengthSeconds();
         rack->preparedTailSamples =

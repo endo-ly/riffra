@@ -86,12 +86,18 @@ TEST(PluginRackTest, RestoresPersistedPluginState) {
                                             kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
 
+    juce::AudioBuffer<float> output(2, kBlockSize);
+    const auto process = [&] {
+        rack->process(nullptr, 0, output.getArrayOfWritePointers(), 2, kBlockSize);
+    };
     ASSERT_TRUE(rack->setParameter(0, 0.75f, error)) << error;
+    process();
     const auto saved = rack->persistedState(error);
     ASSERT_TRUE(saved.has_value()) << error;
     ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
 
     ASSERT_TRUE(rack->applyPersistedState(*saved, error)) << error;
+    process();
     const auto restored = rack->persistedState(error);
     ASSERT_TRUE(restored.has_value()) << error;
     ASSERT_FALSE(restored->parameterValues.empty());

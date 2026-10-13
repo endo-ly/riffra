@@ -114,13 +114,19 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
                                                kBlockSize, error))
         << error;
 
+    juce::AudioBuffer<float> output(2, kBlockSize);
+    const auto process = [&](PluginChain& chain) {
+        chain.process(nullptr, 0, output.getArrayOfWritePointers(), 2, kBlockSize);
+    };
     ASSERT_TRUE(playbackState.setParameter("device-state", 0, 0.75f, error));
+    process(playbackState);
     const auto captured = playbackState.persistedState("device-state", error);
     ASSERT_TRUE(captured.has_value()) << error;
     const std::vector<PluginDeviceSpec> persistedDevices{
         {"device-state", "test-device.vst3", *captured}};
 
     ASSERT_TRUE(liveState.applyState(persistedDevices, error)) << error;
+    process(liveState);
     const auto liveCaptured = liveState.persistedState("device-state", error);
     ASSERT_TRUE(liveCaptured.has_value()) << error;
     const auto& liveValues = liveCaptured->parameterValues;

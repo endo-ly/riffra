@@ -32,6 +32,17 @@ bool RuntimeLifecycleExecutor::submit(Task task, std::chrono::milliseconds timeo
     return true;
 }
 
+bool RuntimeLifecycleExecutor::submitControl(Task task, std::chrono::milliseconds timeout) {
+    if (!task || timeout <= std::chrono::milliseconds::zero()) return false;
+    {
+        const std::lock_guard lock(mutex);
+        if (stopping) return false;
+        lifecycleTasks.push_back(TimedTask{std::move(task), timeout, false, false});
+    }
+    wake.notify_one();
+    return true;
+}
+
 bool RuntimeLifecycleExecutor::submitWithProgress(Task task,
                                                   const std::chrono::milliseconds stallTimeout) {
     if (!task || stallTimeout <= std::chrono::milliseconds::zero()) return false;
@@ -51,14 +62,15 @@ void RuntimeLifecycleExecutor::reportProgress() noexcept {
 }
 
 RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitState(
-    std::string key, Task task, std::chrono::milliseconds timeout) {
+    std::string key, Task task, std::chrono::milliseconds timeout, const TaskThread thread) {
     if (!task || key.empty() || timeout <= std::chrono::milliseconds::zero())
         return StateSubmitResult::invalid;
     {
         const std::lock_guard lock(mutex);
         if (stopping) return StateSubmitResult::stopping;
         if (const auto existing = stateTasks.find(key); existing != stateTasks.end()) {
-            existing->second = TimedTask{std::move(task), timeout, false};
+            existing->second =
+                TimedTask{std::move(task), timeout, false, thread == TaskThread::owner};
             return StateSubmitResult::coalesced;
         } else {
             StateSubmitResult result = StateSubmitResult::accepted;
@@ -71,7 +83,8 @@ RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitStat
                 result = StateSubmitResult::droppedCapacity;
             }
             stateOrder.push_back(key);
-            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout, false});
+            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout, false,
+                                                         thread == TaskThread::owner});
             wake.notify_one();
             return result;
         }
@@ -178,7 +191,7 @@ void RuntimeLifecycleExecutor::run() {
             currentTaskTimeout = timedTask.timeout;
         }
         try {
-            if (taskDispatcher)
+            if (taskDispatcher && timedTask.dispatchToOwner)
                 taskDispatcher(std::move(timedTask.task));
             else
                 timedTask.task();

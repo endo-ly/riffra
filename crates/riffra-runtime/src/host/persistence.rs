@@ -1,5 +1,6 @@
 use super::HostState;
 use super::events::HostEventSubscription;
+use crate::execution::GraphPluginState;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,7 @@ struct PluginStateEvent {
     parameter_values: Vec<f32>,
     state_data: Option<String>,
     bypassed: bool,
+    arrangement_revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -248,13 +250,30 @@ impl HostState {
         }
         let committed = writer
             .commit(|mut app| match &queued.change {
-                PendingPluginChange::State(change) => app.persist_plugin_state(
-                    &change.owner,
-                    &change.device_id,
-                    change.parameter_values.clone(),
-                    change.state_data.clone(),
-                    change.bypassed,
-                ),
+                PendingPluginChange::State(change) => {
+                    let state = if change.arrangement_revision
+                        != app.canonical_state().session.arrangement.revision
+                    {
+                        self.audio
+                            .get_plugin_state(&change.owner, &change.device_id)
+                            .map_err(|error| {
+                                riffra_core::ApplicationError::InvalidCommand(error.to_string())
+                            })?
+                    } else {
+                        GraphPluginState {
+                            parameter_values: change.parameter_values.clone(),
+                            state_data: change.state_data.clone(),
+                            bypassed: change.bypassed,
+                        }
+                    };
+                    app.persist_plugin_state(
+                        &change.owner,
+                        &change.device_id,
+                        state.parameter_values,
+                        state.state_data,
+                        state.bypassed,
+                    )
+                }
                 PendingPluginChange::Parameter(change) => {
                     if change.parameter_index < 0 || !change.value.is_finite() {
                         return Err(riffra_core::ApplicationError::InvalidCommand(
@@ -427,7 +446,7 @@ mod tests {
         riffra_control::HostEventFrame::new(
             "plugin-state-changed",
             serde_json::json!({
-                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "parameterValues": [value], "stateData": null, "bypassed": false,
+                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "arrangementRevision": 0, "parameterValues": [value], "stateData": null, "bypassed": false,
             }),
         )
     }
@@ -492,6 +511,7 @@ mod tests {
         let storage = writer.project().storage.clone();
         state.events.emit(crate::HostEvent::PluginStateChanged(
             crate::model::PluginStateChanged {
+                arrangement_revision: 0,
                 project_id: previous.project_id.clone(),
                 owner: riffra_core::EffectOwner::Track {
                     id: "track:1".into(),
@@ -553,6 +573,7 @@ mod tests {
         for (device_id, value) in [("deleted", 0.25), ("device:1", 0.75)] {
             state.events.emit(crate::HostEvent::PluginStateChanged(
                 crate::model::PluginStateChanged {
+                    arrangement_revision: 0,
                     project_id: previous.project_id.clone(),
                     owner: riffra_core::EffectOwner::Track {
                         id: "track:1".into(),

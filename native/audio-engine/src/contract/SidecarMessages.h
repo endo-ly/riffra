@@ -334,6 +334,7 @@ struct PluginStateChangedSpec final {
     EffectOwnerSpec owner;
     juce::String deviceId;
     PluginStateSpec state;
+    std::uint64_t arrangementRevision = 0;
 };
 
 struct PluginParameterChangedSpec final {

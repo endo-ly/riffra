@@ -604,7 +604,7 @@ public:
         }
 
         // Act
-        if (!engine.mirrorEditorDeviceParameter(
+        if (!engine.setDeviceParameter(
                 EffectOwnerSpec{EffectOwnerKindSpec::track, "track:editor-instrument"},
                 "instrument:editor", 0, 0.75f, error))
             return false;
