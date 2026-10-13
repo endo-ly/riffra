@@ -59,6 +59,14 @@ TEST(RuntimeLifecycleExecutorTest, DispatchesTasksThroughConfiguredDispatcher) {
 }
 
 TEST(RuntimeLifecycleExecutorTest, ExpiresControlTaskBeforeExecutionAfterFifoWait) {
+    constexpr auto clientResponseTimeout = std::chrono::milliseconds(300);
+    constexpr auto queueStartTimeout = std::chrono::milliseconds(250);
+    constexpr auto queueReleaseAfter = std::chrono::milliseconds(500);
+    constexpr auto previousNativeQueueTimeout = std::chrono::milliseconds(1000);
+    ASSERT_TRUE(queueStartTimeout < clientResponseTimeout);
+    ASSERT_TRUE(clientResponseTimeout < queueReleaseAfter);
+    ASSERT_TRUE(queueReleaseAfter < previousNativeQueueTimeout);
+
     RuntimeLifecycleExecutor executor;
     std::atomic<bool> blockerStarted{false};
     std::atomic<bool> releaseBlocker{false};
@@ -78,9 +86,9 @@ TEST(RuntimeLifecycleExecutorTest, ExpiresControlTaskBeforeExecutionAfterFifoWai
     }
 
     ASSERT_TRUE(executor.submitControl(
-        [&] { taskExecuted.store(true, std::memory_order_release); }, std::chrono::milliseconds(50),
-        [&] { expirationHandled.store(true, std::memory_order_release); }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        [&] { taskExecuted.store(true, std::memory_order_release); }, previousNativeQueueTimeout,
+        queueStartTimeout, [&] { expirationHandled.store(true, std::memory_order_release); }));
+    std::this_thread::sleep_for(queueReleaseAfter);
     releaseBlocker.store(true, std::memory_order_release);
 
     ASSERT_TRUE(executor.waitForIdle(std::chrono::seconds(1)));
@@ -102,12 +110,12 @@ TEST(RuntimeLifecycleExecutorTest, ExpiresOwnerTaskWhenDispatchWaitsPastQueueDea
         }
         task();
     });
-    executor.setTimeoutHandler([] {});
     std::atomic<bool> taskExecuted{false};
     std::atomic<bool> expirationHandled{false};
 
     ASSERT_TRUE(executor.submitWithQueueDeadline(
-        [&] { taskExecuted.store(true, std::memory_order_release); }, std::chrono::milliseconds(50),
+        [&] { taskExecuted.store(true, std::memory_order_release); }, std::chrono::seconds(1),
+        std::chrono::milliseconds(50),
         [&] { expirationHandled.store(true, std::memory_order_release); }));
     {
         std::unique_lock lock(dispatchMutex);
