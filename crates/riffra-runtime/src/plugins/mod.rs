@@ -10,7 +10,8 @@ use std::{
 pub(crate) mod catalog;
 pub(crate) mod validation;
 pub(crate) use catalog::{
-    load, reuse_cached_scan_results, save, validated_catalog_plugin, validated_plugin,
+    load, reuse_cached_scan_results, save, selected_plugin_path, validated_catalog_plugin,
+    validated_plugin,
 };
 pub(crate) use validation::{validate_report, validate_report_with_cancel};
 

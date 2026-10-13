@@ -154,6 +154,38 @@ pub fn validated_plugin(
     Ok((name, path))
 }
 
+/// Resolves exactly one path or catalog ID, validating IDs in the current catalog.
+///
+/// # Errors
+/// Returns an error for ambiguous selection, missing IDs, duplicate IDs, or invalid plugins.
+pub(crate) fn selected_plugin_path(
+    data_root: &Path,
+    path: Option<&str>,
+    id: Option<&str>,
+    expected_role: PluginRole,
+) -> Result<PathBuf, String> {
+    match (path, id) {
+        (Some(path), None) if !path.trim().is_empty() => Ok(PathBuf::from(path)),
+        (None, Some(id)) if !id.trim().is_empty() => {
+            let entries = load(data_root).map_err(|error| error.to_string())?;
+            let mut matching = entries.iter().filter(|entry| entry.id == id);
+            let entry = matching
+                .next()
+                .ok_or_else(|| format!("plugin ID is not registered: {id}"))?;
+            if matching.next().is_some() {
+                return Err(format!("plugin ID is ambiguous: {id}"));
+            }
+            if entry.scan_state != PluginScanState::Validated || entry.role != Some(expected_role) {
+                return Err(format!(
+                    "plugin ID is not validated for {expected_role:?}: {id}"
+                ));
+            }
+            validated_plugin(data_root, Path::new(&entry.path), expected_role).map(|(_, path)| path)
+        }
+        _ => Err("select exactly one of pluginPath or pluginId".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +267,24 @@ mod tests {
         assert_eq!(name, "Amp");
         assert_eq!(resolved_path, plugin_path);
 
+        assert_eq!(
+            selected_plugin_path(&root, None, Some("vst3-amp"), PluginRole::Effect).unwrap(),
+            plugin_path
+        );
+        assert!(selected_plugin_path(&root, None, Some("missing"), PluginRole::Effect).is_err());
+        assert!(
+            selected_plugin_path(&root, None, Some("vst3-amp"), PluginRole::Instrument).is_err()
+        );
+        let mut duplicate = report.clone();
+        duplicate.plugins.push(duplicate.plugins[0].clone());
+        save(&root, &duplicate).unwrap();
+        assert!(
+            selected_plugin_path(&root, None, Some("vst3-amp"), PluginRole::Effect)
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+        save(&root, &report).unwrap();
+
         let error = validated_plugin(&root, &plugin_path, PluginRole::Instrument).unwrap_err();
         assert!(error.contains("role Effect"));
 
@@ -243,6 +293,11 @@ mod tests {
         save(&root, &quarantined).unwrap();
         let error = validated_plugin(&root, &plugin_path, PluginRole::Effect).unwrap_err();
         assert!(error.contains("not validated"));
+        assert!(selected_plugin_path(&root, None, Some("vst3-amp"), PluginRole::Effect).is_err());
+        quarantined.plugins[0].scan_state = PluginScanState::Validated;
+        save(&root, &quarantined).unwrap();
+        fs::remove_dir_all(&plugin_path).unwrap();
+        assert!(selected_plugin_path(&root, None, Some("vst3-amp"), PluginRole::Effect).is_err());
         let _ = fs::remove_dir_all(root);
     }
 

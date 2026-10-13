@@ -7,17 +7,21 @@ use ts_rs::TS;
 /// Loads a VST3 into a Track's instrument slot or effect chain.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 pub struct PluginPathParams {
     pub track_id: String,
-    pub plugin_path: String,
+    pub plugin_path: Option<String>,
+    pub plugin_id: Option<String>,
 }
 
 /// Inserts an effect into a Track, Bus, or Master chain.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 pub struct EffectAddParams {
     pub owner: riffra_core::EffectOwner,
-    pub plugin_path: String,
+    pub plugin_path: Option<String>,
+    pub plugin_id: Option<String>,
 }
 
 /// Opens a validated VST3 outside the Project.
@@ -44,11 +48,13 @@ pub struct DeviceBypassParams {
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
 pub struct DeviceParameterSetParams {
     pub owner: riffra_core::EffectOwner,
     pub device_id: String,
     pub parameter_index: u32,
-    pub value: f32,
+    pub value: Option<f32>,
+    pub display: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
