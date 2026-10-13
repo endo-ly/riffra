@@ -21,10 +21,11 @@ public:
     }
 
     void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& details) override {
-        if (!host.rack.hostEditInProgress.load(std::memory_order_acquire) &&
-            (details.nonParameterStateChanged ||
-             (details.programChanged && !details.parameterInfoChanged)))
-            host.markOpaqueStateDirty();
+        if (host.rack.hostEditInProgress.load(std::memory_order_acquire) ||
+            (!details.nonParameterStateChanged && !details.programChanged))
+            return;
+        host.rack.parameterControllerSyncPending.store(true, std::memory_order_release);
+        host.markOpaqueStateDirty();
     }
 
 private:
