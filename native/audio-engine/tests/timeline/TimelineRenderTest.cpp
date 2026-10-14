@@ -299,37 +299,63 @@ TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughOfflineRenderer) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    test::TemporaryDirectory directory;
-    const auto destination = directory.get().getChildFile("built-in.wav");
-    OfflineRenderer::Result result;
-    juce::String error;
+TEST(TimelineEngineTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOfflineRenderer) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    for (const bool vst3 : {false, true}) {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        test::TemporaryDirectory directory;
+        const auto destination = directory.get().getChildFile("built-in.wav");
+        OfflineRenderer::Result result;
+        juce::String error;
 
-    // Act
-    const auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
-    const auto rendered = renderTestSnapshot(snapshot.graph, formats, destination, 0, 960, 48'000,
-                                             512, false, result, error);
+        // Act
+        auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
+        if (vst3) {
+            auto& track = snapshot.graph.tracks.front();
+            track.panLaw = "unityCenterStereo";
+            track.instrument =
+                Vst3InstrumentSpec{"instrument:vst", RIFFRA_TEST_INSTRUMENT_BUNDLE_PATH, {}};
+            track.midiClips[0].notes[0].durationTicks = 960;
+            snapshot.graph.automation = {{AutomationTargetKind::deviceParameter,
+                                          "instrument:vst",
+                                          "3165055",
+                                          AutomationInterpolationSpec::step,
+                                          {{0, 0.25}, {240, 0.75}}}};
+        }
+        const auto rendered = renderTestSnapshot(snapshot.graph, formats, destination, 0, 960,
+                                                 48'000, 512, false, result, error);
 
-    // Assert
-    ASSERT_TRUE(rendered) << error.toStdString();
-    ASSERT_TRUE(destination.existsAsFile());
-    ASSERT_GT(result.frames, 0u);
-    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
-    ASSERT_NE(reader, nullptr);
-    ASSERT_EQ(reader->numChannels, 2u);
-    ASSERT_GT(reader->lengthInSamples, 0);
-    const auto frameCount = static_cast<int>(reader->lengthInSamples);
-    juce::AudioBuffer<float> output(2, frameCount);
-    ASSERT_TRUE(reader->read(&output, 0, frameCount, 0, true, true));
-    for (int channel = 0; channel < output.getNumChannels(); ++channel)
-        for (int sample = 0; sample < output.getNumSamples(); ++sample)
-            ASSERT_TRUE(std::isfinite(output.getSample(channel, sample)));
-    EXPECT_GT(
-        std::max(output.getMagnitude(0, 0, frameCount), output.getMagnitude(1, 0, frameCount)),
-        0.0f);
+        // Assert
+        ASSERT_TRUE(rendered) << error.toStdString();
+        ASSERT_TRUE(destination.existsAsFile());
+        ASSERT_GT(result.frames, 0u);
+        auto reader =
+            std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
+        ASSERT_NE(reader, nullptr);
+        ASSERT_EQ(reader->numChannels, 2u);
+        ASSERT_GT(reader->lengthInSamples, 0);
+        const auto frameCount = static_cast<int>(reader->lengthInSamples);
+        juce::AudioBuffer<float> output(2, frameCount);
+        ASSERT_TRUE(reader->read(&output, 0, frameCount, 0, true, true));
+        for (int channel = 0; channel < output.getNumChannels(); ++channel)
+            for (int sample = 0; sample < output.getNumSamples(); ++sample)
+                ASSERT_TRUE(std::isfinite(output.getSample(channel, sample)));
+        EXPECT_GT(
+            std::max(output.getMagnitude(0, 0, frameCount), output.getMagnitude(1, 0, frameCount)),
+            0.0f);
+        if (vst3) {
+            EXPECT_NEAR(output.getSample(0, 1000), 0.0625f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 10000), 0.1875f, 0.0001f);
+            auto invalid = snapshot.graph;
+            invalid.automation.front().parameterId = "absent";
+            EXPECT_FALSE(renderTestSnapshot(invalid, formats,
+                                            directory.get().getChildFile("invalid.wav"), 0, 960,
+                                            48'000, 512, false, result, error));
+            EXPECT_TRUE(error.contains("instrument:vst/absent"));
+        }
+    }
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {

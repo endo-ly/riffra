@@ -1334,6 +1334,95 @@ mod tests {
             })
             .collect();
         session.arrangement.mixer.master_effects = vec![fx("fx:master")];
+        session.arrangement.tracks[1].effects = vec![fx("fx:audio")];
+        let mut lane = |id: &str, target, value: f64| {
+            session
+                .arrangement
+                .automation_lanes
+                .push(riffra_core::AutomationLane {
+                    id: id.into(),
+                    target,
+                    interpolation: riffra_core::AutomationInterpolation::Step,
+                    points: vec![riffra_core::AutomationPoint {
+                        id: format!("point:{id}"),
+                        tick: TimelineTick(0),
+                        value,
+                    }],
+                });
+        };
+        use riffra_core::{AutomationTarget, BusMixParameter, TrackMixParameter};
+        lane(
+            "volume",
+            AutomationTarget::TrackMix {
+                track_id: "audio".into(),
+                parameter: TrackMixParameter::Volume,
+            },
+            -6.0,
+        );
+        lane(
+            "pan",
+            AutomationTarget::TrackMix {
+                track_id: "audio".into(),
+                parameter: TrackMixParameter::Pan,
+            },
+            0.0,
+        );
+        for id in ["bus:group", "bus:return"] {
+            lane(
+                &format!("{id}:gain"),
+                AutomationTarget::BusMix {
+                    bus_id: id.into(),
+                    parameter: BusMixParameter::Gain,
+                },
+                -6.0,
+            );
+            lane(
+                &format!("{id}:pan"),
+                AutomationTarget::BusMix {
+                    bus_id: id.into(),
+                    parameter: BusMixParameter::Pan,
+                },
+                0.0,
+            );
+        }
+        for id in ["send:audio", "send:midi"] {
+            lane(
+                id,
+                AutomationTarget::SendLevel { send_id: id.into() },
+                -12.0,
+            );
+        }
+        for (id, value) in [
+            ("fx:audio", 0.75),
+            ("fx:group", 0.25),
+            ("fx:return", 0.25),
+            ("fx:master", 0.75),
+        ] {
+            // The test plugin exposes the VST3 ID derived from its stable JUCE "gain" ID.
+            lane(
+                id,
+                AutomationTarget::DeviceParameter {
+                    device_id: id.into(),
+                    parameter_id: "3165055".into(),
+                },
+                value,
+            );
+        }
+        lane("master", AutomationTarget::MasterGain, -6.0);
+        session
+            .arrangement
+            .automation_lanes
+            .last_mut()
+            .unwrap()
+            .points
+            .push(riffra_core::AutomationPoint {
+                id: "master-late".into(),
+                tick: TimelineTick(960),
+                value: -12.0,
+            });
+        let mut static_session = session.clone();
+        static_session.arrangement.automation_lanes.clear();
+
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
         let worker = RenderWorker::new(executable.into());
         let mut pending = render_stems_with_cancellation(
@@ -1417,6 +1506,48 @@ mod tests {
             maximum_error < 0.0001,
             "linear mixer stems differ from the complete mix by {maximum_error}"
         );
+        let baseline = render_timeline_with_cancellation(
+            &worker,
+            &root,
+            &catalog,
+            &static_session,
+            3,
+            RenderOptions {
+                track_id: Some("audio".into()),
+                ..Default::default()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let baseline_samples = samples(Path::new(&baseline.path));
+        let audio_stem = pending
+            .result
+            .stems
+            .iter()
+            .position(|stem| stem.track_id == "audio")
+            .unwrap();
+        let rms = |values: &[f64], start: usize, end: usize| {
+            (values[start * 2..end * 2]
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                / ((end - start) * 2) as f64)
+                .sqrt()
+        };
+        let gain = 10.0_f64.powf(-6.0 / 20.0);
+        let send = 10.0_f64.powf(-12.0 / 20.0);
+        let expected_ratio = 1.125 * gain.powi(3) * (1.0 + send) / (1.0 + gain);
+        for (start, end, ratio) in [
+            (5_000, 6_000, expected_ratio),
+            (25_000, 26_000, expected_ratio * gain),
+        ] {
+            let actual_ratio =
+                rms(&stem_samples[audio_stem], start, end) / rms(&baseline_samples, start, end);
+            assert!(
+                (actual_ratio - ratio).abs() < 0.0001,
+                "automated stem ratio {actual_ratio} differs from {ratio}"
+            );
+        }
         let manifest: serde_json::Value = serde_json::from_slice(
             &fs::read(pending.result.directory.clone() + "/render.json").unwrap(),
         )
@@ -1720,6 +1851,19 @@ mod tests {
             "latency-reference".into(),
             "Latency Reference".into(),
         ));
+        session
+            .arrangement
+            .automation_lanes
+            .push(riffra_core::AutomationLane {
+                id: "master-lane".into(),
+                target: riffra_core::AutomationTarget::MasterGain,
+                interpolation: riffra_core::AutomationInterpolation::Step,
+                points: vec![riffra_core::AutomationPoint {
+                    id: "master-point".into(),
+                    tick: TimelineTick(120),
+                    value: -9.0,
+                }],
+            });
         let catalog = empty_catalog();
         let plan = build_render_plan(
             &root,
@@ -1739,6 +1883,12 @@ mod tests {
         assert!(!tracks[0].muted);
         assert_eq!(tracks[1].id, "latency-reference");
         assert!(tracks[1].muted);
+        assert_eq!(plan.graph.automation.len(), 1);
+        assert_eq!(
+            plan.graph.automation[0].target,
+            riffra_core::AutomationTarget::MasterGain
+        );
+        assert_eq!(plan.graph.automation[0].points[0].value, -9.0);
     }
 
     #[test]

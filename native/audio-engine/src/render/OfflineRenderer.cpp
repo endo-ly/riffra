@@ -160,6 +160,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
     const auto status = timelineEngine->status();
+    if (status.graph && !status.graph->automationWarnings.empty()) {
+        error = "automation cannot be rendered: " + status.graph->automationWarnings.front();
+        return nullptr;
+    }
     const auto latencySamples = status.graph.has_value()
                                     ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
                                     : 0;
