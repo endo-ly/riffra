@@ -71,7 +71,8 @@ pub(crate) enum SidecarCommand {
         owner: riffra_core::EffectOwner,
         device_id: String,
         parameter_index: u32,
-        value: f32,
+        value: Option<f32>,
+        display: Option<String>,
     },
     GetDeviceStatus {
         owner: riffra_core::EffectOwner,

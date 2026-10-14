@@ -16,8 +16,15 @@ impl HostDispatcher<'_> {
         application: &mut riffra_core::application::Application<'_, S>,
         params: PluginPathParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let (name, plugin_path) =
-            self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Instrument)?;
+        let (name, plugin_path) = self.plugin_for_slot(
+            &plugins::selected_plugin_path(
+                &self.data_root,
+                params.plugin_path.as_deref(),
+                params.plugin_id.as_deref(),
+                PluginRole::Instrument,
+            )?,
+            PluginRole::Instrument,
+        )?;
         let snapshot = application.canonical_state();
         let track = snapshot
             .session
@@ -54,8 +61,15 @@ impl HostDispatcher<'_> {
         application: &mut riffra_core::application::Application<'_, S>,
         params: EffectAddParams,
     ) -> Result<ControlOutput, DispatchError> {
-        let (name, plugin_path) =
-            self.plugin_for_slot(Path::new(&params.plugin_path), PluginRole::Effect)?;
+        let (name, plugin_path) = self.plugin_for_slot(
+            &plugins::selected_plugin_path(
+                &self.data_root,
+                params.plugin_path.as_deref(),
+                params.plugin_id.as_deref(),
+                PluginRole::Effect,
+            )?,
+            PluginRole::Effect,
+        )?;
         self.created(
             application.add_effect_with_created_ids(
                 &params.owner,

@@ -172,7 +172,8 @@ public:
     bool setDeviceBypassed(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                            bool bypassed, juce::String& error) noexcept;
     bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
-                            int parameterIndex, float value, juce::String& error) noexcept;
+                            int parameterIndex, std::optional<float> value, juce::String& error,
+                            const std::optional<juce::String>& display = {}) noexcept;
     bool setDeviceProgram(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                           int programIndex, juce::String& error);
     bool setDevicePersistedState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
@@ -185,17 +186,12 @@ public:
     [[nodiscard]] std::optional<DeviceProgramsSpec> deviceProgramStatus(
         const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
         juce::String& error) const;
+    /// Revision of the latest committed Arrangement Graph.
+    [[nodiscard]] std::uint64_t committedRevision() const;
     [[nodiscard]] PluginRack* findDevice(const EffectOwnerSpec& deviceOwner,
-                                         const juce::String& deviceId) noexcept;
-    bool mirrorEditorDeviceState(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
-                                 const PluginStateSpec& persistedState,
-                                 juce::String& error) noexcept;
-    bool mirrorEditorDeviceParameter(const EffectOwnerSpec& deviceOwner,
-                                     const juce::String& deviceId, int parameterIndex, float value,
-                                     juce::String& error) noexcept;
+                                         const juce::String& deviceId) const noexcept;
     [[nodiscard]] std::optional<PluginStateSpec> devicePersistedState(
-        const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
-        juce::String& error) const;
+        const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error);
 
     /// Resets the processing state of every VST3 instrument and effect chain of the active
     /// graph. Plugin activation belongs to the message thread, so call this there while no
@@ -304,8 +300,7 @@ private:
 
     // Realtime command path.
     [[nodiscard]] std::optional<std::uint64_t> submit(RealtimeCommand command) noexcept;
-    bool waitUntilApplied(std::uint64_t commandSequence, std::chrono::milliseconds timeout,
-                          bool requireCompletedBlock = false) const;
+    bool waitUntilApplied(std::uint64_t commandSequence, std::chrono::milliseconds timeout) const;
     void waitUntilApplied(std::uint64_t commandSequence) const;
     void applyRealtimeCommand(RealtimeState& state, const RealtimeCommand& command) noexcept;
     void drainRealtimeCommands(RealtimeState& state) noexcept;
@@ -392,7 +387,6 @@ private:
     mutable std::mutex ownerMutex;
     std::atomic<RealtimeOwner> owner{RealtimeOwner::control};
     std::uint64_t nextCommandSequence = 1;
-    std::atomic<std::uint64_t> completedBlockCommandSequence{0};
     RealtimeState realtime;
     MidiSourceRegistry midiSources;
     BoundedMpmcQueue<LiveMidiEvent, kLiveMidiCapacity> liveMidi;

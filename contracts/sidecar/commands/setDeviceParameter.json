@@ -1,6 +1,7 @@
 {
   "command": {
     "deviceId": "device-1",
+    "display": null,
     "owner": {
       "id": "track-1",
       "kind": "track"

@@ -4,4 +4,4 @@ import type { EffectOwner } from "./EffectOwner";
 /**
  * Inserts an effect into a Track, Bus, or Master chain.
  */
-export type EffectAddParams = { owner: EffectOwner, pluginPath: string, };
+export type EffectAddParams = { owner: EffectOwner, pluginPath?: string | null, pluginId?: string | null, };

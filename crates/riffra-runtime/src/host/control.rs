@@ -145,10 +145,17 @@ impl HostState {
                 riffra_core::MidiInputRoute::default(),
             ),
             CanonicalCommand::InstrumentVst3Set(params) => {
+                let path = crate::plugins::selected_plugin_path(
+                    &self.data_root,
+                    params.plugin_path.as_deref(),
+                    params.plugin_id.as_deref(),
+                    crate::api::output::PluginRole::Instrument,
+                )
+                .map_err(super::control::command_error)?;
                 session_adapter::set_track_vst3_instrument_with_expected_sequence(
                     &mut context,
                     &params.track_id,
-                    &params.plugin_path,
+                    &path.to_string_lossy(),
                     sequence,
                 )
             }
@@ -156,10 +163,17 @@ impl HostState {
                 session_adapter::clear_track_instrument(&mut context, &params.track_id)
             }
             CanonicalCommand::EffectAdd(params) => {
+                let path = crate::plugins::selected_plugin_path(
+                    &self.data_root,
+                    params.plugin_path.as_deref(),
+                    params.plugin_id.as_deref(),
+                    crate::api::output::PluginRole::Effect,
+                )
+                .map_err(super::control::command_error)?;
                 session_adapter::add_effect_with_expected_sequence(
                     &mut context,
                     &params.owner,
-                    &params.plugin_path,
+                    &path.to_string_lossy(),
                     sequence,
                 )
             }
@@ -181,6 +195,7 @@ impl HostState {
                 &params.device_id,
                 params.parameter_index,
                 params.value,
+                params.display,
             ),
             CanonicalCommand::MissingRelink(params) => {
                 let asset_id =

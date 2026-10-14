@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include <regex>
 #include <vector>
 
 #include "FaultInjection.h"
@@ -32,17 +33,19 @@ void PluginRack::queueParameterValue(const int index, const float value) noexcep
 
 void PluginRack::enqueueParameterChange(const int index, const float value) noexcept {
     queueParameterValue(index, value);
-    const auto normalized = juce::jlimit(0.0f, 1.0f, value);
-    const juce::ScopedLock statusGuard(statusLock);
-    const auto cached =
-        std::find_if(cachedParameters.begin(), cachedParameters.end(),
-                     [index](const auto& parameter) { return parameter.index == index; });
-    if (cached != cachedParameters.end()) cached->value = normalized;
 }
 
 std::size_t PluginRack::parameterCount() const noexcept {
-    const juce::ScopedLock statusGuard(statusLock);
-    return cachedParameters.size();
+    return cachedParameterCount.load(std::memory_order_acquire);
+}
+
+bool PluginRack::canQueueParameterValue(const int index, juce::String& error) const noexcept {
+    const auto* queue = parameterQueue.get();
+    if (queue == nullptr || index < 0 || static_cast<std::size_t>(index) >= queue->capacity) {
+        error = "Plugin parameter change queue cannot handle this index.";
+        return false;
+    }
+    return true;
 }
 
 bool PluginRack::hasPrograms() const noexcept {
@@ -108,6 +111,7 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
         error = "Plugin parameter index is out of range.";
         return false;
     }
+    if (!canQueueParameterValue(index, error)) return false;
     enqueueParameterChange(index, value);
     return true;
 }
@@ -125,7 +129,8 @@ bool PluginRack::setProgram(const int index, juce::String& error) {
             return false;
         }
         plugin->setCurrentProgram(index);
-        updateParameterCache(*plugin);
+        parameterControllerSyncPending.store(true, std::memory_order_release);
+        updateParameterCount(*plugin);
         return true;
     } catch (const std::exception& exception) {
         error = "VST3 program change raised an exception: " + juce::String(exception.what());
@@ -148,7 +153,8 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
         return false;
     }
     plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-    updateParameterCache(*plugin);
+    parameterControllerSyncPending.store(true, std::memory_order_release);
+    updateParameterCount(*plugin);
     return true;
 }
 
@@ -200,23 +206,6 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         return std::nullopt;
     }
     PluginStateSpec result;
-    std::vector<PluginParameterInfo> cached;
-    {
-        const juce::ScopedLock statusGuard(statusLock);
-        cached = cachedParameters;
-    }
-    const auto parameters = plugin->getParameters();
-    result.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
-    for (int index = 0; index < parameters.size(); ++index) {
-        const auto found =
-            std::find_if(cached.begin(), cached.end(),
-                         [index](const auto& parameter) { return parameter.index == index; });
-        result.parameterValues.push_back(
-            found != cached.end()
-                ? found->value
-                : (parameters[index] != nullptr ? parameters[index]->getValue() : 0.0f));
-    }
-    result.bypassed = bypassed.load(std::memory_order_acquire);
     try {
         juce::MemoryBlock state;
         plugin->getStateInformation(state);
@@ -229,6 +218,11 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         error = "VST3 state capture failed with an unknown exception.";
         return std::nullopt;
     }
+    const auto& parameters = plugin->getParameters();
+    result.parameterValues.reserve(static_cast<std::size_t>(parameters.size()));
+    for (auto* parameter : parameters)
+        result.parameterValues.push_back(parameter != nullptr ? parameter->getValue() : 0.0f);
+    result.bypassed = bypassed.load(std::memory_order_acquire);
     return result;
 }
 
@@ -248,6 +242,56 @@ void PluginRack::applyQueuedParameterChanges() noexcept {
     }
 }
 
+namespace {
+
+juce::String normalizedDisplayText(const juce::String& text) {
+    return text.toLowerCase().removeCharacters(" \t\r\n");
+}
+
+bool equivalentDisplayText(const juce::String& input, const juce::String& output,
+                           const juce::String& label) {
+    if (normalizedDisplayText(input) == normalizedDisplayText(output)) return true;
+    static const std::regex number(R"(^\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*([^0-9]*)$)");
+    std::smatch requested, rendered;
+    const auto inputText = input.toStdString(), outputText = output.toStdString();
+    if (!std::regex_match(inputText, requested, number) ||
+        !std::regex_match(outputText, rendered, number))
+        return false;
+    const auto unit = normalizedDisplayText(juce::String(requested[2].str()));
+    auto renderedUnit = normalizedDisplayText(juce::String(rendered[2].str()));
+    if (renderedUnit.isEmpty()) renderedUnit = normalizedDisplayText(label);
+    if (unit != renderedUnit) return false;
+    const auto displayNumber = rendered[1].str();
+    const auto decimal = displayNumber.find('.');
+    const auto precision = decimal == std::string::npos ? 0 : displayNumber.size() - decimal - 1;
+    const auto tolerance = 0.5 * std::pow(10.0, -static_cast<double>(precision));
+    try {
+        const auto a = std::stod(requested[1].str()), b = std::stod(displayNumber);
+        return std::isfinite(a) && std::isfinite(b) && std::abs(a - b) <= tolerance;
+    } catch (...) {
+        return false;
+    }
+}
+
+}  // namespace
+
+std::optional<float> PluginRack::parameterValueForText(const int index, const juce::String& text,
+                                                       juce::String& error) const {
+    const auto& parameters = plugin->getParameters();
+    if (index < 0 || index >= parameters.size() || parameters[index] == nullptr) {
+        error = "Plugin parameter index is out of range.";
+        return std::nullopt;
+    }
+    const auto* parameter = parameters[index];
+    const auto value = parameter->getValueForText(text);
+    if (text.trim().isEmpty() || !std::isfinite(value) || value < 0.0f || value > 1.0f ||
+        !equivalentDisplayText(text, parameter->getText(value, 96), parameter->getLabel())) {
+        error = "Plugin cannot convert this display text unambiguously.";
+        return std::nullopt;
+    }
+    return value;
+}
+
 bool PluginRack::synchronizeParameterController(juce::String& error) {
     if (!parameterControllerSyncPending.load(std::memory_order_acquire)) return true;
     const juce::SpinLock::ScopedLockType lock(pluginLock);
@@ -264,23 +308,9 @@ bool PluginRack::synchronizeParameterController(juce::String& error) {
     }
 }
 
-void PluginRack::updateParameterCache(juce::AudioProcessor& processor) {
-    std::vector<PluginParameterInfo> next;
-    const auto& parameters = processor.getParameters();
-    next.reserve(static_cast<std::size_t>(parameters.size()));
-    for (int index = 0; index < parameters.size(); ++index) {
-        auto* parameter = parameters[index];
-        if (parameter == nullptr) continue;
-        next.push_back(PluginParameterInfo{
-            index,
-            parameter->getName(96),
-            parameter->getValue(),
-            parameter->getDefaultValue(),
-            parameter->isAutomatable(),
-        });
-    }
-    const juce::ScopedLock lock(statusLock);
-    cachedParameters = std::move(next);
+void PluginRack::updateParameterCount(juce::AudioProcessor& processor) {
+    cachedParameterCount.store(static_cast<std::size_t>(processor.getParameters().size()),
+                               std::memory_order_release);
 }
 
 PluginRackStatus PluginRack::status() const {

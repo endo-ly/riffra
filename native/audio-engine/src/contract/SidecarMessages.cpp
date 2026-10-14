@@ -436,6 +436,7 @@ juce::var encodeEventBody(const SidecarEventSpec& event) {
                     .set("owner", encodeEffectOwner(changed.owner))
                     .set("deviceId", changed.deviceId)
                     .set("state", encodePluginState(changed.state))
+                    .set("arrangementRevision", integer(changed.arrangementRevision))
                     .build();
             },
             [](const PluginParameterChangedSpec& changed) {

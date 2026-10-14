@@ -152,6 +152,48 @@ TEST(AudioCommandDispatcherTest, QueueFullDoesNotPreventSafetyMutes) {
     EXPECT_TRUE(pipeline.hasMuteReason(MuteReason::UserEmergency));
 }
 
+TEST(AudioCommandDispatcherTest, RejectsDeviceChangesDuringGraphOperations) {
+    juce::AudioFormatManager formats;
+    TimelineEngine timeline;
+    AudioRenderPipeline pipeline(timeline);
+    AudioDeviceController deviceController(pipeline);
+    MidiInputService midiInputs(pipeline.preview(), timeline);
+    RuntimeLifecycleExecutor runtimeLifecycle;
+    std::shared_ptr<PluginEditorHost> trackPluginEditor;
+    EffectOwnerSpec pluginEditorOwner;
+    juce::String trackPluginEditorDeviceId;
+    std::shared_ptr<PluginEditorHost> auditionEditor;
+    juce::AudioBuffer<float> comparisonRaw;
+    juce::AudioBuffer<float> comparisonProcessed;
+    std::atomic<bool> timelineOperationRunning{true};
+    AudioCommandDispatcher dispatcher({
+        formats,
+        timeline,
+        pipeline,
+        deviceController,
+        midiInputs,
+        runtimeLifecycle,
+        trackPluginEditor,
+        pluginEditorOwner,
+        trackPluginEditorDeviceId,
+        auditionEditor,
+        comparisonRaw,
+        comparisonProcessed,
+        timelineOperationRunning,
+    });
+    juce::var reply;
+
+    dispatcher.dispatch(
+        {1,
+         SetDeviceParameterCommand{
+             {EffectOwnerKindSpec::track, "track:1"}, "device:1", 0, 0.75f, std::nullopt}},
+        CommandResponder(1, [&reply](const juce::var& value) { reply = value; }));
+
+    ASSERT_EQ(reply.getProperty("kind", {}).toString(), "error");
+    EXPECT_EQ(reply.getProperty("error", {}).getProperty("kind", {}).toString(), "timelineBusy");
+    EXPECT_TRUE(runtimeLifecycle.waitForIdle(std::chrono::milliseconds(100)));
+}
+
 TEST(AudioCommandDispatcherTest, PanicMustApplyBeforeASafetyMuteCanBeReleased) {
     // Arrange
     juce::AudioFormatManager formats;

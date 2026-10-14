@@ -190,7 +190,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         // reports the plugin error. A failed capability probe must not prevent
         // the plugin from loading.
     }
-    updateParameterCache(*candidate);
+    updateParameterCount(*candidate);
     const auto candidateParameterCount =
         static_cast<std::size_t>(candidate->getParameters().size());
     pendingMidi.reset();
@@ -202,6 +202,7 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         return PluginLoadError{"parameterQueue", parameterQueueError};
     if (plugin != nullptr) plugin->releaseResources();
     plugin = std::move(candidate);
+    controlBuffer.setSize(2, blockSize);
     preparedLatencySamples = std::max(0, plugin->getLatencySamples());
     const auto tailSeconds = plugin->getTailLengthSeconds();
     preparedTailSamples =
@@ -345,12 +346,26 @@ bool PluginRack::isInstrument() const noexcept {
 }
 
 int PluginRack::latencySamples() const noexcept {
-    return bypassed.load(std::memory_order_acquire) ? 0 : preparedLatencySamples;
+    return bypassed.load(std::memory_order_acquire)
+               ? 0
+               : preparedLatencySamples.load(std::memory_order_acquire);
 }
 
 int PluginRack::tailSamples() const noexcept { return preparedTailSamples; }
 
 std::uint64_t PluginRack::droppedMidiEvents() const noexcept { return pendingMidi.droppedEvents(); }
+
+bool PluginRack::processControlBlock() noexcept {
+    if (plugin == nullptr || controlBuffer.getNumSamples() <= 0) return false;
+    controlBuffer.clear();
+    controlMidi.clear();
+    // Do not consume live MIDI, change panic state, or send this block to the mixer.
+    plugin->processBlock(controlBuffer, controlMidi);
+    processedBlocks.fetch_add(1, std::memory_order_relaxed);
+    completedControlSequence.store(requestedControlSequence.load(std::memory_order_acquire),
+                                   std::memory_order_release);
+    return true;
+}
 
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
@@ -410,6 +425,8 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
     pendingMidi.appendTo(processMidi, numSamples);
     active->processBlock(buffer, processMidi);
     processedBlocks.fetch_add(1, std::memory_order_relaxed);
+    completedControlSequence.store(requestedControlSequence.load(std::memory_order_acquire),
+                                   std::memory_order_release);
 }
 
 }  // namespace riffra

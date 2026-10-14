@@ -125,6 +125,13 @@ bool AudioCommandDispatcher::rejectWhileTimelineBusy(CommandResponder& responder
     return true;
 }
 
+bool AudioCommandDispatcher::rejectDeviceCommandWhileTimelineBusy(CommandResponder& responder) {
+    return rejectWhileTimelineBusy(
+        responder,
+        "A timeline or plug-in lifecycle operation is in progress; Track Device commands are "
+        "unavailable until it completes.");
+}
+
 bool AudioCommandDispatcher::rejectUnlessAccepted(CommandResponder& responder,
                                                   const RealtimeRequest request,
                                                   const juce::String& kind,

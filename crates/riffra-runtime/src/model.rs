@@ -97,6 +97,8 @@ pub struct PluginStateChanged {
     pub parameter_values: Vec<f32>,
     pub state_data: Option<String>,
     pub bypassed: bool,
+    /// Arrangement revision of the graph used to capture this snapshot.
+    pub arrangement_revision: u64,
 }
 
 /// One parameter changed in an open native plugin editor.
