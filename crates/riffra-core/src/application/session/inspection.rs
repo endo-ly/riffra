@@ -268,6 +268,16 @@ pub fn inspect_canonical_state(
         .map(|track| inspect_track(arrangement, track, &timebase, selection_ticks))
         .collect::<Vec<_>>();
 
+    let automation = automation_counts(
+        arrangement.automation_lanes.iter().filter(|lane| {
+            query.track_id.as_ref().is_none_or(|id| {
+                arrangement.tracks.iter().any(|track| {
+                    track.id == *id && lane.target.is_on_track(track, &arrangement.mixer.sends)
+                })
+            })
+        }),
+        selection_ticks,
+    );
     let counts = InspectionCounts {
         tracks: tracks.len(),
         audio_clips: tracks.iter().map(|track| track.audio_clip_count).sum(),
@@ -277,11 +287,8 @@ pub fn inspect_canonical_state(
         regions: regions.len(),
         harmony_events: harmony_events.len(),
         markers: markers.len(),
-        automation_lanes: tracks.iter().map(|track| track.automation_lane_count).sum(),
-        automation_points: tracks
-            .iter()
-            .map(|track| track.automation_point_count)
-            .sum(),
+        automation_lanes: automation.0,
+        automation_points: automation.1,
     };
 
     Ok(SessionInspection {
@@ -446,7 +453,7 @@ fn inspect_track(
         arrangement
             .automation_lanes
             .iter()
-            .filter(|lane| lane.track_id == track.id),
+            .filter(|lane| lane.target.is_on_track(track, &arrangement.mixer.sends)),
         selection,
     );
 
@@ -780,8 +787,11 @@ mod tests {
         ];
         session.arrangement.automation_lanes = vec![AutomationLane {
             id: "lane:volume".into(),
-            track_id: "track:keys".into(),
-            parameter: crate::AutomationParameter::Volume,
+            target: crate::AutomationTarget::TrackMix {
+                track_id: "track:keys".into(),
+                parameter: crate::TrackMixParameter::Volume,
+            },
+            interpolation: crate::AutomationInterpolation::Linear,
             points: vec![
                 crate::AutomationPoint {
                     id: "point:start".into(),
@@ -894,8 +904,11 @@ mod tests {
             .collect();
         session.arrangement.automation_lanes = vec![AutomationLane {
             id: "lane:volume".into(),
-            track_id: "track:keys".into(),
-            parameter: crate::AutomationParameter::Volume,
+            target: crate::AutomationTarget::TrackMix {
+                track_id: "track:keys".into(),
+                parameter: crate::TrackMixParameter::Volume,
+            },
+            interpolation: crate::AutomationInterpolation::Linear,
             points: vec![crate::AutomationPoint {
                 id: "point:volume".into(),
                 tick: TimelineTick(0),

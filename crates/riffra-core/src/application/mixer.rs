@@ -104,7 +104,16 @@ impl<S: SessionStorage + ?Sized> Application<'_, S> {
                 }
                 .into());
             }
-            arrangement.mixer.buses.remove(index);
+            let bus = arrangement.mixer.buses.remove(index);
+            arrangement
+                .automation_lanes
+                .retain(|lane| match &lane.target {
+                    AutomationTarget::BusMix { bus_id, .. } => bus_id != id,
+                    AutomationTarget::DeviceParameter { device_id, .. } => {
+                        !bus.effects.iter().any(|effect| effect.id == *device_id)
+                    }
+                    _ => true,
+                });
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -208,6 +217,7 @@ impl<S: SessionStorage + ?Sized> Application<'_, S> {
                     crate::DomainError::InvalidMixer(format!("send '{id}' does not exist"))
                 })?;
             arrangement.mixer.sends.remove(index);
+            arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::SendLevel { send_id } if send_id == id));
             arrangement.revision = arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -436,6 +446,48 @@ mod tests {
             )
             .unwrap();
 
+        let snapshot = core.canonical_state();
+        let targets = [
+            AutomationTarget::TrackMix {
+                track_id: "track:source".into(),
+                parameter: crate::TrackMixParameter::Volume,
+            },
+            AutomationTarget::SendLevel {
+                send_id: snapshot.session.arrangement.mixer.sends[0].id.clone(),
+            },
+            AutomationTarget::DeviceParameter {
+                device_id: snapshot.session.arrangement.tracks[0].effects[0].id.clone(),
+                parameter_id: "gain".into(),
+            },
+        ];
+        for target in targets {
+            let points = vec![AutomationPoint {
+                id: next_id("point"),
+                tick: TimelineTick(0),
+                value: 0.0,
+            }];
+            let first = core
+                .application(&storage)
+                .set_automation_with_created_ids(
+                    target.clone(),
+                    AutomationInterpolation::Linear,
+                    points.clone(),
+                )
+                .unwrap();
+            let id = first.created_entity_ids["automationLanes"][0].clone();
+            let updated = core
+                .application(&storage)
+                .set_automation_with_created_ids(target, AutomationInterpolation::Step, points)
+                .unwrap();
+            assert!(updated.created_entity_ids.is_empty());
+            assert!(
+                updated.session.arrangement.automation_lanes.iter().any(
+                    |lane| lane.id == id && lane.interpolation == AutomationInterpolation::Step
+                )
+            );
+        }
+        let original_lanes = core.canonical_state().session.arrangement.automation_lanes;
+
         // Act
         let duplicate = core
             .application(&storage)
@@ -464,10 +516,24 @@ mod tests {
             session.arrangement.mixer.sends[0].id,
             session.arrangement.mixer.sends[1].id
         );
+        assert_eq!(session.arrangement.automation_lanes.len(), 6);
+        for (original, copied) in original_lanes
+            .iter()
+            .zip(&session.arrangement.automation_lanes[3..])
+        {
+            assert_ne!(original.id, copied.id);
+            assert_ne!(original.points[0].id, copied.points[0].id);
+            assert_eq!(copied.interpolation, AutomationInterpolation::Step);
+            assert!(copied.target.is_on_track(
+                &session.arrangement.tracks[1],
+                &session.arrangement.mixer.sends
+            ));
+        }
         let deleted = core
             .application(&storage)
             .remove_track(duplicate_id)
             .unwrap();
+        assert_eq!(deleted.arrangement.automation_lanes, original_lanes);
         assert_eq!(deleted.arrangement.mixer.sends.len(), 1);
         assert_eq!(deleted.arrangement.mixer.sends[0].track_id, "track:source");
     }

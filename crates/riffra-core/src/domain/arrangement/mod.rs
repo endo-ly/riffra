@@ -20,7 +20,10 @@ mod mixer;
 mod track;
 
 pub use audio_clip::{AudioClip, AudioClipMove, AudioClipPatch, FadeShape};
-pub use automation::{AutomationLane, AutomationParameter, AutomationPoint};
+pub use automation::{
+    AutomationInterpolation, AutomationLane, AutomationPoint, AutomationTarget, BusMixParameter,
+    TrackMixParameter,
+};
 pub use midi_clip::{
     InstrumentControlEvent, InstrumentControlEventKind, MidiClip, MidiClipMove, MidiClipPatch,
     MidiEvent, MidiEventKind, MidiNote,
@@ -284,6 +287,9 @@ impl Arrangement {
             .iter()
             .position(|track| track.id == track_id)
             .ok_or_else(|| DomainError::UnknownTrack(track_id.to_owned()))?;
+        let track = &self.tracks[index];
+        self.automation_lanes
+            .retain(|lane| !lane.target.is_on_track(track, &self.mixer.sends));
         self.tracks.remove(index);
         self.mixer.sends.retain(|send| send.track_id != track_id);
         for consumer in &mut self.tracks {
@@ -293,8 +299,6 @@ impl Arrangement {
         }
         self.audio_clips.retain(|clip| clip.track_id != track_id);
         self.midi_clips.retain(|clip| clip.track_id != track_id);
-        self.automation_lanes
-            .retain(|lane| lane.track_id != track_id);
         self.remove_recording_track_references(None, track_id);
         self.revision = self.revision.saturating_add(1);
         Ok(())
@@ -1649,23 +1653,31 @@ impl Arrangement {
                 .find(|track| track.id == clip.track_id);
             clip.validate_and_normalize(track)?;
         }
-        if arrangement.automation_lanes.len() > arrangement.tracks.len().saturating_mul(2) {
-            return Err(
-                "An arrangement cannot contain more than two Automation Lanes per Track.".into(),
-            );
-        }
         let mut lane_keys = std::collections::HashSet::new();
         let mut lane_ids = std::collections::HashSet::new();
-        for lane in &mut arrangement.automation_lanes {
-            if lane.id.trim().is_empty()
-                || !lane_ids.insert(lane.id.clone())
-                || !track_ids.contains(lane.track_id.as_str())
-                || !lane_keys.insert((lane.track_id.clone(), lane.parameter))
-            {
-                return Err("Automation Lanes contain invalid or duplicate references.".into());
+        for lane in &arrangement.automation_lanes {
+            if lane.id.trim().is_empty() || !lane_ids.insert(lane.id.as_str()) {
+                return Err(format!(
+                    "automation lane '{}' has an invalid or duplicate id",
+                    lane.id
+                ));
             }
+            if !arrangement.has_automation_target(&lane.target) {
+                return Err(format!(
+                    "automation lane '{}' references an unknown target",
+                    lane.id
+                ));
+            }
+            if !lane_keys.insert(&lane.target) {
+                return Err(format!("automation lane '{}' duplicates a target", lane.id));
+            }
+        }
+        for lane in &mut arrangement.automation_lanes {
             lane.validate_and_normalize()?;
         }
+        arrangement
+            .automation_lanes
+            .retain(|lane| !lane.points.is_empty());
         if arrangement.markers.len() > 256 {
             return Err("An arrangement cannot contain more than 256 markers.".into());
         }

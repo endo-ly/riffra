@@ -59,16 +59,24 @@ where
                 .iter()
                 .position(|track| track.id == track_id)
                 .ok_or_else(|| crate::DomainError::UnknownTrack(track_id.to_owned()))?;
+            let source = arrangement.tracks[source_index].clone();
+            let source_sends = arrangement.mixer.sends.clone();
+            let mut device_ids = std::collections::HashMap::new();
+            let mut send_ids = std::collections::HashMap::new();
             let operation_id = next_id("duplicate");
             let mut duplicate = arrangement.tracks[source_index].clone();
             duplicate.id = format!("track:{operation_id}");
             duplicate.name = format!("{} copy", duplicate.name);
             if let Some(instrument) = &mut duplicate.instrument {
+                let old_id = instrument.id.clone();
                 instrument.id = next_id("device:instrument");
+                device_ids.insert(old_id, instrument.id.clone());
                 record_created(created, "devices", instrument.id.clone());
             }
             for effect in &mut duplicate.effects {
+                let old_id = effect.id.clone();
                 effect.id = next_id("device:effect");
+                device_ids.insert(old_id, effect.id.clone());
                 record_created(created, "devices", effect.id.clone());
             }
             let duplicate_id = duplicate.id.clone();
@@ -79,7 +87,9 @@ where
                 .filter(|send| send.track_id == track_id)
                 .cloned()
                 .map(|mut send| {
+                    let old_id = send.id.clone();
                     send.id = next_id("send");
+                    send_ids.insert(old_id, send.id.clone());
                     send.track_id = duplicate_id.clone();
                     record_created(created, "sends", send.id.clone());
                     send
@@ -124,12 +134,23 @@ where
             let automation_lanes = arrangement
                 .automation_lanes
                 .iter()
-                .filter(|lane| lane.track_id == track_id)
+                .filter(|lane| lane.target.is_on_track(&source, &source_sends))
                 .cloned()
                 .enumerate()
                 .map(|(index, mut lane)| {
                     lane.id = format!("automation:{duplicate_id}:{index}");
-                    lane.track_id = duplicate_id.clone();
+                    match &mut lane.target {
+                        AutomationTarget::TrackMix { track_id, .. } => {
+                            *track_id = duplicate_id.clone()
+                        }
+                        AutomationTarget::DeviceParameter { device_id, .. } => {
+                            *device_id = device_ids[device_id].clone()
+                        }
+                        AutomationTarget::SendLevel { send_id } => {
+                            *send_id = send_ids[send_id].clone()
+                        }
+                        _ => unreachable!("only track-owned targets are duplicated"),
+                    }
                     record_created(created, "automationLanes", lane.id.clone());
                     for (point_index, point) in lane.points.iter_mut().enumerate() {
                         point.id = format!("automation-point:{operation_id}:{index}:{point_index}");
