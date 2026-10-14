@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <thread>
 #include <utility>
 
 #include "TimelineEngine.h"
@@ -8,6 +9,17 @@ namespace riffra {
 namespace {
 
 using Track = PreparedTimeline::Track;
+
+class HostEditScope final {
+public:
+    explicit HostEditScope(std::atomic<bool>& flag) : editing(flag) {
+        editing.store(true, std::memory_order_release);
+    }
+    ~HostEditScope() { editing.store(false, std::memory_order_release); }
+
+private:
+    std::atomic<bool>& editing;
+};
 
 /// Finds the plugin rack of a Track device; `nullptr` for built-in instruments
 /// and unknown devices.
@@ -204,9 +216,15 @@ void TimelineEngine::resetPluginDevices() noexcept {
     });
 }
 
+std::uint64_t TimelineEngine::committedRevision() const {
+    return graphRegistry.access([](const ControlGraphRegistry::State& graphs) {
+        return graphs.latestCommitted != nullptr ? graphs.latestCommitted->revision : 0;
+    });
+}
+
 PluginRack* TimelineEngine::findDevice(const EffectOwnerSpec& deviceOwner,
-                                       const juce::String& deviceId) noexcept {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) -> PluginRack* {
+                                       const juce::String& deviceId) const noexcept {
+    return graphRegistry.access([&](const ControlGraphRegistry::State& graphs) -> PluginRack* {
         return graphs.latestCommitted != nullptr
                    ? findRack(*graphs.latestCommitted, deviceOwner, deviceId)
                    : nullptr;
@@ -249,83 +267,69 @@ std::optional<DeviceStatusSpec> TimelineEngine::deviceStatus(const EffectOwnerSp
 
 std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
     const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) {
-    return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<DeviceParametersSpec> {
-            auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "parameters", error);
-            if (rack == nullptr) return std::nullopt;
-            if (!synchronizeDeviceParameters(*rack, error)) return std::nullopt;
-            DeviceParametersSpec result;
-            for (const auto& parameter : rack->parameters()) {
-                DeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
-                                         parameter.name,
-                                         parameter.value,
-                                         parameter.defaultValue,
-                                         parameter.automatable,
-                                         parameter.displayValue,
-                                         parameter.label,
-                                         parameter.discrete,
-                                         parameter.stepCount,
-                                         {}};
-                for (const auto& choice : parameter.choices)
-                    info.choices.push_back({choice.value, choice.displayValue});
-                result.parameters.push_back(std::move(info));
-            }
-            return result;
-        });
+    auto* rack = findDevice(deviceOwner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return std::nullopt;
+    }
+    if (!synchronizeDeviceParameters(*rack, error)) return std::nullopt;
+    return juce::MessageManager::callSync([&]() -> std::optional<DeviceParametersSpec> {
+               DeviceParametersSpec result;
+               for (const auto& parameter : rack->parameters()) {
+                   DeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
+                                            parameter.name,
+                                            parameter.value,
+                                            parameter.defaultValue,
+                                            parameter.automatable,
+                                            parameter.displayValue,
+                                            parameter.label,
+                                            parameter.discrete,
+                                            parameter.stepCount,
+                                            {}};
+                   for (const auto& choice : parameter.choices)
+                       info.choices.push_back({choice.value, choice.displayValue});
+                   result.parameters.push_back(std::move(info));
+               }
+               return result;
+           })
+        .value_or(std::nullopt);
 }
 
 std::optional<DeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
     const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) const {
-    return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<DeviceProgramsSpec> {
-            const auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "programs", error);
-            if (rack == nullptr) return std::nullopt;
-            const auto programs = rack->programStatus();
-            if (programs.error.has_value()) {
-                error = *programs.error;
-                return std::nullopt;
-            }
-            DeviceProgramsSpec result;
-            if (programs.currentIndex >= 0)
-                result.currentIndex = static_cast<std::uint32_t>(programs.currentIndex);
-            for (std::size_t index = 0; index < programs.names.size(); ++index)
-                result.programs.push_back(
-                    {static_cast<std::uint32_t>(index), programs.names[index]});
-            return result;
-        });
+    return juce::MessageManager::callSync([&]() -> std::optional<DeviceProgramsSpec> {
+               const auto* rack = findDevice(deviceOwner, deviceId);
+               if (rack == nullptr) return std::nullopt;
+               const auto programs = rack->programStatus();
+               if (programs.error.has_value()) {
+                   error = *programs.error;
+                   return std::nullopt;
+               }
+               DeviceProgramsSpec result;
+               if (programs.currentIndex >= 0)
+                   result.currentIndex = static_cast<std::uint32_t>(programs.currentIndex);
+               for (std::size_t index = 0; index < programs.names.size(); ++index)
+                   result.programs.push_back(
+                       {static_cast<std::uint32_t>(index), programs.names[index]});
+               return result;
+           })
+        .value_or(std::nullopt);
 }
 
 std::optional<PluginStateSpec> TimelineEngine::devicePersistedState(
-    const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) const {
-    return graphRegistry.access(
-        [&](const ControlGraphRegistry::State& graphs) -> std::optional<PluginStateSpec> {
-            const auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "state", error);
-            if (rack == nullptr) return std::nullopt;
-            return rack->persistedState(error);
-        });
-}
-
-bool TimelineEngine::mirrorEditorDeviceState(const EffectOwnerSpec& deviceOwner,
-                                             const juce::String& deviceId,
-                                             const PluginStateSpec& persistedState,
-                                             juce::String& error) noexcept {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
-        if (rack == nullptr) return false;
-        return rack->applyPersistedState(persistedState, error);
-    });
-}
-
-bool TimelineEngine::mirrorEditorDeviceParameter(const EffectOwnerSpec& deviceOwner,
-                                                 const juce::String& deviceId,
-                                                 const int parameterIndex, const float value,
-                                                 juce::String& error) noexcept {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
-        if (rack == nullptr) return false;
-        rack->enqueueParameterChange(parameterIndex, value);
-        return true;
-    });
+    const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) {
+    auto* target = findDevice(deviceOwner, deviceId);
+    if (target == nullptr) {
+        error = "Channel Device was not found.";
+        return std::nullopt;
+    }
+    if (!synchronizeDeviceParameters(*target, error)) return std::nullopt;
+    return juce::MessageManager::callSync([&]() -> std::optional<PluginStateSpec> {
+               const auto* rack = findDevice(deviceOwner, deviceId);
+               if (rack == nullptr) return std::nullopt;
+               return rack->persistedState(error);
+           })
+        .value_or(std::nullopt);
 }
 
 bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
@@ -357,9 +361,20 @@ bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
 bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String& error,
                                                  const int parameterIndex,
                                                  const float value) noexcept {
+    if (parameterIndex < 0 &&
+        !rack.parameterControllerSyncPending.load(std::memory_order_acquire)) {
+        return juce::MessageManager::callSync([&] {
+                   rack.updateParameterCount(*rack.plugin);
+                   return true;
+               })
+            .value_or(false);
+    }
     RealtimeCommand command;
     command.kind = RealtimeCommand::Kind::applyDeviceParameters;
     command.pluginRack = &rack;
+    command.graphSerial = graphRegistry.access([](const ControlGraphRegistry::State& graphs) {
+        return graphs.latestCommitted != nullptr ? graphs.latestCommitted->serial : 0;
+    });
     command.parameterIndex = parameterIndex;
     command.parameterValue = value;
     const auto sequence = submit(command);
@@ -367,70 +382,82 @@ bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String&
         error = "The realtime command queue is full.";
         return false;
     }
-    if (!waitUntilApplied(*sequence, std::chrono::seconds(5), true)) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (rack.completedControlSequence.load(std::memory_order_acquire) < *sequence) {
+        if (std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        rack.cancelledControlSequence.store(*sequence, std::memory_order_release);
         error = "Plugin parameter application timed out.";
         return false;
     }
-    if (!rack.synchronizeParameterController(error)) return false;
-    if (parameterIndex >= 0) rack.updateParameterCache(*rack.plugin);
-    return true;
+    const auto synchronized = juce::MessageManager::callSync([&] {
+        if (!rack.synchronizeParameterController(error)) return false;
+        rack.updateParameterCount(*rack.plugin);
+        rack.preparedLatencySamples.store(std::max(0, rack.plugin->getLatencySamples()),
+                                          std::memory_order_release);
+        return true;
+    });
+    return synchronized.value_or(false);
 }
 
 bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
                                         const juce::String& deviceId, const int parameterIndex,
-                                        const float value, juce::String& error) noexcept {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        if (graphs.latestCommitted == nullptr) {
-            error = "Arrangement Graph is not loaded.";
-            return false;
-        }
-        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
-        if (rack == nullptr) return false;
-        if (parameterIndex < 0 ||
-            static_cast<std::size_t>(parameterIndex) >= rack->parameterCount()) {
-            error = "Track Device parameter index is invalid.";
-            return false;
-        }
-        return synchronizeDeviceParameters(*rack, error, parameterIndex, value);
-    });
+                                        const std::optional<float> value, juce::String& error,
+                                        const std::optional<juce::String>& display) noexcept {
+    auto* rack = findDevice(deviceOwner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return false;
+    }
+    if (parameterIndex < 0 || static_cast<std::size_t>(parameterIndex) >= rack->parameterCount()) {
+        error = "Track Device parameter index is invalid.";
+        return false;
+    }
+    if (value.has_value() == display.has_value()) {
+        error = "Select exactly one of value or display.";
+        return false;
+    }
+    if (!rack->canQueueParameterValue(parameterIndex, error)) return false;
+    auto normalized = value;
+    if (display.has_value()) {
+        normalized = juce::MessageManager::callSync([&] {
+                         return rack->parameterValueForText(parameterIndex, *display, error);
+                     }).value_or(std::nullopt);
+        if (!normalized.has_value()) return false;
+    }
+    const HostEditScope edit(rack->hostEditInProgress);
+    return synchronizeDeviceParameters(*rack, error, parameterIndex, *normalized);
 }
 
 bool TimelineEngine::setDevicePersistedState(const EffectOwnerSpec& deviceOwner,
                                              const juce::String& deviceId,
                                              const PluginStateSpec& persistedState,
                                              juce::String& error) {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        if (graphs.latestCommitted == nullptr) {
-            error = "Arrangement Graph is not loaded.";
-            return false;
-        }
-        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
-        if (rack == nullptr) return false;
-        return rack->applyPersistedState(persistedState, error);
-    });
+    auto* rack = findDevice(deviceOwner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return false;
+    }
+    const HostEditScope edit(rack->hostEditInProgress);
+    const auto applied = juce::MessageManager::callSync(
+        [&] { return rack->applyPersistedState(persistedState, error); });
+    return applied.value_or(false) && synchronizeDeviceParameters(*rack, error);
 }
 
 bool TimelineEngine::setDeviceProgram(const EffectOwnerSpec& deviceOwner,
                                       const juce::String& deviceId, const int programIndex,
                                       juce::String& error) {
-    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
-        if (graphs.latestCommitted == nullptr) {
-            error = "Arrangement Graph is not loaded.";
-            return false;
-        }
-        auto* rack = findCommittedRack(graphs, deviceOwner, deviceId, "controls", error);
-        if (rack == nullptr) return false;
-        const auto programs = rack->programStatus();
-        if (programs.error.has_value()) {
-            error = *programs.error;
-            return false;
-        }
-        if (programIndex < 0 || static_cast<std::size_t>(programIndex) >= programs.names.size()) {
-            error = "Plugin program index is out of range.";
-            return false;
-        }
-        return rack->setProgram(programIndex, error);
-    });
+    auto* rack = findDevice(deviceOwner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return false;
+    }
+    const HostEditScope edit(rack->hostEditInProgress);
+    const auto applied =
+        juce::MessageManager::callSync([&] { return rack->setProgram(programIndex, error); });
+    return applied.value_or(false) && synchronizeDeviceParameters(*rack, error);
 }
 
 }  // namespace riffra

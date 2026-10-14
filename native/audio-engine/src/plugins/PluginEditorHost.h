@@ -12,7 +12,7 @@ namespace riffra {
 
 class PluginEditorHost final : public std::enable_shared_from_this<PluginEditorHost> {
 public:
-    using StateCallback = std::function<void(const PluginStateSpec&)>;
+    using StateCallback = std::function<void()>;
     using ParameterCallback = std::function<void(int, float)>;
     /// Runs on the Message Thread after the user closed the editor window.
     using ClosedCallback = std::function<void()>;

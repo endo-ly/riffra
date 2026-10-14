@@ -47,6 +47,7 @@ struct RealtimeCommand final {
     ArrangementCaptureSink* recordingSink = nullptr;
     /// `applyDeviceParameters`; the control registry retains the rack until applied.
     PluginRack* pluginRack = nullptr;
+    std::uint64_t graphSerial = 0;
     /// Optional parameter assignment before draining that rack's existing queue.
     std::int32_t parameterIndex = -1;
     float parameterValue = 0.0f;

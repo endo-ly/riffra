@@ -457,8 +457,8 @@ Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","
 | ----------------------- | ------------------------------------------------------------------------------------------- |
 | `instrument list`       | -                                                                                           |
 | `instrument apply`      | `--track-id` `--instrument-id`（catalogの`id`。Built-inは`builtin:<presetId>`）             |
-| `plugin instrument`     | `--track-id` `--plugin-path`(VST3 パス)                                                     |
-| `effect add`            | `<owner>` `--plugin-path`                                                                   |
+| `plugin instrument`     | `--track-id` (`--plugin-path` または `--plugin-id`)                                         |
+| `effect add`            | `<owner>` (`--plugin-path` または `--plugin-id`)                                            |
 | `instrument clear`      | `--track-id`                                                                                |
 | `effect remove`         | `<owner>` `--device-id`                                                                     |
 | `effect reorder`        | `<owner>` `--device-ids a,b,c` または `--device-ids-json '[...]'`(チェーン順に全 ID を列挙) |
@@ -466,7 +466,9 @@ Control Commandでは`owner`を `{"kind":"track","id":"..."}`、`{"kind":"bus","
 | `device inspect`        | `<owner>` `--device-id`                                                                     |
 | `device parameter list` | `<owner>` `--device-id`                                                                     |
 | `device parameter get`  | `<owner>` `--device-id` `--parameter-index`                                                 |
-| `device parameter set`  | `<owner>` `--device-id` `--parameter-index` `--value`                                       |
+| `device parameter set`  | `<owner>` `--device-id` `--parameter-index` (`--value` または `--display`)                  |
+
+`--plugin-path`と`--plugin-id`は一方だけを指定する。IDは現在のDataRootのCatalogにあるValidated・Role一致のPluginへ解決され、Projectには解決後のパスが保存される。未登録・重複ID・未Validated・Role不一致・実パス欠落はエラーとなる。IDはインストールパスに依存するため、別PCへ持ち運べる識別子ではない。
 
 Standalone ではパスだけを登録し実体のロードは Runtime が行うため、VST3 が無い環境でも安全に実行できる。`device inspect`、`device parameter list/get`、下記の `plugin state` / `plugin preset` は実体のPluginを扱うため Live Host 専用である。
 
@@ -486,6 +488,8 @@ device inspectはmetadataとcapabilityだけを返し、stateData本体や全par
 | `choices`      | 2〜256 個の状態を列挙できる場合の `{ value, displayValue }` 配列。それ以外は空配列 |
 
 `name` で Parameter を特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
+
+`device parameter set`は`--value`と`--display`の一方だけを指定する。`--display "250.00 ms"`はLive HostのPluginに変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。単位の違い、未対応・不正な文字列はエラーとなり、正準状態は変更されない。Surge XT Effects 1.3.4のFX Typeは文字列変換に対応していないため、一覧で確認した正規化値を`--value`へ渡す。Live Hostでは停止中も対象Pluginの処理とController同期を終えてから設定成功を返す。
 
 `effect add` / `effect.add` は Effect Chain の末尾へ追加し、応答の `createdEntityIds.devices` に新しい Device ID を返す。`effect reorder` は Instrument を含めず、所有チャンネルのEffect ID 全件を一度ずつ処理順に並べる。
 

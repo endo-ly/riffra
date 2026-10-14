@@ -99,6 +99,22 @@ int main(int argc, char** argv) {
         std::cerr << "mode-dependent parameter metadata did not update: " << error << '\n';
         return 1;
     }
+    const riffra::EffectOwnerSpec owner{riffra::EffectOwnerKindSpec::track, "track:audio"};
+    if (!engine.setDeviceParameter(owner, "device:audio-effect", 2, std::nullopt, error, "Warm")) {
+        std::cerr << "display conversion failed: " << error << '\n';
+        return 1;
+    }
+    for (const auto* invalid : {"unknown", "250 Hz"}) {
+        error.clear();
+        if (engine.setDeviceParameter(owner, "device:audio-effect", 2, std::nullopt, error,
+                                      invalid) ||
+            engine.deviceParameterStatus(owner, "device:audio-effect", error)
+                    ->parameters[2]
+                    .value != 0.5f) {
+            std::cerr << "invalid display text changed plugin state\n";
+            return 1;
+        }
+    }
     engine.setRealtimeOwner(riffra::RealtimeOwner::audio);
     while (engine.play().has_value()) {
     }
@@ -114,6 +130,18 @@ int main(int argc, char** argv) {
         "device:audio-effect", error);
     if (!rejected || rejected->parameters[2].displayValue != "Warm") {
         std::cerr << "rejected parameter command changed plugin state\n";
+        return 1;
+    }
+    engine.setRealtimeOwner(riffra::RealtimeOwner::audio);
+    error.clear();
+    if (engine.setDeviceParameter(owner, "device:audio-effect", 2, 1.0f, error)) {
+        std::cerr << "parameter command completed without a processing owner\n";
+        return 1;
+    }
+    engine.setRealtimeOwner(riffra::RealtimeOwner::control);
+    if (engine.deviceParameterStatus(owner, "device:audio-effect", error)->parameters[2].value !=
+        0.5f) {
+        std::cerr << "timed-out parameter command was applied late\n";
         return 1;
     }
     engine.setRealtimeOwner(riffra::RealtimeOwner::audio);

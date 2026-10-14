@@ -3,4 +3,4 @@
 /**
  * Loads a VST3 into a Track's instrument slot or effect chain.
  */
-export type PluginPathParams = { trackId: string, pluginPath: string, };
+export type PluginPathParams = { trackId: string, pluginPath?: string | null, pluginId?: string | null, };

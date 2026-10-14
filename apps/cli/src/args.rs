@@ -170,7 +170,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: InstrumentCommand,
     },
-    /// Remove and reorder effect devices on a Track.
+    /// Insert, remove, and reorder effects on Tracks, Buses, and Master.
     Effect {
         #[command(subcommand)]
         command: EffectCommand,
@@ -1811,8 +1811,19 @@ pub struct EffectAddArgs {
     #[command(flatten)]
     pub owner: DeviceOwnerArgs,
     /// VST3 effect binary or bundle path.
-    #[arg(long)]
-    pub plugin_path: String,
+    #[arg(
+        long,
+        conflicts_with = "plugin_id",
+        required_unless_present = "plugin_id"
+    )]
+    pub plugin_path: Option<String>,
+    /// Validated plugin ID from the current DataRoot catalog.
+    #[arg(
+        long,
+        conflicts_with = "plugin_path",
+        required_unless_present = "plugin_path"
+    )]
+    pub plugin_id: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1882,8 +1893,11 @@ pub struct DeviceParameterSetArgs {
     #[arg(long)]
     pub parameter_index: u32,
     /// New parameter value; values are clamped to the device's 0.0..=1.0 parameter range.
-    #[arg(long)]
-    pub value: f32,
+    #[arg(long, conflicts_with = "display", required_unless_present = "display")]
+    pub value: Option<f32>,
+    /// Plugin display text; requires a running Host accessed with --attach.
+    #[arg(long, conflicts_with = "value", required_unless_present = "value")]
+    pub display: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2217,8 +2231,19 @@ pub struct PluginPathArgs {
     #[arg(long)]
     pub track_id: String,
     /// Filesystem path of the VST3 plugin to load.
-    #[arg(long)]
-    pub plugin_path: String,
+    #[arg(
+        long,
+        conflicts_with = "plugin_id",
+        required_unless_present = "plugin_id"
+    )]
+    pub plugin_path: Option<String>,
+    /// Validated plugin ID from the current DataRoot catalog.
+    #[arg(
+        long,
+        conflicts_with = "plugin_path",
+        required_unless_present = "plugin_path"
+    )]
+    pub plugin_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -3138,6 +3163,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
             EffectCommand::Add(args) => Canonical::EffectAdd(EffectAddParams {
                 owner: args.owner.into_owner()?,
                 plugin_path: args.plugin_path,
+                plugin_id: args.plugin_id,
             })
             .into(),
             EffectCommand::Remove(args) => Canonical::EffectRemove(DeviceParams {
@@ -3183,6 +3209,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                         device_id: args.device_id,
                         parameter_index: args.parameter_index,
                         value: args.value,
+                        display: args.display,
                     })
                     .into()
                 }
@@ -3418,6 +3445,7 @@ fn plugin_path(args: PluginPathArgs) -> PluginPathParams {
     PluginPathParams {
         track_id: args.track_id,
         plugin_path: args.plugin_path,
+        plugin_id: args.plugin_id,
     }
 }
 
@@ -4564,6 +4592,69 @@ mod tests {
             json!({"clipId":"clip:1","noteIds":["note:a","note:b"]})
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn device_inputs_select_exactly_one_representation() {
+        // Arrange
+        let commands = [
+            (
+                vec![
+                    "riffra",
+                    "device",
+                    "parameter",
+                    "set",
+                    "--master",
+                    "--device-id",
+                    "fx",
+                    "--parameter-index",
+                    "0",
+                ],
+                "--value",
+                "0.5",
+                "--display",
+                "250.00 ms",
+            ),
+            (
+                vec!["riffra", "effect", "add", "--master"],
+                "--plugin-path",
+                "Amp.vst3",
+                "--plugin-id",
+                "vst3-amp",
+            ),
+            (
+                vec!["riffra", "plugin", "instrument", "--track-id", "track"],
+                "--plugin-path",
+                "Synth.vst3",
+                "--plugin-id",
+                "vst3-synth",
+            ),
+        ];
+        for (base, first, first_value, second, second_value) in commands {
+            // Act / Assert
+            assert!(Cli::try_parse_from(base.clone()).is_err());
+            for (flag, value) in [(first, first_value), (second, second_value)] {
+                let mut args = base.clone();
+                args.extend([flag, value]);
+                let request = wire(Cli::try_parse_from(args).unwrap());
+                let field = match flag {
+                    "--value" => "value",
+                    "--display" => "display",
+                    "--plugin-path" => "pluginPath",
+                    "--plugin-id" => "pluginId",
+                    _ => unreachable!(),
+                };
+                let expected = if flag == "--value" {
+                    json!(value.parse::<f32>().unwrap())
+                } else {
+                    json!(value)
+                };
+                assert_eq!(request.params[field], expected);
+            }
+            let mut both = base;
+            both.extend([first, first_value, second, second_value]);
+            assert!(Cli::try_parse_from(both).is_err());
+        }
     }
 
     #[test]

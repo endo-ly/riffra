@@ -604,7 +604,7 @@ public:
         }
 
         // Act
-        if (!engine.mirrorEditorDeviceParameter(
+        if (!engine.setDeviceParameter(
                 EffectOwnerSpec{EffectOwnerKindSpec::track, "track:editor-instrument"},
                 "instrument:editor", 0, 0.75f, error))
             return false;
@@ -616,8 +616,20 @@ public:
 
         // Assert
         const auto state = rackPointer->persistedState(error);
-        return state.has_value() && !state->parameterValues.empty() &&
-               std::abs(state->parameterValues[0] - 0.75f) <= 0.0001f;
+        if (!state.has_value() || state->parameterValues.empty() ||
+            std::abs(state->parameterValues[0] - 0.75f) > 0.0001f)
+            return false;
+
+        PluginRackTestPeer::addParameterAndPublishCount(
+            *rackPointer, new juce::AudioParameterFloat("added", "Added", 0.0f, 1.0f, 0.0f));
+        const auto owner = EffectOwnerSpec{EffectOwnerKindSpec::track, "track:editor-instrument"};
+        if (engine.setDeviceParameter(owner, "instrument:editor", 700, 1.0f, error) ||
+            error != "Plugin parameter change queue cannot handle this index.")
+            return false;
+        const auto unchanged = rackPointer->persistedState(error);
+        return unchanged.has_value() && unchanged->parameterValues.size() == 701u &&
+               std::abs(unchanged->parameterValues[0] - 0.75f) <= 0.0001f &&
+               unchanged->parameterValues[700] == 0.0f;
     }
 
     static bool persistedStateUpdatesInstrumentRuntime() {

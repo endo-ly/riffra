@@ -317,17 +317,23 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         return true;
     }
     if (type == "setDeviceParameter") {
-        auto fields = reader({"type", "owner", "deviceId", "parameterIndex", "value"});
+        auto fields = reader({"type", "owner", "deviceId", "parameterIndex", "value", "display"});
         SetDeviceParameterCommand command;
-        double parameterValue = 0.0;
+        std::optional<double> parameterValue;
         if (!fields.string("type", ignoredType) ||
             !decodeDevice(fields, command.owner, command.deviceId, error) ||
             !fields.unsigned32("parameterIndex", command.parameterIndex) ||
-            !fields.number("value", parameterValue) || !fields.finish())
+            (value.hasProperty("value") && !fields.optionalNumber("value", parameterValue)) ||
+            (value.hasProperty("display") && !fields.optionalString("display", command.display)) ||
+            !fields.finish())
             return false;
-        if (parameterValue < 0.0 || parameterValue > 1.0)
-            return fail(error, field("value"), "must be between 0 and 1");
-        command.value = static_cast<float>(parameterValue);
+        if (parameterValue.has_value() == command.display.has_value())
+            return fail(error, field("value"), "select exactly one of value or display");
+        if (parameterValue.has_value()) {
+            if (*parameterValue < 0.0 || *parameterValue > 1.0)
+                return fail(error, field("value"), "must be between 0 and 1");
+            command.value = static_cast<float>(*parameterValue);
+        }
         output = command;
         return true;
     }

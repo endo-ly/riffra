@@ -80,18 +80,42 @@ TEST(PluginRackTest, ChangesAndReportsPluginPrograms) {
     EXPECT_FALSE(rack->setProgram(2, error));
 }
 
+TEST(PluginRackTest, RejectsParametersBeyondThePreparedChangeQueue) {
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = makeRack(trace, error);
+    ASSERT_NE(rack, nullptr) << error;
+
+    PluginRackTestPeer::addParameterAndPublishCount(
+        *rack, new juce::AudioParameterFloat("added", "Added", 0.0f, 1.0f, 0.5f));
+    ASSERT_EQ(rack->parameterCount(), 1u);
+
+    EXPECT_FALSE(rack->setParameter(0, 0.75f, error));
+    EXPECT_EQ(error, "Plugin parameter change queue cannot handle this index.");
+    const auto state = rack->persistedState(error);
+    ASSERT_TRUE(state.has_value()) << error;
+    ASSERT_EQ(state->parameterValues.size(), 1u);
+    EXPECT_FLOAT_EQ(state->parameterValues[0], 0.5f);
+}
+
 TEST(PluginRackTest, RestoresPersistedPluginState) {
     juce::String error;
     auto rack = PluginRackTestPeer::install(std::make_unique<StateTestProcessor>(), kSampleRate,
                                             kBlockSize, error);
     ASSERT_NE(rack, nullptr) << error;
 
+    juce::AudioBuffer<float> output(2, kBlockSize);
+    const auto process = [&] {
+        rack->process(nullptr, 0, output.getArrayOfWritePointers(), 2, kBlockSize);
+    };
     ASSERT_TRUE(rack->setParameter(0, 0.75f, error)) << error;
+    process();
     const auto saved = rack->persistedState(error);
     ASSERT_TRUE(saved.has_value()) << error;
     ASSERT_TRUE(rack->setParameter(0, 0.25f, error)) << error;
 
     ASSERT_TRUE(rack->applyPersistedState(*saved, error)) << error;
+    process();
     const auto restored = rack->persistedState(error);
     ASSERT_TRUE(restored.has_value()) << error;
     ASSERT_FALSE(restored->parameterValues.empty());

@@ -131,7 +131,7 @@ private:
         std::unique_ptr<std::atomic<bool>[]> dirty;
     };
 
-    void updateParameterCache(juce::AudioProcessor& processor);
+    void updateParameterCount(juce::AudioProcessor& processor);
     [[nodiscard]] juce::AudioProcessorEditor* createEditor(juce::String& error);
     [[nodiscard]] juce::String currentPluginName() const;
     [[nodiscard]] static std::optional<PluginLoadError> configureProcessor(
@@ -139,8 +139,17 @@ private:
         PluginProcessingMode mode);
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges() noexcept;
+    bool processControlBlock() noexcept;
+    juce::AudioBuffer<float> controlBuffer;
+    juce::MidiBuffer controlMidi;
+    std::atomic<std::uint64_t> requestedControlSequence{0};
+    std::atomic<std::uint64_t> completedControlSequence{0};
+    std::atomic<std::uint64_t> cancelledControlSequence{0};
     void queueParameterValue(int index, float value) noexcept;
+    [[nodiscard]] bool canQueueParameterValue(int index, juce::String& error) const noexcept;
     bool synchronizeParameterController(juce::String& error);
+    std::optional<float> parameterValueForText(int index, const juce::String& text,
+                                               juce::String& error) const;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 
     class PendingMidi final {
@@ -169,13 +178,13 @@ private:
     juce::AudioPluginFormatManager formatManager;
     std::unique_ptr<juce::AudioProcessor> plugin;
     std::unique_ptr<ParameterQueue> parameterQueue;
-    int preparedLatencySamples = 0;
+    std::atomic<int> preparedLatencySamples{0};
     int preparedTailSamples = 0;
     PendingMidi pendingMidi;
     juce::MidiBuffer processMidi;
     mutable juce::SpinLock pluginLock;
     mutable juce::CriticalSection statusLock;
-    std::vector<PluginParameterInfo> cachedParameters;
+    std::atomic<std::size_t> cachedParameterCount{0};
     juce::String pluginPath;
     juce::String pluginName;
     std::atomic<double> preparedSampleRate{0.0};
@@ -183,6 +192,7 @@ private:
     std::atomic<int> pluginInputChannels{0};
     std::atomic<int> pluginOutputChannels{0};
     std::atomic<bool> pluginIsInstrument{false};
+    std::atomic<bool> hostEditInProgress{false};
     std::atomic<int> cachedProgramCount{0};
     std::atomic<bool> cachedHasEditor{false};
     std::atomic<bool> loaded{false};

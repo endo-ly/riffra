@@ -89,7 +89,8 @@ struct SetDeviceParameterCommand final {
     EffectOwnerSpec owner;
     juce::String deviceId;
     std::uint32_t parameterIndex = 0;
-    float value = 0.0f;
+    std::optional<float> value;
+    std::optional<juce::String> display;
 };
 
 enum class DeviceQuery { status, parameters, programs, pluginState };

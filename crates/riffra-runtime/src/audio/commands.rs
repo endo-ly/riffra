@@ -220,11 +220,12 @@ impl AudioSupervisor {
         owner: &riffra_core::EffectOwner,
         device_id: &str,
         parameter_index: u32,
-        value: f32,
+        value: Option<f32>,
+        display: Option<String>,
     ) -> NativeAudioResult<()> {
-        if !value.is_finite() {
+        if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
             return Err(NativeAudioError::native_rejected(
-                "Track Device parameter value must be finite.",
+                "select exactly one finite value or display text",
             ));
         }
         self.request_ack(
@@ -232,7 +233,8 @@ impl AudioSupervisor {
                 owner: owner.clone(),
                 device_id: device_id.into(),
                 parameter_index,
-                value: value.clamp(0.0, 1.0),
+                value: value.map(|value| value.clamp(0.0, 1.0)),
+                display,
             },
             TRACK_DEVICE_COMMAND_TIMEOUT,
         )

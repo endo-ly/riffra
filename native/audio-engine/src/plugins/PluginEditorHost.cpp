@@ -16,10 +16,15 @@ public:
 
     void audioProcessorParameterChanged(juce::AudioProcessor*, const int parameterIndex,
                                         const float newValue) override {
-        host.queueParameterChange(parameterIndex, newValue);
+        if (!host.rack.hostEditInProgress.load(std::memory_order_acquire))
+            host.queueParameterChange(parameterIndex, newValue);
     }
 
-    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails&) override {
+    void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& details) override {
+        if (host.rack.hostEditInProgress.load(std::memory_order_acquire) ||
+            (!details.nonParameterStateChanged && !details.programChanged))
+            return;
+        host.rack.parameterControllerSyncPending.store(true, std::memory_order_release);
         host.markOpaqueStateDirty();
     }
 
@@ -197,6 +202,7 @@ void PluginEditorHost::queueParameterChange(const int index, const float value) 
     if (index < 0 || static_cast<std::size_t>(index) >= parameterCapacity ||
         parameterValues == nullptr || parameterDirty == nullptr)
         return;
+    rack.parameterControllerSyncPending.store(true, std::memory_order_release);
     const auto offset = static_cast<std::size_t>(index);
     parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
     parameterDirty[offset].store(true, std::memory_order_release);
@@ -242,9 +248,7 @@ void PluginEditorHost::publishStateIfDirty(const bool force) {
     if (!force && static_cast<std::uint32_t>(now - changedAt) < 400) return;
     opaqueStateDirty.store(false, std::memory_order_release);
     parameterStateDirty.store(false, std::memory_order_release);
-    juce::String error;
-    const auto state = rack.persistedState(error);
-    if (state.has_value()) onStateChanged(*state);
+    onStateChanged();
 }
 
 }  // namespace riffra

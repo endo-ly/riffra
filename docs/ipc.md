@@ -210,7 +210,13 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
 
-`getDeviceParameters` は制御側で最新の Plugin metadata を取得し、`deviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。Parameter 変更は既存キューでブロック先頭に適用する。変更 ACK と metadata の読取は、対象の realtime command が含まれる block の処理完了を確認し、制御側で VST3 Edit Controller の更新を同期してから行う。音声デバイス停止中は制御側の所有者がキューを適用する。
+`getDeviceParameters` は制御側で最新の Plugin metadata を取得し、`deviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。
+
+Parameter変更は既存Realtimeキューで適用する。変更ACKは対象Rackがcommand sequenceに対応したPlugin処理を完了し、Message Threadの情報変更通知とEdit Controller同期を通過してから返す。停止中は対象Rackだけを準備済み無音ブロックで処理し、その出力をMixerや録音へ送らない。Audio Device停止中は排他的なControl Realtime Ownerが処理する。未完了はエラーとなり、Rustは途中状態を正準コミットしない。復旧に失敗した場合は設定と復旧の両方の失敗理由を返す。
+
+`device.parameter.set`は`value`または`display`の一方だけを受け付ける。表示文字列はLive HostのPlugin Instanceに変換させ、有限な0..1の値と表示への往復を検証する。空白・大小文字・数値のゼロ埋めを許容し、丸め精度と単位を照合する。未対応・不正な文字列を0として適用しない。
+
+`effect.add`と`instrument.vst3.set`は`pluginPath`または`pluginId`の一方だけを受け付ける。Catalog IDは現在のDataRootで厳密に1件へ照合し、Validated・Role一致・実パス存在を検証する。Projectへ保存するのは解決後のパスであり、未登録・重複IDや検証失敗を自動スキャンで補わない。
 
 Desktop の Devices は既存 Control Command の `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。Preset と Parameter の編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editor のイベントによる正準値更新も同じ詳細へ反映する。
 
@@ -236,14 +242,14 @@ MIDI 系の意味づけは次の通り。
 
 `error` と `fault` は共通の形（`kind`、`message`、`operation`、`details`）を持つ。`kind` は分類、`operation` は失敗した操作、`details` は機械可読の追加情報である。
 
-| `kind`             | 意味                                                              |
-| ------------------ | ----------------------------------------------------------------- |
-| `invalidCommand`   | `requestId` は読めたが命令をデコードできない                      |
-| `protocol`         | `requestId` も読めない行を受けた（`fault` で通知）                |
-| `noResponse`       | 命令の処理が応答せずに終わった                                    |
-| `timelineBusy`     | 投影の置換が進行中で受け付けられない。Rust は再試行可能として扱う |
-| `timelineContract` | `TimelineSnapshot` の契約違反                                     |
-| その他             | 各領域の失敗（`deviceLost`、`invalidAudioConfiguration` など）    |
+| `kind`             | 意味                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalidCommand`   | `requestId` は読めたが命令をデコードできない                                                                                                                                    |
+| `protocol`         | `requestId` も読めない行を受けた（`fault` で通知）                                                                                                                              |
+| `noResponse`       | 命令の処理が応答せずに終わった                                                                                                                                                  |
+| `timelineBusy`     | Graphのprepare・commit・discard、投影の置換、またはプラグイン試聴の初期化中で受け付けられない。Track Device命令も処理中の排他操作が終わるまで拒否し、Rustは再試行可能として扱う |
+| `timelineContract` | `TimelineSnapshot` の契約違反                                                                                                                                                   |
+| その他             | 各領域の失敗（`deviceLost`、`invalidAudioConfiguration` など）                                                                                                                  |
 
 Rust は解釈できない行を捨てない。`tracing` に記録し、`AudioStatus.diagnostics.protocolErrors` を加算し、行から `requestId` が読めればその要求を即座に失敗させる。プロセスは止めない。
 

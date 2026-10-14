@@ -285,12 +285,13 @@ pub fn set_device_parameter(
     owner: &riffra_core::EffectOwner,
     device_id: &str,
     parameter_index: u32,
-    value: f32,
+    value: Option<f32>,
+    display: Option<String>,
 ) -> Result<crate::api::output::ArrangementMutationResult, AdapterError> {
-    if !value.is_finite() {
-        return Err("device parameter value must be finite".into());
+    if value.is_some() == display.is_some() || value.is_some_and(|value| !value.is_finite()) {
+        return Err("select exactly one finite value or display text".into());
     }
-    let value = value.clamp(0.0, 1.0);
+    let value = value.map(|value| value.clamp(0.0, 1.0));
     let session = current_session(context)?;
     let device = session
         .arrangement
@@ -310,7 +311,7 @@ pub fn set_device_parameter(
     let committed: Result<_, AdapterError> = (|| {
         context
             .audio
-            .set_device_parameter(owner, device_id, parameter_index, value)?;
+            .set_device_parameter(owner, device_id, parameter_index, value, display)?;
         let state = context.audio.get_plugin_state(owner, device_id)?;
         context.commit(|mut app| {
             app.persist_plugin_state(
@@ -327,7 +328,9 @@ pub fn set_device_parameter(
         Err(error) => {
             if let Err(rollback_error) = context.audio.set_plugin_state(owner, device_id, previous)
             {
-                tracing::error!(%rollback_error, device_id, "plugin parameter rollback failed");
+                return Err(AdapterError::runtime(format!(
+                    "{error}; plugin parameter rollback failed: {rollback_error}"
+                )));
             }
             Err(error)
         }

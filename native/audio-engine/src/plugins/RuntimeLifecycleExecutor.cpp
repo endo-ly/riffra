@@ -22,11 +22,37 @@ RuntimeLifecycleExecutor::~RuntimeLifecycleExecutor() {
 }
 
 bool RuntimeLifecycleExecutor::submit(Task task, std::chrono::milliseconds timeout) {
-    if (!task || timeout <= std::chrono::milliseconds::zero()) return false;
+    return enqueue(std::move(task), timeout, {}, false, true);
+}
+
+bool RuntimeLifecycleExecutor::submitWithQueueDeadline(Task task, std::chrono::milliseconds timeout,
+                                                       std::chrono::milliseconds queueTimeout,
+                                                       Task onExpired) {
+    if (!onExpired) return false;
+    return enqueue(std::move(task), timeout, queueTimeout, false, true, std::move(onExpired));
+}
+
+bool RuntimeLifecycleExecutor::submitControl(Task task, std::chrono::milliseconds timeout,
+                                             std::chrono::milliseconds queueTimeout,
+                                             Task onExpired) {
+    if (!onExpired) return false;
+    return enqueue(std::move(task), timeout, queueTimeout, false, false, std::move(onExpired));
+}
+
+bool RuntimeLifecycleExecutor::enqueue(Task task, const std::chrono::milliseconds watchdogTimeout,
+                                       const std::chrono::milliseconds queueTimeout,
+                                       const bool usesProgressWatchdog, const bool dispatchToOwner,
+                                       Task onExpired) {
+    if (!task || watchdogTimeout <= std::chrono::milliseconds::zero() ||
+        (onExpired && queueTimeout <= std::chrono::milliseconds::zero()))
+        return false;
     {
         const std::lock_guard lock(mutex);
         if (stopping) return false;
-        lifecycleTasks.push_back(TimedTask{std::move(task), timeout, false});
+        const auto queueDeadline = onExpired ? std::chrono::steady_clock::now() + queueTimeout
+                                             : std::chrono::steady_clock::time_point{};
+        lifecycleTasks.push_back(TimedTask{std::move(task), watchdogTimeout, usesProgressWatchdog,
+                                           dispatchToOwner, queueDeadline, std::move(onExpired)});
     }
     wake.notify_one();
     return true;
@@ -51,14 +77,15 @@ void RuntimeLifecycleExecutor::reportProgress() noexcept {
 }
 
 RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitState(
-    std::string key, Task task, std::chrono::milliseconds timeout) {
+    std::string key, Task task, std::chrono::milliseconds timeout, const TaskThread thread) {
     if (!task || key.empty() || timeout <= std::chrono::milliseconds::zero())
         return StateSubmitResult::invalid;
     {
         const std::lock_guard lock(mutex);
         if (stopping) return StateSubmitResult::stopping;
         if (const auto existing = stateTasks.find(key); existing != stateTasks.end()) {
-            existing->second = TimedTask{std::move(task), timeout, false};
+            existing->second =
+                TimedTask{std::move(task), timeout, false, thread == TaskThread::owner};
             return StateSubmitResult::coalesced;
         } else {
             StateSubmitResult result = StateSubmitResult::accepted;
@@ -71,7 +98,8 @@ RuntimeLifecycleExecutor::StateSubmitResult RuntimeLifecycleExecutor::submitStat
                 result = StateSubmitResult::droppedCapacity;
             }
             stateOrder.push_back(key);
-            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout, false});
+            stateTasks.emplace(std::move(key), TimedTask{std::move(task), timeout, false,
+                                                         thread == TaskThread::owner});
             wake.notify_one();
             return result;
         }
@@ -148,6 +176,7 @@ void RuntimeLifecycleExecutor::watch() {
 void RuntimeLifecycleExecutor::run() {
     for (;;) {
         TimedTask timedTask;
+        bool queueExpired = false;
         {
             std::unique_lock lock(mutex);
             wake.wait(lock, [this] {
@@ -171,17 +200,36 @@ void RuntimeLifecycleExecutor::run() {
                 }
             }
             running = true;
-            currentTaskTimedOut = false;
+            queueExpired = timedTask.queueDeadline != std::chrono::steady_clock::time_point{} &&
+                           std::chrono::steady_clock::now() >= timedTask.queueDeadline;
+            currentTaskTimedOut = queueExpired;
             currentTaskUsesProgressWatchdog = timedTask.usesProgressWatchdog;
             currentTaskStarted = std::chrono::steady_clock::now();
             currentTaskLastProgress = currentTaskStarted;
-            currentTaskTimeout = timedTask.timeout;
+            currentTaskTimeout = timedTask.watchdogTimeout;
         }
         try {
-            if (taskDispatcher)
-                taskDispatcher(std::move(timedTask.task));
-            else
-                timedTask.task();
+            if (queueExpired) {
+                timedTask.onExpired();
+            } else {
+                auto task = std::move(timedTask.task);
+                if (timedTask.queueDeadline != std::chrono::steady_clock::time_point{}) {
+                    auto onExpired = std::move(timedTask.onExpired);
+                    const auto deadline = timedTask.queueDeadline;
+                    task = [task = std::move(task), onExpired = std::move(onExpired),
+                            deadline]() mutable {
+                        if (std::chrono::steady_clock::now() >= deadline) {
+                            onExpired();
+                            return;
+                        }
+                        task();
+                    };
+                }
+                if (taskDispatcher && timedTask.dispatchToOwner)
+                    taskDispatcher(std::move(task));
+                else
+                    task();
+            }
         } catch (...) {
             // Lifecycle tasks report expected failures through their command
             // response. A defensive boundary keeps one unexpected vendor

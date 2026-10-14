@@ -64,6 +64,8 @@ private:
     /// Rejects a command that must not overlap an Arrangement Graph lifecycle task.
     [[nodiscard]] bool rejectWhileTimelineBusy(CommandResponder& responder,
                                                const juce::String& message);
+    /// Rejects Track Device commands while a conflicting Graph or VST lifecycle task is active.
+    [[nodiscard]] bool rejectDeviceCommandWhileTimelineBusy(CommandResponder& responder);
     /// Fails the request unless the timeline accepted it. A full realtime
     /// command queue is reported as the retryable `realtimeQueueFull`.
     [[nodiscard]] static bool rejectUnlessAccepted(CommandResponder& responder,

@@ -1,5 +1,6 @@
 use super::HostState;
 use super::events::HostEventSubscription;
+use crate::execution::GraphPluginState;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,7 @@ struct PluginStateEvent {
     parameter_values: Vec<f32>,
     state_data: Option<String>,
     bypassed: bool,
+    arrangement_revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -246,40 +248,84 @@ impl HostState {
         if queued.project_id != writer.project().core.project_id() {
             return Ok(());
         }
-        let committed = writer
-            .commit(|mut app| match &queued.change {
-                PendingPluginChange::State(change) => app.persist_plugin_state(
-                    &change.owner,
-                    &change.device_id,
-                    change.parameter_values.clone(),
-                    change.state_data.clone(),
-                    change.bypassed,
-                ),
-                PendingPluginChange::Parameter(change) => {
-                    if change.parameter_index < 0 || !change.value.is_finite() {
-                        return Err(riffra_core::ApplicationError::InvalidCommand(
-                            "plugin parameter value is invalid".into(),
-                        ));
-                    }
-                    let state = self
-                        .audio
+        let canonical = writer.project().core.canonical_state();
+        let (owner, device_id, state) = match &queued.change {
+            PendingPluginChange::State(change) => {
+                let state = if change.arrangement_revision != canonical.session.arrangement.revision
+                {
+                    self.audio
                         .get_plugin_state(&change.owner, &change.device_id)
                         .map_err(|error| {
                             riffra_core::ApplicationError::InvalidCommand(error.to_string())
-                        })?;
-                    app.persist_plugin_state(
-                        &change.owner,
-                        &change.device_id,
-                        state.parameter_values,
-                        state.state_data,
-                        state.bypassed,
+                                .to_string()
+                        })?
+                } else {
+                    GraphPluginState {
+                        parameter_values: change.parameter_values.clone(),
+                        state_data: change.state_data.clone(),
+                        bypassed: change.bypassed,
+                    }
+                };
+                (change.owner.clone(), change.device_id.clone(), state)
+            }
+            PendingPluginChange::Parameter(change) => {
+                if change.parameter_index < 0 || !change.value.is_finite() {
+                    return Err(riffra_core::ApplicationError::InvalidCommand(
+                        "plugin parameter value is invalid".into(),
                     )
+                    .to_string());
                 }
+                let state = self
+                    .audio
+                    .get_plugin_state(&change.owner, &change.device_id)
+                    .map_err(|error| {
+                        riffra_core::ApplicationError::InvalidCommand(error.to_string()).to_string()
+                    })?;
+                (change.owner.clone(), change.device_id.clone(), state)
+            }
+        };
+        if canonical_plugin_state_matches(&canonical, &owner, &device_id, &state) {
+            return Ok(());
+        }
+        let committed = writer
+            .commit(|mut app| {
+                app.persist_plugin_state(
+                    &owner,
+                    &device_id,
+                    state.parameter_values,
+                    state.state_data,
+                    state.bypassed,
+                )
             })
             .map_err(|error| error.to_string())?;
         self.publish_commit(writer, committed);
         Ok(())
     }
+}
+
+fn canonical_plugin_state_matches(
+    canonical: &riffra_core::CanonicalState,
+    owner: &riffra_core::EffectOwner,
+    device_id: &str,
+    state: &GraphPluginState,
+) -> bool {
+    let Ok(device) = canonical.session.arrangement.device(owner, device_id) else {
+        return false;
+    };
+    let Some(plugin) = device.plugin() else {
+        return false;
+    };
+    let canonical_state_data = plugin
+        .state_data
+        .as_deref()
+        .filter(|value| !value.is_empty());
+    let runtime_state_data = state
+        .state_data
+        .as_deref()
+        .filter(|value| !value.is_empty());
+    plugin.parameter_values == state.parameter_values
+        && canonical_state_data == runtime_state_data
+        && device.bypassed() == state.bypassed
 }
 
 fn flush_plugin_changes(
@@ -427,9 +473,66 @@ mod tests {
         riffra_control::HostEventFrame::new(
             "plugin-state-changed",
             serde_json::json!({
-                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "parameterValues": [value], "stateData": null, "bypassed": false,
+                "projectId": project_id, "owner": {"kind":"track", "id":"track:1"}, "deviceId": "device:1", "arrangementRevision": 0, "parameterValues": [value], "stateData": null, "bypassed": false,
             }),
         )
+    }
+    fn opaque_plugin_state_change(
+        project_id: &str,
+        arrangement_revision: u64,
+    ) -> riffra_control::HostEventFrame {
+        riffra_control::HostEventFrame::new(
+            "plugin-state-changed",
+            serde_json::json!({
+                "projectId": project_id,
+                "owner": {"kind":"track", "id":"track:1"},
+                "deviceId": "device:1",
+                "arrangementRevision": arrangement_revision,
+                "parameterValues": [0.0],
+                "stateData": "cHJlc2V0LXN0YXRl",
+                "bypassed": false,
+            }),
+        )
+    }
+    #[test]
+    fn persists_opaque_program_state_and_skips_an_identical_snapshot() {
+        let (root, state) = plugin_host();
+        let project_id = state.project.read().canonical.project_id.clone();
+        let mut pending = HashMap::new();
+        collect_plugin_change(
+            &mut pending,
+            opaque_plugin_state_change(&project_id, 0),
+            &mut 0,
+        );
+        let queued = pending.into_values().next().unwrap();
+        let mut writer = state.project.write();
+
+        state.apply_plugin_change(&mut writer, &queued).unwrap();
+        let saved = writer.project().core.canonical_state();
+        assert_eq!(saved.sequence, 1);
+        assert_eq!(
+            saved.session.arrangement.tracks[0].effects[0]
+                .plugin
+                .state_data
+                .as_deref(),
+            Some("cHJlc2V0LXN0YXRl")
+        );
+
+        let mut pending = HashMap::new();
+        collect_plugin_change(
+            &mut pending,
+            opaque_plugin_state_change(&project_id, saved.session.arrangement.revision),
+            &mut 1,
+        );
+        let duplicate = pending.into_values().next().unwrap();
+        state.apply_plugin_change(&mut writer, &duplicate).unwrap();
+        assert_eq!(
+            writer.project().core.canonical_state().sequence,
+            saved.sequence
+        );
+        drop(writer);
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
     #[test]
     fn periodic_persistence_cannot_interleave_a_command_with_its_publication() {
@@ -492,6 +595,7 @@ mod tests {
         let storage = writer.project().storage.clone();
         state.events.emit(crate::HostEvent::PluginStateChanged(
             crate::model::PluginStateChanged {
+                arrangement_revision: 0,
                 project_id: previous.project_id.clone(),
                 owner: riffra_core::EffectOwner::Track {
                     id: "track:1".into(),
@@ -553,6 +657,7 @@ mod tests {
         for (device_id, value) in [("deleted", 0.25), ("device:1", 0.75)] {
             state.events.emit(crate::HostEvent::PluginStateChanged(
                 crate::model::PluginStateChanged {
+                    arrangement_revision: 0,
                     project_id: previous.project_id.clone(),
                     owner: riffra_core::EffectOwner::Track {
                         id: "track:1".into(),

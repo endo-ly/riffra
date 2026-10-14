@@ -695,7 +695,19 @@ impl HostDispatcher<'_> {
                     &params.owner,
                     &params.device_id,
                     params.parameter_index as usize,
-                    params.value,
+                    match (params.value, params.display) {
+                        (Some(value), None) => value,
+                        (None, Some(_)) => {
+                            return Err(DispatchError::CommandFailed(
+                                "display parameter input requires a live Host".into(),
+                            ));
+                        }
+                        _ => {
+                            return Err(DispatchError::CommandFailed(
+                                "select exactly one of value or display".into(),
+                            ));
+                        }
+                    },
                 )?,
                 application,
             ),
