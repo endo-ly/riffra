@@ -33,6 +33,7 @@ const track: Track = {
 const parameters: DeviceParameterInfo[] = [
   {
     index: 0,
+    parameterId: 'level',
     name: 'Level',
     value: 0.5,
     defaultValue: 0.25,
@@ -45,6 +46,7 @@ const parameters: DeviceParameterInfo[] = [
   },
   {
     index: 1,
+    parameterId: 'mode',
     name: 'Mode',
     value: 0,
     defaultValue: 0,
@@ -97,6 +99,9 @@ function Harness({
   return (
     <DevicesPanel
       projectId={session.sessionId}
+      automationLanes={session.arrangement.automationLanes}
+      playing={false}
+      onOpenAutomation={() => undefined}
       target={resolveDeviceTarget(session.arrangement, owner)}
       api={api}
       applyCanonicalState={(canonical) => {
@@ -244,6 +249,9 @@ describe('DevicesPanel', () => {
     );
     const props = {
       projectId: 'project:1',
+      automationLanes: [],
+      playing: false,
+      onOpenAutomation: () => undefined,
       target: {
         owner: { kind: 'track' as const, id: track.id },
         name: track.name,

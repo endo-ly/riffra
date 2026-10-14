@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CanonicalState, DeviceParameterInfo, EffectOwner } from '@/model/domain';
+import type {
+  AutomationLane,
+  CanonicalState,
+  DeviceParameterInfo,
+  EffectOwner,
+} from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
 import styles from './Devices.module.css';
@@ -10,6 +15,9 @@ interface DeviceParameterEditorProps {
   deviceId: string;
   stateData?: string;
   parameterValues: number[];
+  automationLanes: AutomationLane[];
+  automationReadActive: boolean;
+  onOpenAutomation: (parameter: DeviceParameterInfo) => void;
   applyCanonicalState: (state: CanonicalState) => boolean;
 }
 
@@ -18,11 +26,15 @@ function ParameterControl({
   canonicalValue,
   disabled,
   onCommit,
+  automated,
+  onOpenAutomation,
 }: {
   parameter: DeviceParameterInfo;
   canonicalValue: number;
   disabled: boolean;
   onCommit: (value: number) => Promise<boolean>;
+  automated: boolean;
+  onOpenAutomation: () => void;
 }) {
   const [draft, setDraft] = useState(parameter.value);
   const submitted = useRef(parameter.value);
@@ -47,7 +59,14 @@ function ParameterControl({
   );
   return (
     <div className={styles.parameter}>
-      <label htmlFor={`parameter-${parameter.index}`}>{name}</label>
+      <label htmlFor={`parameter-${parameter.index}`}>
+        {name} {automated ? '· AUTO' : ''}
+      </label>
+      {parameter.automatable && parameter.parameterId && (
+        <button type="button" onClick={onOpenAutomation} aria-label={`Open ${name} automation`}>
+          Automation
+        </button>
+      )}
       {parameter.choices.length >= 2 ? (
         <select
           id={`parameter-${parameter.index}`}
@@ -135,6 +154,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
       aria-busy={loading || saving}
     >
       {loading && <p role="status">Loading device…</p>}
+      {props.automationReadActive && <p>Automation Read · stop playback to edit device state.</p>}
       {error && <p role="alert">{error}</p>}
       {details && (
         <>
@@ -146,7 +166,7 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
                 <select
                   aria-label="Preset"
                   value={details.currentPreset?.index ?? ''}
-                  disabled={loading || saving}
+                  disabled={loading || saving || props.automationReadActive}
                   onChange={(event) => {
                     const index = Number(event.currentTarget.value);
                     void mutate(() =>
@@ -179,9 +199,16 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
           {details.parameters.map((parameter) => (
             <ParameterControl
               key={parameter.index}
+              automated={props.automationLanes.some(
+                (lane) =>
+                  lane.target.kind === 'deviceParameter' &&
+                  lane.target.deviceId === props.deviceId &&
+                  lane.target.parameterId === parameter.parameterId,
+              )}
+              onOpenAutomation={() => props.onOpenAutomation(parameter)}
               parameter={parameter}
               canonicalValue={props.parameterValues[parameter.index] ?? parameter.value}
-              disabled={loading || saving}
+              disabled={loading || saving || props.automationReadActive}
               onCommit={(value) =>
                 mutate(() =>
                   props.api.setDeviceParameter(props.owner, props.deviceId, parameter.index, value),

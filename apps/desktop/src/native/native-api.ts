@@ -39,7 +39,8 @@ import type {
   MidiInputRoute,
   MusicalPosition,
   AudioTakeVariant,
-  AutomationParameter,
+  AutomationTarget,
+  AutomationInterpolation,
   AutomationPoint,
   TrackKind,
   InstrumentCollection,
@@ -308,9 +309,9 @@ export interface ArrangeApi {
       color?: string;
     },
   ): Promise<ArrangementMutationResult>;
-  setTrackAutomation(
-    trackId: string,
-    parameter: AutomationParameter,
+  setAutomation(
+    target: AutomationTarget,
+    interpolation: AutomationInterpolation,
     points: AutomationPoint[],
   ): Promise<ArrangementMutationResult>;
   setTrackAudioInput(

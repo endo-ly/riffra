@@ -49,6 +49,7 @@ export type ControlCommandResults = {
   'timebase.set-map': OutputValue<'arrangementMutation'>;
   'loop-range.set': OutputValue<'arrangementMutation'>;
   'punch-range.set': OutputValue<'arrangementMutation'>;
+  'automation.list': OutputValue<'automationLanes'>;
   'automation.get': OutputValue<'automationLanes'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;

@@ -3,4 +3,4 @@
 /**
  * A Track mix parameter controlled on the Arrangement timeline.
  */
-export type AutomationParameter = "volume" | "pan";
+export type TrackMixParameter = "volume" | "pan";

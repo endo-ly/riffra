@@ -9,12 +9,12 @@
 use crate::model::BootstrapState;
 use riffra_core::{
     Arrangement, AssetId, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute,
-    AudioTakeVariant, AutomationLane, AutomationParameter, AutomationPoint, CanonicalState,
-    CreativeSession, EffectDevice, FrameDuration, FrameRange, HarmonyChord, HarmonyEvent,
-    HistoryState, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute, MidiNote,
-    MonitoringState, MusicalNoteName, ProjectTimebase, RecordingPassRecord, RecordingSessionRecord,
-    RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings, TimelineLoopRange,
-    TimelineRegion, Track, TrackKind, Vst3Plugin,
+    AudioTakeVariant, AutomationInterpolation, AutomationLane, AutomationPoint, AutomationTarget,
+    CanonicalState, CreativeSession, EffectDevice, FrameDuration, FrameRange, HarmonyChord,
+    HarmonyEvent, HistoryState, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiInputRoute,
+    MidiNote, MonitoringState, MusicalNoteName, ProjectTimebase, RecordingPassRecord,
+    RecordingSessionRecord, RecordingSessionTrackSlot, RecordingTakeRecord, SessionSettings,
+    TimelineLoopRange, TimelineRegion, Track, TrackKind, Vst3Plugin,
 };
 use riffra_runtime::api::output::{
     AudioAnalysis, BackgroundJobStatus, DropoutInformation, JobKind, JobState, LibraryAsset,
@@ -69,7 +69,8 @@ fn export_types() {
     AudioInputRoute::export_all(&cfg).expect("AudioInputRoute bindings");
     MidiInputRoute::export_all(&cfg).expect("MidiInputRoute bindings");
     Track::export_all(&cfg).expect("Track bindings");
-    AutomationParameter::export_all(&cfg).expect("AutomationParameter bindings");
+    AutomationTarget::export_all(&cfg).expect("AutomationTarget bindings");
+    AutomationInterpolation::export_all(&cfg).expect("AutomationInterpolation bindings");
     AutomationPoint::export_all(&cfg).expect("AutomationPoint bindings");
     AutomationLane::export_all(&cfg).expect("AutomationLane bindings");
     MidiNote::export_all(&cfg).expect("MidiNote bindings");

@@ -21,6 +21,7 @@ interface MixerTrackChannelStripProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelect: () => void;
   onOpenDevices: () => void;
+  onOpenAutomation: () => void;
   onOpenRouting: () => void;
   outputName: string;
   sendCount: number;
@@ -94,9 +95,12 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
       <button type="button" className={styles.routeButton} onClick={props.onOpenRouting}>
         {props.outputName} · {props.sendCount} Sends
       </button>
+      <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
+        Automation
+      </button>
       <label className={styles.panControl}>
         <span>
-          PAN <output>{formatPan(mix.pan)}</output>
+          PAN · STATIC <output>{formatPan(mix.pan)}</output>
           {props.panAutomation?.points.length ? <b>AUTO</b> : null}
         </span>
         <input
@@ -137,7 +141,7 @@ export function MixerTrackChannelStrip(props: MixerTrackChannelStripProps) {
 
         <label className={styles.faderControl}>
           <span className={styles.faderLabel}>
-            <span>GAIN</span>
+            <span>GAIN · STATIC</span>
             {props.volumeAutomation?.points.length ? <b>AUTO</b> : null}
           </span>
           <input

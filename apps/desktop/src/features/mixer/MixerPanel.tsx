@@ -1,5 +1,6 @@
 import type {
   CanonicalState,
+  AutomationTarget,
   CreativeSession,
   EffectOwner,
   ArrangementMutationResult,
@@ -25,6 +26,7 @@ interface MixerPanelProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onSelectTrack: (trackId: string) => void;
   onOpenDevices: (trackId: string) => void;
+  onOpenAutomation: (target: AutomationTarget) => void;
   onError?: (message: string) => void;
   disabled?: boolean;
 }
@@ -135,10 +137,16 @@ export function MixerPanel(props: MixerPanelProps) {
                 track={track}
                 trackIndex={trackIndex}
                 volumeAutomation={arrangement.automationLanes.find(
-                  (lane) => lane.trackId === track.id && lane.parameter === 'volume',
+                  (lane) =>
+                    lane.target.kind === 'trackMix' &&
+                    lane.target.trackId === track.id &&
+                    lane.target.parameter === 'volume',
                 )}
                 panAutomation={arrangement.automationLanes.find(
-                  (lane) => lane.trackId === track.id && lane.parameter === 'pan',
+                  (lane) =>
+                    lane.target.kind === 'trackMix' &&
+                    lane.target.trackId === track.id &&
+                    lane.target.parameter === 'pan',
                 )}
                 selected={props.selectedTrackId === track.id}
                 missingDeviceIds={props.missingDeviceIds}
@@ -146,6 +154,13 @@ export function MixerPanel(props: MixerPanelProps) {
                 applyCanonicalState={props.applyCanonicalState}
                 onSelect={() => props.onSelectTrack(track.id)}
                 onOpenDevices={() => props.onOpenDevices(track.id)}
+                onOpenAutomation={() =>
+                  props.onOpenAutomation({
+                    kind: 'trackMix',
+                    trackId: track.id,
+                    parameter: 'volume',
+                  })
+                }
                 onOpenRouting={() => setRoutingTrackId(track.id)}
                 outputName={
                   arrangement.mixer.buses.find((bus) => bus.id === track.outputBusId)?.name ??
@@ -174,6 +189,12 @@ export function MixerPanel(props: MixerPanelProps) {
                     applyCanonicalState={props.applyCanonicalState}
                     onSelect={() => props.onSelectOwner({ kind: 'bus', id: bus.id })}
                     onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'bus', id: bus.id })}
+                    onOpenAutomation={() =>
+                      props.onOpenAutomation({ kind: 'busMix', busId: bus.id, parameter: 'gain' })
+                    }
+                    automated={arrangement.automationLanes.some(
+                      (lane) => lane.target.kind === 'busMix' && lane.target.busId === bus.id,
+                    )}
                     onError={setError}
                     disabled={props.disabled}
                   />
@@ -189,6 +210,7 @@ export function MixerPanel(props: MixerPanelProps) {
       </div>
 
       <MixerMasterChannelStrip
+        onOpenAutomation={() => props.onOpenAutomation({ kind: 'masterGain' })}
         onOpenMixdown={() => setMixdownOpen(true)}
         onOpenDevices={() => props.onOpenOwnerDevices({ kind: 'master' })}
         missingDeviceIds={props.missingDeviceIds}
@@ -213,6 +235,7 @@ export function MixerPanel(props: MixerPanelProps) {
       )}
       {routingTrack && (
         <MixerRouting
+          onOpenAutomation={props.onOpenAutomation}
           arrangement={arrangement}
           track={routingTrack}
           api={props.api}

@@ -115,6 +115,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       instrumentRuntimeCount: 0,
       pluginCount: 0,
       maximumLatencySamples: 0,
+      automationWarnings: [],
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
       protocolErrors: 0,
@@ -504,8 +505,8 @@ export class FakeNativeApi implements NativeApi {
   updateTrack(...args: Parameters<NativeApi['updateTrack']>) {
     return this.command('updateTrack', args);
   }
-  setTrackAutomation(...args: Parameters<NativeApi['setTrackAutomation']>) {
-    return this.command('setTrackAutomation', args);
+  setAutomation(...args: Parameters<NativeApi['setAutomation']>) {
+    return this.command('setAutomation', args);
   }
   setTrackAudioInput(...args: Parameters<NativeApi['setTrackAudioInput']>) {
     return this.command('setTrackAudioInput', args);
@@ -1131,7 +1132,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'crossfadeAudioClips',
   'addTrack',
   'updateTrack',
-  'setTrackAutomation',
+  'setAutomation',
   'setTrackAudioInput',
   'setTrackMidiInput',
   'applyInstrument',
