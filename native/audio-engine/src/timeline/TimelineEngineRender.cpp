@@ -518,6 +518,7 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
 }
 
 void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcept {
+    prepared.restoreAutomation();
     prepared.mixer.reset();
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;

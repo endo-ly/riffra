@@ -671,12 +671,33 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
         EXPECT_GT(meters[0].peakLeft, 0.01);
         const auto groupEffects = graph->mixer.buses[0]->effects;
         const auto masterEffects = graph->mixer.masterEffects;
+        const auto automatedOwner = EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"};
+        const auto staticState = engine.devicePersistedState(automatedOwner, "fx:group", error);
+        ASSERT_TRUE(staticState.has_value()) << error;
+        const auto parameterInfo = groupEffects->findDevice("fx:group")->parameters();
+        ASSERT_TRUE(parameterInfo[0].parameterId.has_value());
+        candidate.graph.automation = {{AutomationTargetKind::deviceParameter,
+                                       "fx:group",
+                                       *parameterInfo[0].parameterId,
+                                       AutomationInterpolationSpec::step,
+                                       {{0, 0.25}}}};
         candidate.graph.mixer.buses[0].gainDb = -3.0;
         candidate.graph.mixer.sends[0].levelDb = -6.0;
         ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
         graph = TimelineEngineTestPeer::committedGraph(engine);
         EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
         EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        ASSERT_EQ(graph->mixer.buses[0]->deviceAutomation.size(), 1u);
+        output.clear();
+        engine.mix(output.getArrayOfWritePointers(), 2, 64);
+        EXPECT_EQ(engine.devicePersistedState(automatedOwner, "fx:group", error), staticState);
+        EXPECT_FALSE(engine.setDeviceParameter(automatedOwner, "fx:group", 0, 0.9f, error));
+        candidate.graph.automation.clear();
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        EXPECT_EQ(TimelineEngineTestPeer::committedGraph(engine)->mixer.buses[0]->effects,
+                  groupEffects);
+        EXPECT_NEAR(groupEffects->findDevice("fx:group")->parameters()[0].value,
+                    staticState->parameterValues[0], 0.0001f);
         for (const auto& [owner, id] : std::array<std::pair<EffectOwnerSpec, juce::String>, 3>{
                  std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"},
                            juce::String("fx:group")},

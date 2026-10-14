@@ -26,6 +26,7 @@ void PluginRack::queueParameterValue(const int index, const float value) noexcep
         return;
     }
     const auto offset = static_cast<std::size_t>(index);
+    staticStateDirty.store(true, std::memory_order_release);
     const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     queue->values[offset].store(normalized, std::memory_order_release);
     queue->dirty[offset].store(true, std::memory_order_release);
@@ -60,6 +61,12 @@ bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& e
         return false;
     }
     if (count > 0) {
+        candidate->automationRestore = std::unique_ptr<ParameterQueue::Restore[]>(
+            new (std::nothrow) ParameterQueue::Restore[count]);
+        if (candidate->automationRestore == nullptr) {
+            error = "plugin automation restore storage could not be allocated";
+            return false;
+        }
         candidate->values =
             std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
         candidate->dirty =
@@ -104,6 +111,10 @@ juce::String PluginRack::currentPluginName() const {
 }
 
 bool PluginRack::setParameter(const int index, const float value, juce::String& error) noexcept {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
     if (!loaded.load(std::memory_order_acquire)) {
         error = "No VST3 plugin is loaded.";
         return false;
@@ -118,6 +129,11 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
 }
 
 bool PluginRack::setProgram(const int index, juce::String& error) {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
@@ -160,6 +176,11 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
 }
 
 bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     try {
         FaultInjection::before(FaultStage::stateApply);
     } catch (const std::exception& exception) {
@@ -206,6 +227,8 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         error = "No VST3 plugin is loaded.";
         return std::nullopt;
     }
+    if (staticState && (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive()))
+        return staticState;
     PluginStateSpec result;
     try {
         juce::MemoryBlock state;
@@ -224,7 +247,47 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
     for (auto* parameter : parameters)
         result.parameterValues.push_back(parameter != nullptr ? parameter->getValue() : 0.0f);
     result.bypassed = bypassed.load(std::memory_order_acquire);
+    if (staticState) {
+        staticState = result;
+        staticStateDirty.store(false, std::memory_order_release);
+    }
     return result;
+}
+
+void PluginRack::restoreAutomation() noexcept {
+    auto* queue = parameterQueue.get();
+    if (queue != nullptr) {
+        for (std::size_t index = 0; index < queue->capacity; ++index) {
+            auto& restore = queue->automationRestore[index];
+            if (restore.parameter == nullptr) continue;
+            restore.parameter->setValue(restore.value);
+            restore.parameter = nullptr;
+            parameterControllerSyncPending.store(true, std::memory_order_release);
+        }
+    }
+    activeBindings = nullptr;
+    activeBindingCount = 0;
+    automationActive.store(false, std::memory_order_release);
+}
+
+void PluginRack::applyAutomation(std::span<PluginParameterAutomation> bindings,
+                                 const std::int64_t timelineSample, const bool playing) noexcept {
+    if (!playing || activeBindings != bindings.data() || activeBindingCount != bindings.size()) {
+        restoreAutomation();
+        activeBindings = bindings.data();
+        activeBindingCount = bindings.size();
+    }
+    if (!playing) return;
+    for (auto& binding : bindings) {
+        if (binding.rack != this) continue;
+        auto& restore = parameterQueue->automationRestore[binding.parameterIndex];
+        if (restore.parameter == nullptr) restore = {binding.parameter, binding.staticValue};
+        auto cursor = binding.lane.cursorAt(timelineSample - binding.inputLatency);
+        const auto value =
+            cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue);
+        if (binding.parameter->getValue() != value) binding.parameter->setValue(value);
+        automationActive.store(true, std::memory_order_release);
+    }
 }
 
 void PluginRack::applyQueuedParameterChanges() noexcept {
@@ -401,10 +464,20 @@ std::optional<PluginParameterAutomation> PluginRack::bindAutomation(const juce::
         return std::nullopt;
     }
     const auto index = static_cast<std::size_t>(found->index);
-    const auto value =
-        index < state.parameterValues.size() ? state.parameterValues[index] : found->value;
+    if (parameterQueue == nullptr || index >= parameterQueue->capacity) {
+        error = "automation parameter storage requires device reprepare";
+        return std::nullopt;
+    }
+    auto baseline = persistedState(error);
+    if (!baseline) return std::nullopt;
+    if (state.stateData) baseline->stateData = state.stateData;
+    for (std::size_t i = 0;
+         i < std::min(state.parameterValues.size(), baseline->parameterValues.size()); ++i)
+        baseline->parameterValues[i] = state.parameterValues[i];
+    staticState = std::move(baseline);
+    staticStateDirty.store(false, std::memory_order_release);
     return PluginParameterAutomation{this, plugin->getParameters()[found->index], std::move(lane),
-                                     value, false};
+                                     staticState->parameterValues[index], index};
 }
 
 PluginProgramStatus PluginRack::programStatus() const {

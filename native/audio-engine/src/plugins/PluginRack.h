@@ -88,7 +88,7 @@ struct PluginParameterAutomation final {
     juce::AudioProcessorParameter* parameter = nullptr;
     AutomationRuntime lane;
     float staticValue = 0.0f;
-    bool applied = false;
+    std::size_t parameterIndex = 0;
     std::int64_t inputLatency = 0;
 };
 
@@ -104,6 +104,13 @@ public:
     [[nodiscard]] bool prepareTimelineMidiCapacity(std::size_t eventCapacity,
                                                    juce::String& error) noexcept;
     void reset() noexcept;
+    /// Audio owner restores static parameter values without serializing plugin state.
+    void restoreAutomation() noexcept;
+    void beginAutomationRead() noexcept { automationActive.store(true, std::memory_order_release); }
+    [[nodiscard]] bool isAutomationActive() const noexcept {
+        return automationActive.load(std::memory_order_acquire);
+    }
+
     void setBypassed(bool shouldBypass) noexcept;
     bool setParameter(int index, float value, juce::String& error) noexcept;
     bool setProgram(int index, juce::String& error);
@@ -146,7 +153,12 @@ private:
     struct ParameterQueue final {
         explicit ParameterQueue(std::size_t parameterCount) : capacity(parameterCount) {}
 
+        struct Restore final {
+            juce::AudioProcessorParameter* parameter = nullptr;
+            float value = 0.0f;
+        };
         const std::size_t capacity;
+        std::unique_ptr<Restore[]> automationRestore;
         std::unique_ptr<std::atomic<float>[]> values;
         std::unique_ptr<std::atomic<bool>[]> dirty;
     };
@@ -159,6 +171,8 @@ private:
         PluginProcessingMode mode);
     bool applyStateData(const juce::String& base64, juce::String& error) noexcept;
     void applyQueuedParameterChanges() noexcept;
+    void applyAutomation(std::span<PluginParameterAutomation> bindings, std::int64_t timelineSample,
+                         bool playing) noexcept;
     bool processControlBlock() noexcept;
     juce::AudioBuffer<float> controlBuffer;
     juce::MidiBuffer controlMidi;
@@ -224,6 +238,11 @@ private:
     std::atomic<bool> bypassed{false};
     std::atomic<bool> panicPending{false};
     std::atomic<bool> parameterControllerSyncPending{false};
+    std::atomic<bool> automationActive{false};
+    const PluginParameterAutomation* activeBindings = nullptr;
+    std::size_t activeBindingCount = 0;
+    mutable std::optional<PluginStateSpec> staticState;
+    mutable std::atomic<bool> staticStateDirty{true};
 };
 
 }  // namespace riffra

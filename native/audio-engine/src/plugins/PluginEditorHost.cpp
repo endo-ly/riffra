@@ -16,12 +16,14 @@ public:
 
     void audioProcessorParameterChanged(juce::AudioProcessor*, const int parameterIndex,
                                         const float newValue) override {
-        if (!host.rack.hostEditInProgress.load(std::memory_order_acquire))
+        if (!host.rack.hostEditInProgress.load(std::memory_order_acquire) &&
+            !host.rack.isAutomationActive())
             host.queueParameterChange(parameterIndex, newValue);
     }
 
     void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& details) override {
-        if (host.rack.hostEditInProgress.load(std::memory_order_acquire) ||
+        if (host.rack.isAutomationActive() ||
+            host.rack.hostEditInProgress.load(std::memory_order_acquire) ||
             (!details.nonParameterStateChanged && !details.programChanged))
             return;
         host.rack.parameterControllerSyncPending.store(true, std::memory_order_release);
@@ -202,6 +204,8 @@ void PluginEditorHost::queueParameterChange(const int index, const float value) 
     if (index < 0 || static_cast<std::size_t>(index) >= parameterCapacity ||
         parameterValues == nullptr || parameterDirty == nullptr)
         return;
+    if (rack.isAutomationActive()) return;
+    rack.staticStateDirty.store(true, std::memory_order_release);
     rack.parameterControllerSyncPending.store(true, std::memory_order_release);
     const auto offset = static_cast<std::size_t>(index);
     parameterValues[offset].store(juce::jlimit(0.0f, 1.0f, value), std::memory_order_release);
@@ -210,11 +214,16 @@ void PluginEditorHost::queueParameterChange(const int index, const float value) 
 }
 
 void PluginEditorHost::markOpaqueStateDirty() noexcept {
+    if (rack.isAutomationActive()) return;
+    rack.staticStateDirty.store(true, std::memory_order_release);
     lastOpaqueStateChangeMs.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
     opaqueStateDirty.store(true, std::memory_order_release);
 }
 
 void PluginEditorHost::drainParameterChanges() {
+    if (window != nullptr && window->getContentComponent() != nullptr)
+        window->getContentComponent()->setEnabled(!rack.isAutomationActive());
+    if (rack.isAutomationActive()) return;
     if (!onParameterChanged) return;
     for (std::size_t index = 0; index < parameterCapacity; ++index) {
         if (!parameterDirty[index].exchange(false, std::memory_order_acq_rel)) continue;
@@ -240,6 +249,7 @@ void PluginEditorHost::resizeParameterQueue() noexcept {
 }
 
 void PluginEditorHost::publishStateIfDirty(const bool force) {
+    if (rack.isAutomationActive()) return;
     const auto opaqueDirty = opaqueStateDirty.load(std::memory_order_acquire);
     const auto parameterStateChanged = parameterStateDirty.load(std::memory_order_acquire);
     if (!onStateChanged || (!opaqueDirty && !(force && parameterStateChanged))) return;

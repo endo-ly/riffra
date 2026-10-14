@@ -202,6 +202,9 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         return PluginLoadError{"parameterQueue", parameterQueueError};
     if (plugin != nullptr) plugin->releaseResources();
     plugin = std::move(candidate);
+    staticState.reset();
+    staticStateDirty.store(true, std::memory_order_release);
+    automationActive.store(false, std::memory_order_release);
     controlBuffer.setSize(2, blockSize);
     preparedLatencySamples = std::max(0, plugin->getLatencySamples());
     const auto tailSeconds = plugin->getTailLengthSeconds();
@@ -315,6 +318,7 @@ void PluginRack::reset() noexcept {
 }
 
 void PluginRack::setBypassed(const bool shouldBypass) noexcept {
+    staticStateDirty.store(true, std::memory_order_release);
     bypassed.store(shouldBypass, std::memory_order_release);
 }
 
@@ -388,19 +392,7 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         return;
     }
     applyQueuedParameterChanges();
-    for (auto& binding : automation) {
-        if (binding.rack != this) continue;
-        if (playing) {
-            auto cursor = binding.lane.cursorAt(timelineSample - binding.inputLatency);
-            const auto value =
-                cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue);
-            if (binding.parameter->getValue() != value) binding.parameter->setValue(value);
-            binding.applied = true;
-        } else if (binding.applied) {
-            binding.parameter->setValue(binding.staticValue);
-            binding.applied = false;
-        }
-    }
+    applyAutomation(automation, timelineSample, playing);
     if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;

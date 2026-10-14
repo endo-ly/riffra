@@ -263,6 +263,7 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
     switch (command.kind) {
         case RealtimeCommand::Kind::play:
             state.transport = TransportState::playing;
+            if (state.graph != nullptr) state.graph->beginAutomationRead();
             break;
         case RealtimeCommand::Kind::setStarting:
             state.transport = TransportState::starting;
@@ -360,6 +361,8 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
 
 void TimelineEngine::publishGraph(RealtimeState& state, PreparedTimeline* const graph) noexcept {
     auto* const previous = std::exchange(state.graph, graph);
+    if (previous != nullptr) previous->restoreAutomation();
+    if (state.transport == TransportState::playing) graph->beginAutomationRead();
     if (previous == nullptr)
         state.timelineSample = 0;
     else if (!retiredGraphs.retire(previous))

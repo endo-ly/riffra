@@ -366,6 +366,11 @@ bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
             error = "Arrangement Graph is not loaded.";
             return false;
         }
+        auto* device = findRack(*graphs.latestCommitted, deviceOwner, deviceId);
+        if (device != nullptr && device->isAutomationActive()) {
+            error = "device state editing is unavailable during automation read";
+            return false;
+        }
         if (deviceOwner.kind == EffectOwnerKindSpec::track) {
             auto* track = graphs.latestCommitted->findTrack(deviceOwner.id);
             if (track != nullptr && isInstrumentDevice(*track, deviceId)) {
@@ -387,6 +392,7 @@ bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
 bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String& error,
                                                  const int parameterIndex,
                                                  const float value) noexcept {
+    if (rack.isAutomationActive()) return true;
     if (parameterIndex < 0 &&
         !rack.parameterControllerSyncPending.load(std::memory_order_acquire)) {
         return juce::MessageManager::callSync([&] {
@@ -435,6 +441,10 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
     auto* rack = findDevice(deviceOwner, deviceId);
     if (rack == nullptr) {
         error = "Channel Device was not found.";
+        return false;
+    }
+    if (rack->isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
         return false;
     }
     if (parameterIndex < 0 || static_cast<std::size_t>(parameterIndex) >= rack->parameterCount()) {

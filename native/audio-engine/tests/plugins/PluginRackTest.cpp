@@ -344,6 +344,12 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
     EXPECT_NEAR(left.back(), 0.0625f, 0.0001f);
     rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 32, true);
     EXPECT_NEAR(left.back(), 0.1875f, 0.0001f);
+    EXPECT_EQ(rack.persistedState(error), state);
+    EXPECT_FALSE(rack.setParameter(0, 0.9f, error));
+    EXPECT_FALSE(rack.applyPersistedState(*state, error));
+    EXPECT_FALSE(rack.setProgram(0, error));
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, {}, 48, true);
+    EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
     rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 64, false);
     EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
     EXPECT_FALSE(rack.bindAutomation("absent-parameter", lane, *state, true, error).has_value());
