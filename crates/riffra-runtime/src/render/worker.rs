@@ -211,6 +211,7 @@ mod tests {
 
     fn empty_graph() -> ExecutionGraph {
         ExecutionGraph {
+            automation: Vec::new(),
             mixer: crate::execution::GraphMixer::default(),
             mixdown: crate::execution::GraphMixdown::default(),
             timebase: GraphTimebase {

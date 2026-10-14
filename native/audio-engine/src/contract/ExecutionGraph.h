@@ -72,6 +72,26 @@ struct AutomationPointSpec final {
     bool operator==(const AutomationPointSpec&) const = default;
 };
 
+enum class AutomationTargetKind {
+    trackVolume,
+    trackPan,
+    busGain,
+    busPan,
+    masterGain,
+    sendLevel,
+    deviceParameter
+};
+enum class AutomationInterpolationSpec { linear, step };
+
+struct AutomationLaneSpec final {
+    AutomationTargetKind kind = AutomationTargetKind::trackVolume;
+    juce::String id;
+    juce::String parameterId;
+    AutomationInterpolationSpec interpolation = AutomationInterpolationSpec::linear;
+    std::vector<AutomationPointSpec> points;
+    bool operator==(const AutomationLaneSpec&) const = default;
+};
+
 struct PluginStateSpec final {
     std::optional<juce::String> stateData;
     std::vector<float> parameterValues;
@@ -204,8 +224,6 @@ struct TrackSpec final {
     bool monitorInput = false;
     std::optional<AudioInputSpec> audioInput;
     MidiInputSpec midiInput;
-    std::vector<AutomationPointSpec> volumeAutomation;
-    std::vector<AutomationPointSpec> panAutomation;
     std::vector<PluginDeviceSpec> effects;
     std::optional<InstrumentSpec> instrument;
     std::vector<AudioClipSpec> audioClips;
@@ -246,6 +264,7 @@ struct MixerSpec final {
 };
 
 struct ExecutionGraph final {
+    std::vector<AutomationLaneSpec> automation;
     TimebaseSpec timebase;
     LoopRangeSpec loopRange;
     std::optional<TickRangeSpec> punchRange;

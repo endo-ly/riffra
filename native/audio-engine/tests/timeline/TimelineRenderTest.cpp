@@ -154,7 +154,11 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeAudioTrackSnapshot(1, true, false);
-    snapshot.graph.tracks.front().volumeAutomation.push_back({0, -12.0});
+    snapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                         snapshot.graph.tracks.front().id,
+                                         {},
+                                         AutomationInterpolationSpec::linear,
+                                         {{0, -12.0}}});
 
     TimelineEngine engine;
     juce::String error;
@@ -186,8 +190,16 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     // Verify volume and pan automation reach their late-block values in one
     // realtime callback, rather than only preserving a static automation point.
     auto rampSnapshot = makeAudioTrackSnapshot(1, true, false);
-    rampSnapshot.graph.tracks.front().volumeAutomation = {{0, -24.0}, {20, 0.0}};
-    rampSnapshot.graph.tracks.front().panAutomation = {{0, -1.0}, {20, 1.0}};
+    rampSnapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                             rampSnapshot.graph.tracks.front().id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -24.0}, {20, 0.0}}});
+    rampSnapshot.graph.automation.push_back({AutomationTargetKind::trackPan,
+                                             rampSnapshot.graph.tracks.front().id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -1.0}, {20, 1.0}}});
     TimelineEngine rampEngine;
     ASSERT_TRUE(loadTestSnapshot(rampEngine, rampSnapshot, formats, 48'000.0, 512, error))
         << error.toStdString();
@@ -820,8 +832,17 @@ TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks)
         clip.durationSampleRate = 48'000;
         monitoredTrack.audioClips.push_back(clip);
         if (restriction == Restriction::volumeAutomation)
-            monitoredTrack.volumeAutomation = {{0, -6.0}};
-        if (restriction == Restriction::panAutomation) monitoredTrack.panAutomation = {{0, 0.5}};
+            snapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                                 monitoredTrack.id,
+                                                 {},
+                                                 AutomationInterpolationSpec::linear,
+                                                 {{0, -6.0}}});
+        if (restriction == Restriction::panAutomation)
+            snapshot.graph.automation.push_back({AutomationTargetKind::trackPan,
+                                                 monitoredTrack.id,
+                                                 {},
+                                                 AutomationInterpolationSpec::linear,
+                                                 {{0, 0.5}}});
 
         auto highLatencyTrack = makeAudioTrack("track:high-latency");
         highLatencyTrack.audioClips.push_back(clip);

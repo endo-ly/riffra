@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 
 #include "ExecutionGraph.h"
 
@@ -54,6 +55,34 @@ inline bool validateMixerGraph(const ExecutionGraph& graph, juce::String& error)
                          [&](const auto& track) { return track.id == send.trackId; }) ||
             !hasBus(send.returnBusId, MixBusKindSpec::returnBus)) {
             error = "send routing cannot be executed: " + send.id;
+            return false;
+        }
+    }
+    std::set<std::tuple<AutomationTargetKind, juce::String, juce::String>> targets;
+    for (const auto& lane : graph.automation) {
+        bool resolved = true;
+        switch (lane.kind) {
+            case AutomationTargetKind::trackVolume:
+            case AutomationTargetKind::trackPan:
+                resolved = std::any_of(graph.tracks.begin(), graph.tracks.end(),
+                                       [&](const auto& track) { return track.id == lane.id; });
+                break;
+            case AutomationTargetKind::busGain:
+            case AutomationTargetKind::busPan:
+                resolved = std::any_of(graph.mixer.buses.begin(), graph.mixer.buses.end(),
+                                       [&](const auto& bus) { return bus.id == lane.id; });
+                break;
+            case AutomationTargetKind::sendLevel:
+                resolved = sendIds.contains(lane.id);
+                break;
+            case AutomationTargetKind::deviceParameter:
+                // Unavailable plugins retain canonical lanes and are diagnosed during binding.
+                break;
+            case AutomationTargetKind::masterGain:
+                break;
+        }
+        if (!resolved || !targets.emplace(lane.kind, lane.id, lane.parameterId).second) {
+            error = "automation target is missing or duplicated: " + lane.id;
             return false;
         }
     }

@@ -54,18 +54,6 @@
           "deviceId": null,
           "channel": null
         },
-        "volumeAutomation": [
-          {
-            "tick": 0,
-            "value": 1.0
-          }
-        ],
-        "panAutomation": [
-          {
-            "tick": 960,
-            "value": -0.5
-          }
-        ],
         "effects": [],
         "instrument": null,
         "audioClips": [
@@ -143,18 +131,6 @@
           "deviceId": "midi-device",
           "channel": 16
         },
-        "volumeAutomation": [
-          {
-            "tick": 0,
-            "value": 1.0
-          }
-        ],
-        "panAutomation": [
-          {
-            "tick": 960,
-            "value": -0.5
-          }
-        ],
         "effects": [],
         "instrument": {
           "type": "internal",
@@ -210,18 +186,6 @@
           "deviceId": null,
           "channel": null
         },
-        "volumeAutomation": [
-          {
-            "tick": 0,
-            "value": 1.0
-          }
-        ],
-        "panAutomation": [
-          {
-            "tick": 960,
-            "value": -0.5
-          }
-        ],
         "effects": [
           {
             "id": "fx-1",
@@ -347,7 +311,37 @@
           "enabled": true
         }
       ]
-    }
+    },
+    "automation": [
+      {
+        "target": {
+          "kind": "trackMix",
+          "trackId": "track-audio",
+          "parameter": "volume"
+        },
+        "interpolation": "linear",
+        "points": [
+          {
+            "tick": 0,
+            "value": -6.0
+          }
+        ]
+      },
+      {
+        "target": {
+          "kind": "trackMix",
+          "trackId": "track-audio",
+          "parameter": "pan"
+        },
+        "interpolation": "step",
+        "points": [
+          {
+            "tick": 0,
+            "value": 0.25
+          }
+        ]
+      }
+    ]
   },
   "destination": "renders/song.wav",
   "startTick": 0,

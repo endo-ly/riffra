@@ -28,6 +28,7 @@ set(request_template [=[
       "punchRange": null,
       "metronomeEnabled": false,
       "masterGainDb": 0.0,
+      "automation": [],
       "mixer": {"masterEffects": [], "buses": [], "sends": []},
       "tracks": [
         {
@@ -44,8 +45,6 @@ set(request_template [=[
           "monitorInput": false,
           "audioInput": null,
           "midiInput": {"deviceId": null, "channel": null},
-          "volumeAutomation": [],
-          "panAutomation": [],
           "effects": [
             {
               "id": "effect-isolation",

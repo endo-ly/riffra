@@ -81,12 +81,20 @@ TEST(TrackProcessingPoolTest, OfflineOutputIsBitIdenticalAcrossWorkerCounts) {
     ASSERT_TRUE(writePcmWave(audioFile, 48'000, 1, 48'000, 4'000));
     auto snapshot = makeBuiltInInstrumentSnapshot("track:instrument");
     auto audio = makeRawAndProcessedClipSnapshot(audioFile, audioFile, 48'000).graph.tracks.front();
-    audio.volumeAutomation = {{0, -12.0}, {480, -3.0}, {960, -9.0}};
-    audio.panAutomation = {{0, -0.5}, {960, 0.5}};
     for (int index = 0; index < 16; ++index) {
         auto copy = audio;
         copy.id = "track:audio-" + juce::String(index);
         for (auto& clip : copy.audioClips) clip.id += "-" + juce::String(index);
+        snapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                             copy.id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -12.0}, {480, -3.0}, {960, -9.0}}});
+        snapshot.graph.automation.push_back({AutomationTargetKind::trackPan,
+                                             copy.id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -0.5}, {960, 0.5}}});
         snapshot.graph.tracks.push_back(std::move(copy));
     }
     juce::AudioFormatManager formats;

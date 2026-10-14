@@ -137,19 +137,20 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
 
-        std::vector<AutomationRuntime::Point> volumeAutomation;
-        std::vector<AutomationRuntime::Point> panAutomation;
-        volumeAutomation.reserve(trackSpec.volumeAutomation.size());
-        panAutomation.reserve(trackSpec.panAutomation.size());
-        for (const auto& point : trackSpec.volumeAutomation)
-            volumeAutomation.push_back(
-                {prepared->timebase.tickToSample(point.tick, outputSampleRate),
-                 static_cast<float>(point.value)});
-        for (const auto& point : trackSpec.panAutomation)
-            panAutomation.push_back({prepared->timebase.tickToSample(point.tick, outputSampleRate),
-                                     static_cast<float>(point.value)});
-        track->runtime->volumeAutomation.setPoints(std::move(volumeAutomation));
-        track->runtime->panAutomation.setPoints(std::move(panAutomation));
+        const auto prepareAutomation = [&](const AutomationTargetKind kind,
+                                           AutomationRuntime& runtime) {
+            for (const auto& lane : graph.automation) {
+                if (lane.kind != kind || lane.id != trackSpec.id) continue;
+                std::vector<AutomationRuntime::Point> points;
+                points.reserve(lane.points.size());
+                for (const auto& point : lane.points)
+                    points.push_back({prepared->timebase.tickToSample(point.tick, outputSampleRate),
+                                      static_cast<float>(point.value)});
+                runtime.setPoints(std::move(points));
+            }
+        };
+        prepareAutomation(AutomationTargetKind::trackVolume, track->runtime->volumeAutomation);
+        prepareAutomation(AutomationTargetKind::trackPan, track->runtime->panAutomation);
 
         track->effects = trackSpec.effects;
         track->instrument = trackSpec.instrument;
@@ -575,7 +576,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto lowLatencyPdcCandidate =
             (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
             !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
-            spec.volumeAutomation.empty() && spec.panAutomation.empty();
+            track.volumeAutomation.empty() && track.panAutomation.empty();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
                       1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});
         for (const auto& send : graph.mixer.sends) {

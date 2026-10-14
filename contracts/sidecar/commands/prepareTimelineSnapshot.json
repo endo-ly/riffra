@@ -2,6 +2,7 @@
   "command": {
     "snapshot": {
       "graph": {
+        "automation": [],
         "loopRange": {
           "enabled": false,
           "endTick": 0,

@@ -562,7 +562,11 @@ public:
             "instrument:state", "test-instrument.vst3", {std::nullopt, {}, false}};
         secondTrack.midiClips.push_back(
             MidiClipSpec{"midi:test", 0, 960, false, false, {{0, 120, 64, 100, 1}}, {}});
-        secondTrack.volumeAutomation.push_back({480, -3.0});
+        second.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                           secondTrack.id,
+                                           {},
+                                           AutomationInterpolationSpec::linear,
+                                           {{480, -3.0}}});
 
         // Act
         if (!engine.loadSnapshot(second, formats, 48'000.0, 32, error, false) ||
