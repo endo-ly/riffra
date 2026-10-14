@@ -171,6 +171,7 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     const std::array<const float*, 1> inputs{input.data()};
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
+    ASSERT_TRUE(engine.play());
     // Act: render the automation value, then preview a different static gain.
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
     const auto automatedPeak =
@@ -514,6 +515,91 @@ TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
     const auto peak = std::max(rendered.getMagnitude(0, 0, sampleCount),
                                rendered.getMagnitude(1, 0, sampleCount));
     EXPECT_NEAR(peak, 0.98f, 0.02f);
+}
+
+TEST(MixerRoutingTest, AutomationFollowsMixerRoutesAndRestoresStaticValuesOnStop) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, true, false);
+    const auto trackId = snapshot.graph.tracks.front().id;
+    snapshot.graph.tracks.front().outputBusId = "group";
+    snapshot.graph.tracks.front().panLaw = "unityCenterStereo";
+    snapshot.graph.mixer.buses = {
+        {"group", MixBusKindSpec::group, 0.0, 0.0, "unityCenterStereo", false, false, {}},
+        {"return", MixBusKindSpec::returnBus, 0.0, 0.0, "unityCenterStereo", false, false, {}}};
+    snapshot.graph.mixer.sends = {
+        {"send", trackId, "return", 0.0, SendPositionSpec::preFader, true}};
+    snapshot.graph.automation = {{AutomationTargetKind::trackVolume,
+                                  trackId,
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::trackPan,
+                                  trackId,
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 0.0}, {20, 1.0}}},
+                                 {AutomationTargetKind::busGain,
+                                  "group",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::busPan,
+                                  "group",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -1.0}, {20, 0.0}}},
+                                 {AutomationTargetKind::busGain,
+                                  "return",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::busPan,
+                                  "return",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 1.0}, {20, 0.0}}},
+                                 {AutomationTargetKind::sendLevel,
+                                  "send",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::masterGain,
+                                  {},
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}}};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 1024, error))
+        << error.toStdString();
+    std::array<float, 1024> input, left{}, right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    ASSERT_TRUE(engine.play());
+    engine.mix(inputs.data(), 1, outputs.data(), 2, 1024);
+    engine.applyMasterGain(outputs.data(), 2, 1024, 0.0f);
+
+    // Assert: exact Step boundary at tick 20 (sample 500), after the transport fade.
+    const auto first = 0.25f * std::pow(10.0f, -18.0f / 20.0f);
+    EXPECT_NEAR(left[499], first, 0.00001f);
+    EXPECT_NEAR(right[499], first, 0.00001f);
+    const auto late = 0.25f * std::pow(10.0f, -36.0f / 20.0f);
+    EXPECT_NEAR(left[500], late, 0.00001f);
+    EXPECT_NEAR(right[500], 2.0f * late, 0.00001f);
+    ASSERT_TRUE(engine.stop());
+    for (int block = 0; block < 2; ++block) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(inputs.data(), 1, outputs.data(), 2, 1024);
+        engine.applyMasterGain(outputs.data(), 2, 1024, 0.0f);
+    }
+    EXPECT_NEAR(left.back(), 0.5f, 0.00001f);
+    EXPECT_NEAR(right.back(), 0.5f, 0.00001f);
 }
 
 TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {

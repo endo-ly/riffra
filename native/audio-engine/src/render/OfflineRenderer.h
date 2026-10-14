@@ -48,7 +48,7 @@ private:
         int blockSize = 0;
         std::int64_t startSample = 0;
         std::int64_t endSample = 0;
-        float masterGain = 1.0f;
+        float masterGainDb = 0.0f;
         bool normalize = false;
         bool hostsPlugins = false;
         std::int64_t latencySamples = 0;

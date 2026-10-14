@@ -67,7 +67,8 @@ void TrackProcessingPool::processAvailableTracks() noexcept {
         if (channels.empty())
             processTrackStage(*currentTracks[index], currentJob);
         else
-            channels[index]->process(currentJob.sampleCount);
+            channels[index]->process(currentJob.sampleCount, currentJob.rangeStart,
+                                     currentJob.playing);
         completedTracks.fetch_add(1, std::memory_order_acq_rel);
     }
 }
@@ -82,11 +83,14 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
 }
 
 void TrackProcessingPool::runMixer(const std::span<MixerChannel* const> currentChannels,
-                                   const int sampleCount) noexcept {
+                                   const int sampleCount, const std::int64_t rangeStart,
+                                   const bool playing) noexcept {
     if (currentChannels.empty()) return;
     tracks = {};
     channels = currentChannels;
     job.sampleCount = sampleCount;
+    job.rangeStart = rangeStart;
+    job.playing = playing;
     execute(currentChannels.size());
 }
 
@@ -140,7 +144,7 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
                                   job.sampleCount);
     }
     TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
-                                   job.transportGainStep);
+                                   job.transportGainStep, job.playing);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();

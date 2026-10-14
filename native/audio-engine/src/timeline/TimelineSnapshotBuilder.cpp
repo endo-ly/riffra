@@ -53,6 +53,22 @@ bool matchesExecutedEffects(const PluginChain& chain,
     return true;
 }
 
+AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
+                                    const AutomationTargetKind kind, const juce::String& id = {}) {
+    AutomationRuntime runtime;
+    for (const auto& lane : graph.automation) {
+        if (lane.kind != kind || lane.id != id) continue;
+        std::vector<AutomationRuntime::Point> points;
+        points.reserve(lane.points.size());
+        for (const auto& point : lane.points)
+            points.push_back({prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate),
+                              static_cast<float>(point.value)});
+        runtime.setPoints(std::move(points),
+                          lane.interpolation == AutomationInterpolationSpec::step);
+    }
+    return runtime;
+}
+
 }  // namespace
 
 TimelineSnapshotBuilder::TimelineSnapshotBuilder(TimelineEngine& engine) noexcept
@@ -137,20 +153,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
 
-        const auto prepareAutomation = [&](const AutomationTargetKind kind,
-                                           AutomationRuntime& runtime) {
-            for (const auto& lane : graph.automation) {
-                if (lane.kind != kind || lane.id != trackSpec.id) continue;
-                std::vector<AutomationRuntime::Point> points;
-                points.reserve(lane.points.size());
-                for (const auto& point : lane.points)
-                    points.push_back({prepared->timebase.tickToSample(point.tick, outputSampleRate),
-                                      static_cast<float>(point.value)});
-                runtime.setPoints(std::move(points));
-            }
-        };
-        prepareAutomation(AutomationTargetKind::trackVolume, track->runtime->volumeAutomation);
-        prepareAutomation(AutomationTargetKind::trackPan, track->runtime->panAutomation);
+        track->runtime->volumeAutomation =
+            prepareAutomation(graph, *prepared, AutomationTargetKind::trackVolume, trackSpec.id);
+        track->runtime->panAutomation =
+            prepareAutomation(graph, *prepared, AutomationTargetKind::trackPan, trackSpec.id);
 
         track->effects = trackSpec.effects;
         track->instrument = trackSpec.instrument;
@@ -469,6 +475,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
                                            const PluginProcessingMode mode, juce::String& error) {
     auto& mixer = prepared.mixer;
+    mixer.masterGainAutomation =
+        prepareAutomation(graph, prepared, AutomationTargetKind::masterGain);
     const auto blockSize = prepared.preparedBlockSize;
     const auto sampleRate = prepared.outputSampleRate;
     mixer.masterInput.setSize(2, blockSize);
@@ -482,6 +490,10 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         auto bus = std::make_unique<MixerChannel>();
         bus->id = spec.id;
         bus->effectSpecs = spec.effects;
+        bus->gainAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::busGain, spec.id);
+        bus->panAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::busPan, spec.id);
         bus->gainDb.store(static_cast<float>(spec.gainDb));
         bus->pan.store(static_cast<float>(spec.pan));
         bus->unityCenterStereo = spec.panLaw == "unityCenterStereo";
@@ -544,6 +556,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         route->audible = audible;
         route->allowLowLatencyBypass = allowLowLatencyBypass;
         route->sendId = sendId;
+        route->levelAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::sendLevel, sendId);
         if (destination != nullptr) {
             destination->hasInput = true;
             destination->hasAudibleInput = destination->hasAudibleInput || audible;

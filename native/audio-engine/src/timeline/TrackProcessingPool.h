@@ -36,7 +36,8 @@ public:
     explicit TrackProcessingPool(int workerCount);
     ~TrackProcessingPool();
     void run(std::span<Track* const> tracks, const TrackStageJob& job) noexcept;
-    void runMixer(std::span<MixerChannel* const> channels, int sampleCount) noexcept;
+    void runMixer(std::span<MixerChannel* const> channels, int sampleCount, std::int64_t rangeStart,
+                  bool playing) noexcept;
 
 private:
     class Worker;

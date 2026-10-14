@@ -217,6 +217,9 @@ public:
     /// Track.
     [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
+    /// Applies the master fader at the musical position of each rendered sample.
+    void applyMasterGain(float* const* outputChannels, int channelCount, int sampleCount,
+                         float staticGainDb) noexcept;
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
              int outputChannelCount, int sampleCount) noexcept;
@@ -351,10 +354,11 @@ private:
                                            int sampleCount, std::int64_t rangeStart,
                                            bool playing) noexcept;
     static void mixTrackOutput(Track& track, std::int64_t rangeStart, int sampleCount,
-                               float transportGainStart = 1.0f,
-                               float transportGainStep = 0.0f) noexcept;
+                               float transportGainStart = 1.0f, float transportGainStep = 0.0f,
+                               bool playing = true) noexcept;
     void mixProductionOutput(PreparedTimeline& timeline, float* const* outputChannels,
-                             int channelCount, int destinationStart, int sampleCount) noexcept;
+                             int channelCount, std::int64_t rangeStart, int destinationStart,
+                             int sampleCount, bool playing) noexcept;
     static void scheduleMidi(const PreparedTimeline& prepared, Track& track,
                              std::int64_t rangeStart, int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;

@@ -163,14 +163,10 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     const auto latencySamples = status.graph.has_value()
                                     ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
                                     : 0;
-    Plan renderPlan{destination,
-                    sampleRate,
-                    blockSize,
-                    startSample,
-                    endSample,
-                    juce::Decibels::decibelsToGain(static_cast<float>(request.graph.masterGainDb)),
-                    request.normalize,
-                    hostsPlugins(request.graph),
+    Plan renderPlan{destination,       sampleRate,
+                    blockSize,         startSample,
+                    endSample,         static_cast<float>(request.graph.masterGainDb),
+                    request.normalize, hostsPlugins(request.graph),
                     latencySamples};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
@@ -210,7 +206,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
             static_cast<int>(std::min<std::int64_t>(plan.blockSize, processingEnd - position));
         buffer.clear();
         engine->mix(buffer.getArrayOfWritePointers(), 2, count);
-        buffer.applyGain(0, count, plan.masterGain);
+        engine->applyMasterGain(buffer.getArrayOfWritePointers(), 2, count, plan.masterGainDb);
         const auto writeStart = static_cast<int>(std::min<std::int64_t>(
             count, std::max<std::int64_t>(0, plan.startSample + plan.latencySamples - position)));
         const auto writeCount = count - writeStart;

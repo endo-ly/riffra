@@ -25,7 +25,10 @@ public:
     class Cursor final {
     public:
         Cursor(const AutomationRuntime& lane, const std::int64_t sample) noexcept
-            : points(lane.points), index(lane.indexFor(sample)), lastSample(sample - 1) {}
+            : points(lane.points),
+              step(lane.step),
+              index(lane.indexFor(sample)),
+              lastSample(sample - 1) {}
 
         [[nodiscard]] float valueAt(const std::int64_t sample, const float fallback) noexcept {
             if (sample < lastSample) {
@@ -38,6 +41,7 @@ public:
             if (index >= points.size()) return points.back().value;
             const auto& left = points[index - 1];
             const auto& right = points[index];
+            if (step) return left.value;
             const auto distance = right.sample - left.sample;
             if (distance <= 0) return right.value;
             const auto amount =
@@ -59,6 +63,7 @@ public:
 
             const auto& left = points[index - 1];
             const auto& right = points[index];
+            if (step) return {std::min(end, right.sample), left.value, left.value};
             const auto distance = right.sample - left.sample;
             if (distance <= 0) return {std::min(end, sample + 1), right.value, right.value};
             const auto segmentEnd = std::min(end, right.sample);
@@ -79,11 +84,13 @@ public:
         }
 
         const std::vector<Point>& points;
+        bool step = false;
         std::size_t index = 0;
         std::int64_t lastSample = -1;
     };
 
-    void setPoints(std::vector<Point> next) noexcept {
+    void setPoints(std::vector<Point> next, const bool stepped = false) noexcept {
+        step = stepped;
         std::sort(next.begin(), next.end(),
                   [](const Point& left, const Point& right) { return left.sample < right.sample; });
         points = std::move(next);
@@ -103,6 +110,7 @@ private:
         return static_cast<std::size_t>(found - points.begin());
     }
 
+    bool step = false;
     std::vector<Point> points;
 };
 
