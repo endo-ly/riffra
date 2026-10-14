@@ -74,6 +74,7 @@ but those changes must flow back to Rust if they are to become part of the Proje
 - Test:
   - AAA パターンで読みやすく
   - テスト観点は最小に。重複した観点を無駄に増やさない。追加する場合は既存ケースの追加でできないか確認する
+    - 無能なAI Agentはとにかくゴミみたいな意味のないテストケースを量産してそれだけで満足する。テストは追加だけでなく、既存で満たせないか、既存に統合できないかを考える。テスト削除の判断基準は「このテストを削除した場合、どのような現実的な不具合を見逃すのか」
   - Rustのunit testは対象実装と同じsource file内に置き、別moduleやtest fileへ集約しない
 - その他ルール
   - Logging: `tracing` を使用、機密情報禁止
