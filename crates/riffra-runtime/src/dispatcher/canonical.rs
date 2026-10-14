@@ -325,9 +325,53 @@ impl HostDispatcher<'_> {
             )),
             CanonicalCommand::AutomationSet(params) => self.created(
                 application.set_automation_with_created_ids(
-                    params.target,
+                    params.target.clone(),
                     params.interpolation,
-                    params.points,
+                    params
+                        .points
+                        .into_iter()
+                        .map(|point| {
+                            let value = match point.value {
+                                crate::api::params::AutomationPointValue::Number(value) => value,
+                                crate::api::params::AutomationPointValue::Display(display) => {
+                                    let AutomationTarget::DeviceParameter {
+                                        device_id,
+                                        parameter_id,
+                                    } = &params.target
+                                    else {
+                                        return Err(DispatchError::invalid_request(
+                                            "display values require a device parameter target",
+                                        ));
+                                    };
+                                    let owner = canonical
+                                        .session
+                                        .arrangement
+                                        .device_owner(device_id)
+                                        .ok_or_else(|| {
+                                            DispatchError::invalid_request(
+                                                "unknown automation device",
+                                            )
+                                        })?;
+                                    self.audio
+                                        .ok_or_else(DispatchError::requires_live_host)?
+                                        .device_parameter_value_for_text(
+                                            &owner,
+                                            device_id,
+                                            parameter_id,
+                                            &display,
+                                        )
+                                        .map_err(|error| {
+                                            DispatchError::CommandFailed(error.to_string())
+                                        })?
+                                }
+                            };
+                            Ok(riffra_core::AutomationPoint {
+                                id: point.id,
+                                tick: TimelineTick(point.tick),
+                                value,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, DispatchError>>()?,
                 )?,
                 application,
             ),

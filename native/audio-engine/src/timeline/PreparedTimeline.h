@@ -21,6 +21,7 @@ struct GraphSummary final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    std::vector<juce::String> automationWarnings;
     std::vector<juce::String> armedTrackIds;
     /// Whether any Audio Track monitors its live input.
     bool monitorLiveInput = false;

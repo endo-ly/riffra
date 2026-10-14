@@ -458,6 +458,7 @@ TimelineStatus TimelineEngine::status() const {
             result.instrumentRuntimeCount = graph.summary.instrumentRuntimeCount;
             result.pluginCount = graph.summary.pluginCount;
             result.maximumLatencySamples = graph.summary.maximumLatencySamples;
+            result.automationWarnings = graph.summary.automationWarnings;
             result.armedTrackIds = graph.summary.armedTrackIds;
             result.liveMidiDrops = liveMidiQueueDrops.load(std::memory_order_relaxed);
             for (const auto& track : graph.tracks) {

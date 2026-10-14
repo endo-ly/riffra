@@ -111,6 +111,34 @@ fn normalize_gain(gain_db: &mut f64) -> Result<(), String> {
 }
 
 impl Arrangement {
+    /// Resolves the channel owning a globally unique device identity.
+    pub fn device_owner(&self, device_id: &str) -> Option<EffectOwner> {
+        if let Some(track) = self.tracks.iter().find(|track| {
+            track
+                .instrument
+                .as_ref()
+                .is_some_and(|instrument| instrument.id == device_id)
+                || track.effects.iter().any(|device| device.id == device_id)
+        }) {
+            return Some(EffectOwner::Track {
+                id: track.id.clone(),
+            });
+        }
+        if let Some(bus) = self
+            .mixer
+            .buses
+            .iter()
+            .find(|bus| bus.effects.iter().any(|device| device.id == device_id))
+        {
+            return Some(EffectOwner::Bus { id: bus.id.clone() });
+        }
+        self.mixer
+            .master_effects
+            .iter()
+            .any(|device| device.id == device_id)
+            .then_some(EffectOwner::Master)
+    }
+
     /// Resolves a device without changing its canonical state.
     ///
     /// # Errors

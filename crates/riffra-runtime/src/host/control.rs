@@ -335,7 +335,8 @@ impl HostState {
             &self.data_root,
             &self.binaries.sonalloy,
             &self.built_in_instruments,
-        );
+        )
+        .with_audio(&self.audio);
         if access == CanonicalAccess::Read {
             let result = dispatcher
                 .execute_read_canonical(command, current)

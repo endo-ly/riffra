@@ -149,6 +149,7 @@ struct AudioDiagnosticsSpec final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    std::vector<juce::String> automationWarnings;
     std::vector<InstrumentFaultSpec> instrumentFaults;
 };
 
@@ -272,6 +273,7 @@ struct DeviceParameterChoiceSpec final {
 
 struct DeviceParameterSpec final {
     std::uint32_t index = 0;
+    std::optional<juce::String> parameterId;
     juce::String name;
     float value = 0.0f;
     float defaultValue = 0.0f;

@@ -48,6 +48,7 @@ struct TimelineGraphStatus final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    std::vector<juce::String> automationWarnings;
     std::uint64_t liveMidiDrops = 0;
     std::vector<juce::String> armedTrackIds;
     std::vector<InstrumentFaultSpec> instrumentFaults;
@@ -181,6 +182,9 @@ public:
     [[nodiscard]] std::optional<DeviceStatusSpec> deviceStatus(const EffectOwnerSpec& deviceOwner,
                                                                const juce::String& deviceId,
                                                                juce::String& error) const;
+    [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterValueForText(
+        const EffectOwnerSpec& owner, const juce::String& deviceId, const juce::String& parameterId,
+        const juce::String& display, juce::String& error);
     [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterStatus(
         const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error);
     [[nodiscard]] std::optional<DeviceProgramsSpec> deviceProgramStatus(

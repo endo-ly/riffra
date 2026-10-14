@@ -277,6 +277,7 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
                DeviceParametersSpec result;
                for (const auto& parameter : rack->parameters()) {
                    DeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
+                                            parameter.parameterId,
                                             parameter.name,
                                             parameter.value,
                                             parameter.defaultValue,
@@ -293,6 +294,31 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
                return result;
            })
         .value_or(std::nullopt);
+}
+
+std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterValueForText(
+    const EffectOwnerSpec& owner, const juce::String& deviceId, const juce::String& parameterId,
+    const juce::String& display, juce::String& error) {
+    auto parameters = deviceParameterStatus(owner, deviceId, error);
+    if (!parameters) return std::nullopt;
+    auto* rack = findDevice(owner, deviceId);
+    const auto found = std::find_if(
+        parameters->parameters.begin(), parameters->parameters.end(), [&](const auto& parameter) {
+            return parameter.parameterId && *parameter.parameterId == parameterId &&
+                   parameter.automatable;
+        });
+    if (rack == nullptr || found == parameters->parameters.end()) {
+        error = "automation parameter ID is unavailable";
+        return std::nullopt;
+    }
+    const auto normalized =
+        juce::MessageManager::callSync([&] {
+            return rack->parameterValueForText(static_cast<int>(found->index), display, error);
+        }).value_or(std::nullopt);
+    if (!normalized) return std::nullopt;
+    auto result = *found;
+    result.value = *normalized;
+    return DeviceParametersSpec{{std::move(result)}};
 }
 
 std::optional<DeviceProgramsSpec> TimelineEngine::deviceProgramStatus(

@@ -93,10 +93,12 @@ struct SetDeviceParameterCommand final {
     std::optional<juce::String> display;
 };
 
-enum class DeviceQuery { status, parameters, programs, pluginState };
+enum class DeviceQuery { status, parameters, programs, pluginState, parameterText };
 
 struct GetDeviceCommand final {
     DeviceQuery query = DeviceQuery::status;
+    juce::String parameterId;
+    juce::String display;
     EffectOwnerSpec owner;
     juce::String deviceId;
 };
@@ -196,7 +198,7 @@ struct SidecarRequestSpec final {
 };
 
 /// Every command `type` accepted on stdin.
-inline constexpr std::array<std::string_view, 41> kSidecarCommandTypes{
+inline constexpr std::array<std::string_view, 42> kSidecarCommandTypes{
     "status",
     "setEmergencyMute",
     "setFeedbackProtection",
@@ -221,6 +223,7 @@ inline constexpr std::array<std::string_view, 41> kSidecarCommandTypes{
     "setDeviceParameter",
     "getDeviceStatus",
     "getDeviceParameters",
+    "getDeviceParameterValueForText",
     "getDevicePrograms",
     "getPluginState",
     "setPluginState",

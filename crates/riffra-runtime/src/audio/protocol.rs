@@ -131,6 +131,7 @@ fn audio_status_from_wire(status: WireAudioStatus) -> AudioStatus {
             instrument_runtime_count: diagnostics.instrument_runtime_count,
             plugin_count: diagnostics.plugin_count,
             maximum_latency_samples: diagnostics.maximum_latency_samples,
+            automation_warnings: diagnostics.automation_warnings,
             projection_duration_ms: 0,
             audio_environment_revision: 0,
             protocol_errors: 0,

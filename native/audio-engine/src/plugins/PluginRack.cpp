@@ -369,8 +369,9 @@ bool PluginRack::processControlBlock() noexcept {
 
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
-                         const int numSamples,
-                         const juce::MidiBuffer* const timelineMidi) noexcept {
+                         const int numSamples, const juce::MidiBuffer* const timelineMidi,
+                         std::span<PluginParameterAutomation> automation,
+                         const std::int64_t timelineSample, const bool playing) noexcept {
     for (int channel = 0; channel < numOutputChannels; ++channel) {
         auto* output = outputChannelData[channel];
         if (output == nullptr) continue;
@@ -387,6 +388,19 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         return;
     }
     applyQueuedParameterChanges();
+    for (auto& binding : automation) {
+        if (binding.rack != this) continue;
+        if (playing) {
+            auto cursor = binding.lane.cursorAt(timelineSample - binding.inputLatency);
+            const auto value =
+                cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue);
+            if (binding.parameter->getValue() != value) binding.parameter->setValue(value);
+            binding.applied = true;
+        } else if (binding.applied) {
+            binding.parameter->setValue(binding.staticValue);
+            binding.applied = false;
+        }
+    }
     if (bypassed.load(std::memory_order_acquire)) {
         bypassedBlocks.fetch_add(1, std::memory_order_relaxed);
         return;

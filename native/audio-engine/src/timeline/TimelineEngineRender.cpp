@@ -346,6 +346,8 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
                                       ? 0
                                       : runtime.externalAudioSource->routeLatencySamples;
         auto context = instrumentProcessContext(prepared, rangeStart - inputLatency, true);
+        context.automation = runtime.deviceAutomation;
+        context.timelineSample = rangeStart - inputLatency;
         context.timelineEvents = runtime.instrumentEvents.data();
         context.timelineEventCount = runtime.instrumentEventCount;
         if (runtime.externalAudioSource != nullptr) {
@@ -358,8 +360,11 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
     } else {
         runtime.mixBuffer.clear(0, sampleCount);
     }
-    runtime.effects().process(runtime.mixBuffer.getArrayOfReadPointers(), 2,
-                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
+    runtime.effects().process(
+        runtime.mixBuffer.getArrayOfReadPointers(), 2,
+        runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount, nullptr,
+        runtime.deviceAutomation,
+        rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(), true);
 }
 
 void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -374,6 +379,8 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
         return;
     }
     auto context = instrumentProcessContext(prepared, rangeStart, playing);
+    context.automation = runtime.deviceAutomation;
+    context.timelineSample = rangeStart;
     if (runtime.externalAudioSource != nullptr) {
         context.externalInput =
             runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
@@ -382,7 +389,8 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
     runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2, sampleCount,
                                   nullptr, context);
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
-                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
+                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
+                              nullptr, runtime.deviceAutomation, rangeStart, playing);
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
@@ -493,7 +501,9 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
     pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing);
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
     mixer.masterEffects->process(mixer.masterInput.getArrayOfReadPointers(), 2,
-                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount);
+                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount,
+                                 nullptr, mixer.masterDeviceAutomation,
+                                 rangeStart - mixer.masterInputLatency, playing);
     for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
         if (outputChannels[channel] != nullptr)
             juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,

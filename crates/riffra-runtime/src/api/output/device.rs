@@ -39,6 +39,7 @@ pub struct DeviceParameterChoice {
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceParameterInfo {
+    pub parameter_id: Option<String>,
     pub index: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <new>
 #include <regex>
 #include <vector>
@@ -339,6 +340,14 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
     if (plugin == nullptr) return result;
     const auto& parameters = plugin->getParameters();
     result.reserve(static_cast<std::size_t>(parameters.size()));
+    std::map<juce::String, int> idCounts;
+    for (auto* parameter : parameters) {
+        if (const auto* hosted =
+                dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter)) {
+            const auto id = hosted->getParameterID();
+            if (id.isNotEmpty()) ++idCounts[id];
+        }
+    }
     for (int index = 0; index < parameters.size(); ++index) {
         auto* parameter = parameters[index];
         if (parameter == nullptr) continue;
@@ -346,7 +355,14 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
         const auto discrete = parameter->isDiscrete();
         const auto steps =
             discrete ? static_cast<std::uint32_t>(std::max(0, parameter->getNumSteps())) : 0u;
+        std::optional<juce::String> parameterId;
+        if (const auto* hosted =
+                dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter)) {
+            const auto id = hosted->getParameterID();
+            if (id.isNotEmpty() && idCounts[id] == 1) parameterId = id;
+        }
         PluginParameterInfo info{index,
+                                 parameterId,
                                  parameter->getName(96),
                                  value,
                                  parameter->getDefaultValue(),
@@ -366,6 +382,29 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
         result.push_back(std::move(info));
     }
     return result;
+}
+
+std::optional<PluginParameterAutomation> PluginRack::bindAutomation(const juce::String& parameterId,
+                                                                    AutomationRuntime lane,
+                                                                    const PluginStateSpec& state,
+                                                                    const bool stepped,
+                                                                    juce::String& error) {
+    const auto available = parameters();
+    const auto found = std::find_if(available.begin(), available.end(), [&](const auto& parameter) {
+        return parameter.parameterId && *parameter.parameterId == parameterId;
+    });
+    if (found == available.end() || !found->automatable || (found->discrete && !stepped)) {
+        error =
+            "automation parameter is unavailable, not automatable, or requires step "
+            "interpolation: " +
+            parameterId;
+        return std::nullopt;
+    }
+    const auto index = static_cast<std::size_t>(found->index);
+    const auto value =
+        index < state.parameterValues.size() ? state.parameterValues[index] : found->value;
+    return PluginParameterAutomation{this, plugin->getParameters()[found->index], std::move(lane),
+                                     value, false};
 }
 
 PluginProgramStatus PluginRack::programStatus() const {

@@ -268,6 +268,27 @@ impl AudioSupervisor {
         }
     }
 
+    pub(crate) fn device_parameter_value_for_text(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        parameter_id: &str,
+        display: &str,
+    ) -> NativeAudioResult<f64> {
+        let command = SidecarCommand::GetDeviceParameterValueForText {
+            owner: owner.clone(),
+            device_id: device_id.into(),
+            parameter_id: parameter_id.into(),
+            display: display.into(),
+        };
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::DeviceParameters(status) if status.parameters.len() == 1 => {
+                Ok(f64::from(status.parameters[0].value))
+            }
+            response => Err(unexpected(&response)),
+        }
+    }
+
     pub(crate) fn list_device_parameters(
         &self,
         owner: &riffra_core::EffectOwner,
@@ -282,6 +303,7 @@ impl AudioSupervisor {
                 .parameters
                 .into_iter()
                 .map(|parameter| DeviceParameterInfo {
+                    parameter_id: parameter.parameter_id,
                     index: parameter.index,
                     name: Some(parameter.name),
                     value: parameter.value,

@@ -236,6 +236,7 @@ pub(crate) struct WireAudioDiagnostics {
     pub(crate) instrument_runtime_count: u64,
     pub(crate) plugin_count: u64,
     pub(crate) maximum_latency_samples: u64,
+    pub(crate) automation_warnings: Vec<String>,
     pub(crate) instrument_faults: Vec<WireInstrumentFault>,
 }
 
@@ -373,6 +374,8 @@ pub(crate) struct WireDeviceParameterChoice {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WireDeviceParameter {
+    #[serde(deserialize_with = "nullable")]
+    pub(crate) parameter_id: Option<String>,
     pub(crate) index: u32,
     pub(crate) name: String,
     pub(crate) value: f32,

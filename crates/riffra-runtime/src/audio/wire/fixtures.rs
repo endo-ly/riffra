@@ -122,6 +122,12 @@ fn command_samples() -> Vec<SidecarCommand> {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
         },
+        SidecarCommand::GetDeviceParameterValueForText {
+            owner: riffra_core::EffectOwner::Track { id: track() },
+            device_id: device(),
+            parameter_id: "stable-gain".into(),
+            display: "-6 dB".into(),
+        },
         SidecarCommand::GetDevicePrograms {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),

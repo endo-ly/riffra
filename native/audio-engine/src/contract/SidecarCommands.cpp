@@ -337,6 +337,18 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
+    if (type == "getDeviceParameterValueForText") {
+        auto fields = reader({"type", "owner", "deviceId", "parameterId", "display"});
+        GetDeviceCommand command;
+        command.query = DeviceQuery::parameterText;
+        if (!fields.string("type", ignoredType) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
+            !fields.string("parameterId", command.parameterId) ||
+            !fields.string("display", command.display) || !fields.finish())
+            return false;
+        output = command;
+        return true;
+    }
     if (type == "getDeviceStatus" || type == "getDeviceParameters" || type == "getDevicePrograms" ||
         type == "getPluginState") {
         auto fields = reader({"type", "owner", "deviceId"});

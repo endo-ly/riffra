@@ -182,6 +182,7 @@ pub struct AudioDiagnostics {
     pub instrument_runtime_count: u64,
     pub plugin_count: u64,
     pub maximum_latency_samples: u64,
+    pub automation_warnings: Vec<String>,
     pub projection_duration_ms: u64,
     pub audio_environment_revision: u64,
     /// Sidecar output lines that did not match the protocol.

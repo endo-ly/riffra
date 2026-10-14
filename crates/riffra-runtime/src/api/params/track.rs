@@ -1,8 +1,8 @@
 //! Params of Track, marker, range, and automation commands.
 
 use riffra_core::{
-    AutomationInterpolation, AutomationPoint, AutomationTarget, EffectOwner, MonitoringState,
-    MusicalPosition, TrackKind,
+    AutomationInterpolation, AutomationTarget, EffectOwner, MonitoringState, MusicalPosition,
+    TrackKind,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -110,7 +110,24 @@ pub struct RangeParams {
 pub struct AutomationSetParams {
     pub target: AutomationTarget,
     pub interpolation: AutomationInterpolation,
-    pub points: Vec<AutomationPoint>,
+    pub points: Vec<AutomationPointInput>,
+}
+
+/// One point supplied in canonical units or plugin-provided display text.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AutomationPointInput {
+    pub id: String,
+    pub tick: u64,
+    pub value: AutomationPointValue,
+}
+
+/// Display strings are converted through the live plugin; canonical state stores numbers.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(untagged)]
+pub enum AutomationPointValue {
+    Number(f64),
+    Display(String),
 }
 
 /// Reads the lane for a single target.

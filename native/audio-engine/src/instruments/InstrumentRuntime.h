@@ -5,10 +5,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace riffra {
 
 class PluginRack;
+struct PluginParameterAutomation;
 
 struct InstrumentProcessContext final {
     std::uint64_t absoluteFrame = 0;
@@ -18,6 +20,8 @@ struct InstrumentProcessContext final {
     std::uint16_t timeSignatureNumerator = 4;
     std::uint16_t timeSignatureDenominator = 4;
     bool playing = false;
+    std::span<PluginParameterAutomation> automation;
+    std::int64_t timelineSample = 0;
     const SonalloyEvent* timelineEvents = nullptr;
     std::size_t timelineEventCount = 0;
     const float* const* externalInput = nullptr;

@@ -55,7 +55,9 @@ void PluginChain::allNotesOff() noexcept {
 
 void PluginChain::process(const float* const* inputChannels, const int inputChannelCount,
                           float* const* outputChannels, const int outputChannelCount,
-                          const int sampleCount, const juce::MidiBuffer* midi) noexcept {
+                          const int sampleCount, const juce::MidiBuffer* midi,
+                          std::span<PluginParameterAutomation> automation,
+                          const std::int64_t timelineSample, const bool playing) noexcept {
     if (devices.empty()) {
         for (int channel = 0; channel < outputChannelCount; ++channel) {
             if (outputChannels[channel] == nullptr) continue;
@@ -77,7 +79,8 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
         auto* const* targetChannels = last ? outputChannels : target.getArrayOfWritePointers();
         const auto targetCount = last ? outputChannelCount : target.getNumChannels();
         devices[index].rack->process(currentInput, currentInputCount, targetChannels, targetCount,
-                                     sampleCount, index == 0 ? midi : nullptr);
+                                     sampleCount, index == 0 ? midi : nullptr, automation,
+                                     timelineSample, playing);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }

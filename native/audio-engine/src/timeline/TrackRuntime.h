@@ -275,6 +275,7 @@ public:
     std::atomic<float> gainDb{0.0f};
     std::atomic<float> pan{0.0f};
     TrackMeterAccumulator meter;
+    std::vector<PluginParameterAutomation> deviceAutomation;
     AutomationRuntime volumeAutomation;
     AutomationRuntime panAutomation;
     bool muted = false;

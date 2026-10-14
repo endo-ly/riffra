@@ -53,20 +53,76 @@ bool matchesExecutedEffects(const PluginChain& chain,
     return true;
 }
 
+AutomationRuntime prepareLane(const AutomationLaneSpec& lane, const PreparedTimeline& prepared) {
+    AutomationRuntime runtime;
+    std::vector<AutomationRuntime::Point> points;
+    points.reserve(lane.points.size());
+    for (const auto& point : lane.points)
+        points.push_back({prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate),
+                          static_cast<float>(point.value)});
+    runtime.setPoints(std::move(points), lane.interpolation == AutomationInterpolationSpec::step);
+    return runtime;
+}
+
 AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
                                     const AutomationTargetKind kind, const juce::String& id = {}) {
-    AutomationRuntime runtime;
+    for (const auto& lane : graph.automation)
+        if (lane.kind == kind && lane.id == id) return prepareLane(lane, prepared);
+    return {};
+}
+
+void prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prepared) {
     for (const auto& lane : graph.automation) {
-        if (lane.kind != kind || lane.id != id) continue;
-        std::vector<AutomationRuntime::Point> points;
-        points.reserve(lane.points.size());
-        for (const auto& point : lane.points)
-            points.push_back({prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate),
-                              static_cast<float>(point.value)});
-        runtime.setPoints(std::move(points),
-                          lane.interpolation == AutomationInterpolationSpec::step);
+        if (lane.kind != AutomationTargetKind::deviceParameter) continue;
+        PluginRack* rack = nullptr;
+        std::int64_t inputLatency = 0;
+        const PluginStateSpec* state = nullptr;
+        std::vector<PluginParameterAutomation>* bindings = nullptr;
+        const auto findEffect = [&](PluginChain& chain, const std::vector<PluginDeviceSpec>& specs,
+                                    std::vector<PluginParameterAutomation>& target) {
+            std::int64_t latency = 0;
+            for (const auto& spec : specs) {
+                auto* effect = chain.findDevice(spec.id);
+                if (spec.id != lane.id) {
+                    if (effect != nullptr) latency += effect->latencySamples();
+                    continue;
+                }
+                inputLatency = latency;
+                rack = chain.findDevice(spec.id);
+                state = &spec.state;
+                bindings = &target;
+            }
+        };
+        for (auto& track : prepared.tracks) {
+            auto& runtime = *track->runtime;
+            if (track->instrument &&
+                std::holds_alternative<Vst3InstrumentSpec>(*track->instrument)) {
+                const auto& instrument = std::get<Vst3InstrumentSpec>(*track->instrument);
+                if (instrument.id == lane.id && runtime.instrument() != nullptr) {
+                    rack = runtime.instrument()->vst3Rack();
+                    state = &instrument.state;
+                    bindings = &runtime.deviceAutomation;
+                }
+            }
+            findEffect(runtime.effects(), track->effects, runtime.deviceAutomation);
+        }
+        for (auto& bus : prepared.mixer.buses)
+            findEffect(*bus->effects, bus->effectSpecs, bus->deviceAutomation);
+        findEffect(*prepared.mixer.masterEffects, prepared.mixer.masterEffectSpecs,
+                   prepared.mixer.masterDeviceAutomation);
+        juce::String warning;
+        if (rack == nullptr || state == nullptr)
+            warning = "automation device is unavailable";
+        else if (auto binding = rack->bindAutomation(
+                     lane.parameterId, prepareLane(lane, prepared), *state,
+                     lane.interpolation == AutomationInterpolationSpec::step, warning)) {
+            binding->inputLatency = inputLatency;
+            bindings->push_back(std::move(*binding));
+        }
+        if (warning.isNotEmpty())
+            prepared.summary.automationWarnings.push_back(lane.id + "/" + lane.parameterId + ": " +
+                                                          warning);
     }
-    return runtime;
 }
 
 }  // namespace
@@ -438,6 +494,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     change + track->runtime->externalAudioSource->routeLatencySamples);
     }
     if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
+    prepareDeviceAutomation(graph, *prepared);
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),

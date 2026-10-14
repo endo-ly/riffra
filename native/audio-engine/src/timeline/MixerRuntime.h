@@ -75,6 +75,7 @@ private:
 struct MixerChannel final {
     juce::String id;
     std::vector<PluginDeviceSpec> effectSpecs;
+    std::vector<PluginParameterAutomation> deviceAutomation;
     std::shared_ptr<PluginChain> effects = std::make_shared<PluginChain>();
     juce::AudioBuffer<float> input;
     juce::AudioBuffer<float> output;
@@ -100,7 +101,8 @@ struct MixerChannel final {
     void process(const int sampleCount, const std::int64_t rangeStart,
                  const bool playing) noexcept {
         effects->process(input.getArrayOfReadPointers(), 2, output.getArrayOfWritePointers(), 2,
-                         sampleCount);
+                         sampleCount, nullptr, deviceAutomation, rangeStart - inputLatency,
+                         playing);
         if (playing && (!gainAutomation.empty() || !panAutomation.empty())) {
             MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
                                        sampleCount, gainDb.load(std::memory_order_acquire),
@@ -165,6 +167,7 @@ struct MixerRuntime final {
     std::vector<std::unique_ptr<MixerRoute>> trackRoutes;
     std::vector<std::unique_ptr<MixerRoute>> busRoutes;
     std::vector<PluginDeviceSpec> masterEffectSpecs;
+    std::vector<PluginParameterAutomation> masterDeviceAutomation;
     std::shared_ptr<PluginChain> masterEffects = std::make_shared<PluginChain>();
     juce::AudioBuffer<float> masterInput;
     juce::AudioBuffer<float> masterOutput;

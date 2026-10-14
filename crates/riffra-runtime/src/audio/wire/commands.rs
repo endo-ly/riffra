@@ -82,6 +82,12 @@ pub(crate) enum SidecarCommand {
         owner: riffra_core::EffectOwner,
         device_id: String,
     },
+    GetDeviceParameterValueForText {
+        owner: riffra_core::EffectOwner,
+        device_id: String,
+        parameter_id: String,
+        display: String,
+    },
     GetDevicePrograms {
         owner: riffra_core::EffectOwner,
         device_id: String,
@@ -215,7 +221,9 @@ impl SidecarCommand {
             | Self::SetPluginState { .. }
             | Self::OpenPluginEditor { .. } => ExpectedResponse::DeviceAck,
             Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
-            Self::GetDeviceParameters { .. } => ExpectedResponse::DeviceParameters,
+            Self::GetDeviceParameters { .. } | Self::GetDeviceParameterValueForText { .. } => {
+                ExpectedResponse::DeviceParameters
+            }
             Self::GetDevicePrograms { .. } => ExpectedResponse::DevicePrograms,
             Self::GetPluginState { .. } => ExpectedResponse::PluginState,
             Self::SetDeviceProgram { .. } => ExpectedResponse::DeviceProgramChanged,

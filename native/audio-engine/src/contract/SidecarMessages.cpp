@@ -176,6 +176,9 @@ juce::var encodeDiagnostics(const AudioDiagnosticsSpec& diagnostics) {
         .set("instrumentRuntimeCount", integer(diagnostics.instrumentRuntimeCount))
         .set("pluginCount", integer(diagnostics.pluginCount))
         .set("maximumLatencySamples", integer(diagnostics.maximumLatencySamples))
+        .set("automationWarnings",
+             array(diagnostics.automationWarnings,
+                   [](const juce::String& warning) { return juce::var(warning); }))
         .set("instrumentFaults", array(diagnostics.instrumentFaults, encodeInstrumentFault))
         .build();
 }
@@ -351,6 +354,7 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                [](const DeviceParameterSpec& parameter) {
                                    return ObjectBuilder{}
                                        .set("index", integer(parameter.index))
+                                       .set("parameterId", optionalString(parameter.parameterId))
                                        .set("name", parameter.name)
                                        .set("value", parameter.value)
                                        .set("defaultValue", parameter.defaultValue)

@@ -315,4 +315,46 @@ TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
     }
 }
 
+TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstProcessing) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    PluginRack rack;
+    juce::String error;
+    ASSERT_FALSE(rack.load(RIFFRA_TEST_EFFECT_BUNDLE_PATH, kSampleRate, kBlockSize,
+                           PluginProcessingMode::offline)
+                     .has_value());
+    const auto parameters = rack.parameters();
+    ASSERT_FALSE(parameters.empty());
+    ASSERT_TRUE(parameters[0].parameterId.has_value());
+    const auto state = rack.persistedState(error);
+    ASSERT_TRUE(state.has_value()) << error;
+    AutomationRuntime lane;
+    lane.setPoints({{0, 0.25f}, {32, 0.75f}}, true);
+    auto binding = rack.bindAutomation(*parameters[0].parameterId, lane, *state, true, error);
+    ASSERT_TRUE(binding.has_value()) << error;
+    std::array<PluginParameterAutomation, 1> bindings{std::move(*binding)};
+    std::array<float, 32> input, left{}, right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act / Assert
+    ASSERT_TRUE(rack.setParameter(0, state->parameterValues[0], error));
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 0, true);
+    EXPECT_NEAR(left.back(), 0.0625f, 0.0001f);
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 32, true);
+    EXPECT_NEAR(left.back(), 0.1875f, 0.0001f);
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 64, false);
+    EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
+    EXPECT_FALSE(rack.bindAutomation("absent-parameter", lane, *state, true, error).has_value());
+    const auto discrete =
+        std::find_if(parameters.begin(), parameters.end(), [](const auto& parameter) {
+            return parameter.discrete && parameter.parameterId.has_value();
+        });
+    ASSERT_NE(discrete, parameters.end());
+    EXPECT_FALSE(
+        rack.bindAutomation(*discrete->parameterId, lane, *state, false, error).has_value());
+    EXPECT_TRUE(rack.bindAutomation(*discrete->parameterId, lane, *state, true, error).has_value());
+}
+
 }  // namespace riffra

@@ -121,8 +121,18 @@ SidecarErrorSpec error() {
 std::vector<SidecarResponseSpec> responses() {
     DeviceParametersSpec parameters;
     parameters.parameters = {
-        {0, "Gain", 0.5f, 0.25f, true, "-6", "dB", false, 0, {}},
-        {1, "Mode", 0.0f, 0.0f, true, "Clean", "", true, 2, {{0.0f, "Clean"}, {1.0f, "Warm"}}}};
+        {0, "stable-gain", "Gain", 0.5f, 0.25f, true, "-6", "dB", false, 0, {}},
+        {1,
+         "stable-mode",
+         "Mode",
+         0.0f,
+         0.0f,
+         true,
+         "Clean",
+         "",
+         true,
+         2,
+         {{0.0f, "Clean"}, {1.0f, "Warm"}}}};
     DeviceProgramsSpec programs;
     programs.currentIndex = 1u;
     programs.programs = {{0, "Init"}, {1, "Bright"}};

@@ -7,10 +7,12 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "concurrency/BoundedMpmcQueue.h"
 #include "contract/ExecutionGraph.h"
+#include "timeline/AutomationRuntime.h"
 
 namespace riffra {
 
@@ -57,6 +59,7 @@ struct PluginParameterChoice final {
 /// One host-visible plugin parameter.
 struct PluginParameterInfo final {
     int index = 0;
+    std::optional<juce::String> parameterId;
     juce::String name;
     float value = 0.0f;
     float defaultValue = 0.0f;
@@ -75,6 +78,18 @@ struct PluginProgramStatus final {
     /// Program names in index order.
     std::vector<juce::String> names;
     std::optional<juce::String> error;
+};
+
+class PluginRack;
+
+/// Graph-owned binding; plugin identity and parameter references are resolved before publication.
+struct PluginParameterAutomation final {
+    PluginRack* rack = nullptr;
+    juce::AudioProcessorParameter* parameter = nullptr;
+    AutomationRuntime lane;
+    float staticValue = 0.0f;
+    bool applied = false;
+    std::int64_t inputLatency = 0;
 };
 
 class PluginRack final {
@@ -96,7 +111,9 @@ public:
     [[nodiscard]] std::optional<PluginStateSpec> persistedState(juce::String& error) const;
     void process(const float* const* inputChannelData, int numInputChannels,
                  float* const* outputChannelData, int numOutputChannels, int numSamples,
-                 const juce::MidiBuffer* timelineMidi = nullptr) noexcept;
+                 const juce::MidiBuffer* timelineMidi = nullptr,
+                 std::span<PluginParameterAutomation> automation = {},
+                 std::int64_t timelineSample = 0, bool playing = false) noexcept;
     [[nodiscard]] bool enqueueMidi(const juce::MidiMessage& message) noexcept;
     void allNotesOff() noexcept;
     [[nodiscard]] bool isLoaded() const noexcept;
@@ -106,6 +123,9 @@ public:
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
     [[nodiscard]] PluginRackStatus status() const;
     [[nodiscard]] std::vector<PluginParameterInfo> parameters() const;
+    [[nodiscard]] std::optional<PluginParameterAutomation> bindAutomation(
+        const juce::String& parameterId, AutomationRuntime lane, const PluginStateSpec& state,
+        bool stepped, juce::String& error);
     [[nodiscard]] PluginProgramStatus programStatus() const;
     [[nodiscard]] bool hasPrograms() const noexcept;
     [[nodiscard]] bool hasEditor() const noexcept;

@@ -1,0 +1,13 @@
+{
+  "command": {
+    "deviceId": "device-1",
+    "display": "-6 dB",
+    "owner": {
+      "id": "track-1",
+      "kind": "track"
+    },
+    "parameterId": "stable-gain",
+    "type": "getDeviceParameterValueForText"
+  },
+  "requestId": 1
+}
