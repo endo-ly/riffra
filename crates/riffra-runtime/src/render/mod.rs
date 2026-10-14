@@ -722,10 +722,6 @@ fn build_render_plan_with_conditions(
             .arrangement
             .midi_clips
             .retain(|clip| required_tracks.contains(&clip.track_id));
-        render_session
-            .arrangement
-            .automation_lanes
-            .retain(|lane| required_tracks.contains(&lane.track_id));
         // Keep every Track's plugin graph so all independently rendered stems
         // use the same project-wide PDC baseline. Only the selected Track owns
         // renderable content and reaches the final mix. Input dependencies retain

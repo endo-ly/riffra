@@ -261,6 +261,7 @@ control_commands! {
         TimebaseSetMap = "timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
         LoopRangeSet = "loop-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         PunchRangeSet = "punch-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
+        AutomationList = "automation.list" (AutomationListParams) -> AutomationLanes, read, project;
         AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
@@ -481,7 +482,7 @@ mod tests {
     fn automation_get_is_a_project_scoped_canonical_read() {
         let command = ControlCommand::decode(
             "automation.get",
-            json!({"trackId": "track:1", "parameter": "volume"}),
+            json!({"target": {"kind":"trackMix", "trackId": "track:1", "parameter": "volume"}}),
         )
         .unwrap();
 

@@ -1,7 +1,8 @@
 use super::*;
 use riffra_core::{
-    AudioTakeVariant, AutomationParameter, CreativeSession, FadeShape, InternalInstrumentResource,
-    MidiEventKind, MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
+    AudioTakeVariant, AutomationTarget, CreativeSession, FadeShape, InternalInstrumentResource,
+    MidiEventKind, MonitoringState, Track, TrackInstrumentSource, TrackKind, TrackMixParameter,
+    Vst3Plugin,
 };
 
 /// Builds a live snapshot from canonical session state and already-resolved resources.
@@ -170,11 +171,12 @@ pub(crate) fn project_graph(
             for lane in arrangement
                 .automation_lanes
                 .iter()
-                .filter(|lane| lane.track_id == track.id)
+                .filter(|lane| matches!(&lane.target, AutomationTarget::TrackMix { track_id, .. } if *track_id == track.id))
             {
-                let target = match lane.parameter {
-                    AutomationParameter::Volume => &mut volume_automation,
-                    AutomationParameter::Pan => &mut pan_automation,
+                let AutomationTarget::TrackMix { parameter, .. } = &lane.target else { unreachable!() };
+                let target = match parameter {
+                    TrackMixParameter::Volume => &mut volume_automation,
+                    TrackMixParameter::Pan => &mut pan_automation,
                 };
                 target.extend(lane.points.iter().map(|point| GraphAutomationPoint {
                     tick: point.tick.0,
@@ -530,8 +532,11 @@ mod tests {
         session.arrangement.automation_lanes = vec![
             AutomationLane {
                 id: "lane:volume".into(),
-                track_id: "track:audio".into(),
-                parameter: AutomationParameter::Volume,
+                target: AutomationTarget::TrackMix {
+                    track_id: "track:audio".into(),
+                    parameter: TrackMixParameter::Volume,
+                },
+                interpolation: riffra_core::AutomationInterpolation::Linear,
                 points: vec![AutomationPoint {
                     id: "point:ignored".into(),
                     tick: riffra_core::TimelineTick(240),
@@ -540,8 +545,11 @@ mod tests {
             },
             AutomationLane {
                 id: "lane:pan".into(),
-                track_id: "track:audio".into(),
-                parameter: AutomationParameter::Pan,
+                target: AutomationTarget::TrackMix {
+                    track_id: "track:audio".into(),
+                    parameter: TrackMixParameter::Pan,
+                },
+                interpolation: riffra_core::AutomationInterpolation::Linear,
                 points: vec![AutomationPoint {
                     id: "point:pan".into(),
                     tick: riffra_core::TimelineTick(360),

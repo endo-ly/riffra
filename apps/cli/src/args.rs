@@ -148,7 +148,7 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: RangeCommand,
     },
-    /// Set or clear volume and pan automation lanes on a Track.
+    /// Edit timeline automation for mixer controls and VST3 parameters.
     Automation {
         #[command(subcommand)]
         command: AutomationCommand,
@@ -1581,53 +1581,126 @@ pub struct RangeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AutomationCommand {
-    /// Read one Track's automation lanes without loading the full session.
-    Get(AutomationGetArgs),
-    /// Replace a Track's automation lane for one parameter with the supplied points.
-    ///
-    /// points is a JSON array of objects holding id, tick, and value. id must be non-empty and
-    /// unique within the lane. tick is an absolute timeline tick and duplicates fail. Points are
-    /// ordered by tick. volume values are dB clamped to -90..=24; pan values are clamped to
-    /// -1.0..=1.0; non-finite values fail. At most 16384 points are accepted. The lane holds
-    /// only the supplied points: an empty array deletes the lane. Where a non-empty lane is
-    /// active, its values replace the Track's static gain or pan; outside the lane the static
-    /// values apply. Mute and solo decide output independently of automation.
+    /// Read the lane for one canonical target.
+    Get(AutomationTargetArgs),
+    /// Discover lanes across the project or a channel owner.
+    List(AutomationListArgs),
+    /// Replace a lane with absolute-tick points; values before/after points hold the endpoint.
     Set(AutomationSetArgs),
-    /// Delete a Track's automation lane for one parameter.
-    Clear(AutomationClearArgs),
+    /// Delete a target's lane and use its static value.
+    Clear(AutomationTargetArgs),
 }
 
 #[derive(Debug, Args)]
-pub struct AutomationGetArgs {
-    /// Id of the Track whose automation lanes are read.
-    #[arg(long)]
-    pub track_id: String,
-    /// Return only this automated Track parameter.
-    #[arg(long, value_parser = ["volume", "pan"])]
+pub struct AutomationTargetArgs {
+    /// Track fader owner.
+    #[arg(long, conflicts_with_all = ["bus_id", "master", "send_id", "device_id"])]
+    pub track_id: Option<String>,
+    /// Group or Return fader owner.
+    #[arg(long, conflicts_with_all = ["master", "send_id", "device_id"])]
+    pub bus_id: Option<String>,
+    /// Master gain.
+    #[arg(long, conflicts_with_all = ["send_id", "device_id"])]
+    pub master: bool,
+    /// Parallel route level.
+    #[arg(long, conflicts_with = "device_id")]
+    pub send_id: Option<String>,
+    /// VST3 instrument or effect ID.
+    #[arg(long, requires = "parameter_id", conflicts_with = "parameter")]
+    pub device_id: Option<String>,
+    /// Stable VST3 parameter ID from device parameter list.
+    #[arg(long, requires = "device_id", conflicts_with = "parameter")]
+    pub parameter_id: Option<String>,
+    /// Mixer parameter: volume/pan for Track, gain/pan for Bus, gain for Master, level for Send.
+    #[arg(long, value_parser = ["volume", "pan", "gain", "level"])]
     pub parameter: Option<String>,
+}
+
+impl AutomationTargetArgs {
+    fn into_target(self) -> Result<riffra_core::AutomationTarget, String> {
+        use riffra_core::{AutomationTarget, BusMixParameter, TrackMixParameter};
+        match (
+            self.track_id,
+            self.bus_id,
+            self.master,
+            self.send_id,
+            self.device_id,
+            self.parameter_id,
+            self.parameter.as_deref(),
+        ) {
+            (Some(track_id), None, false, None, None, None, Some("volume")) => {
+                Ok(AutomationTarget::TrackMix {
+                    track_id,
+                    parameter: TrackMixParameter::Volume,
+                })
+            }
+            (Some(track_id), None, false, None, None, None, Some("pan")) => {
+                Ok(AutomationTarget::TrackMix {
+                    track_id,
+                    parameter: TrackMixParameter::Pan,
+                })
+            }
+            (None, Some(bus_id), false, None, None, None, Some("gain")) => {
+                Ok(AutomationTarget::BusMix {
+                    bus_id,
+                    parameter: BusMixParameter::Gain,
+                })
+            }
+            (None, Some(bus_id), false, None, None, None, Some("pan")) => {
+                Ok(AutomationTarget::BusMix {
+                    bus_id,
+                    parameter: BusMixParameter::Pan,
+                })
+            }
+            (None, None, true, None, None, None, Some("gain")) => Ok(AutomationTarget::MasterGain),
+            (None, None, false, Some(send_id), None, None, Some("level")) => {
+                Ok(AutomationTarget::SendLevel { send_id })
+            }
+            (None, None, false, None, Some(device_id), Some(parameter_id), None) => {
+                Ok(AutomationTarget::DeviceParameter {
+                    device_id,
+                    parameter_id,
+                })
+            }
+            _ => Err("select one automation target and its supported parameter".into()),
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct AutomationListArgs {
+    /// Filter lanes owned by this Track, including its devices and sends.
+    #[arg(long, conflicts_with_all = ["bus_id", "master"])]
+    pub track_id: Option<String>,
+    /// Filter lanes owned by this Group or Return.
+    #[arg(long, conflicts_with = "master")]
+    pub bus_id: Option<String>,
+    /// Filter Master gain and Master effect lanes.
+    #[arg(long)]
+    pub master: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct AutomationSetArgs {
-    /// Id of the Track that owns the automation lane.
-    #[arg(long)]
-    pub track_id: String,
-    /// Automated Track parameter: `volume` in dB or `pan` as a unit value.
-    #[arg(long, value_parser = ["volume", "pan"])]
-    pub parameter: String,
-    /// JSON array of point objects; each element is an object with id (string, unique, non-empty), tick (absolute timeline tick), and value (volume: dB clamped to -90..=24, pan: clamped to -1.0..=1.0); an empty array deletes the lane; at most 16384 points.
-    #[arg(long)]
-    pub points_json: String,
-}
-
-#[derive(Debug, Args)]
-pub struct AutomationClearArgs {
-    /// Id of the Track that owns the automation lane.
-    #[arg(long)]
-    pub track_id: String,
-    /// Automated Track parameter whose lane is deleted.
-    #[arg(long, value_parser = ["volume", "pan"])]
-    pub parameter: String,
+    #[command(flatten)]
+    pub target: AutomationTargetArgs,
+    /// Interpolation between adjacent points.
+    #[arg(long, default_value = "linear", value_parser = ["linear", "step"])]
+    pub interpolation: String,
+    /// JSON points with id, absolute tick, and value in the target's units.
+    #[arg(
+        long,
+        conflicts_with = "points_file",
+        required_unless_present = "points_file"
+    )]
+    pub points_json: Option<String>,
+    /// File containing the JSON point array.
+    #[arg(
+        long,
+        conflicts_with = "points_json",
+        required_unless_present = "points_json"
+    )]
+    pub points_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -3075,19 +3148,35 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         },
         CliCommand::Automation { command } => match command {
             AutomationCommand::Get(args) => Canonical::AutomationGet(AutomationGetParams {
-                track_id: args.track_id,
-                parameter: optional_text("/parameter", args.parameter)?,
+                target: args.into_target()?,
             })
             .into(),
-            AutomationCommand::Set(args) => Canonical::AutomationSet(AutomationSetParams {
-                track_id: args.track_id,
-                parameter: text("/parameter", args.parameter)?,
-                points: field("/points", json_argument("points-json", &args.points_json)?)?,
-            })
-            .into(),
+            AutomationCommand::List(args) => {
+                let owner = match (args.track_id, args.bus_id, args.master) {
+                    (Some(id), None, false) => Some(riffra_core::EffectOwner::Track { id }),
+                    (None, Some(id), false) => Some(riffra_core::EffectOwner::Bus { id }),
+                    (None, None, true) => Some(riffra_core::EffectOwner::Master),
+                    (None, None, false) => None,
+                    _ => return Err("select at most one automation owner".into()),
+                };
+                Canonical::AutomationList(AutomationListParams { owner }).into()
+            }
+            AutomationCommand::Set(args) => {
+                let encoded = match (args.points_json, args.points_file) {
+                    (Some(encoded), None) => encoded,
+                    (None, Some(path)) => fs::read_to_string(&path)
+                        .map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+                    _ => return Err("select exactly one of --points-json or --points-file".into()),
+                };
+                Canonical::AutomationSet(AutomationSetParams {
+                    target: args.target.into_target()?,
+                    interpolation: text("/interpolation", args.interpolation)?,
+                    points: field("/points", json_argument("points", &encoded)?)?,
+                })
+                .into()
+            }
             AutomationCommand::Clear(args) => Canonical::AutomationClear(AutomationClearParams {
-                track_id: args.track_id,
-                parameter: text("/parameter", args.parameter)?,
+                target: args.into_target()?,
             })
             .into(),
         },
@@ -3745,11 +3834,9 @@ mod tests {
     }
 
     #[test]
-    fn automation_get_accepts_an_optional_parameter_filter() {
-        let all_lanes = wire(
-            Cli::try_parse_from(["riffra", "automation", "get", "--track-id", "track:1"]).unwrap(),
-        );
-        let pan_lane = wire(
+    fn automation_commands_resolve_targets_and_reject_mismatched_parameters() {
+        // Arrange / Act
+        let pan = wire(
             Cli::try_parse_from([
                 "riffra",
                 "automation",
@@ -3761,11 +3848,70 @@ mod tests {
             ])
             .unwrap(),
         );
+        let master = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "set",
+                "--master",
+                "--parameter",
+                "gain",
+                "--interpolation",
+                "step",
+                "--points-json",
+                "[]",
+            ])
+            .unwrap(),
+        );
+        let device = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "clear",
+                "--device-id",
+                "fx",
+                "--parameter-id",
+                "stable",
+            ])
+            .unwrap(),
+        );
+        let list = wire(Cli::try_parse_from(["riffra", "automation", "list"]).unwrap());
 
-        assert_eq!(all_lanes.name, "automation.get");
-        assert_eq!(all_lanes.params["trackId"], "track:1");
-        assert!(all_lanes.params["parameter"].is_null());
-        assert_eq!(pan_lane.params["parameter"], "pan");
+        // Assert
+        assert_eq!(
+            pan.params["target"],
+            json!({"kind":"trackMix","trackId":"track:1","parameter":"pan"})
+        );
+        assert_eq!(master.params["target"], json!({"kind":"masterGain"}));
+        assert_eq!(master.params["interpolation"], "step");
+        assert_eq!(
+            device.params["target"],
+            json!({"kind":"deviceParameter","deviceId":"fx","parameterId":"stable"})
+        );
+        assert_eq!(list.name, "automation.list");
+        assert!(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "get",
+                "--master",
+                "--bus-id",
+                "bus",
+                "--parameter",
+                "gain"
+            ])
+            .is_err()
+        );
+        let invalid = AutomationTargetArgs {
+            track_id: None,
+            bus_id: None,
+            master: true,
+            send_id: None,
+            device_id: None,
+            parameter_id: None,
+            parameter: Some("pan".into()),
+        };
+        assert!(invalid.into_target().is_err());
     }
 
     #[test]
