@@ -93,7 +93,7 @@ struct PluginParameterAutomation final {
 };
 
 /// Why a projected automation lane could not be bound to this Rack.
-enum class AutomationBindingFailure { parameterMissing, invalidParameter, unavailableStorage };
+enum class AutomationBindingFailure { laneUnavailable, invalidParameter, unavailableStorage };
 
 class PluginRack final {
 public:

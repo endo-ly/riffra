@@ -360,7 +360,8 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
     EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
     EXPECT_FALSE(
         rack.bindAutomation("absent-parameter", lane, *state, true, failure, error).has_value());
-    EXPECT_EQ(failure, AutomationBindingFailure::parameterMissing);
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error, "automation parameter ID is not present: absent-parameter");
     const auto discrete =
         std::find_if(parameters.begin(), parameters.end(), [](const auto& parameter) {
             return parameter.discrete && parameter.parameterId.has_value();
@@ -368,6 +369,7 @@ TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstPro
     ASSERT_NE(discrete, parameters.end());
     EXPECT_FALSE(rack.bindAutomation(*discrete->parameterId, lane, *state, false, failure, error)
                      .has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
     EXPECT_TRUE(rack.bindAutomation(*discrete->parameterId, lane, *state, true, failure, error)
                     .has_value());
 }
@@ -401,6 +403,36 @@ TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginSt
     ASSERT_TRUE(binding.has_value()) << error;
     EXPECT_FLOAT_EQ(binding->staticValue, projected.parameterValues[0]);
     EXPECT_EQ(trace.stateCaptureCount, 0);
+
+    // An installed plugin may retain an old lane whose parameter is no longer automatable.
+    PluginRackTestPeer::addParameterAndPublishCount(
+        *rack, new juce::AudioParameterFloat(
+                   juce::ParameterID{"test.manual", 1}, "Manual Parameter",
+                   juce::NormalisableRange<float>{0.0f, 1.0f}, 0.5f,
+                   juce::AudioParameterFloatAttributes().withAutomatable(false)));
+    const auto unavailable =
+        rack->bindAutomation("test.manual", lane, projected, true, failure, error);
+    EXPECT_FALSE(unavailable.has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error,
+              "automation parameter is not automatable with this interpolation: test.manual");
+
+    // A newly duplicated stable ID must never bind to its first matching parameter.
+    PluginRackTestPeer::addParameterAndPublishCount(
+        *rack,
+        new juce::AudioParameterFloat(juce::ParameterID{"test.parameter", 1}, "Duplicate Parameter",
+                                      juce::NormalisableRange<float>{0.0f, 1.0f}, 0.25f));
+    const auto parametersAfterDuplicate = rack->parameters();
+    ASSERT_EQ(parametersAfterDuplicate.size(), 3u);
+    EXPECT_FALSE(parametersAfterDuplicate[0].parameterId.has_value());
+    EXPECT_FALSE(parametersAfterDuplicate[2].parameterId.has_value());
+    const auto ambiguous =
+        rack->bindAutomation("test.parameter", lane, projected, true, failure, error);
+    EXPECT_FALSE(ambiguous.has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
+    EXPECT_FALSE(rack->setAutomationPreview("test.parameter", 7, 0.5f, error));
+    EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
 }
 
 }  // namespace riffra

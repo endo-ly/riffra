@@ -109,7 +109,7 @@ bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
                     lane.interpolation == AutomationInterpolationSpec::step, failure, warning)) {
                 binding->inputLatency = inputLatency;
                 bindings->push_back(std::move(*binding));
-            } else if (failure != AutomationBindingFailure::parameterMissing) {
+            } else if (failure != AutomationBindingFailure::laneUnavailable) {
                 error = lane.id + "/" + lane.parameterId + ": " + warning;
                 return false;
             }

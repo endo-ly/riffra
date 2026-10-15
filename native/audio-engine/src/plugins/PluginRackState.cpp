@@ -520,16 +520,21 @@ std::optional<PluginParameterAutomation> PluginRack::bindAutomation(
         auto* parameter = parameters[parameterIndex];
         const auto* hosted = dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter);
         if (hosted == nullptr || hosted->getParameterID() != parameterId) continue;
+        if (resolved != nullptr) {
+            failure = AutomationBindingFailure::laneUnavailable;
+            error = "automation parameter ID is ambiguous: " + parameterId;
+            return std::nullopt;
+        }
         resolved = parameter;
         index = static_cast<std::size_t>(parameterIndex);
-        break;
     }
     if (resolved == nullptr) {
-        failure = AutomationBindingFailure::parameterMissing;
+        failure = AutomationBindingFailure::laneUnavailable;
         error = "automation parameter ID is not present: " + parameterId;
         return std::nullopt;
     }
     if (!resolved->isAutomatable() || (resolved->isDiscrete() && !stepped)) {
+        failure = AutomationBindingFailure::laneUnavailable;
         error = "automation parameter is not automatable with this interpolation: " + parameterId;
         return std::nullopt;
     }
