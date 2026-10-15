@@ -92,6 +92,9 @@ struct PluginParameterAutomation final {
     std::int64_t inputLatency = 0;
 };
 
+/// Why a projected automation lane could not be bound to this Rack.
+enum class AutomationBindingFailure { parameterMissing, invalidParameter, unavailableStorage };
+
 class PluginRack final {
 public:
     PluginRack();
@@ -130,9 +133,14 @@ public:
     [[nodiscard]] std::uint64_t droppedMidiEvents() const noexcept;
     [[nodiscard]] PluginRackStatus status() const;
     [[nodiscard]] std::vector<PluginParameterInfo> parameters() const;
+    /// Resolves a stable parameter ID and binds its lane to the projected static state.
     [[nodiscard]] std::optional<PluginParameterAutomation> bindAutomation(
         const juce::String& parameterId, AutomationRuntime lane, const PluginStateSpec& state,
-        bool stepped, juce::String& error);
+        bool stepped, AutomationBindingFailure& failure, juce::String& error);
+    /// Sets or clears a transient value consumed by the audio thread during automation read.
+    [[nodiscard]] bool setAutomationPreview(const juce::String& parameterId,
+                                            std::uint64_t previewToken, std::optional<float> value,
+                                            juce::String& error);
     [[nodiscard]] PluginProgramStatus programStatus() const;
     [[nodiscard]] bool hasPrograms() const noexcept;
     [[nodiscard]] bool hasEditor() const noexcept;
@@ -161,6 +169,7 @@ private:
         std::unique_ptr<Restore[]> automationRestore;
         std::unique_ptr<std::atomic<float>[]> values;
         std::unique_ptr<std::atomic<bool>[]> dirty;
+        std::unique_ptr<AutomationPreviewValue[]> automationPreview;
     };
 
     void updateParameterCount(juce::AudioProcessor& processor);
@@ -184,6 +193,8 @@ private:
     bool synchronizeParameterController(juce::String& error);
     std::optional<float> parameterValueForText(int index, const juce::String& text,
                                                juce::String& error) const;
+    [[nodiscard]] std::optional<juce::String> parameterDisplayValue(int index, float value,
+                                                                    juce::String& error) const;
     bool allocateParameterQueue(std::size_t count, juce::String& error) noexcept;
 
     class PendingMidi final {

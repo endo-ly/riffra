@@ -98,6 +98,12 @@ void AudioCommandDispatcher::handle(const GetDeviceCommand& command, CommandResp
                             deviceError))
                         result = std::move(*value);
                     break;
+                case DeviceQuery::parameterDisplay:
+                    if (auto value = context.timelineEngine.deviceParameterDisplayValue(
+                            command.owner, command.deviceId, command.parameterIndex,
+                            static_cast<float>(command.parameterValue), deviceError))
+                        result = std::move(*value);
+                    break;
                 case DeviceQuery::programs:
                     if (auto programs = context.timelineEngine.deviceProgramStatus(
                             command.owner, command.deviceId, deviceError))

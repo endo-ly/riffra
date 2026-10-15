@@ -17,7 +17,9 @@ interface TransportControlsProps {
   recordingActive: boolean;
   transportPlaying: boolean;
   transportStarting?: boolean;
+  transportPaused?: boolean;
   onPlay: () => void;
+  onPause: () => void;
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
@@ -34,7 +36,9 @@ export function TransportControls(props: TransportControlsProps) {
     recordingActive,
     transportPlaying,
     transportStarting = false,
+    transportPaused = false,
     onPlay,
+    onPause,
     onStop,
     onGoToStart,
     recordingCommandPending,
@@ -103,7 +107,7 @@ export function TransportControls(props: TransportControlsProps) {
     : recordingActive
       ? 'Stop recording'
       : 'Start recording';
-  const transportActive = transportPlaying || transportStarting;
+  const transportActive = transportPlaying || transportStarting || transportPaused;
 
   return (
     <div className={styles.transport}>
@@ -118,12 +122,24 @@ export function TransportControls(props: TransportControlsProps) {
         </button>
         <button
           type="button"
-          className={clsx(styles.playButton, transportActive && styles.playing)}
-          aria-label={transportActive ? 'Stop playback' : 'Play'}
-          title={transportActive ? 'Stop playback' : 'Play'}
-          onClick={() => void (transportActive ? onStop() : onPlay())}
+          aria-label="Stop playback"
+          title="Stop playback"
+          disabled={!transportActive}
+          onClick={onStop}
         >
-          <TransportIcon name={transportActive ? 'stop' : 'play'} />
+          <TransportIcon name="stop" />
+        </button>
+        <button
+          type="button"
+          className={clsx(styles.playButton, transportPlaying && styles.playing)}
+          aria-label={
+            transportPlaying ? 'Pause playback' : transportPaused ? 'Resume playback' : 'Play'
+          }
+          title={transportPlaying ? 'Pause playback' : transportPaused ? 'Resume playback' : 'Play'}
+          onClick={() => void (transportPlaying ? onPause() : onPlay())}
+          disabled={transportStarting}
+        >
+          <TransportIcon name={transportPlaying ? 'pause' : 'play'} />
         </button>
         <button
           type="button"

@@ -73,6 +73,8 @@ const char* name(const TransportStateSpec state) noexcept {
             return "starting";
         case TransportStateSpec::playing:
             return "playing";
+        case TransportStateSpec::paused:
+            return "paused";
         case TransportStateSpec::faulted:
             return "faulted";
     }
@@ -603,6 +605,9 @@ juce::var encodeOfflineRenderComplete(const OfflineRenderCompleteSpec& result) {
         .set("type", "offlineRenderComplete")
         .set("frames", integer(result.frames))
         .set("sampleRate", integer(result.sampleRate))
+        .set("automationWarnings",
+             array(result.automationWarnings,
+                   [](const juce::String& warning) { return juce::var(warning); }))
         .build();
 }
 

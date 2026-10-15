@@ -1,0 +1,13 @@
+{
+  "command": {
+    "previewToken": 17,
+    "target": {
+      "kind": "trackMix",
+      "parameter": "volume",
+      "trackId": "track-1"
+    },
+    "type": "previewAutomationValue",
+    "value": -3.0
+  },
+  "requestId": 1
+}

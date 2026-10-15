@@ -13,6 +13,7 @@ class PluginRack;
 struct RealtimeCommand final {
     enum class Kind : std::uint8_t {
         play,
+        pause,
         stop,
         setStarting,
         seek,

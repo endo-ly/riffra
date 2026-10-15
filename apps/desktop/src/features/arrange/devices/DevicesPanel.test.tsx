@@ -101,6 +101,7 @@ function Harness({
       projectId={session.sessionId}
       automationLanes={session.arrangement.automationLanes}
       playing={false}
+      currentTick={0}
       onOpenAutomation={() => undefined}
       target={resolveDeviceTarget(session.arrangement, owner)}
       api={api}
@@ -125,6 +126,14 @@ describe('DevicesPanel', () => {
       const api = runtimeApi();
       const currentSession = defaultSession();
       currentSession.arrangement.tracks = [structuredClone(track)];
+      currentSession.arrangement.automationLanes = [
+        {
+          id: 'automation:device-level',
+          target: { kind: 'deviceParameter', deviceId: effect.id, parameterId: 'level' },
+          interpolation: 'linear',
+          points: [{ id: 'point:device-level', tick: 0, value: 0.75 }],
+        },
+      ];
       const owner: EffectOwner =
         kind === 'master' ? { kind } : { kind, id: kind === 'track' ? track.id : 'bus:1' };
       if (kind === 'bus')
@@ -144,6 +153,7 @@ describe('DevicesPanel', () => {
       const currentEffect = resolveDeviceTarget(currentSession.arrangement, owner)!.effects[0];
 
       const currentParameters = structuredClone(parameters);
+      api.formatDeviceParameterValue = vi.fn(async () => '-3 dB');
       let releaseModeMetadata!: () => void;
       const modeMetadata = new Promise<void>((resolve) => {
         releaseModeMetadata = resolve;
@@ -198,8 +208,14 @@ describe('DevicesPanel', () => {
       if (kind === 'track') expect(screen.getByText('Audio Input →')).toBeInTheDocument();
       else expect(screen.queryByText('Audio Input →')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
-      const slider = await screen.findByLabelText('Level');
+      const slider = await screen.findByLabelText('Level · AUTO');
       expect(screen.getByText('-6 dB')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByLabelText('Level current automation value')).toHaveTextContent(
+          'Automation: -3 dB',
+        ),
+      );
+      expect(api.formatDeviceParameterValue).toHaveBeenCalledWith(owner, effect.id, 0, 0.75);
       fireEvent.change(slider, { target: { value: '0.7' } });
       expect(api.setDeviceParameter).not.toHaveBeenCalled();
       fireEvent.pointerUp(slider);
@@ -231,10 +247,10 @@ describe('DevicesPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Open Plugin Editor' }));
       expect(api.openPluginEditor).toHaveBeenCalledWith(owner, effect.id);
       api.setDeviceParameter = vi.fn().mockRejectedValue(new Error('Parameter rejected'));
-      fireEvent.change(screen.getByLabelText('Level'), { target: { value: '0.9' } });
-      fireEvent.pointerUp(screen.getByLabelText('Level'));
+      fireEvent.change(screen.getByLabelText('Level · AUTO'), { target: { value: '0.9' } });
+      fireEvent.pointerUp(screen.getByLabelText('Level · AUTO'));
       expect(await screen.findByRole('alert')).toHaveTextContent('Parameter rejected');
-      expect(screen.getByLabelText('Level')).toHaveValue('0.25');
+      expect(screen.getByLabelText('Level · AUTO')).toHaveValue('0.25');
     },
   );
 
@@ -251,6 +267,7 @@ describe('DevicesPanel', () => {
       projectId: 'project:1',
       automationLanes: [],
       playing: false,
+      currentTick: 0,
       onOpenAutomation: () => undefined,
       target: {
         owner: { kind: 'track' as const, id: track.id },

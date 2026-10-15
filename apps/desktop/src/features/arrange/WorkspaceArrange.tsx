@@ -106,6 +106,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
+  const previewScope = `${props.hostGeneration ?? 0}:${props.session.sessionId}`;
+  const previewAutomation = (
+    target: AutomationTarget,
+    value: number | null,
+    token: number,
+  ): Promise<void> => {
+    if (value !== null && transport?.state !== 'playing') return Promise.resolve();
+    return api.previewAutomationValue(target, value, token).catch(() => undefined);
+  };
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
   const analyses = useWaveformAnalyses(
@@ -750,13 +759,17 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                     api={props.api}
                     timelineWidth={timelineWidth}
                     pixelsPerTick={pixelsPerTick}
+                    playheadTick={displayTick}
+                    playheadTickRef={displayTickRef}
+                    previewScope={previewScope}
                     snapTick={editor.snapTick}
+                    onPreview={previewAutomation}
                     onTarget={openAutomation}
                     onClose={() =>
                       setAutomationTargets((current) => ({ ...current, [track.id]: undefined }))
                     }
                     onCommit={(target, interpolation, points) =>
-                      void editor.commit(props.api.setAutomation(target, interpolation, points))
+                      editor.commit(props.api.setAutomation(target, interpolation, points))
                     }
                   />
                 )}
@@ -771,11 +784,15 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
               api={props.api}
               timelineWidth={timelineWidth}
               pixelsPerTick={pixelsPerTick}
+              playheadTick={displayTick}
+              playheadTickRef={displayTickRef}
+              previewScope={previewScope}
               snapTick={editor.snapTick}
+              onPreview={previewAutomation}
               onTarget={openAutomation}
               onClose={() => setMixerAutomationTarget(null)}
               onCommit={(target, interpolation, points) =>
-                void editor.commit(props.api.setAutomation(target, interpolation, points))
+                editor.commit(props.api.setAutomation(target, interpolation, points))
               }
             />
           )}
@@ -850,6 +867,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           <DevicesPanel
             automationLanes={arrangement.automationLanes}
             playing={transport?.state === 'playing'}
+            currentTick={displayTick}
             onOpenAutomation={openAutomation}
             key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${props.hostGeneration ?? 0}`}
             target={deviceTarget}

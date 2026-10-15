@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 #include "AutomationRuntime.h"
 
@@ -20,16 +21,18 @@ public:
 
     MixAutomationCursor(const AutomationRuntime& gainLane, const AutomationRuntime& panLane,
                         const std::int64_t start, const int count, const float gainDb,
-                        const float pan, const bool unityCenterStereo, const bool active) noexcept
+                        const float pan, const bool unityCenterStereo, const bool active,
+                        const std::optional<float> gainPreview = std::nullopt,
+                        const std::optional<float> panPreview = std::nullopt) noexcept
         : gainCursor(gainLane.cursorAt(start)),
           panCursor(panLane.cursorAt(start)),
           sample(start),
           end(start + count),
-          staticGain(gainDb),
-          staticPan(pan),
+          staticGain(gainPreview.value_or(gainDb)),
+          staticPan(panPreview.value_or(pan)),
           scale(unityCenterStereo ? std::sqrt(2.0f) : 1.0f),
-          gainAutomated(active && !gainLane.empty()),
-          panAutomated(active && !panLane.empty()) {}
+          gainAutomated(active && !gainPreview.has_value() && !gainLane.empty()),
+          panAutomated(active && !panPreview.has_value() && !panLane.empty()) {}
 
     [[nodiscard]] Gains next() noexcept {
         if (sample >= segmentEnd) prepareSegment();

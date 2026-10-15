@@ -218,6 +218,7 @@ fn transport_status(status: WireTransportStatus) -> TransportStatus {
             WireTransportState::Stopped => TransportState::Stopped,
             WireTransportState::Starting => TransportState::Starting,
             WireTransportState::Playing => TransportState::Playing,
+            WireTransportState::Paused => TransportState::Paused,
             WireTransportState::Faulted => TransportState::Faulted,
         },
         revision: status.revision,

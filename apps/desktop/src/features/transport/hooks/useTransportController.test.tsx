@@ -16,6 +16,7 @@ function Harness({ api }: { api: FakeNativeApi }) {
   return (
     <>
       <button onClick={() => void transport.playTransport()}>Play</button>
+      <button onClick={() => void transport.pauseTransport()}>Pause</button>
       <button onClick={() => void transport.stopTransport()}>Stop</button>
       <button onClick={() => void transport.goToStart()}>Go to Start</button>
       <output>
@@ -23,7 +24,9 @@ function Harness({ api }: { api: FakeNativeApi }) {
           ? 'transport-starting'
           : transport.transportPlaying
             ? 'transport-playing'
-            : ''}
+            : transport.transportPaused
+              ? 'transport-paused'
+              : ''}
       </output>
     </>
   );
@@ -42,6 +45,16 @@ describe('useTransportController', () => {
 
     act(() => api.emitTransportStatus({ state: 'playing' }));
     await waitFor(() => expect(screen.getByText('transport-playing')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(api.calls).toContain('pauseTimeline'));
+    act(() => api.emitTransportStatus({ state: 'paused' }));
+    await waitFor(() => expect(screen.getByText('transport-paused')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() =>
+      expect(api.calls.filter((call) => call === 'playTimeline')).toHaveLength(2),
+    );
   });
 
   it('stops a timeline play request before the playing status arrives', async () => {

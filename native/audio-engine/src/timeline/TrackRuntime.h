@@ -274,6 +274,8 @@ public:
     int preparedBlockSize = 0;
     std::atomic<float> gainDb{0.0f};
     std::atomic<float> pan{0.0f};
+    AutomationPreviewValue gainPreview;
+    AutomationPreviewValue panPreview;
     TrackMeterAccumulator meter;
     std::vector<PluginParameterAutomation> deviceAutomation;
     AutomationRuntime volumeAutomation;

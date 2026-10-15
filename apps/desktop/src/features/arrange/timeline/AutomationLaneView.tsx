@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import type {
   AutomationInterpolation,
   AutomationLane,
@@ -7,6 +7,7 @@ import type {
 } from '@/model/domain';
 import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { automationValueAt } from '@/features/arrange/model/automation-value';
 import styles from '../WorkspaceArrange.module.css';
 
 const HEIGHT = 128;
@@ -18,28 +19,64 @@ interface AutomationLaneViewProps {
   error?: string | null;
   timelineWidth: number;
   pixelsPerTick: number;
+  playheadTick: number;
+  playheadTickRef: MutableRefObject<number>;
+  previewScope: string;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
   onTarget: (target: AutomationTarget) => void;
   onClose: () => void;
-  onCommit: (points: AutomationPoint[], interpolation: AutomationInterpolation) => void;
+  onPreview: (value: number | null, token: number) => void | Promise<void>;
+  formatValue?: (value: number) => Promise<string>;
+  onCommit: (
+    points: AutomationPoint[],
+    interpolation: AutomationInterpolation,
+  ) => void | Promise<unknown>;
 }
 
 export function AutomationLaneView(props: AutomationLaneViewProps) {
   const { min, max, unit: label, name, staticValue: baseValue } = props.option;
+  const { formatValue, previewScope } = props;
   const interpolation = props.lane?.interpolation ?? (props.option.discrete ? 'step' : 'linear');
   const cancelDrag = useRef<(() => void) | null>(null);
-  useEffect(
-    () => () => {
-      cancelDrag.current?.();
-    },
-    [],
-  );
+  const previewQueue = useRef(Promise.resolve());
+  const queuePreview = (value: number | null, token: number) => {
+    previewQueue.current = previewQueue.current
+      .catch(() => undefined)
+      .then(() => props.onPreview(value, token));
+  };
+  useEffect(() => {
+    return () => cancelDrag.current?.();
+  }, [previewScope]);
   const [points, setPoints] = useState(props.lane?.points ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [effectiveText, setEffectiveText] = useState<string | null>(null);
   useEffect(() => {
     cancelDrag.current?.();
     setPoints(props.lane?.points ?? []);
   }, [props.lane]);
+
+  const effectiveValue =
+    baseValue === undefined
+      ? undefined
+      : automationValueAt(points, interpolation, props.playheadTick, baseValue);
+  useEffect(() => {
+    let current = true;
+    if (effectiveValue === undefined || !formatValue) {
+      setEffectiveText(null);
+      return;
+    }
+    void formatValue(effectiveValue).then(
+      (formatted) => {
+        if (current) setEffectiveText(formatted);
+      },
+      () => {
+        if (current) setEffectiveText(null);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [effectiveValue, formatValue]);
 
   const yForValue = (value: number) => ((max - value) / (max - min)) * HEIGHT;
   const valueFromY = (clientY: number, top: number) => {
@@ -68,7 +105,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
     );
     setPoints(next);
     setSelectedId(point.id);
-    props.onCommit(next, interpolation);
+    void props.onCommit(next, interpolation);
   };
 
   const movePoint = (event: React.PointerEvent<HTMLButtonElement>, pointId: string) => {
@@ -81,6 +118,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
     if (!lane) return;
     const bounds = lane.getBoundingClientRect();
     let preview = points;
+    const previewToken = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
     const move = (pointer: PointerEvent) => {
       const ordered = [...preview].sort((left, right) => left.tick - right.tick);
       const index = ordered.findIndex((point) => point.id === pointId);
@@ -101,6 +139,10 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
           : point,
       );
       setPoints(preview);
+      queuePreview(
+        automationValueAt(preview, interpolation, props.playheadTickRef.current, baseValue ?? 0),
+        previewToken,
+      );
     };
     const finish = () => {
       window.removeEventListener('pointermove', move);
@@ -108,7 +150,9 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
       window.removeEventListener('pointercancel', cancel);
       window.removeEventListener('keydown', key);
       cancelDrag.current = null;
-      props.onCommit(preview, interpolation);
+      void Promise.resolve(props.onCommit(preview, interpolation)).finally(() =>
+        queuePreview(null, previewToken),
+      );
     };
     const cancel = () => {
       window.removeEventListener('pointermove', move);
@@ -117,6 +161,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
       window.removeEventListener('keydown', key);
       cancelDrag.current = null;
       setPoints(props.lane?.points ?? []);
+      queuePreview(null, previewToken);
     };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -162,7 +207,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
           value={interpolation}
           disabled={!points.length}
           onChange={(event) =>
-            props.onCommit(points, event.target.value as AutomationInterpolation)
+            void props.onCommit(points, event.target.value as AutomationInterpolation)
           }
         >
           <option value="linear" disabled={props.option.discrete}>
@@ -172,6 +217,9 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
         </select>
         <span title={props.error ?? undefined}>
           {props.error ?? `Static: ${baseValue === undefined ? '—' : baseValue} ${label}`}
+          {effectiveValue !== undefined && (
+            <small> Current: {effectiveText ?? `${effectiveValue.toFixed(3)} ${label}`}</small>
+          )}
         </span>
       </aside>
       <div
@@ -187,7 +235,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
           const next = points.filter((point) => point.id !== selectedId);
           setPoints(next);
           setSelectedId(null);
-          props.onCommit(next, interpolation);
+          void props.onCommit(next, interpolation);
         }}
       >
         {baseValue !== undefined && (

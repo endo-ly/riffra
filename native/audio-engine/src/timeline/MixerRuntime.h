@@ -81,6 +81,8 @@ struct MixerChannel final {
     juce::AudioBuffer<float> output;
     std::atomic<float> gainDb{0.0f};
     std::atomic<float> pan{0.0f};
+    AutomationPreviewValue gainPreview;
+    AutomationPreviewValue panPreview;
     AutomationRuntime gainAutomation;
     AutomationRuntime panAutomation;
     bool unityCenterStereo = true;
@@ -106,8 +108,8 @@ struct MixerChannel final {
         if (playing && (!gainAutomation.empty() || !panAutomation.empty())) {
             MixAutomationCursor cursor(gainAutomation, panAutomation, rangeStart - outputLatency,
                                        sampleCount, gainDb.load(std::memory_order_acquire),
-                                       pan.load(std::memory_order_acquire), unityCenterStereo,
-                                       true);
+                                       pan.load(std::memory_order_acquire), unityCenterStereo, true,
+                                       gainPreview.current(), panPreview.current());
             for (int sample = 0; sample < sampleCount; ++sample) {
                 const auto gains = cursor.next();
                 output.setSample(0, sample,
@@ -144,6 +146,7 @@ struct MixerRoute final {
     bool audible = true;
     bool allowLowLatencyBypass = false;
     AutomationRuntime levelAutomation;
+    AutomationPreviewValue levelPreview;
     MixRouteDelay delay;
 
     void mix(const int sampleCount, const std::int64_t rangeStart, const bool playing) noexcept {
@@ -154,8 +157,11 @@ struct MixerRoute final {
                              : track != nullptr   ? track->routeLatencySamples
                                                   : 0;
         auto cursor = levelAutomation.cursorAt(rangeStart - latency);
-        delay.add(*source, *destination, sampleCount, gain.load(std::memory_order_acquire), audible,
-                  lowLatency, playing && !levelAutomation.empty() ? &cursor : nullptr,
+        const auto preview = levelPreview.current();
+        const auto routeGain = preview ? juce::Decibels::decibelsToGain(*preview)
+                                       : gain.load(std::memory_order_acquire);
+        delay.add(*source, *destination, sampleCount, routeGain, audible, lowLatency,
+                  playing && !preview && !levelAutomation.empty() ? &cursor : nullptr,
                   rangeStart - latency);
     }
 };
@@ -173,6 +179,7 @@ struct MixerRuntime final {
     juce::AudioBuffer<float> masterOutput;
     std::int64_t masterInputLatency = 0;
     AutomationRuntime masterGainAutomation;
+    AutomationPreviewValue masterGainPreview;
 
     [[nodiscard]] MixerChannel* findBus(const juce::String& id) const noexcept {
         for (const auto& bus : buses)

@@ -34,4 +34,17 @@ void AudioCommandDispatcher::handle(const SetSendLevelCommand& command,
     responder.respond(MixAckSpec{});
 }
 
+void AudioCommandDispatcher::handle(const PreviewAutomationValueCommand& command,
+                                    CommandResponder responder) {
+    juce::String error;
+    std::optional<float> value;
+    if (command.value.has_value()) value = static_cast<float>(*command.value);
+    if (!context.timelineEngine.previewAutomationValue(
+            command.kind, command.id, command.parameterId, value, command.previewToken, error)) {
+        responder.fail("automationPreview", error, "automation.preview");
+        return;
+    }
+    responder.respond(MixAckSpec{});
+}
+
 }  // namespace riffra

@@ -41,18 +41,6 @@ juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     return std::visit([](const auto& value) { return value.id; }, *instrument);
 }
 
-bool matchesExecutedEffects(const PluginChain& chain,
-                            const std::vector<PluginDeviceSpec>& effects) {
-    for (const auto& effect : effects) {
-        const auto* rack = chain.findDevice(effect.id);
-        if (rack == nullptr) return false;
-        juce::String error;
-        const auto state = rack->persistedState(error);
-        if (!state || *state != effect.state) return false;
-    }
-    return true;
-}
-
 AutomationRuntime prepareLane(const AutomationLaneSpec& lane, const PreparedTimeline& prepared) {
     AutomationRuntime runtime;
     std::vector<AutomationRuntime::Point> points;
@@ -71,7 +59,8 @@ AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedT
     return {};
 }
 
-void prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prepared) {
+bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prepared,
+                             juce::String& error) {
     for (const auto& lane : graph.automation) {
         if (lane.kind != AutomationTargetKind::deviceParameter) continue;
         PluginRack* rack = nullptr;
@@ -113,16 +102,33 @@ void prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
         juce::String warning;
         if (rack == nullptr || state == nullptr)
             warning = "automation device is unavailable";
-        else if (auto binding = rack->bindAutomation(
-                     lane.parameterId, prepareLane(lane, prepared), *state,
-                     lane.interpolation == AutomationInterpolationSpec::step, warning)) {
-            binding->inputLatency = inputLatency;
-            bindings->push_back(std::move(*binding));
+        else {
+            AutomationBindingFailure failure = AutomationBindingFailure::invalidParameter;
+            if (auto binding = rack->bindAutomation(
+                    lane.parameterId, prepareLane(lane, prepared), *state,
+                    lane.interpolation == AutomationInterpolationSpec::step, failure, warning)) {
+                binding->inputLatency = inputLatency;
+                bindings->push_back(std::move(*binding));
+            } else if (failure != AutomationBindingFailure::parameterMissing) {
+                error = lane.id + "/" + lane.parameterId + ": " + warning;
+                return false;
+            }
         }
         if (warning.isNotEmpty())
             prepared.summary.automationWarnings.push_back(lane.id + "/" + lane.parameterId + ": " +
                                                           warning);
     }
+    const auto byDevice = [](const auto& left, const auto& right) {
+        return std::less<PluginRack*>{}(left.rack, right.rack);
+    };
+    for (auto& track : prepared.tracks)
+        std::sort(track->runtime->deviceAutomation.begin(), track->runtime->deviceAutomation.end(),
+                  byDevice);
+    for (auto& bus : prepared.mixer.buses)
+        std::sort(bus->deviceAutomation.begin(), bus->deviceAutomation.end(), byDevice);
+    std::sort(prepared.mixer.masterDeviceAutomation.begin(),
+              prepared.mixer.masterDeviceAutomation.end(), byDevice);
+    return true;
 }
 
 }  // namespace
@@ -303,9 +309,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
             track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
             track->reuseRuntimeDevices =
-                (existing->effects == track->effects ||
-                 matchesExecutedEffects(existing->runtime->effects(), track->effects)) &&
-                existing->instrument == track->instrument &&
+                existing->effects == track->effects && existing->instrument == track->instrument &&
                 existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
             if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
         });
@@ -505,7 +509,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     change + track->runtime->externalAudioSource->routeLatencySamples);
     }
     if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
-    prepareDeviceAutomation(graph, *prepared);
+    if (!prepareDeviceAutomation(graph, *prepared, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
@@ -577,8 +581,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 return;
             const auto* existing = previous->mixer.findBus(spec.id);
             if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
-                (existing->effectSpecs == spec.effects ||
-                 matchesExecutedEffects(*existing->effects, spec.effects))) {
+                existing->effectSpecs == spec.effects) {
                 bus->effects = existing->effects;
                 reused = true;
             }
@@ -597,8 +600,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (previous != nullptr && !graphs.devicesNeedReprepare &&
             previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
             sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
-            (previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs ||
-             matchesExecutedEffects(*previous->mixer.masterEffects, mixer.masterEffectSpecs))) {
+            previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs) {
             mixer.masterEffects = previous->mixer.masterEffects;
             masterReused = true;
         }

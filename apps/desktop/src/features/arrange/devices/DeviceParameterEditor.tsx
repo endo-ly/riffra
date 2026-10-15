@@ -7,6 +7,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
+import { automationValueAt } from '@/features/arrange/model/automation-value';
 import styles from './Devices.module.css';
 
 interface DeviceParameterEditorProps {
@@ -17,6 +18,7 @@ interface DeviceParameterEditorProps {
   parameterValues: number[];
   automationLanes: AutomationLane[];
   automationReadActive: boolean;
+  currentTick: number;
   onOpenAutomation: (parameter: DeviceParameterInfo) => void;
   applyCanonicalState: (state: CanonicalState) => boolean;
 }
@@ -28,6 +30,8 @@ function ParameterControl({
   onCommit,
   automated,
   onOpenAutomation,
+  automationValue,
+  formatAutomationValue,
 }: {
   parameter: DeviceParameterInfo;
   canonicalValue: number;
@@ -35,13 +39,34 @@ function ParameterControl({
   onCommit: (value: number) => Promise<boolean>;
   automated: boolean;
   onOpenAutomation: () => void;
+  automationValue?: number;
+  formatAutomationValue: (value: number) => Promise<string>;
 }) {
   const [draft, setDraft] = useState(parameter.value);
+  const [automationDisplay, setAutomationDisplay] = useState<string | null>(null);
   const submitted = useRef(parameter.value);
   useEffect(() => {
     setDraft(parameter.value);
     submitted.current = parameter.value;
   }, [parameter]);
+  useEffect(() => {
+    let current = true;
+    if (automationValue === undefined) {
+      setAutomationDisplay(null);
+      return;
+    }
+    void formatAutomationValue(automationValue).then(
+      (display) => {
+        if (current) setAutomationDisplay(display);
+      },
+      () => {
+        if (current) setAutomationDisplay(null);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [automationValue, formatAutomationValue]);
   const commit = async (value: number) => {
     if (disabled || value === submitted.current) return;
     submitted.current = value;
@@ -121,9 +146,20 @@ function ParameterControl({
         />
       )}
       <output>
-        {parameter.displayValue || parameter.value.toFixed(3)}
-        {parameter.label && ` ${parameter.label}`}
+        Static:{' '}
+        <span>
+          {parameter.displayValue
+            ? `${parameter.displayValue}${parameter.label ? ` ${parameter.label}` : ''}`
+            : `${canonicalValue.toFixed(3)} normalized`}
+        </span>{' '}
+        ({canonicalValue.toFixed(3)} normalized)
       </output>
+      {automationValue !== undefined && (
+        <output aria-label={`${name} current automation value`}>
+          Automation: {automationDisplay ?? automationValue.toFixed(3)}
+          {parameter.label && ` ${parameter.label}`}
+        </output>
+      )}
       <button
         type="button"
         disabled={disabled}
@@ -196,26 +232,49 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
               </button>
             )}
           </div>
-          {details.parameters.map((parameter) => (
-            <ParameterControl
-              key={parameter.index}
-              automated={props.automationLanes.some(
-                (lane) =>
-                  lane.target.kind === 'deviceParameter' &&
-                  lane.target.deviceId === props.deviceId &&
-                  lane.target.parameterId === parameter.parameterId,
-              )}
-              onOpenAutomation={() => props.onOpenAutomation(parameter)}
-              parameter={parameter}
-              canonicalValue={props.parameterValues[parameter.index] ?? parameter.value}
-              disabled={loading || saving || props.automationReadActive}
-              onCommit={(value) =>
-                mutate(() =>
-                  props.api.setDeviceParameter(props.owner, props.deviceId, parameter.index, value),
-                )
-              }
-            />
-          ))}
+          {details.parameters.map((parameter) =>
+            (() => {
+              const lane = props.automationLanes.find(
+                (candidate) =>
+                  candidate.target.kind === 'deviceParameter' &&
+                  candidate.target.deviceId === props.deviceId &&
+                  candidate.target.parameterId === parameter.parameterId,
+              );
+              const staticValue = props.parameterValues[parameter.index] ?? parameter.value;
+              const currentValue = lane
+                ? automationValueAt(lane.points, lane.interpolation, props.currentTick, staticValue)
+                : undefined;
+              return (
+                <ParameterControl
+                  key={parameter.index}
+                  automated={Boolean(lane)}
+                  onOpenAutomation={() => props.onOpenAutomation(parameter)}
+                  parameter={parameter}
+                  canonicalValue={staticValue}
+                  automationValue={currentValue}
+                  formatAutomationValue={(value) =>
+                    props.api.formatDeviceParameterValue(
+                      props.owner,
+                      props.deviceId,
+                      parameter.index,
+                      value,
+                    )
+                  }
+                  disabled={loading || saving || props.automationReadActive}
+                  onCommit={(value) =>
+                    mutate(() =>
+                      props.api.setDeviceParameter(
+                        props.owner,
+                        props.deviceId,
+                        parameter.index,
+                        value,
+                      ),
+                    )
+                  }
+                />
+              );
+            })(),
+          )}
         </>
       )}
     </section>

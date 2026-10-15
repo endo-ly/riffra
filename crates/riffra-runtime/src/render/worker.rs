@@ -77,7 +77,7 @@ impl RenderWorker {
         &self,
         request: OfflineRenderRequest,
         cancelled: Option<&AtomicBool>,
-    ) -> Result<(), RenderWorkerError> {
+    ) -> Result<Vec<String>, RenderWorkerError> {
         if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
             return Err(RenderWorkerError::Cancelled);
         }
@@ -164,7 +164,7 @@ impl RenderWorker {
         })
     }
 
-    fn handle_output(&self, output: Output) -> Result<(), RenderWorkerError> {
+    fn handle_output(&self, output: Output) -> Result<Vec<String>, RenderWorkerError> {
         let response: RenderMessage = serde_json::from_slice(&output.stdout).map_err(|source| {
             RenderWorkerError::InvalidResponse {
                 error: source,
@@ -176,9 +176,10 @@ impl RenderWorker {
             RenderMessage::OfflineRenderComplete {
                 frames,
                 sample_rate,
+                automation_warnings,
             } if output.status.success() => {
                 tracing::info!(frames, sample_rate, "offline render worker completed");
-                Ok(())
+                Ok(automation_warnings)
             }
             RenderMessage::OfflineRenderComplete { .. } => Err(RenderWorkerError::Incomplete {
                 status: output.status.to_string(),
@@ -197,7 +198,7 @@ impl RenderWorker {
         &self,
         request: OfflineRenderRequest,
         cancelled: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
         self.render_with_cancellation(request, Some(cancelled))
             .map_err(|error| error.to_string())
     }

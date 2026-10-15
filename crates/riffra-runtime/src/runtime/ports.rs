@@ -23,6 +23,7 @@ pub(crate) trait ProjectionDriver: Send + Sync + 'static {
 pub(crate) trait TransportDriver: Send + Sync + 'static {
     fn set_transport_starting(&self) -> Result<(), RuntimeError>;
     fn play_timeline(&self) -> Result<(), RuntimeError>;
+    fn pause_timeline(&self) -> Result<(), RuntimeError>;
     fn stop_timeline(&self) -> Result<(), RuntimeError>;
 }
 

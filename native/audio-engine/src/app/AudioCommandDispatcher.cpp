@@ -228,6 +228,8 @@ void AudioCommandDispatcher::handle(const TransportCommand& command, CommandResp
         switch (command.kind) {
             case TransportCommandKind::play:
                 return timeline.play();
+            case TransportCommandKind::pause:
+                return timeline.pause();
             case TransportCommandKind::setStarting:
                 return timeline.startPreparing();
             case TransportCommandKind::stop:

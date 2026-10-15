@@ -37,8 +37,10 @@ interface GlobalControlBarProps {
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   transportPlaying: boolean;
   transportStarting: boolean;
+  transportPaused: boolean;
   playheadTick: number;
   onPlay: () => void;
+  onPause: () => void;
   onStop: () => void;
   onGoToStart: () => void;
   recordingCommandPending: boolean;
@@ -134,7 +136,9 @@ export function GlobalControlBar(props: GlobalControlBarProps) {
           recordingActive={props.audio.recording.active || props.audio.recording.processing}
           transportPlaying={props.transportPlaying}
           transportStarting={props.transportStarting}
+          transportPaused={props.transportPaused}
           onPlay={props.onPlay}
+          onPause={props.onPause}
           onStop={props.onStop}
           onGoToStart={props.onGoToStart}
           recordingCommandPending={props.recordingCommandPending}

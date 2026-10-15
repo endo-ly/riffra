@@ -287,6 +287,7 @@ pub(crate) enum WireTransportState {
     Stopped,
     Starting,
     Playing,
+    Paused,
     Faulted,
 }
 
@@ -439,7 +440,11 @@ pub(crate) struct WirePluginParameterChanged {
     deny_unknown_fields
 )]
 pub(crate) enum RenderMessage {
-    OfflineRenderComplete { frames: u64, sample_rate: u32 },
+    OfflineRenderComplete {
+        frames: u64,
+        sample_rate: u32,
+        automation_warnings: Vec<String>,
+    },
     Error(SidecarError),
 }
 

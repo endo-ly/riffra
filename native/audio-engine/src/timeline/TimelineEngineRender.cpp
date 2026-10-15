@@ -17,8 +17,9 @@ constexpr double kTransportFadeSeconds = 0.005;
 void TimelineEngine::applyMasterGain(float* const* outputChannels, const int channelCount,
                                      const int sampleCount, const float staticGainDb) noexcept {
     const auto* graph = realtime.graph;
-    const auto fixedGain = juce::Decibels::decibelsToGain(staticGainDb);
-    if (graph == nullptr || graph->mixer.masterGainAutomation.empty()) {
+    const auto preview = graph != nullptr ? graph->mixer.masterGainPreview.current() : std::nullopt;
+    const auto fixedGain = juce::Decibels::decibelsToGain(preview.value_or(staticGainDb));
+    if (graph == nullptr || preview.has_value() || graph->mixer.masterGainAutomation.empty()) {
         for (int channel = 0; channel < channelCount; ++channel)
             if (outputChannels[channel] != nullptr)
                 juce::FloatVectorOperations::multiply(outputChannels[channel], fixedGain,
@@ -439,7 +440,8 @@ void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
     MixAutomationCursor mixCursor(
         runtime.volumeAutomation, runtime.panAutomation, rangeStart - runtime.routeLatencySamples,
         sampleCount, runtime.gainDb.load(std::memory_order_acquire),
-        runtime.pan.load(std::memory_order_acquire), runtime.unityCenterStereo, playing);
+        runtime.pan.load(std::memory_order_acquire), runtime.unityCenterStereo, playing,
+        runtime.gainPreview.current(), runtime.panPreview.current());
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
     double sumSquaresLeft = 0.0;
@@ -596,6 +598,10 @@ void TimelineEngine::finishTransportFade(PreparedTimeline& prepared) noexcept {
     realtime.transportGain = 0.0f;
     realtime.transportFadeStep = 0.0f;
     realtime.transportFadeRemaining = 0;
+    if (realtime.transport == TransportState::paused) {
+        realtime.renderTransportState = RenderTransportState::paused;
+        return;
+    }
     realtime.renderTransportState = RenderTransportState::stopped;
     resetPlaybackTrackState(prepared);
     if (realtime.recordingPhase != RecordingPhase::recording) resetRecordingTrackState(prepared);
@@ -639,15 +645,22 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         realtime.transportGain = 0.0f;
         realtime.transportFadeStep = 0.0f;
         applyPendingSeek(*active);
+        if (currentState == TransportState::paused)
+            realtime.renderTransportState = RenderTransportState::paused;
         realtime.seekRequestedWhileStopped = false;
     }
     if (realtime.seekPending && realtime.renderTransportState != RenderTransportState::stopped &&
         realtime.renderTransportState != RenderTransportState::fadingOut) {
         beginTransportFade(false, sampleRate);
     } else if (currentState == TransportState::playing &&
-               realtime.renderTransportState == RenderTransportState::stopped) {
+               (realtime.renderTransportState == RenderTransportState::stopped ||
+                realtime.renderTransportState == RenderTransportState::paused)) {
         if (realtime.seekPending) applyPendingSeek(*active);
         beginTransportFade(true, sampleRate);
+    } else if (currentState == TransportState::paused &&
+               realtime.renderTransportState == RenderTransportState::stopped) {
+        realtime.renderTransportState = RenderTransportState::paused;
+        realtime.transportGain = 0.0f;
     } else if (currentState != TransportState::playing &&
                (realtime.renderTransportState == RenderTransportState::playing ||
                 realtime.renderTransportState == RenderTransportState::fadingIn))
@@ -703,6 +716,12 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         segment.active = segmentActive;
     };
 
+    if (realtime.renderTransportState == RenderTransportState::paused) {
+        for (int channel = 0; channel < channelCount; ++channel)
+            if (outputChannels[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannels[channel], sampleCount);
+        return;
+    }
     if (realtime.renderTransportState == RenderTransportState::stopped) {
         applyPendingSeek(*active);
         const auto stoppedPosition = realtime.timelineSample;
@@ -721,6 +740,14 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     auto consumed = blockPlaybackOffset;
     while (consumed < sampleCount) {
         auto chunk = std::min(sampleCount - consumed, active->preparedBlockSize);
+        if (realtime.renderTransportState == RenderTransportState::paused) {
+            for (int channel = 0; channel < channelCount; ++channel)
+                if (outputChannels[channel] != nullptr)
+                    juce::FloatVectorOperations::clear(outputChannels[channel] + consumed,
+                                                       sampleCount - consumed);
+            appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
+            break;
+        }
         if (realtime.renderTransportState == RenderTransportState::stopped) {
             appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
             processStoppedRange(consumed, sampleCount - consumed, position);

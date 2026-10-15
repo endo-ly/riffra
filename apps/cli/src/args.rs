@@ -2034,6 +2034,8 @@ pub enum RuntimeProjectionCommand {
 pub enum TransportCommand {
     /// Start transport playback from the current position; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps playback offline.
     Play,
+    /// Pause playback while retaining the current playhead and automation values.
+    Pause,
     /// Stop transport playback; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps playback offline.
     Stop,
     /// Stop playback and return the playhead to the arrangement start; requires a running Riffra Host accessed with --attach and is unavailable in Safe Mode, which keeps playback offline.
@@ -3312,6 +3314,7 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
         },
         CliCommand::Transport { command } => match command {
             TransportCommand::Play => Runtime::TransportPlay(empty).into(),
+            TransportCommand::Pause => Runtime::TransportPause(empty).into(),
             TransportCommand::Stop => Runtime::TransportStop(empty).into(),
             TransportCommand::GoToStart => Runtime::TransportGoToStart(empty).into(),
             TransportCommand::Seek(args) => {

@@ -18,6 +18,7 @@ interface DevicesPanelProps {
   projectId: string;
   automationLanes: AutomationLane[];
   playing: boolean;
+  currentTick: number;
   onOpenAutomation: (target: AutomationTarget) => void;
   target: DeviceTarget | null;
   api: ArrangeWorkspaceApi;
@@ -93,6 +94,7 @@ export function DevicesPanel(props: DevicesPanelProps) {
                 lane.target.kind === 'deviceParameter' && lane.target.deviceId === device.id,
             )
           }
+          currentTick={props.currentTick}
           onOpenAutomation={(parameter) => {
             if (parameter.parameterId)
               props.onOpenAutomation({

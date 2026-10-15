@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MutableRefObject } from 'react';
 import type {
   AutomationInterpolation,
   AutomationPoint,
@@ -23,6 +23,9 @@ interface Props {
   warnings: readonly string[];
   timelineWidth: number;
   pixelsPerTick: number;
+  playheadTick: number;
+  playheadTickRef: MutableRefObject<number>;
+  previewScope: string;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
   onTarget: (target: AutomationTarget) => void;
   onClose: () => void;
@@ -30,7 +33,12 @@ interface Props {
     target: AutomationTarget,
     interpolation: AutomationInterpolation,
     points: AutomationPoint[],
-  ) => void;
+  ) => void | Promise<unknown>;
+  onPreview: (
+    target: AutomationTarget,
+    value: number | null,
+    token: number,
+  ) => void | Promise<void>;
 }
 
 export function AutomationLaneEditor(props: Props) {
@@ -70,6 +78,7 @@ export function AutomationLaneEditor(props: Props) {
   if (!owner) return null;
   const options = automationOptions(props.session, owner, parameters);
   const key = automationTargetKey(props.target);
+  const deviceTarget = props.target.kind === 'deviceParameter' ? props.target : null;
   let selected = options.find((option) => automationTargetKey(option.target) === key);
   if (!selected && props.target.kind === 'deviceParameter') {
     selected = {
@@ -83,6 +92,20 @@ export function AutomationLaneEditor(props: Props) {
     options.push(selected);
   }
   if (!selected) return null;
+  const formattedParameter = deviceTarget
+    ? (parameters[deviceTarget.deviceId] ?? []).find(
+        (parameter) => parameter.parameterId === deviceTarget.parameterId,
+      )
+    : undefined;
+  const formatValue = (value: number) => {
+    if (!owner || !formattedParameter || !deviceTarget) return Promise.resolve(value.toFixed(3));
+    return props.api.formatDeviceParameterValue(
+      owner,
+      deviceTarget.deviceId,
+      formattedParameter.index,
+      value,
+    );
+  };
   const lane = props.session.arrangement.automationLanes.find(
     (lane) => automationTargetKey(lane.target) === key,
   );
@@ -103,9 +126,14 @@ export function AutomationLaneEditor(props: Props) {
       }
       timelineWidth={props.timelineWidth}
       pixelsPerTick={props.pixelsPerTick}
+      playheadTick={props.playheadTick}
+      playheadTickRef={props.playheadTickRef}
+      previewScope={props.previewScope}
       snapTick={props.snapTick}
       onTarget={props.onTarget}
       onClose={props.onClose}
+      onPreview={(value, token) => props.onPreview(props.target, value, token)}
+      formatValue={props.target.kind === 'deviceParameter' ? formatValue : undefined}
       onCommit={(points, interpolation) => props.onCommit(props.target, interpolation, points)}
     />
   );

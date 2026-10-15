@@ -24,7 +24,9 @@ function Harness({ api }: { api: FakeNativeApi }) {
       positionTick={0}
       transportPlaying={false}
       transportStarting={false}
+      transportPaused={false}
       onPlay={() => undefined}
+      onPause={() => undefined}
       onStop={() => undefined}
       onGoToStart={() => undefined}
       recordingCommandPending={false}

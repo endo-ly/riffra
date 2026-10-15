@@ -43,7 +43,7 @@ struct WaitForTimelineIdleCommand final {
     std::uint64_t timeoutMs = 0;
 };
 
-enum class TransportCommandKind { play, setStarting, stop, seek };
+enum class TransportCommandKind { play, pause, setStarting, stop, seek };
 
 struct TransportCommand final {
     TransportCommandKind kind = TransportCommandKind::stop;
@@ -79,6 +79,14 @@ struct SetSendLevelCommand final {
     double levelDb = 0.0;
 };
 
+struct PreviewAutomationValueCommand final {
+    AutomationTargetKind kind = AutomationTargetKind::trackVolume;
+    juce::String id;
+    juce::String parameterId;
+    std::optional<double> value;
+    std::uint64_t previewToken = 0;
+};
+
 struct SetDeviceBypassedCommand final {
     EffectOwnerSpec owner;
     juce::String deviceId;
@@ -93,12 +101,21 @@ struct SetDeviceParameterCommand final {
     std::optional<juce::String> display;
 };
 
-enum class DeviceQuery { status, parameters, programs, pluginState, parameterText };
+enum class DeviceQuery {
+    status,
+    parameters,
+    programs,
+    pluginState,
+    parameterText,
+    parameterDisplay
+};
 
 struct GetDeviceCommand final {
     DeviceQuery query = DeviceQuery::status;
     juce::String parameterId;
     juce::String display;
+    std::uint32_t parameterIndex = 0;
+    double parameterValue = 0.0;
     EffectOwnerSpec owner;
     juce::String deviceId;
 };
@@ -185,11 +202,12 @@ using SidecarCommandSpec = std::variant<
     CommitTimelineSnapshotCommand, DiscardTimelineSnapshotCommand, WaitForTimelineIdleCommand,
     TransportCommand, SetMidiListeningCommand, SetLiveMidiTargetCommand, SendTrackMidiCommand,
     PanicTrackMidiCommand, SetChannelMixCommand, SetSendLevelCommand, SetDeviceBypassedCommand,
-    SetDeviceParameterCommand, GetDeviceCommand, SetPluginStateCommand, SetDeviceProgramCommand,
-    OpenPluginEditorCommand, PreviewSampleCommand, PreviewInstrumentCommand, StopPreviewCommand,
-    StopInstrumentPreviewCommand, OpenPluginAuditionCommand, StartTakeComparisonCommand,
-    SwitchTakeComparisonVariantCommand, StopTakeComparisonCommand, RecoverAudioDeviceCommand,
-    SetAudioDriverCommand, StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
+    SetDeviceParameterCommand, PreviewAutomationValueCommand, GetDeviceCommand,
+    SetPluginStateCommand, SetDeviceProgramCommand, OpenPluginEditorCommand, PreviewSampleCommand,
+    PreviewInstrumentCommand, StopPreviewCommand, StopInstrumentPreviewCommand,
+    OpenPluginAuditionCommand, StartTakeComparisonCommand, SwitchTakeComparisonVariantCommand,
+    StopTakeComparisonCommand, RecoverAudioDeviceCommand, SetAudioDriverCommand,
+    StartArrangeRecordingCommand, StopArrangeRecordingCommand>;
 
 /// One decoded stdin line of the realtime sidecar.
 struct SidecarRequestSpec final {
@@ -198,7 +216,7 @@ struct SidecarRequestSpec final {
 };
 
 /// Every command `type` accepted on stdin.
-inline constexpr std::array<std::string_view, 42> kSidecarCommandTypes{
+inline constexpr std::array<std::string_view, 45> kSidecarCommandTypes{
     "status",
     "setEmergencyMute",
     "setFeedbackProtection",
@@ -209,6 +227,7 @@ inline constexpr std::array<std::string_view, 42> kSidecarCommandTypes{
     "discardTimelineSnapshot",
     "waitForTimelineIdle",
     "playTimeline",
+    "pauseTimeline",
     "setTransportStarting",
     "stopTimeline",
     "seekTimeline",
@@ -219,11 +238,13 @@ inline constexpr std::array<std::string_view, 42> kSidecarCommandTypes{
     "panicTrackMidi",
     "setChannelMix",
     "setSendLevel",
+    "previewAutomationValue",
     "setDeviceBypassed",
     "setDeviceParameter",
     "getDeviceStatus",
     "getDeviceParameters",
     "getDeviceParameterValueForText",
+    "getDeviceParameterDisplayValue",
     "getDevicePrograms",
     "getPluginState",
     "setPluginState",

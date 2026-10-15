@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AutomationLane } from '@/model/domain';
@@ -12,7 +12,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('edits Step curves, cancels point gestures, and preserves point identities through edits', () => {
+it('previews point drags, cancels transient values, and commits one canonical lane edit', async () => {
   // Arrange
   vi.stubGlobal('PointerEvent', MouseEvent);
   const option: AutomationOption = {
@@ -24,6 +24,8 @@ it('edits Step curves, cancels point gestures, and preserves point identities th
     unit: 'dB',
   };
   const committed = vi.fn();
+  const previewed = vi.fn();
+  let previewScope = 'project:host';
   function Harness() {
     const [lane, setLane] = useState<AutomationLane>({
       id: 'lane',
@@ -41,7 +43,11 @@ it('edits Step curves, cancels point gestures, and preserves point identities th
         lane={lane}
         timelineWidth={100}
         pixelsPerTick={1}
+        playheadTick={10}
+        playheadTickRef={{ current: 10 }}
+        previewScope={previewScope}
         snapTick={Math.round}
+        onPreview={previewed}
         onTarget={() => undefined}
         onClose={() => undefined}
         onCommit={(points, interpolation) => {
@@ -51,7 +57,7 @@ it('edits Step curves, cancels point gestures, and preserves point identities th
       />
     );
   }
-  const { container } = render(<Harness />);
+  const { container, rerender } = render(<Harness />);
   const lane = screen.getByLabelText('Master Gain automation');
 
   // Act / Assert
@@ -62,11 +68,34 @@ it('edits Step curves, cancels point gestures, and preserves point identities th
     'points',
     '0,17.066666666666666 0,17.066666666666666 20,17.066666666666666 20,0 100,0',
   );
+  expect(screen.getByText(/Current:/)).toHaveTextContent('Current: -12.000 dB');
   fireEvent.pointerDown(screen.getByRole('button', { name: 'Master Gain -12dB at tick 0' }), {
     button: 0,
   });
   fireEvent.pointerMove(window, { clientX: 5, clientY: 25 });
+  await waitFor(() => expect(previewed).toHaveBeenCalled());
+  const canceledPreview = previewed.mock.lastCall;
+  expect(canceledPreview?.[0]).toBeCloseTo(-17.6);
   fireEvent.keyDown(window, { key: 'Escape' });
+  await waitFor(() => expect(previewed).toHaveBeenLastCalledWith(null, canceledPreview?.[1]));
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Master Gain -12dB at tick 0' }), {
+    button: 0,
+  });
+  fireEvent.pointerMove(window, { clientX: 5, clientY: 25 });
+  await waitFor(() => expect(previewed.mock.lastCall?.[0]).toBeDefined());
+  const switchedPreview = previewed.mock.lastCall;
+  previewScope = 'project:other-host';
+  rerender(<Harness />);
+  await waitFor(() => expect(previewed).toHaveBeenLastCalledWith(null, switchedPreview?.[1]));
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Master Gain -12dB at tick 0' }), {
+    button: 0,
+  });
+  fireEvent.pointerMove(window, { clientX: 5, clientY: 25 });
+  await waitFor(() => expect(previewed.mock.lastCall?.[0]).toBeDefined());
+  const canceledByPointer = previewed.mock.lastCall;
+  fireEvent.pointerCancel(window);
+  await waitFor(() => expect(previewed).toHaveBeenLastCalledWith(null, canceledByPointer?.[1]));
+  expect(committed).toHaveBeenCalledTimes(1);
   fireEvent.pointerUp(window);
   expect(committed).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('button', { name: 'Master Gain -12dB at tick 0' })).toHaveStyle({
@@ -76,7 +105,11 @@ it('edits Step curves, cancels point gestures, and preserves point identities th
     button: 0,
   });
   fireEvent.pointerMove(window, { clientX: 10, clientY: 64 });
+  await waitFor(() => expect(previewed.mock.lastCall?.[0]).toBeDefined());
+  const committedPreview = previewed.mock.lastCall;
+  expect(committedPreview?.[0]).toBe(-45);
   fireEvent.pointerUp(window);
+  await waitFor(() => expect(previewed).toHaveBeenLastCalledWith(null, committedPreview?.[1]));
   expect(committed).toHaveBeenLastCalledWith(
     [
       { id: 'a', tick: 10, value: -45 },

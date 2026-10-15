@@ -160,18 +160,16 @@ std::unique_ptr<OfflineRenderer> OfflineRenderer::prepare(const OfflineRenderReq
     if (!timelineEngine->loadSnapshot(renderSnapshot, formats, sampleRate, blockSize, error))
         return nullptr;
     const auto status = timelineEngine->status();
-    if (status.graph && !status.graph->automationWarnings.empty()) {
-        error = "automation cannot be rendered: " + status.graph->automationWarnings.front();
-        return nullptr;
-    }
     const auto latencySamples = status.graph.has_value()
                                     ? static_cast<std::int64_t>(status.graph->maximumLatencySamples)
                                     : 0;
+    const auto automationWarnings =
+        status.graph ? status.graph->automationWarnings : std::vector<juce::String>{};
     Plan renderPlan{destination,       sampleRate,
                     blockSize,         startSample,
                     endSample,         static_cast<float>(request.graph.masterGainDb),
                     request.normalize, hostsPlugins(request.graph),
-                    latencySamples};
+                    latencySamples,    automationWarnings};
     return std::unique_ptr<OfflineRenderer>(
         new OfflineRenderer(std::move(renderPlan), std::move(timelineEngine)));
 }
@@ -246,6 +244,7 @@ bool OfflineRenderer::render(juce::AudioFormatManager& formats, Result& result,
 
     result.frames = static_cast<std::uint64_t>(plan.endSample - plan.startSample);
     result.sampleRate = plan.sampleRate;
+    result.automationWarnings = plan.automationWarnings;
     return true;
 }
 

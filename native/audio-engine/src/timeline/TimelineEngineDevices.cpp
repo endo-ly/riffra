@@ -322,6 +322,27 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterValueForText(
     return DeviceParametersSpec{{std::move(result)}};
 }
 
+std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterDisplayValue(
+    const EffectOwnerSpec& owner, const juce::String& deviceId, const std::uint32_t parameterIndex,
+    const float value, juce::String& error) {
+    auto* rack = findDevice(owner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return std::nullopt;
+    }
+    const auto display =
+        juce::MessageManager::callSync([&] {
+            return rack->parameterDisplayValue(static_cast<int>(parameterIndex), value, error);
+        }).value_or(std::nullopt);
+    if (!display) return std::nullopt;
+    DeviceParameterSpec parameter;
+    parameter.index = parameterIndex;
+    parameter.value = value;
+    parameter.automatable = true;
+    parameter.displayValue = *display;
+    return DeviceParametersSpec{{std::move(parameter)}};
+}
+
 std::optional<DeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
     const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error) const {
     return juce::MessageManager::callSync([&]() -> std::optional<DeviceProgramsSpec> {

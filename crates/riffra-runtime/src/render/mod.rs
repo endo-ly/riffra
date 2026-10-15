@@ -190,7 +190,7 @@ fn render_timeline_with_renderer(
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
-    render: impl FnOnce(OfflineRenderRequest) -> Result<(), String>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
     let plan = build_render_plan(
@@ -214,7 +214,7 @@ fn render_timeline_with_renderer(
         committed: false,
     };
 
-    render(OfflineRenderRequest {
+    let mut automation_warnings = render(OfflineRenderRequest {
         include_end_events: matches!(options.range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
@@ -239,13 +239,14 @@ fn render_timeline_with_renderer(
         } else {
             (None, None)
         };
-    let (measurements, warnings) = mastering::measure_output(
+    let (measurements, mut warnings) = mastering::measure_output(
         &plan.output_path,
         plan.sample_rate,
         mastered_measurement,
         session.settings.mixdown.mastering.as_ref(),
         cancelled,
     )?;
+    warnings.append(&mut automation_warnings);
 
     let timebase = &session.arrangement.timebase;
     let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
@@ -474,7 +475,7 @@ pub(crate) fn render_stems_with_cancellation(
 
 fn render_stems_with_renderer(
     context: StemRenderContext<'_>,
-    mut render: impl FnMut(OfflineRenderRequest) -> Result<(), String>,
+    mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<PendingRenderStems, String> {
     let StemRenderContext {
@@ -542,7 +543,7 @@ fn render_stems_with_renderer(
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
-        render(OfflineRenderRequest {
+        let mut automation_warnings = render(OfflineRenderRequest {
             include_end_events: matches!(&range, RenderRange::EntireArrangement),
             tail_seconds: plan.tail_seconds,
             graph: plan.graph,
@@ -570,8 +571,9 @@ fn render_stems_with_renderer(
             return Err("Rendered stems do not have a shared frame count.".into());
         }
         frames = Some(stem_frames);
-        let (measurements, warnings) =
+        let (measurements, mut warnings) =
             mastering::measure_output(&plan.output_path, sample_rate, None, None, cancelled)?;
+        warnings.append(&mut automation_warnings);
         completed.push((
             track,
             plan.source_ids,
@@ -1154,7 +1156,7 @@ mod tests {
                     request.normalize,
                 ));
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         )
@@ -1593,7 +1595,7 @@ mod tests {
                 calls += 1;
                 let frames = if calls == 1 { 64 } else { 32 };
                 fs::write(&request.destination, wav(request.sample_rate, frames)).unwrap();
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         );
@@ -1675,7 +1677,7 @@ mod tests {
                     )
                     .unwrap();
                 }
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         );
@@ -1914,7 +1916,7 @@ mod tests {
                     if failure == 1 {
                         cancelled.store(true, std::sync::atomic::Ordering::Release);
                     }
-                    Ok(())
+                    Ok(Vec::new())
                 },
                 Some(&cancelled),
             );

@@ -6,7 +6,7 @@ interface TransportControllerOptions {
   hostGeneration?: number;
   api: Pick<
     NativeEventApi & TransportApi,
-    'onTransportStatus' | 'playTimeline' | 'stopTimeline' | 'goToStartTimeline'
+    'onTransportStatus' | 'playTimeline' | 'pauseTimeline' | 'stopTimeline' | 'goToStartTimeline'
   >;
   sessionRef: {
     current: CreativeSession | null;
@@ -23,11 +23,13 @@ export function useTransportController({
 }: TransportControllerOptions) {
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelineStarting, setTimelineStarting] = useState(false);
+  const [timelinePaused, setTimelinePaused] = useState(false);
   const pendingPlayRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     pendingPlayRef.current = null;
     setTimelinePlaying(false);
     setTimelineStarting(false);
+    setTimelinePaused(false);
   }, [hostGeneration]);
   const cancelPendingPlay = useCallback(() => {
     pendingPlayRef.current = null;
@@ -69,6 +71,12 @@ export function useTransportController({
       await api.stopTimeline();
     });
   }, [api, cancelPendingPlay, runImmediateTransportOperation]);
+  const pauseTransport = useCallback(() => {
+    cancelPendingPlay();
+    return runImmediateTransportOperation(async () => {
+      await api.pauseTimeline();
+    });
+  }, [api, cancelPendingPlay, runImmediateTransportOperation]);
   const goToStart = useCallback(() => {
     cancelPendingPlay();
     return runImmediateTransportOperation(async () => {
@@ -79,12 +87,15 @@ export function useTransportController({
     return api.onTransportStatus((status) => {
       setTimelinePlaying(status.state === 'playing');
       setTimelineStarting(status.state === 'starting');
+      setTimelinePaused(status.state === 'paused');
     });
   }, [api]);
   return {
     transportPlaying: timelinePlaying,
     transportStarting: timelineStarting,
+    transportPaused: timelinePaused,
     playTransport,
+    pauseTransport,
     stopTransport,
     goToStart,
   };

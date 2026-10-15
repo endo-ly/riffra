@@ -570,9 +570,12 @@ riffra --attach host shutdown
 | コマンド                | 主要引数   |
 | ----------------------- | ---------- |
 | `transport play`        | -          |
+| `transport pause`       | -          |
 | `transport stop`        | -          |
 | `transport go-to-start` | -          |
 | `transport seek`        | `--tick N` |
+
+Pauseは再生位置とAutomationの有効値を保持し、Playで同じ位置から再開する。Stopは有効値を静的値へ戻す。
 
 ### Audio デバイス
 

@@ -406,6 +406,9 @@ export class FakeNativeApi implements NativeApi {
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
   }
+  previewAutomationValue(...args: Parameters<NativeApi['previewAutomationValue']>) {
+    return this.command('previewAutomationValue', args);
+  }
   previewChannelMix(...args: Parameters<NativeApi['previewChannelMix']>) {
     return this.command('previewChannelMix', args);
   }
@@ -571,6 +574,9 @@ export class FakeNativeApi implements NativeApi {
   getDeviceParameter(...args: Parameters<NativeApi['getDeviceParameter']>) {
     return this.command('getDeviceParameter', args);
   }
+  formatDeviceParameterValue(...args: Parameters<NativeApi['formatDeviceParameterValue']>) {
+    return this.command('formatDeviceParameterValue', args);
+  }
   listPluginPresets(...args: Parameters<NativeApi['listPluginPresets']>) {
     return this.command('listPluginPresets', args);
   }
@@ -663,6 +669,10 @@ export class FakeNativeApi implements NativeApi {
   }
   playTimeline(...args: Parameters<NativeApi['playTimeline']>) {
     return this.command('playTimeline', args);
+  }
+
+  pauseTimeline(...args: Parameters<NativeApi['pauseTimeline']>) {
+    return this.command('pauseTimeline', args);
   }
   stopTimeline(...args: Parameters<NativeApi['stopTimeline']>) {
     return this.command('stopTimeline', args);
@@ -1192,10 +1202,12 @@ const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
   'installAppUpdate',
   'previewMasterGainDb',
+  'previewAutomationValue',
   'previewSendLevel',
   'previewChannelMix',
   'openPluginEditor',
   'playTimeline',
+  'pauseTimeline',
   'stopTimeline',
   'goToStartTimeline',
   'seekTimeline',

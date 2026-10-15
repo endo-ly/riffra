@@ -22,6 +22,7 @@ struct ProcessorTrace final {
     int processBlockCount = 0;
     int resetCount = 0;
     int currentProgram = 0;
+    int stateCaptureCount = 0;
     std::function<void()> onProcess;
     double sampleRate = 0.0;
     int blockSize = 0;
@@ -30,11 +31,17 @@ struct ProcessorTrace final {
 
 class TestProcessor final : public juce::AudioProcessor {
 public:
-    explicit TestProcessor(ProcessorTrace& processorTrace)
+    explicit TestProcessor(ProcessorTrace& processorTrace,
+                           bool includeHostedAutomationParameter = false)
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo(), true)
                              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          trace(processorTrace) {}
+          trace(processorTrace) {
+        if (includeHostedAutomationParameter)
+            addParameter(new juce::AudioParameterFloat(
+                juce::ParameterID{"test.parameter", 1}, "Test Parameter",
+                juce::NormalisableRange<float>{0.0f, 1.0f}, 0.5f));
+    }
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
         trace.prepared = sampleRate > 0.0 && samplesPerBlock > 0;
@@ -73,7 +80,7 @@ public:
         return "Program " + juce::String(index);
     }
     void changeProgramName(int, const juce::String&) override {}
-    void getStateInformation(juce::MemoryBlock&) override {}
+    void getStateInformation(juce::MemoryBlock&) override { ++trace.stateCaptureCount; }
     void setStateInformation(const void*, int) override {}
 
 private:

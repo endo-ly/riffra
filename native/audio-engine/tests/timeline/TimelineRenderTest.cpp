@@ -352,10 +352,12 @@ TEST(TimelineEngineTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOffline
             EXPECT_NEAR(output.getSample(0, 6144), 0.1875f, 0.0001f);
             auto invalid = snapshot.graph;
             invalid.automation.front().parameterId = "absent";
-            EXPECT_FALSE(renderTestSnapshot(invalid, formats,
-                                            directory.get().getChildFile("invalid.wav"), 0, 960,
-                                            48'000, 512, false, result, error));
-            EXPECT_TRUE(error.contains("instrument:vst/absent"));
+            EXPECT_TRUE(renderTestSnapshot(invalid, formats,
+                                           directory.get().getChildFile("unresolved.wav"), 0, 960,
+                                           48'000, 512, false, result, error))
+                << error.toStdString();
+            ASSERT_EQ(result.automationWarnings.size(), 1u);
+            EXPECT_TRUE(result.automationWarnings.front().contains("instrument:vst/absent"));
         }
     }
 }
@@ -644,7 +646,7 @@ TEST(MixerRoutingTest, AutomationFollowsMixerRoutesAndRestoresStaticValuesOnStop
     EXPECT_NEAR(loopLeft[4025], first * std::pow(10.0f, -6.0f / 20.0f), 0.00001f);
 }
 
-TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
+TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesOnlyWhenProjectedStateMatches) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;
     test::TemporaryDirectory directory;
@@ -776,8 +778,8 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
         candidate.graph.mixer.buses[0].gainDb = -9.0;
         ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
         graph = TimelineEngineTestPeer::committedGraph(engine);
-        EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
-        EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        EXPECT_NE(graph->mixer.buses[0]->effects, groupEffects);
+        EXPECT_NE(graph->mixer.masterEffects, masterEffects);
         ASSERT_TRUE(engine.setChannelMixControl(
             EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"}, -9.0f, 0.2f, error));
         ASSERT_TRUE(engine.setSendLevelControl("send:first", -12.0f, error));

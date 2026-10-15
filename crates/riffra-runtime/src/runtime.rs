@@ -290,6 +290,20 @@ impl<D: RuntimeDriver> RuntimeReconciler<D> {
         Ok(self.status())
     }
 
+    /// Pauses playback at the current position while retaining the active projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the active runtime cannot accept the pause request.
+    pub fn pause(&self) -> Result<RuntimeProjectionStatus, RuntimeError> {
+        let lease = self.transport.acquire()?;
+        let _ = lease.request_stop();
+        self.projection.notify();
+        lease.pause()?;
+        drop(lease);
+        Ok(self.status())
+    }
+
     pub fn stop_and_seek_to_start<F>(&self, seek: F) -> Result<(), RuntimeError>
     where
         F: FnOnce() -> Result<(), RuntimeError>,
@@ -400,6 +414,10 @@ mod tests {
 
         fn play_timeline(&self) -> Result<(), RuntimeError> {
             self.played.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn pause_timeline(&self) -> Result<(), RuntimeError> {
             Ok(())
         }
 

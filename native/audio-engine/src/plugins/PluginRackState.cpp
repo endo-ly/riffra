@@ -71,7 +71,10 @@ bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& e
             std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
         candidate->dirty =
             std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
-        if (candidate->values == nullptr || candidate->dirty == nullptr) {
+        candidate->automationPreview = std::unique_ptr<AutomationPreviewValue[]>(
+            new (std::nothrow) AutomationPreviewValue[count]);
+        if (candidate->values == nullptr || candidate->dirty == nullptr ||
+            candidate->automationPreview == nullptr) {
             error = "The plugin parameter change queue could not be allocated.";
             return false;
         }
@@ -180,6 +183,30 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         error = "device state editing is unavailable during automation read";
         return false;
     }
+    PluginStateSpec staticProjection;
+    try {
+        staticProjection = state;
+        if (!staticProjection.stateData || staticProjection.stateData->isEmpty()) {
+            const juce::SpinLock::ScopedLockType lock(pluginLock);
+            if (plugin == nullptr) {
+                error = "No VST3 plugin is loaded.";
+                return false;
+            }
+            const auto& parameters = plugin->getParameters();
+            const auto existingCount = staticProjection.parameterValues.size();
+            staticProjection.parameterValues.reserve(
+                std::max(existingCount, static_cast<std::size_t>(parameters.size())));
+            for (auto index = existingCount; index < static_cast<std::size_t>(parameters.size());
+                 ++index) {
+                const auto* parameter = parameters[static_cast<int>(index)];
+                staticProjection.parameterValues.push_back(
+                    parameter != nullptr ? parameter->getDefaultValue() : 0.0f);
+            }
+        }
+    } catch (...) {
+        error = "plugin static state projection could not be prepared";
+        return false;
+    }
     staticStateDirty.store(true, std::memory_order_release);
     try {
         FaultInjection::before(FaultStage::stateApply);
@@ -218,6 +245,14 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         }
     }
     setBypassed(state.bypassed);
+    try {
+        const juce::SpinLock::ScopedLockType lock(pluginLock);
+        staticState = std::move(staticProjection);
+        staticStateDirty.store(false, std::memory_order_release);
+    } catch (...) {
+        error = "plugin static state projection could not be retained";
+        return false;
+    }
     return true;
 }
 
@@ -279,12 +314,12 @@ void PluginRack::applyAutomation(std::span<PluginParameterAutomation> bindings,
     }
     if (!playing) return;
     for (auto& binding : bindings) {
-        if (binding.rack != this) continue;
         auto& restore = parameterQueue->automationRestore[binding.parameterIndex];
         if (restore.parameter == nullptr) restore = {binding.parameter, binding.staticValue};
         auto cursor = binding.lane.cursorAt(timelineSample - binding.inputLatency);
-        const auto value =
-            cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue);
+        const auto preview = parameterQueue->automationPreview[binding.parameterIndex].current();
+        const auto value = preview.value_or(
+            cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue));
         if (binding.parameter->getValue() != value) binding.parameter->setValue(value);
         automationActive.store(true, std::memory_order_release);
     }
@@ -354,6 +389,27 @@ std::optional<float> PluginRack::parameterValueForText(const int index, const ju
         return std::nullopt;
     }
     return value;
+}
+
+std::optional<juce::String> PluginRack::parameterDisplayValue(const int index, const float value,
+                                                              juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr || index < 0 || static_cast<std::size_t>(index) >= parameterCount() ||
+        !std::isfinite(value) || value < 0.0f || value > 1.0f) {
+        error = "Plugin parameter display request is out of range.";
+        return std::nullopt;
+    }
+    const auto& parameters = plugin->getParameters();
+    if (index >= parameters.size() || parameters[index] == nullptr) {
+        error = "Plugin parameter index is out of range.";
+        return std::nullopt;
+    }
+    try {
+        return parameters[index]->getText(value, 96);
+    } catch (...) {
+        error = "Plugin parameter display conversion failed.";
+        return std::nullopt;
+    }
 }
 
 bool PluginRack::synchronizeParameterController(juce::String& error) {
@@ -447,37 +503,90 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
     return result;
 }
 
-std::optional<PluginParameterAutomation> PluginRack::bindAutomation(const juce::String& parameterId,
-                                                                    AutomationRuntime lane,
-                                                                    const PluginStateSpec& state,
-                                                                    const bool stepped,
-                                                                    juce::String& error) {
-    const auto available = parameters();
-    const auto found = std::find_if(available.begin(), available.end(), [&](const auto& parameter) {
-        return parameter.parameterId && *parameter.parameterId == parameterId;
-    });
-    if (found == available.end() || !found->automatable || (found->discrete && !stepped)) {
-        error =
-            "automation parameter is unavailable, not automatable, or requires step "
-            "interpolation: " +
-            parameterId;
+std::optional<PluginParameterAutomation> PluginRack::bindAutomation(
+    const juce::String& parameterId, AutomationRuntime lane, const PluginStateSpec& state,
+    const bool stepped, AutomationBindingFailure& failure, juce::String& error) {
+    failure = AutomationBindingFailure::invalidParameter;
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "automation device is unavailable";
         return std::nullopt;
     }
-    const auto index = static_cast<std::size_t>(found->index);
+
+    const auto& parameters = plugin->getParameters();
+    juce::AudioProcessorParameter* resolved = nullptr;
+    std::size_t index = 0;
+    for (int parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+        auto* parameter = parameters[parameterIndex];
+        const auto* hosted = dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter);
+        if (hosted == nullptr || hosted->getParameterID() != parameterId) continue;
+        resolved = parameter;
+        index = static_cast<std::size_t>(parameterIndex);
+        break;
+    }
+    if (resolved == nullptr) {
+        failure = AutomationBindingFailure::parameterMissing;
+        error = "automation parameter ID is not present: " + parameterId;
+        return std::nullopt;
+    }
+    if (!resolved->isAutomatable() || (resolved->isDiscrete() && !stepped)) {
+        error = "automation parameter is not automatable with this interpolation: " + parameterId;
+        return std::nullopt;
+    }
+    auto staticValue = resolved->getDefaultValue();
+    if (index < state.parameterValues.size())
+        staticValue = state.parameterValues[index];
+    else if (state.stateData.has_value() && state.stateData->isNotEmpty()) {
+        error = "automation static parameter state is unavailable: " + parameterId;
+        return std::nullopt;
+    }
+    if (!std::isfinite(staticValue) || staticValue < 0.0f || staticValue > 1.0f) {
+        error = "automation static parameter state is invalid: " + parameterId;
+        return std::nullopt;
+    }
     if (parameterQueue == nullptr || index >= parameterQueue->capacity) {
+        failure = AutomationBindingFailure::unavailableStorage;
         error = "automation parameter storage requires device reprepare";
         return std::nullopt;
     }
-    auto baseline = persistedState(error);
-    if (!baseline) return std::nullopt;
-    if (state.stateData) baseline->stateData = state.stateData;
-    for (std::size_t i = 0;
-         i < std::min(state.parameterValues.size(), baseline->parameterValues.size()); ++i)
-        baseline->parameterValues[i] = state.parameterValues[i];
-    staticState = std::move(baseline);
-    staticStateDirty.store(false, std::memory_order_release);
-    return PluginParameterAutomation{this, plugin->getParameters()[found->index], std::move(lane),
-                                     staticState->parameterValues[index], index};
+    return PluginParameterAutomation{this, resolved, std::move(lane), staticValue, index};
+}
+
+bool PluginRack::setAutomationPreview(const juce::String& parameterId,
+                                      const std::uint64_t previewToken,
+                                      const std::optional<float> value, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr || parameterQueue == nullptr) {
+        error = "automation device is unavailable";
+        return false;
+    }
+    const auto& parameters = plugin->getParameters();
+    std::optional<std::size_t> resolvedIndex;
+    for (int index = 0; index < parameters.size(); ++index) {
+        const auto* hosted =
+            dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameters[index]);
+        if (hosted == nullptr || hosted->getParameterID() != parameterId) continue;
+        if (resolvedIndex.has_value()) {
+            error = "automation parameter ID is ambiguous: " + parameterId;
+            return false;
+        }
+        resolvedIndex = static_cast<std::size_t>(index);
+    }
+    if (!resolvedIndex || *resolvedIndex >= parameterQueue->capacity) {
+        error = "automation parameter ID is not present: " + parameterId;
+        return false;
+    }
+    auto& preview = parameterQueue->automationPreview[*resolvedIndex];
+    if (value.has_value()) {
+        if (!std::isfinite(*value) || *value < 0.0f || *value > 1.0f) {
+            error = "automation preview value must be between 0 and 1";
+            return false;
+        }
+        preview.set(previewToken, *value);
+    } else {
+        preview.clear(previewToken);
+    }
+    return true;
 }
 
 PluginProgramStatus PluginRack::programStatus() const {

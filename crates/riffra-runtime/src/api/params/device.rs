@@ -65,6 +65,15 @@ pub struct DeviceParameterGetParams {
     pub parameter_index: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeviceParameterFormatParams {
+    pub owner: riffra_core::EffectOwner,
+    pub device_id: String,
+    pub parameter_index: u32,
+    pub value: f32,
+}
+
 /// Selects a plugin program by name or index; exactly one is required.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

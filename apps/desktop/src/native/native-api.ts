@@ -212,6 +212,12 @@ export interface AudioApi {
   getAudioStatus(): Promise<AudioStatus>;
   /** Applies master gain to the live Audio Runtime without persisting a session edit. */
   previewMasterGainDb(gainDb: number): Promise<void>;
+  /** Applies or clears an ephemeral value over the active automation lane. */
+  previewAutomationValue(
+    target: AutomationTarget,
+    value: number | null,
+    previewToken: number,
+  ): Promise<void>;
   /** Applies a transient Track gain/pan change without persisting a session edit. */
   previewChannelMix(owner: EffectOwner, patch: { gainDb?: number; pan?: number }): Promise<void>;
   /** Engages or releases the Audio Runtime's emergency output mute. */
@@ -346,6 +352,12 @@ export interface ArrangeApi {
     deviceId: string,
     parameterIndex: number,
   ): Promise<DeviceParameterInfo>;
+  formatDeviceParameterValue(
+    owner: EffectOwner,
+    deviceId: string,
+    parameterIndex: number,
+    value: number,
+  ): Promise<string>;
   listPluginPresets(owner: EffectOwner, deviceId: string): Promise<PluginPresetInfo[]>;
   getPluginPreset(owner: EffectOwner, deviceId: string): Promise<PluginPresetInfo | null>;
   setPluginPreset(
@@ -440,6 +452,7 @@ export interface TransportApi {
   getRuntimeProjectionStatus(): Promise<RuntimeProjectionStatus>;
   retryRuntimeProjection(): Promise<RuntimeProjectionStatus>;
   playTimeline(): Promise<void>;
+  pauseTimeline(): Promise<void>;
   stopTimeline(): Promise<void>;
   goToStartTimeline(): Promise<void>;
   seekTimeline(tick: number): Promise<void>;

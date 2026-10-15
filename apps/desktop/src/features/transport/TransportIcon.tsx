@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
-type TransportIconName = 'loop' | 'play' | 'stop' | 'rewind' | 'record' | 'metronome' | 'countIn';
+type TransportIconName =
+  'loop' | 'play' | 'pause' | 'stop' | 'rewind' | 'record' | 'metronome' | 'countIn';
 
 const TRANSPORT_ICON_SHAPES: Record<TransportIconName, ReactNode> = {
   loop: (
@@ -10,6 +11,7 @@ const TRANSPORT_ICON_SHAPES: Record<TransportIconName, ReactNode> = {
     </>
   ),
   play: <path d="m9 5.5 10 6.5-10 6.5Z" />,
+  pause: <path d="M8 6.5v11M16 6.5v11" />,
   stop: <rect x="7.5" y="7.5" width="9" height="9" rx="0.5" />,
   rewind: (
     <>

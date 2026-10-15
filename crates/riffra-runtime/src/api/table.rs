@@ -350,12 +350,14 @@ control_commands! {
         RuntimeProjectionGet = "runtime.projection.get" (EmptyParams) -> RuntimeProjection, project;
         RuntimeProjectionRetry = "runtime.projection.retry" (EmptyParams) -> RuntimeProjection, project;
         TransportPlay = "transport.play" (EmptyParams) -> Ok, project;
+        TransportPause = "transport.pause" (EmptyParams) -> Ok, project;
         TransportStop = "transport.stop" (EmptyParams) -> Ok, project;
         TransportGoToStart = "transport.go-to-start" (EmptyParams) -> Ok, project;
         TransportSeek = "transport.seek" (SeekParams) -> Ok, project;
         MasterGainPreview = "audio.master-gain.preview" (MasterGainParams) -> Ok, project;
         SendLevelPreview = "mixer.send.preview" (SendLevelPreviewParams) -> Ok, project;
         ChannelMixPreview = "mixer.channel.preview" (ChannelMixParams) -> Ok, project;
+        AutomationPreview = "automation.preview" (AutomationPreviewParams) -> Ok, project;
 
         AudioStatus = "audio.status" (EmptyParams) -> AudioStatus, host;
         AudioDiagnostics = "audio.diagnostics" (AudioDiagnosticsParams) -> AudioDiagnostics, host;
@@ -386,6 +388,7 @@ control_commands! {
         DeviceInspect = "device.inspect" (DeviceParams) -> DeviceInspection, project;
         DeviceParameterList = "device.parameter.list" (DeviceParams) -> DeviceParameters, project;
         DeviceParameterGet = "device.parameter.get" (DeviceParameterGetParams) -> DeviceParameter, project;
+        DeviceParameterFormat = "device.parameter.format" (DeviceParameterFormatParams) -> DeviceParameterText, project;
         PluginPresetList = "plugin.preset.list" (DeviceParams) -> PluginPresets, project;
         PluginPresetGet = "plugin.preset.get" (DeviceParams) -> PluginPreset, project;
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;

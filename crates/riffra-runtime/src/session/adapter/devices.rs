@@ -522,6 +522,10 @@ mod tests {
             Ok(())
         }
 
+        fn pause_timeline(&self) -> Result<(), crate::RuntimeError> {
+            Ok(())
+        }
+
         fn stop_timeline(&self) -> Result<(), crate::RuntimeError> {
             Ok(())
         }

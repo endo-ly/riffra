@@ -181,7 +181,7 @@ std::vector<std::pair<juce::String, juce::var>> messageFixtures() {
             encodeEvent(event));
     fixtures.emplace_back("error.json", encodeError(1, error()));
     fixtures.emplace_back("render.offlineRenderComplete.json",
-                          encodeOfflineRenderComplete({96'000, 48'000}));
+                          encodeOfflineRenderComplete({96'000, 48'000, {}}));
     fixtures.emplace_back(
         "render.error.json",
         encodeOfflineRenderError(

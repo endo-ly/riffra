@@ -9,6 +9,7 @@ pub enum TransportState {
     Stopped,
     Starting,
     Playing,
+    Paused,
     Faulted,
 }
 

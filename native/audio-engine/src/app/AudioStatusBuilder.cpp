@@ -34,6 +34,8 @@ TransportStateSpec transportState(const TransportState state) noexcept {
             return TransportStateSpec::starting;
         case TransportState::playing:
             return TransportStateSpec::playing;
+        case TransportState::paused:
+            return TransportStateSpec::paused;
         case TransportState::faulted:
             return TransportStateSpec::faulted;
     }

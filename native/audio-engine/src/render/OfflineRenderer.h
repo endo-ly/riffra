@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "contract/ExecutionGraph.h"
 
@@ -21,6 +22,8 @@ public:
     struct Result final {
         std::uint64_t frames = 0;
         double sampleRate = 0.0;
+        /// Non-fatal diagnostics for automation lanes omitted from the render graph.
+        std::vector<juce::String> automationWarnings;
     };
 
     ~OfflineRenderer();
@@ -52,6 +55,7 @@ private:
         bool normalize = false;
         bool hostsPlugins = false;
         std::int64_t latencySamples = 0;
+        std::vector<juce::String> automationWarnings;
     };
 
     OfflineRenderer(Plan renderPlan, std::unique_ptr<TimelineEngine> timelineEngine) noexcept;

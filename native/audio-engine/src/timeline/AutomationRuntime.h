@@ -1,12 +1,39 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace riffra {
+
+/// Transient UI value layered over a prepared automation lane while a gesture is active.
+class AutomationPreviewValue final {
+public:
+    void set(const std::uint64_t token, const float next) noexcept {
+        previewToken.store(token, std::memory_order_relaxed);
+        value.store(next, std::memory_order_relaxed);
+        active.store(true, std::memory_order_release);
+    }
+
+    void clear(const std::uint64_t token) noexcept {
+        if (previewToken.load(std::memory_order_acquire) == token)
+            active.store(false, std::memory_order_release);
+    }
+
+    [[nodiscard]] std::optional<float> current() const noexcept {
+        if (!active.load(std::memory_order_acquire)) return std::nullopt;
+        return value.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<std::uint64_t> previewToken{0};
+    std::atomic<float> value{0.0f};
+    std::atomic<bool> active{false};
+};
 
 /// Prepared automation lane evaluated by a forward-only realtime cursor.
 class AutomationRuntime final {

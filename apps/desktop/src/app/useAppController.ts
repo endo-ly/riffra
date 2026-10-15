@@ -121,12 +121,19 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     hostGeneration: hostConnection.state.generation,
   });
 
-  const { transportPlaying, transportStarting, playTransport, stopTransport, goToStart } =
-    useTransportController({
-      api,
-      sessionRef,
-      hostGeneration: hostConnection.state.generation,
-    });
+  const {
+    transportPlaying,
+    transportStarting,
+    transportPaused,
+    playTransport,
+    pauseTransport,
+    stopTransport,
+    goToStart,
+  } = useTransportController({
+    api,
+    sessionRef,
+    hostGeneration: hostConnection.state.generation,
+  });
   const arrangementTransport = useArrangementTransport(
     api,
     session?.arrangement.timebase ?? null,
@@ -288,6 +295,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     ignoreMissing,
     transportPlaying,
     transportStarting,
+    transportPaused,
     arrangementTransport,
     recordingCommandPending,
     exportMessage,
@@ -306,6 +314,7 @@ export function useAppController(api: NativeApi = defaultNativeApi) {
     undo,
     redo,
     playTransport,
+    pauseTransport,
     stopTransport,
     goToStart,
     renameProject,

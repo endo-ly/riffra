@@ -197,7 +197,7 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 | 状態照会         | `status`                                                                                                                              | `audioStatus`                                                  |
 | デバイス・安全   | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`previewMasterGainDb` | `audioStatus`                                                  |
 | 投影             | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `timelineAck`（prepare / commit / discard）、`timelineIdleAck` |
-| トランスポート   | `setTransportStarting`、`playTimeline`、`stopTimeline`、`seekTimeline`                                                                | `transportAccepted`                                            |
+| トランスポート   | `setTransportStarting`、`playTimeline`、`pauseTimeline`、`stopTimeline`、`seekTimeline`                                               | `transportAccepted`                                            |
 | 録音             | `startArrangeRecording`、`stopArrangeRecording`                                                                                       | `audioStatus`                                                  |
 | MIDI             | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`                                                                    | `audioStatus`                                                  |
 |                  | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `midiAck`                                                      |
@@ -305,7 +305,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 `response` と `error` は `control` レーンを通る。
 
-`transportStatus` は `state`（`stopped` / `starting` / `playing` / `faulted`）、`revision`、`timelineTick`、`timelineSample`、`audioClockSample`、`sampleRate`、`appliedCommandSequence`、`recordingPhase`、`recordingStartTick`、`recordingPassOrdinal`、`armedTrackIds`、`instrumentFaults`、`clockGeneration`、`discontinuity` を持つ。`timelineSample` は保留中の Seek 先を含み、`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`instrumentFaults` は現役グラフの同じ診断情報を `AudioStatus.diagnostics.instrumentFaults` と共有する。
+`transportStatus` は `state`（`stopped` / `starting` / `playing` / `paused` / `faulted`）、`revision`、`timelineTick`、`timelineSample`、`audioClockSample`、`sampleRate`、`appliedCommandSequence`、`recordingPhase`、`recordingStartTick`、`recordingPassOrdinal`、`armedTrackIds`、`instrumentFaults`、`clockGeneration`、`discontinuity` を持つ。Pause中は再生位置を保持し、Resume時にその位置から再開する。`timelineSample` は保留中の Seek 先を含み、`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`instrumentFaults` は現役グラフの同じ診断情報を `AudioStatus.diagnostics.instrumentFaults` と共有する。
 
 `audioMeters`の`trackMeters`と`busMeters`はIDと左右Peak/RMS、Masterは左右の最終出力Peakを持つ。NativeのMeter threadが約50 msごとに発行し、RustはRuntime投影の`projectId`を付けて`audio-meters` Host event（`AudioMeterFrame`）へ写像する。
 
