@@ -73,6 +73,8 @@ const char* name(const TransportStateSpec state) noexcept {
             return "starting";
         case TransportStateSpec::playing:
             return "playing";
+        case TransportStateSpec::paused:
+            return "paused";
         case TransportStateSpec::faulted:
             return "faulted";
     }
@@ -176,6 +178,9 @@ juce::var encodeDiagnostics(const AudioDiagnosticsSpec& diagnostics) {
         .set("instrumentRuntimeCount", integer(diagnostics.instrumentRuntimeCount))
         .set("pluginCount", integer(diagnostics.pluginCount))
         .set("maximumLatencySamples", integer(diagnostics.maximumLatencySamples))
+        .set("automationWarnings",
+             array(diagnostics.automationWarnings,
+                   [](const juce::String& warning) { return juce::var(warning); }))
         .set("instrumentFaults", array(diagnostics.instrumentFaults, encodeInstrumentFault))
         .build();
 }
@@ -351,6 +356,7 @@ juce::var encodeResponseBody(const SidecarResponseSpec& response) {
                                [](const DeviceParameterSpec& parameter) {
                                    return ObjectBuilder{}
                                        .set("index", integer(parameter.index))
+                                       .set("parameterId", optionalString(parameter.parameterId))
                                        .set("name", parameter.name)
                                        .set("value", parameter.value)
                                        .set("defaultValue", parameter.defaultValue)
@@ -599,6 +605,9 @@ juce::var encodeOfflineRenderComplete(const OfflineRenderCompleteSpec& result) {
         .set("type", "offlineRenderComplete")
         .set("frames", integer(result.frames))
         .set("sampleRate", integer(result.sampleRate))
+        .set("automationWarnings",
+             array(result.automationWarnings,
+                   [](const juce::String& warning) { return juce::var(warning); }))
         .build();
 }
 

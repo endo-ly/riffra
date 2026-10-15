@@ -256,6 +256,7 @@ impl HostState {
             | CanonicalCommand::TimebaseSetMap(_)
             | CanonicalCommand::LoopRangeSet(_)
             | CanonicalCommand::PunchRangeSet(_)
+            | CanonicalCommand::AutomationList(_)
             | CanonicalCommand::AutomationGet(_)
             | CanonicalCommand::AutomationSet(_)
             | CanonicalCommand::AutomationClear(_)
@@ -334,7 +335,8 @@ impl HostState {
             &self.data_root,
             &self.binaries.sonalloy,
             &self.built_in_instruments,
-        );
+        )
+        .with_audio(&self.audio);
         if access == CanonicalAccess::Read {
             let result = dispatcher
                 .execute_read_canonical(command, current)
@@ -449,6 +451,11 @@ impl HostState {
                 }
                 ControlOutput::Ok(())
             }
+            RuntimeCommand::TransportPause(_) => {
+                self.ensure_transport_online()?;
+                self.runtime.pause().map_err(runtime_error)?;
+                ControlOutput::Ok(())
+            }
             RuntimeCommand::TransportStop(_) => {
                 self.ensure_transport_online()?;
                 self.runtime.stop().map_err(runtime_error)?;
@@ -466,6 +473,13 @@ impl HostState {
             RuntimeCommand::TransportSeek(params) => {
                 self.ensure_transport_online()?;
                 self.audio.seek_timeline(params.tick).map_err(audio_error)?;
+                ControlOutput::Ok(())
+            }
+            RuntimeCommand::AutomationPreview(params) => {
+                self.ensure_transport_online()?;
+                self.audio
+                    .preview_automation_value(&params.target, params.value, params.preview_token)
+                    .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }
             RuntimeCommand::MasterGainPreview(params) => {
@@ -729,6 +743,19 @@ impl HostState {
                             ))
                         })?,
                 )
+            }
+            RuntimeCommand::DeviceParameterFormat(params) => {
+                let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;
+                let display_value = self
+                    .audio
+                    .device_parameter_display_value(
+                        &params.owner,
+                        &params.device_id,
+                        params.parameter_index,
+                        params.value,
+                    )
+                    .map_err(audio_error)?;
+                ControlOutput::DeviceParameterText(display_value)
             }
             RuntimeCommand::PluginPresetList(params) => {
                 let _ = canonical_plugin_device(&current, &params.owner, &params.device_id)?;

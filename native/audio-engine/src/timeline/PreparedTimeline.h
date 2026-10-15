@@ -21,6 +21,7 @@ struct GraphSummary final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    std::vector<juce::String> automationWarnings;
     std::vector<juce::String> armedTrackIds;
     /// Whether any Audio Track monitors its live input.
     bool monitorLiveInput = false;
@@ -99,6 +100,24 @@ struct PreparedTimeline final {
     std::int64_t mixEndSample = 0;
     std::int64_t fadeOutSamples = 0;
     std::vector<std::int64_t> timebaseChangeSamples;
+
+    void beginAutomationRead() noexcept {
+        for (auto& track : tracks)
+            for (auto& binding : track->runtime->deviceAutomation)
+                binding.rack->beginAutomationRead();
+        for (auto& bus : mixer.buses)
+            for (auto& binding : bus->deviceAutomation) binding.rack->beginAutomationRead();
+        for (auto& binding : mixer.masterDeviceAutomation) binding.rack->beginAutomationRead();
+    }
+
+    void restoreAutomation() noexcept {
+        for (auto& track : tracks)
+            for (auto& binding : track->runtime->deviceAutomation)
+                binding.rack->restoreAutomation();
+        for (auto& bus : mixer.buses)
+            for (auto& binding : bus->deviceAutomation) binding.rack->restoreAutomation();
+        for (auto& binding : mixer.masterDeviceAutomation) binding.rack->restoreAutomation();
+    }
 
     [[nodiscard]] Track* findTrack(const juce::String& trackId) const noexcept {
         for (const auto& track : tracks)

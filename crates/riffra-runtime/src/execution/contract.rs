@@ -21,6 +21,7 @@ pub(crate) struct ExecutionGraph {
     pub(crate) master_gain_db: f64,
     pub(crate) tracks: Vec<GraphTrack>,
     pub(crate) mixer: GraphMixer,
+    pub(crate) automation: Vec<GraphAutomationLane>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -87,8 +88,6 @@ pub(crate) struct GraphTrack {
     pub(crate) monitor_input: bool,
     pub(crate) audio_input: Option<GraphAudioInput>,
     pub(crate) midi_input: GraphMidiInput,
-    pub(crate) volume_automation: Vec<GraphAutomationPoint>,
-    pub(crate) pan_automation: Vec<GraphAutomationPoint>,
     pub(crate) effects: Vec<GraphPluginDevice>,
     pub(crate) instrument: Option<GraphInstrument>,
     pub(crate) audio_clips: Vec<GraphAudioClip>,
@@ -113,6 +112,14 @@ pub(crate) struct GraphAudioInput {
 pub(crate) struct GraphMidiInput {
     pub(crate) device_id: Option<String>,
     pub(crate) channel: Option<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphAutomationLane {
+    pub(crate) target: riffra_core::AutomationTarget,
+    pub(crate) interpolation: riffra_core::AutomationInterpolation,
+    pub(crate) points: Vec<GraphAutomationPoint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -293,14 +300,6 @@ mod tests {
                     device_id: device_id.map(str::to_owned),
                     channel,
                 },
-                volume_automation: vec![GraphAutomationPoint {
-                    tick: 0,
-                    value: 1.0,
-                }],
-                pan_automation: vec![GraphAutomationPoint {
-                    tick: 960,
-                    value: -0.5,
-                }],
                 effects: vec![GraphPluginDevice {
                     id: "fx-1".into(),
                     path: "plugins/fx.vst3".into(),
@@ -486,6 +485,30 @@ mod tests {
             project_id: "project-full".into(),
             revision: 23,
             graph: ExecutionGraph {
+                automation: vec![
+                    GraphAutomationLane {
+                        target: riffra_core::AutomationTarget::TrackMix {
+                            track_id: audio.id.clone(),
+                            parameter: riffra_core::TrackMixParameter::Volume,
+                        },
+                        interpolation: riffra_core::AutomationInterpolation::Linear,
+                        points: vec![GraphAutomationPoint {
+                            tick: 0,
+                            value: -6.0,
+                        }],
+                    },
+                    GraphAutomationLane {
+                        target: riffra_core::AutomationTarget::TrackMix {
+                            track_id: audio.id.clone(),
+                            parameter: riffra_core::TrackMixParameter::Pan,
+                        },
+                        interpolation: riffra_core::AutomationInterpolation::Step,
+                        points: vec![GraphAutomationPoint {
+                            tick: 0,
+                            value: 0.25,
+                        }],
+                    },
+                ],
                 mixer,
                 mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {
@@ -521,6 +544,7 @@ mod tests {
             project_id: "project-minimal".into(),
             revision: 0,
             graph: ExecutionGraph {
+                automation: Vec::new(),
                 mixer: GraphMixer::default(),
                 mixdown: crate::execution::GraphMixdown::default(),
                 timebase: GraphTimebase {

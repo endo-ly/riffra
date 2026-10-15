@@ -1,7 +1,8 @@
 //! Params of Track, marker, range, and automation commands.
 
 use riffra_core::{
-    AutomationParameter, AutomationPoint, MonitoringState, MusicalPosition, TrackKind,
+    AutomationInterpolation, AutomationTarget, EffectOwner, MonitoringState, MusicalPosition,
+    TrackKind,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -103,25 +104,50 @@ pub struct RangeParams {
     pub end: MusicalPosition,
 }
 
+/// Replaces one canonical lane; an empty point array clears it.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AutomationSetParams {
-    pub track_id: String,
-    pub parameter: AutomationParameter,
-    pub points: Vec<AutomationPoint>,
+    pub target: AutomationTarget,
+    pub interpolation: AutomationInterpolation,
+    pub points: Vec<AutomationPointInput>,
 }
 
+/// One point supplied in canonical units or plugin-provided display text.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AutomationPointInput {
+    pub id: String,
+    pub tick: u64,
+    pub value: AutomationPointValue,
+}
+
+/// Display strings are converted through the live plugin; canonical state stores numbers.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(untagged)]
+pub enum AutomationPointValue {
+    Number(f64),
+    Display(String),
+}
+
+/// Reads the lane for a single target.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AutomationGetParams {
+    pub target: AutomationTarget,
+}
+
+/// Discovers lanes across the project or a canonical channel owner.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(optional_fields = nullable)]
-pub struct AutomationGetParams {
-    pub track_id: String,
-    pub parameter: Option<AutomationParameter>,
+pub struct AutomationListParams {
+    pub owner: Option<EffectOwner>,
 }
 
+/// Removes the lane for a single target.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AutomationClearParams {
-    pub track_id: String,
-    pub parameter: AutomationParameter,
+    pub target: AutomationTarget,
 }

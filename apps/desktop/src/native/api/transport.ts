@@ -13,6 +13,10 @@ export async function playTimeline(): Promise<void> {
   await dispatchControl({ command: 'transport.play', params: {} });
 }
 
+export async function pauseTimeline(): Promise<void> {
+  await dispatchControl({ command: 'transport.pause', params: {} });
+}
+
 export async function stopTimeline(): Promise<void> {
   await dispatchControl({ command: 'transport.stop', params: {} });
 }

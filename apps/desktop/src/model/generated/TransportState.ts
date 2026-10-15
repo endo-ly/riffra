@@ -3,4 +3,4 @@
 /**
  * Transport state of the native timeline.
  */
-export type TransportState = "stopped" | "starting" | "playing" | "faulted";
+export type TransportState = "stopped" | "starting" | "playing" | "paused" | "faulted";

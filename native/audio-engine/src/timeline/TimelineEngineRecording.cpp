@@ -52,7 +52,10 @@ void TimelineEngine::startRecordingNow(RealtimeState& state, const int countInBe
             state.seekPending ? state.pendingSeekSample : state.timelineSample;
         state.recordingStartTick =
             graph.timebase.sampleToTick(requestedSample, graph.outputSampleRate);
-        if (!alreadyPlaying) state.transport = TransportState::playing;
+        if (!alreadyPlaying) {
+            state.transport = TransportState::playing;
+            state.graph->beginAutomationRead();
+        }
     } else {
         const auto requestedSample =
             state.seekPending ? state.pendingSeekSample : state.timelineSample;
@@ -347,6 +350,7 @@ void TimelineEngine::advanceCountIn(RealtimeState& state, const int sampleCount)
             state.recordingStartTick =
                 graph->timebase.sampleToTick(state.timelineSample, graph->outputSampleRate);
         state.transport = TransportState::playing;
+        if (state.graph != nullptr) state.graph->beginAutomationRead();
         state.recordingPhase = RecordingPhase::recording;
         transitionedFromCountIn = true;
     }

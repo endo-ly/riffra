@@ -60,6 +60,7 @@ private:
     juce::AudioParameterFloat* gain = nullptr;
     std::array<std::array<float, 9>, 2> delay{};
     int delayPosition = 0;
+    bool noteActive = false;
 
 public:
     RiffraTestProcessor()
@@ -81,6 +82,7 @@ public:
     void prepareToPlay(double, int) override {
         delay = {};
         delayPosition = 0;
+        noteActive = false;
     }
     void releaseResources() override {}
 
@@ -91,9 +93,18 @@ public:
 
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override {
         juce::ignoreUnused(midi);
-        if (JucePlugin_IsSynth)
-            buffer.clear();
-        else {
+        if (JucePlugin_IsSynth) {
+            for (const auto event : midi) {
+                const auto message = event.getMessage();
+                if (message.isNoteOn()) noteActive = true;
+                if (message.isNoteOff() || message.isAllNotesOff() || message.isAllSoundOff())
+                    noteActive = false;
+            }
+            const auto value = noteActive ? 0.25f * gain->get() : 0.0f;
+            for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+                juce::FloatVectorOperations::fill(buffer.getWritePointer(channel), value,
+                                                  buffer.getNumSamples());
+        } else {
             for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
                 const auto read = (delayPosition + 1) % 9;
                 for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {

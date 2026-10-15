@@ -82,6 +82,7 @@ function audioStatus(overrides: Partial<AudioStatus> = {}): AudioStatus {
       instrumentRuntimeCount: 0,
       pluginCount: 0,
       maximumLatencySamples: 0,
+      automationWarnings: [],
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
       protocolErrors: 0,

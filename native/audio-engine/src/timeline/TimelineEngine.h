@@ -48,6 +48,8 @@ struct TimelineGraphStatus final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    /// Non-fatal diagnostics for lanes omitted from the prepared graph.
+    std::vector<juce::String> automationWarnings;
     std::uint64_t liveMidiDrops = 0;
     std::vector<juce::String> armedTrackIds;
     std::vector<InstrumentFaultSpec> instrumentFaults;
@@ -117,6 +119,8 @@ public:
     // was rejected because the realtime command queue is full.
     [[nodiscard]] std::optional<std::uint64_t> startPreparing() noexcept;
     [[nodiscard]] std::optional<std::uint64_t> play() noexcept;
+    /// Enqueues a fade to silence that preserves the playhead for a later resume.
+    [[nodiscard]] std::optional<std::uint64_t> pause() noexcept;
     [[nodiscard]] std::optional<std::uint64_t> stop() noexcept;
     [[nodiscard]] std::optional<std::uint64_t> seekToTick(std::uint64_t tick) noexcept;
     [[nodiscard]] std::optional<std::uint64_t> panicAllInstrumentTracks() noexcept;
@@ -169,6 +173,10 @@ public:
                              juce::String& error) noexcept;
     bool setChannelMixControl(const EffectOwnerSpec& deviceOwner, std::optional<float> gainDb,
                               std::optional<float> pan, juce::String& error) noexcept;
+    /// Applies a token-owned transient value without changing the canonical graph.
+    bool previewAutomationValue(AutomationTargetKind kind, const juce::String& id,
+                                const juce::String& parameterId, std::optional<float> value,
+                                std::uint64_t previewToken, juce::String& error);
     bool setDeviceBypassed(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
                            bool bypassed, juce::String& error) noexcept;
     bool setDeviceParameter(const EffectOwnerSpec& deviceOwner, const juce::String& deviceId,
@@ -181,6 +189,12 @@ public:
     [[nodiscard]] std::optional<DeviceStatusSpec> deviceStatus(const EffectOwnerSpec& deviceOwner,
                                                                const juce::String& deviceId,
                                                                juce::String& error) const;
+    [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterValueForText(
+        const EffectOwnerSpec& owner, const juce::String& deviceId, const juce::String& parameterId,
+        const juce::String& display, juce::String& error);
+    [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterDisplayValue(
+        const EffectOwnerSpec& owner, const juce::String& deviceId, std::uint32_t parameterIndex,
+        float value, juce::String& error);
     [[nodiscard]] std::optional<DeviceParametersSpec> deviceParameterStatus(
         const EffectOwnerSpec& deviceOwner, const juce::String& deviceId, juce::String& error);
     [[nodiscard]] std::optional<DeviceProgramsSpec> deviceProgramStatus(
@@ -217,6 +231,9 @@ public:
     /// Track.
     [[nodiscard]] bool monitoringInputChannel(int channel) const noexcept;
     void mixMetronome(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
+    /// Applies the master fader at the musical position of each rendered sample.
+    void applyMasterGain(float* const* outputChannels, int channelCount, int sampleCount,
+                         float staticGainDb) noexcept;
     void mix(float* const* outputChannels, int channelCount, int sampleCount) noexcept;
     void mix(const float* const* inputChannels, int inputChannelCount, float* const* outputChannels,
              int outputChannelCount, int sampleCount) noexcept;
@@ -238,7 +255,7 @@ private:
     static constexpr std::size_t kRealtimeCommandCapacity = 256;
     static constexpr std::size_t kLiveMidiCapacity = 1024;
 
-    enum class RenderTransportState { stopped, fadingIn, playing, fadingOut };
+    enum class RenderTransportState { stopped, fadingIn, playing, fadingOut, paused };
 
     struct MetronomeTransportSegment final {
         std::int64_t rangeStart = 0;
@@ -351,10 +368,11 @@ private:
                                            int sampleCount, std::int64_t rangeStart,
                                            bool playing) noexcept;
     static void mixTrackOutput(Track& track, std::int64_t rangeStart, int sampleCount,
-                               float transportGainStart = 1.0f,
-                               float transportGainStep = 0.0f) noexcept;
+                               float transportGainStart = 1.0f, float transportGainStep = 0.0f,
+                               bool playing = true) noexcept;
     void mixProductionOutput(PreparedTimeline& timeline, float* const* outputChannels,
-                             int channelCount, int destinationStart, int sampleCount) noexcept;
+                             int channelCount, std::int64_t rangeStart, int destinationStart,
+                             int sampleCount, bool playing) noexcept;
     static void scheduleMidi(const PreparedTimeline& prepared, Track& track,
                              std::int64_t rangeStart, int sampleCount) noexcept;
     void resetPlaybackTrackState(PreparedTimeline& timeline) noexcept;

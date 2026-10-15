@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type {
-  AutomationParameter,
+  AutomationTarget,
   AudioStatus,
   CanonicalState,
   CreativeSession,
@@ -13,7 +13,8 @@ import type { ArrangeWorkspaceApi } from './arrange-api';
 import { ArrangeRuler } from './timeline/ArrangeRuler';
 import { ArrangeToolbar } from './timeline/ArrangeToolbar';
 import { ArrangeTrack } from './timeline/ArrangeTrack';
-import { AutomationLaneView } from './timeline/AutomationLaneView';
+import { AutomationLaneEditor } from './timeline/AutomationLaneEditor';
+import { automationOwner } from './model/automation-targets';
 import type { MidiGhostNote } from './midi-editor/MidiEditorPanel';
 import { resolveDeviceTarget } from './devices/device-target';
 import { DevicesPanel } from './devices/DevicesPanel';
@@ -86,14 +87,34 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
   const [snap, setSnap] = useState<SnapGrid>('1/16');
   const trackSize: TrackSize = 'normal';
   const [trackSizes, setTrackSizes] = useState<Record<string, TrackSize>>({});
-  const [automationParameters, setAutomationParameters] = useState<
-    Partial<Record<string, AutomationParameter>>
+  const [automationTargets, setAutomationTargets] = useState<
+    Partial<Record<string, AutomationTarget>>
   >({});
+  const [mixerAutomationTarget, setMixerAutomationTarget] = useState<AutomationTarget | null>(null);
+  useEffect(() => {
+    setAutomationTargets({});
+    setMixerAutomationTarget(null);
+  }, [props.session.sessionId]);
+  const openAutomation = (target: AutomationTarget) => {
+    const owner = automationOwner(arrangement, target);
+    if (owner?.kind === 'track')
+      setAutomationTargets((current) => ({ ...current, [owner.id]: target }));
+    else if (owner) setMixerAutomationTarget(target);
+  };
   const [rulerMode, setRulerMode] = useState<'bars' | 'time'>('bars');
   const [confirmRequest, setConfirmRequest] = useState<ArrangeConfirmRequest | null>(null);
   const [emptyDragOver, setEmptyDragOver] = useState(false);
   const [newTrackDragOver, setNewTrackDragOver] = useState(false);
   const { transport, displayTick, displayTickRef, seekLocally } = props.transport;
+  const previewScope = `${props.hostGeneration ?? 0}:${props.session.sessionId}`;
+  const previewAutomation = (
+    target: AutomationTarget,
+    value: number | null,
+    token: number,
+  ): Promise<void> => {
+    if (value !== null && transport?.state !== 'playing') return Promise.resolve();
+    return api.previewAutomationValue(target, value, token).catch(() => undefined);
+  };
   const { scrollerRef, zoom, pixelsPerTick, applyZoom, zoomToRange, scrollTop } =
     useArrangeViewport({ timebase, transport, displayTickRef });
   const analyses = useWaveformAnalyses(
@@ -366,9 +387,9 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
     setTrackSizes((value) => ({ ...value, [trackId]: size }));
   };
   const toggleAutomation = (trackId: string) =>
-    setAutomationParameters((current) => ({
+    setAutomationTargets((current) => ({
       ...current,
-      [trackId]: current[trackId] ? undefined : 'volume',
+      [trackId]: current[trackId] ? undefined : { kind: 'trackMix', trackId, parameter: 'volume' },
     }));
 
   const createEmptyMidiClip = async (trackId: string, rawTick: number) => {
@@ -489,7 +510,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         onZoom={applyZoom}
         onRulerMode={setRulerMode}
         automationAvailable={selectedTrackId !== null}
-        automationOpen={selectedTrackId !== null && Boolean(automationParameters[selectedTrackId])}
+        automationOpen={selectedTrackId !== null && Boolean(automationTargets[selectedTrackId])}
         onToggleAutomation={() => {
           if (selectedTrackId) toggleAutomation(selectedTrackId);
         }}
@@ -730,37 +751,50 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                   }}
                   onSetTrackSize={(size) => setTrackSizeForTrack(track.id, size)}
                 />
-                {automationParameters[track.id] && (
-                  <AutomationLaneView
-                    track={track}
-                    lane={arrangement.automationLanes.find(
-                      (lane) =>
-                        lane.trackId === track.id &&
-                        lane.parameter === automationParameters[track.id],
-                    )}
-                    parameter={automationParameters[track.id]!}
+                {automationTargets[track.id] && (
+                  <AutomationLaneEditor
+                    warnings={props.audio.diagnostics.automationWarnings}
+                    session={props.session}
+                    target={automationTargets[track.id]!}
+                    api={props.api}
                     timelineWidth={timelineWidth}
                     pixelsPerTick={pixelsPerTick}
+                    playheadTick={displayTick}
+                    playheadTickRef={displayTickRef}
+                    previewScope={previewScope}
                     snapTick={editor.snapTick}
-                    onParameter={(parameter) =>
-                      setAutomationParameters((current) => ({
-                        ...current,
-                        [track.id]: parameter,
-                      }))
+                    onPreview={previewAutomation}
+                    onTarget={openAutomation}
+                    onClose={() =>
+                      setAutomationTargets((current) => ({ ...current, [track.id]: undefined }))
                     }
-                    onCommit={(points) =>
-                      void editor.commit(
-                        props.api.setTrackAutomation(
-                          track.id,
-                          automationParameters[track.id]!,
-                          points,
-                        ),
-                      )
+                    onCommit={(target, interpolation, points) =>
+                      editor.commit(props.api.setAutomation(target, interpolation, points))
                     }
                   />
                 )}
               </Fragment>
             ))
+          )}
+          {mixerAutomationTarget && (
+            <AutomationLaneEditor
+              warnings={props.audio.diagnostics.automationWarnings}
+              session={props.session}
+              target={mixerAutomationTarget}
+              api={props.api}
+              timelineWidth={timelineWidth}
+              pixelsPerTick={pixelsPerTick}
+              playheadTick={displayTick}
+              playheadTickRef={displayTickRef}
+              previewScope={previewScope}
+              snapTick={editor.snapTick}
+              onPreview={previewAutomation}
+              onTarget={openAutomation}
+              onClose={() => setMixerAutomationTarget(null)}
+              onCommit={(target, interpolation, points) =>
+                editor.commit(props.api.setAutomation(target, interpolation, points))
+              }
+            />
           )}
           {arrangement.tracks.length > 0 && (
             <div
@@ -831,6 +865,10 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
         devices={
           <DevicesPanel
+            automationLanes={arrangement.automationLanes}
+            playing={transport?.state === 'playing'}
+            currentTick={displayTick}
+            onOpenAutomation={openAutomation}
             key={`${props.session.sessionId}:${JSON.stringify(deviceTarget?.owner)}:${props.hostGeneration ?? 0}`}
             target={deviceTarget}
             projectId={props.session.sessionId}
@@ -846,6 +884,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         }
         mixer={
           <MixerPanel
+            onOpenAutomation={openAutomation}
             session={props.session}
             selectedTrackId={selectedTrackId}
             selectedOwner={deviceTarget?.owner ?? null}

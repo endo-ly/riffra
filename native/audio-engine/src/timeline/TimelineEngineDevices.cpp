@@ -277,6 +277,7 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
                DeviceParametersSpec result;
                for (const auto& parameter : rack->parameters()) {
                    DeviceParameterSpec info{static_cast<std::uint32_t>(parameter.index),
+                                            parameter.parameterId,
                                             parameter.name,
                                             parameter.value,
                                             parameter.defaultValue,
@@ -293,6 +294,53 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterStatus(
                return result;
            })
         .value_or(std::nullopt);
+}
+
+std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterValueForText(
+    const EffectOwnerSpec& owner, const juce::String& deviceId, const juce::String& parameterId,
+    const juce::String& display, juce::String& error) {
+    auto parameters = deviceParameterStatus(owner, deviceId, error);
+    if (!parameters) return std::nullopt;
+    auto* rack = findDevice(owner, deviceId);
+    const auto found = std::find_if(
+        parameters->parameters.begin(), parameters->parameters.end(), [&](const auto& parameter) {
+            return parameter.parameterId && *parameter.parameterId == parameterId &&
+                   parameter.automatable;
+        });
+    if (rack == nullptr || found == parameters->parameters.end()) {
+        error = "automation parameter ID is unavailable";
+        return std::nullopt;
+    }
+    const auto normalized =
+        juce::MessageManager::callSync([&] {
+            return rack->parameterValueForText(static_cast<int>(found->index), display, error);
+        }).value_or(std::nullopt);
+    if (!normalized) return std::nullopt;
+    auto result = *found;
+    result.value = *normalized;
+    result.displayValue = display;
+    return DeviceParametersSpec{{std::move(result)}};
+}
+
+std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterDisplayValue(
+    const EffectOwnerSpec& owner, const juce::String& deviceId, const std::uint32_t parameterIndex,
+    const float value, juce::String& error) {
+    auto* rack = findDevice(owner, deviceId);
+    if (rack == nullptr) {
+        error = "Channel Device was not found.";
+        return std::nullopt;
+    }
+    const auto display =
+        juce::MessageManager::callSync([&] {
+            return rack->parameterDisplayValue(static_cast<int>(parameterIndex), value, error);
+        }).value_or(std::nullopt);
+    if (!display) return std::nullopt;
+    DeviceParameterSpec parameter;
+    parameter.index = parameterIndex;
+    parameter.value = value;
+    parameter.automatable = true;
+    parameter.displayValue = *display;
+    return DeviceParametersSpec{{std::move(parameter)}};
 }
 
 std::optional<DeviceProgramsSpec> TimelineEngine::deviceProgramStatus(
@@ -340,6 +388,11 @@ bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
             error = "Arrangement Graph is not loaded.";
             return false;
         }
+        auto* device = findRack(*graphs.latestCommitted, deviceOwner, deviceId);
+        if (device != nullptr && device->isAutomationActive()) {
+            error = "device state editing is unavailable during automation read";
+            return false;
+        }
         if (deviceOwner.kind == EffectOwnerKindSpec::track) {
             auto* track = graphs.latestCommitted->findTrack(deviceOwner.id);
             if (track != nullptr && isInstrumentDevice(*track, deviceId)) {
@@ -361,6 +414,7 @@ bool TimelineEngine::setDeviceBypassed(const EffectOwnerSpec& deviceOwner,
 bool TimelineEngine::synchronizeDeviceParameters(PluginRack& rack, juce::String& error,
                                                  const int parameterIndex,
                                                  const float value) noexcept {
+    if (rack.isAutomationActive()) return true;
     if (parameterIndex < 0 &&
         !rack.parameterControllerSyncPending.load(std::memory_order_acquire)) {
         return juce::MessageManager::callSync([&] {
@@ -409,6 +463,10 @@ bool TimelineEngine::setDeviceParameter(const EffectOwnerSpec& deviceOwner,
     auto* rack = findDevice(deviceOwner, deviceId);
     if (rack == nullptr) {
         error = "Channel Device was not found.";
+        return false;
+    }
+    if (rack->isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
         return false;
     }
     if (parameterIndex < 0 || static_cast<std::size_t>(parameterIndex) >= rack->parameterCount()) {

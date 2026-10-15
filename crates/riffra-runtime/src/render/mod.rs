@@ -37,6 +37,7 @@ struct RenderPlan {
     tail_seconds: f64,
     block_size: u32,
     graph: ExecutionGraph,
+    dependency_warnings: Vec<String>,
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
@@ -190,7 +191,7 @@ fn render_timeline_with_renderer(
     session: &CreativeSession,
     created_at_ms: u64,
     options: RenderOptions,
-    render: impl FnOnce(OfflineRenderRequest) -> Result<(), String>,
+    render: impl FnOnce(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<RenderResult, String> {
     let plan = build_render_plan(
@@ -214,7 +215,7 @@ fn render_timeline_with_renderer(
         committed: false,
     };
 
-    render(OfflineRenderRequest {
+    let mut automation_warnings = render(OfflineRenderRequest {
         include_end_events: matches!(options.range, RenderRange::EntireArrangement),
         tail_seconds: plan.tail_seconds,
         graph: plan.graph,
@@ -239,13 +240,15 @@ fn render_timeline_with_renderer(
         } else {
             (None, None)
         };
-    let (measurements, warnings) = mastering::measure_output(
+    let (measurements, mut warnings) = mastering::measure_output(
         &plan.output_path,
         plan.sample_rate,
         mastered_measurement,
         session.settings.mixdown.mastering.as_ref(),
         cancelled,
     )?;
+    warnings.extend(plan.dependency_warnings.iter().cloned());
+    warnings.append(&mut automation_warnings);
 
     let timebase = &session.arrangement.timebase;
     let range_start_ms = (timebase.ticks_to_seconds(plan.start_tick) * 1000.0).round() as u64;
@@ -474,7 +477,7 @@ pub(crate) fn render_stems_with_cancellation(
 
 fn render_stems_with_renderer(
     context: StemRenderContext<'_>,
-    mut render: impl FnMut(OfflineRenderRequest) -> Result<(), String>,
+    mut render: impl FnMut(OfflineRenderRequest) -> Result<Vec<String>, String>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<PendingRenderStems, String> {
     let StemRenderContext {
@@ -542,7 +545,7 @@ fn render_stems_with_renderer(
         if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
             return Err("Timeline render was cancelled.".into());
         }
-        render(OfflineRenderRequest {
+        let mut automation_warnings = render(OfflineRenderRequest {
             include_end_events: matches!(&range, RenderRange::EntireArrangement),
             tail_seconds: plan.tail_seconds,
             graph: plan.graph,
@@ -570,8 +573,10 @@ fn render_stems_with_renderer(
             return Err("Rendered stems do not have a shared frame count.".into());
         }
         frames = Some(stem_frames);
-        let (measurements, warnings) =
+        let (measurements, mut warnings) =
             mastering::measure_output(&plan.output_path, sample_rate, None, None, cancelled)?;
+        warnings.extend(plan.dependency_warnings.iter().cloned());
+        warnings.append(&mut automation_warnings);
         completed.push((
             track,
             plan.source_ids,
@@ -722,10 +727,6 @@ fn build_render_plan_with_conditions(
             .arrangement
             .midi_clips
             .retain(|clip| required_tracks.contains(&clip.track_id));
-        render_session
-            .arrangement
-            .automation_lanes
-            .retain(|lane| required_tracks.contains(&lane.track_id));
         // Keep every Track's plugin graph so all independently rendered stems
         // use the same project-wide PDC baseline. Only the selected Track owns
         // renderable content and reaches the final mix. Input dependencies retain
@@ -820,7 +821,7 @@ fn build_render_plan_with_conditions(
     }
     let resources = resolve(data_root, built_in_instruments, &render_session);
     let (graph, diagnostics) = project_graph(&render_session, &resources);
-    fail_for_missing_dependencies(&diagnostics)?;
+    let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
 
     Ok(RenderPlan {
         tail_seconds,
@@ -835,6 +836,7 @@ fn build_render_plan_with_conditions(
             |conditions| conditions.block_size,
         ),
         graph,
+        dependency_warnings,
         start_tick,
         end_tick,
         sample_rate,
@@ -944,26 +946,69 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
     }
 }
 
-fn fail_for_missing_dependencies(diagnostics: &ProjectionDiagnostics) -> Result<(), String> {
+fn validate_render_dependencies(
+    session: &CreativeSession,
+    diagnostics: &ProjectionDiagnostics,
+) -> Result<Vec<String>, String> {
     if !diagnostics.unavailable_clip_ids.is_empty() {
         return Err(format!(
             "Offline Render cannot resolve clip assets: {}",
             diagnostics.unavailable_clip_ids.join(", ")
         ));
     }
-    if !diagnostics.missing_device_ids.is_empty() {
+
+    let audible_tracks = audible_track_ids(session);
+    let midi_source_tracks = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| !clip.muted && audible_tracks.contains(clip.track_id.as_str()))
+        .map(|clip| clip.track_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let instrument_ids = session
+        .arrangement
+        .tracks
+        .iter()
+        .filter_map(|track| track.instrument.as_ref())
+        .map(|instrument| instrument.id.as_str())
+        .collect::<Vec<_>>();
+    let missing_instruments = session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| midi_source_tracks.contains(track.id.as_str()))
+        .filter_map(|track| track.instrument.as_ref())
+        .filter(|instrument| diagnostics.missing_device_ids.contains(&instrument.id))
+        .map(|instrument| instrument.id.as_str())
+        .collect::<Vec<_>>();
+    if !missing_instruments.is_empty() {
         return Err(format!(
-            "Offline Render cannot load Track Devices: {}",
-            diagnostics.missing_device_ids.join(", ")
+            "Offline Render cannot load Track Instruments: {}",
+            missing_instruments.join(", ")
         ));
     }
-    Ok(())
+
+    let missing_effects = diagnostics
+        .missing_device_ids
+        .iter()
+        .filter(|id| !instrument_ids.contains(&id.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if missing_effects.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![format!(
+        "Missing Effects were omitted from Offline Render: {}",
+        missing_effects.join(", ")
+    )])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AudioClip, MidiClip, TimelineLoopRange, TimelineTick, Track};
+    use riffra_core::{
+        AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
+    };
 
     fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
@@ -1021,6 +1066,139 @@ mod tests {
             bytes[offset + 2..offset + 4].copy_from_slice(&sample.to_le_bytes());
         }
         bytes
+    }
+
+    #[test]
+    fn render_omits_missing_effects_but_rejects_missing_sources_and_instruments() {
+        // Arrange
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].effects.push(
+            EffectDevice::new(
+                "effect:missing".into(),
+                "Missing FX".into(),
+                "fx.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let mut unused_instrument = Track::instrument("track:unused".into(), "Unused".into());
+        unused_instrument.instrument = Some(
+            TrackInstrument::vst3(
+                "instrument:unused".into(),
+                "Unused Synth".into(),
+                "unused.vst3".into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(unused_instrument);
+        let effect_diagnostics = ProjectionDiagnostics {
+            missing_device_ids: vec!["effect:missing".into(), "instrument:unused".into()],
+            ..ProjectionDiagnostics::default()
+        };
+
+        // Act
+        let effect_result = validate_render_dependencies(&session, &effect_diagnostics);
+
+        // Assert
+        assert_eq!(
+            effect_result.unwrap(),
+            ["Missing Effects were omitted from Offline Render: effect:missing"]
+        );
+
+        // Arrange: an unavailable instrument is required to produce the MIDI source.
+        session.arrangement.tracks[0].instrument = Some(
+            TrackInstrument::vst3(
+                "instrument:missing".into(),
+                "Missing Synth".into(),
+                "synth.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let instrument_diagnostics = ProjectionDiagnostics {
+            missing_device_ids: vec!["effect:missing".into(), "instrument:missing".into()],
+            ..ProjectionDiagnostics::default()
+        };
+
+        // Assert
+        assert!(
+            validate_render_dependencies(&session, &instrument_diagnostics)
+                .unwrap_err()
+                .contains("Track Instruments: instrument:missing")
+        );
+        assert!(
+            validate_render_dependencies(
+                &session,
+                &ProjectionDiagnostics {
+                    unavailable_clip_ids: vec!["clip:missing-source".into()],
+                    ..ProjectionDiagnostics::default()
+                }
+            )
+            .unwrap_err()
+            .contains("clip:missing-source")
+        );
+    }
+
+    #[test]
+    fn missing_effect_diagnostics_reach_mixdown_and_stem_results() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-missing-effect-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].effects.push(
+            EffectDevice::new(
+                "effect:missing".into(),
+                "Missing FX".into(),
+                "missing-effect.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let warning = "Missing Effects were omitted from Offline Render: effect:missing";
+
+        // Act
+        let mixdown = render_timeline_with_renderer(
+            &root,
+            empty_catalog(),
+            &session,
+            20,
+            RenderOptions::default(),
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        let mut pending_stems = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project:missing-effect",
+                source_sequence: 1,
+                created_at_ms: 21,
+                selection: select_stem_tracks(&session, true, &[]).unwrap(),
+                range: RenderRange::EntireArrangement,
+            },
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+
+        // Assert
+        assert!(mixdown.warnings.iter().any(|item| item == warning));
+        assert_eq!(pending_stems.result.stems.len(), 1);
+        assert!(
+            pending_stems.result.stems[0]
+                .warnings
+                .iter()
+                .any(|item| item == warning)
+        );
+        pending_stems.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn register_source(root: &Path, name: &str, sample_rate: u32, frames: u32) -> AssetId {
@@ -1158,7 +1336,7 @@ mod tests {
                     request.normalize,
                 ));
                 fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         )
@@ -1338,6 +1516,95 @@ mod tests {
             })
             .collect();
         session.arrangement.mixer.master_effects = vec![fx("fx:master")];
+        session.arrangement.tracks[1].effects = vec![fx("fx:audio")];
+        let mut lane = |id: &str, target, value: f64| {
+            session
+                .arrangement
+                .automation_lanes
+                .push(riffra_core::AutomationLane {
+                    id: id.into(),
+                    target,
+                    interpolation: riffra_core::AutomationInterpolation::Step,
+                    points: vec![riffra_core::AutomationPoint {
+                        id: format!("point:{id}"),
+                        tick: TimelineTick(0),
+                        value,
+                    }],
+                });
+        };
+        use riffra_core::{AutomationTarget, BusMixParameter, TrackMixParameter};
+        lane(
+            "volume",
+            AutomationTarget::TrackMix {
+                track_id: "audio".into(),
+                parameter: TrackMixParameter::Volume,
+            },
+            -6.0,
+        );
+        lane(
+            "pan",
+            AutomationTarget::TrackMix {
+                track_id: "audio".into(),
+                parameter: TrackMixParameter::Pan,
+            },
+            0.0,
+        );
+        for id in ["bus:group", "bus:return"] {
+            lane(
+                &format!("{id}:gain"),
+                AutomationTarget::BusMix {
+                    bus_id: id.into(),
+                    parameter: BusMixParameter::Gain,
+                },
+                -6.0,
+            );
+            lane(
+                &format!("{id}:pan"),
+                AutomationTarget::BusMix {
+                    bus_id: id.into(),
+                    parameter: BusMixParameter::Pan,
+                },
+                0.0,
+            );
+        }
+        for id in ["send:audio", "send:midi"] {
+            lane(
+                id,
+                AutomationTarget::SendLevel { send_id: id.into() },
+                -12.0,
+            );
+        }
+        for (id, value) in [
+            ("fx:audio", 0.75),
+            ("fx:group", 0.25),
+            ("fx:return", 0.25),
+            ("fx:master", 0.75),
+        ] {
+            // The test plugin exposes the VST3 ID derived from its stable JUCE "gain" ID.
+            lane(
+                id,
+                AutomationTarget::DeviceParameter {
+                    device_id: id.into(),
+                    parameter_id: "3165055".into(),
+                },
+                value,
+            );
+        }
+        lane("master", AutomationTarget::MasterGain, -6.0);
+        session
+            .arrangement
+            .automation_lanes
+            .last_mut()
+            .unwrap()
+            .points
+            .push(riffra_core::AutomationPoint {
+                id: "master-late".into(),
+                tick: TimelineTick(960),
+                value: -12.0,
+            });
+        let mut static_session = session.clone();
+        static_session.arrangement.automation_lanes.clear();
+
         let selection = select_stem_tracks(&session, true, &[]).unwrap();
         let worker = RenderWorker::new(executable.into());
         let mut pending = render_stems_with_cancellation(
@@ -1421,6 +1688,48 @@ mod tests {
             maximum_error < 0.0001,
             "linear mixer stems differ from the complete mix by {maximum_error}"
         );
+        let baseline = render_timeline_with_cancellation(
+            &worker,
+            &root,
+            &catalog,
+            &static_session,
+            3,
+            RenderOptions {
+                track_id: Some("audio".into()),
+                ..Default::default()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let baseline_samples = samples(Path::new(&baseline.path));
+        let audio_stem = pending
+            .result
+            .stems
+            .iter()
+            .position(|stem| stem.track_id == "audio")
+            .unwrap();
+        let rms = |values: &[f64], start: usize, end: usize| {
+            (values[start * 2..end * 2]
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                / ((end - start) * 2) as f64)
+                .sqrt()
+        };
+        let gain = 10.0_f64.powf(-6.0 / 20.0);
+        let send = 10.0_f64.powf(-12.0 / 20.0);
+        let expected_ratio = 1.125 * gain.powi(3) * (1.0 + send) / (1.0 + gain);
+        for (start, end, ratio) in [
+            (5_000, 6_000, expected_ratio),
+            (25_000, 26_000, expected_ratio * gain),
+        ] {
+            let actual_ratio =
+                rms(&stem_samples[audio_stem], start, end) / rms(&baseline_samples, start, end);
+            assert!(
+                (actual_ratio - ratio).abs() < 0.0001,
+                "automated stem ratio {actual_ratio} differs from {ratio}"
+            );
+        }
         let manifest: serde_json::Value = serde_json::from_slice(
             &fs::read(pending.result.directory.clone() + "/render.json").unwrap(),
         )
@@ -1466,7 +1775,7 @@ mod tests {
                 calls += 1;
                 let frames = if calls == 1 { 64 } else { 32 };
                 fs::write(&request.destination, wav(request.sample_rate, frames)).unwrap();
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         );
@@ -1548,7 +1857,7 @@ mod tests {
                     )
                     .unwrap();
                 }
-                Ok(())
+                Ok(Vec::new())
             },
             None,
         );
@@ -1724,6 +2033,19 @@ mod tests {
             "latency-reference".into(),
             "Latency Reference".into(),
         ));
+        session
+            .arrangement
+            .automation_lanes
+            .push(riffra_core::AutomationLane {
+                id: "master-lane".into(),
+                target: riffra_core::AutomationTarget::MasterGain,
+                interpolation: riffra_core::AutomationInterpolation::Step,
+                points: vec![riffra_core::AutomationPoint {
+                    id: "master-point".into(),
+                    tick: TimelineTick(120),
+                    value: -9.0,
+                }],
+            });
         let catalog = empty_catalog();
         let plan = build_render_plan(
             &root,
@@ -1743,6 +2065,12 @@ mod tests {
         assert!(!tracks[0].muted);
         assert_eq!(tracks[1].id, "latency-reference");
         assert!(tracks[1].muted);
+        assert_eq!(plan.graph.automation.len(), 1);
+        assert_eq!(
+            plan.graph.automation[0].target,
+            riffra_core::AutomationTarget::MasterGain
+        );
+        assert_eq!(plan.graph.automation[0].points[0].value, -9.0);
     }
 
     #[test]
@@ -1768,7 +2096,7 @@ mod tests {
                     if failure == 1 {
                         cancelled.store(true, std::sync::atomic::Ordering::Release);
                     }
-                    Ok(())
+                    Ok(Vec::new())
                 },
                 Some(&cancelled),
             );

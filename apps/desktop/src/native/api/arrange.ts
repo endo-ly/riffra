@@ -8,7 +8,8 @@ import type {
   TrackKind,
   AudioClipPatch,
   AudioTakeVariant,
-  AutomationParameter,
+  AutomationTarget,
+  AutomationInterpolation,
   AutomationPoint,
   MidiClipMove,
   MidiClipPatch,
@@ -210,12 +211,12 @@ export async function updateTrack(
   return dispatchControl(command);
 }
 
-export async function setTrackAutomation(
-  trackId: string,
-  parameter: AutomationParameter,
+export async function setAutomation(
+  target: AutomationTarget,
+  interpolation: AutomationInterpolation,
   points: AutomationPoint[],
 ): Promise<ArrangementMutationResult> {
-  return dispatchControl({ command: 'automation.set', params: { trackId, parameter, points } });
+  return dispatchControl({ command: 'automation.set', params: { target, interpolation, points } });
 }
 
 export async function setTrackAudioInput(

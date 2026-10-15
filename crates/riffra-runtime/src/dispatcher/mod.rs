@@ -236,6 +236,7 @@ pub struct HostDispatcher<'a> {
     sonalloy: PathBuf,
     built_in_instruments: Arc<BuiltInInstrumentCatalog>,
     validate_plugin_roles: bool,
+    audio: Option<&'a crate::audio::AudioSupervisor>,
 }
 
 /// Standalone canonical editing entry point.
@@ -274,11 +275,17 @@ impl HostDispatcher<'static> {
             sonalloy,
             built_in_instruments,
             validate_plugin_roles: false,
+            audio: None,
         })
     }
 }
 
 impl<'a> HostDispatcher<'a> {
+    pub(crate) fn with_audio(mut self, audio: &'a crate::audio::AudioSupervisor) -> Self {
+        self.audio = Some(audio);
+        self
+    }
+
     /// Validates and executes a standalone request.
     ///
     /// # Errors
@@ -386,6 +393,7 @@ impl<'a> HostDispatcher<'a> {
             sonalloy: sonalloy.to_path_buf(),
             built_in_instruments: Arc::clone(built_in_instruments),
             validate_plugin_roles: true,
+            audio: None,
         }
     }
 

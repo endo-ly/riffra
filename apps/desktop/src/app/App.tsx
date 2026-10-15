@@ -101,6 +101,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     plugins,
     transportPlaying,
     transportStarting,
+    transportPaused,
     arrangementTransport,
     recordingCommandPending,
     startRecordingNow,
@@ -147,6 +148,7 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
     selectAudioDriver,
     stopTransport,
     playTransport,
+    pauseTransport,
     goToStart,
     toggleRecording,
     api: nativeApi,
@@ -338,8 +340,10 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
         applyCanonicalState={applyCanonicalState}
         transportPlaying={transportPlaying}
         transportStarting={transportStarting}
+        transportPaused={transportPaused}
         playheadTick={arrangementTransport.displayTick}
         onPlay={() => void playTransport()}
+        onPause={() => void pauseTransport()}
         onStop={() => void stopTransport()}
         onGoToStart={() => void goToStart()}
         recordingCommandPending={recordingCommandPending}
@@ -577,7 +581,11 @@ export default function App({ api = defaultNativeApi }: { api?: NativeApi } = {}
               api={nativeApi}
               audio={audio}
               onToggleTransport={() =>
-                void (transportPlaying || transportStarting ? stopTransport() : playTransport())
+                void (transportPlaying
+                  ? pauseTransport()
+                  : transportStarting
+                    ? stopTransport()
+                    : playTransport())
               }
               plugins={plugins}
               instruments={browser.instruments.items}

@@ -224,10 +224,44 @@ void AudioCommandDispatcher::handle(const PreviewMasterGainDbCommand& command,
 
 void AudioCommandDispatcher::handle(const TransportCommand& command, CommandResponder responder) {
     auto& timeline = context.timelineEngine;
+    if (command.kind == TransportCommandKind::pause) {
+        constexpr auto kTransportApplyTimeout = std::chrono::milliseconds(500);
+        const auto rejectDuringRecording = [&responder]() {
+            responder.fail("timeline.recordingActive",
+                           "Transport cannot be paused during Arrange recording.",
+                           "timeline.transport");
+        };
+        if (timeline.status().frame.recordingPhase != RecordingPhase::idle) {
+            rejectDuringRecording();
+            return;
+        }
+        const auto sequence = timeline.pause();
+        if (!sequence.has_value()) {
+            if (timeline.status().frame.recordingPhase != RecordingPhase::idle)
+                rejectDuringRecording();
+            else
+                responder.fail("realtimeQueueFull", "The realtime command queue is full.",
+                               "timeline.transport");
+            return;
+        }
+        if (!timeline.waitForCommandApplied(*sequence, kTransportApplyTimeout)) {
+            responder.fail("timeout", "The audio thread did not apply the pause command in time.",
+                           "timeline.transport");
+            return;
+        }
+        if (timeline.status().frame.recordingPhase != RecordingPhase::idle) {
+            rejectDuringRecording();
+            return;
+        }
+        responder.respond(TransportAcceptedSpec{*sequence});
+        return;
+    }
     const auto accepted = [&]() -> std::optional<std::uint64_t> {
         switch (command.kind) {
             case TransportCommandKind::play:
                 return timeline.play();
+            case TransportCommandKind::pause:
+                return std::nullopt;
             case TransportCommandKind::setStarting:
                 return timeline.startPreparing();
             case TransportCommandKind::stop:

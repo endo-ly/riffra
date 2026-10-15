@@ -187,6 +187,10 @@ impl AudioSupervisor {
         self.request_transport(SidecarCommand::PlayTimeline)
     }
 
+    pub fn pause_timeline(&self) -> NativeAudioResult<()> {
+        self.request_transport(SidecarCommand::PauseTimeline)
+    }
+
     pub fn set_transport_starting(&self) -> NativeAudioResult<()> {
         self.request_transport(SidecarCommand::SetTransportStarting)
     }
@@ -268,6 +272,69 @@ impl AudioSupervisor {
         }
     }
 
+    pub(crate) fn device_parameter_value_for_text(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        parameter_id: &str,
+        display: &str,
+    ) -> NativeAudioResult<f64> {
+        let command = SidecarCommand::GetDeviceParameterValueForText {
+            owner: owner.clone(),
+            device_id: device_id.into(),
+            parameter_id: parameter_id.into(),
+            display: display.into(),
+        };
+        match self.request(command, TRACK_DEVICE_COMMAND_TIMEOUT)? {
+            SidecarResponse::DeviceParameters(status) if status.parameters.len() == 1 => {
+                Ok(f64::from(status.parameters[0].value))
+            }
+            response => Err(unexpected(&response)),
+        }
+    }
+
+    pub(crate) fn preview_automation_value(
+        &self,
+        target: &riffra_core::AutomationTarget,
+        value: Option<f64>,
+        preview_token: u64,
+    ) -> NativeAudioResult<()> {
+        match self.request(
+            SidecarCommand::PreviewAutomationValue {
+                target: target.clone(),
+                value,
+                preview_token,
+            },
+            COMMAND_ACK_TIMEOUT,
+        )? {
+            SidecarResponse::MixAck {} => Ok(()),
+            response => Err(unexpected(&response)),
+        }
+    }
+
+    pub(crate) fn device_parameter_display_value(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        parameter_index: u32,
+        value: f32,
+    ) -> NativeAudioResult<String> {
+        match self.request(
+            SidecarCommand::GetDeviceParameterDisplayValue {
+                owner: owner.clone(),
+                device_id: device_id.into(),
+                parameter_index,
+                value,
+            },
+            TRACK_DEVICE_COMMAND_TIMEOUT,
+        )? {
+            SidecarResponse::DeviceParameters(status) if status.parameters.len() == 1 => {
+                Ok(status.parameters[0].display_value.clone())
+            }
+            response => Err(unexpected(&response)),
+        }
+    }
+
     pub(crate) fn list_device_parameters(
         &self,
         owner: &riffra_core::EffectOwner,
@@ -282,6 +349,7 @@ impl AudioSupervisor {
                 .parameters
                 .into_iter()
                 .map(|parameter| DeviceParameterInfo {
+                    parameter_id: parameter.parameter_id,
                     index: parameter.index,
                     name: Some(parameter.name),
                     value: parameter.value,

@@ -6,6 +6,7 @@
     "parameters": [
       {
         "index": 0,
+        "parameterId": "stable-gain",
         "name": "Gain",
         "value": 0.5,
         "defaultValue": 0.25,
@@ -18,6 +19,7 @@
       },
       {
         "index": 1,
+        "parameterId": "stable-mode",
         "name": "Mode",
         "value": 0.0,
         "defaultValue": 0.0,

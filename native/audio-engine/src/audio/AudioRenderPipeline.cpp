@@ -74,7 +74,6 @@ bool AudioRenderPipeline::isPreviewing() const noexcept { return previewEngine.i
 void AudioRenderPipeline::setMasterGainDb(const float gainDb) noexcept {
     const auto safeGain = juce::jlimit(kMinimumGainDb, kMaximumGainDb, gainDb);
     masterGainDb.store(safeGain, std::memory_order_release);
-    targetGainLinear.store(juce::Decibels::decibelsToGain(safeGain), std::memory_order_release);
 }
 
 float AudioRenderPipeline::getMasterGainDb() const noexcept {
@@ -210,7 +209,7 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
         return;
     }
 
-    const auto target = targetGainLinear.load(std::memory_order_acquire);
+    constexpr auto target = 1.0f;
     if (resetGainOnNextCallback.exchange(false, std::memory_order_acq_rel))
         currentGainLinear = 0.0f;
     float blockPreLimiterPeak = 0.0f;
@@ -231,6 +230,8 @@ void AudioRenderPipeline::processBlock(const float* const* inputChannelData,
     pluginAudition.mix(selectedInput, outputChannelData, numOutputChannels, numSamples,
                        activeSampleRate.load(std::memory_order_acquire));
     dcBlocker.processBlock(outputChannelData, numOutputChannels, numSamples);
+    timelineEngine.applyMasterGain(outputChannelData, numOutputChannels, numSamples,
+                                   getMasterGainDb());
 
     for (int sample = 0; sample < numSamples; ++sample) {
         if (currentGainLinear < target)

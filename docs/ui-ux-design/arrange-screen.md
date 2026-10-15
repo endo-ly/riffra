@@ -284,7 +284,7 @@ Instrument Track の作成では Add Instrument Browser へつなぎ、音源選
 
 ### 3.10 Automation
 
-Automation は対象 Track の直下へ Lane として展開し、Timeline と同じ時間軸を使う。
+AutomationはTimelineと同じPlayhead、Snap、Zoomを使う共通Lane Editorで操作する。TrackのMixとDeviceはTrack直下に展開し、Group・Return・MasterはTrack群の下の編集領域へ表示する。MixerとDevicesのAutomation操作から対象Laneを開ける。
 
 ```text
 Track: Synth
@@ -295,7 +295,9 @@ Track: Synth
                  •────────────•
 ```
 
-Parameter Selector から編集対象を選び、Point の追加、移動、削除を Lane 上で行う。Playhead、Snap、Zoom は Clip と Automation で同じ基準を共有する。表示状態は Track ごとに保持する。
+対象SelectorはMix、Send、Plugin Parameterを所有者ごとに列挙する。Pluginの離散Parameterでは選択肢へ値を合わせ、Stepだけを選べる。Laneヘッダーには補間方式、静的値のガイド、Read状態を表示する。対象Parameterが見つからない場合もLaneを保持し、実行診断を表示する。
+
+Lane上でPointを追加・移動・削除する。同じTickへの追加は既存PointのIDを保って値を更新し、最後のPointを削除するとLaneを解除する。再生中のDragは一時値をNativeへ送り、音声にもPreviewを反映する。PointerUpで一度だけ正準状態へCommitし、Escape・PointerCancel・Project / Host切替ではPreviewを破棄する。AltでSnapを一時解除する。Trackごとの対象選択は表示状態として保持し、Project切替で解除する。
 
 ### 3.11 録音中の表示
 
@@ -625,7 +627,7 @@ Arrange の再生・録音は Global Control Bar に含まれる Transport を�
 
 ```text
 Global Control Bar
-Position / Go Start / Stop / Play / Record
+Position / Go Start / Stop / Play / Pause / Resume / Record
 Loop / Metronome / Count-in / Tempo / Signature
                 │
                 ▼
@@ -638,7 +640,7 @@ Loop / Metronome / Count-in / Tempo / Signature
 
 Timeline と Lower Area のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
 
-Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。準備中の Play は UI をブロックせず、Stop は保留中の Play より優先される。Stop 後に準備が終わっても自動再生せず、投影失敗時は Play 意図を解除して失敗を通知する。
+Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。Pause は短いフェードで音を止め、再生位置とAutomationの有効値を保持する。Arrange Recording中のPauseは拒否し、録音状態を保ったまま理由を通知する。録音をStopしてキャプチャを確定してからPauseする。PausedでPlayを押すと同じ位置から再開する。Stop は保持中の有効値を静的値へ戻し、保留中のPlayより優先される。Stop後に準備が終わっても自動再生せず、投影失敗時はPlay意図を解除して失敗を通知する。
 
 Track Arm は録音対象の Track を選択する操作であり、Focus とは分離する。Global Record は Arm された Track の Timeline Recording を開始する操作で、Count-in の設定に従い Recording 開始とともに Arrangement Transport も進行する。Arm された Track が存在しない場合は Recording と Transport を開始せず、録音対象を Arm するよう利用者へ通知する。
 

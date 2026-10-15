@@ -122,6 +122,10 @@ impl<D: TransportDriver> TransportExecutionLease<'_, D> {
             })
     }
 
+    pub(crate) fn pause(&self) -> Result<(), RuntimeError> {
+        self.executor.driver.pause_timeline()
+    }
+
     pub(crate) fn set_transport_starting(&self) -> Result<(), RuntimeError> {
         self.executor.driver.set_transport_starting()
     }
@@ -225,6 +229,10 @@ mod tests {
             if let Some(play_probe) = self.play_probe.lock().unwrap().clone() {
                 play_probe();
             }
+            Ok(())
+        }
+
+        fn pause_timeline(&self) -> Result<(), RuntimeError> {
             Ok(())
         }
 

@@ -4,7 +4,7 @@
 
 namespace riffra {
 
-enum class TransportState : std::uint8_t { stopped, starting, playing, faulted };
+enum class TransportState : std::uint8_t { stopped, starting, playing, paused, faulted };
 enum class RecordingPhase : std::uint8_t { idle, countingIn, recording, stopping };
 
 /// Realtime state published by the owner of the timeline at the end of each block.

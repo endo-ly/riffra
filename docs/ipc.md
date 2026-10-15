@@ -197,7 +197,7 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 | 状態照会         | `status`                                                                                                                              | `audioStatus`                                                  |
 | デバイス・安全   | `recoverAudioDevice`、`setAudioDriver`、`setEmergencyMute`、`setFeedbackProtection`、`setEngineTransitionMute`、`previewMasterGainDb` | `audioStatus`                                                  |
 | 投影             | `prepareTimelineSnapshot`、`commitTimelineSnapshot`、`discardTimelineSnapshot`、`waitForTimelineIdle`                                 | `timelineAck`（prepare / commit / discard）、`timelineIdleAck` |
-| トランスポート   | `setTransportStarting`、`playTimeline`、`stopTimeline`、`seekTimeline`                                                                | `transportAccepted`                                            |
+| トランスポート   | `setTransportStarting`、`playTimeline`、`pauseTimeline`、`stopTimeline`、`seekTimeline`                                               | `transportAccepted`                                            |
 | 録音             | `startArrangeRecording`、`stopArrangeRecording`                                                                                       | `audioStatus`                                                  |
 | MIDI             | `enableMidiListening`、`disableMidiListening`、`setLiveMidiTarget`                                                                    | `audioStatus`                                                  |
 |                  | `sendTrackMidi`、`panicTrackMidi`                                                                                                     | `midiAck`                                                      |
@@ -210,7 +210,9 @@ Desktopのイベントゲートは現在の接続世代のイベントだけをW
 
 トランスポート、録音、MIDI 送信、グラフの公開はリアルタイム命令キューを通る。再生中は音声スレッドが次のブロック先頭で適用し、デバイス停止中は制御側が適用する（`architecture.md §5.6`）。`transportAccepted` は命令の受け付けと `commandSequence` を返し、適用済みの命令番号は `transportStatus.appliedCommandSequence` で分かる。
 
-`getDeviceParameters` は制御側で最新の Plugin metadata を取得し、`deviceParameters` へ返す。各 Parameter は `index`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。
+`getDeviceParameterValueForText` はDevice ID、Stable Parameter ID、表示文字列を受け取り、値を変更せずに変換結果を `deviceParameters` へ返す。
+
+`getDeviceParameters` は制御側で最新の Plugin metadata を取得し、`deviceParameters` へ返す。各 Parameter は `index`、`parameterId`、`name`、normalized `value`、`defaultValue`、Plugin の表示文字列 `displayValue`、単位 `label`、`automatable`、`discrete`、状態数 `stepCount`、`choices` を持つ。`parameterId` はPluginが公開した一意で非空のStable IDで、公開できない場合は`null`とする。Automationの識別にIndexや名前を使わない。Continuous の `stepCount` は 0。離散状態が 2〜256 個の場合だけ `choices` を列挙し、各要素は normalized `value` と Plugin の `displayValue` を返す。空の表示や単位を推測で補わず、metadata 生成は音声コールバックで行わない。
 
 Parameter変更は既存Realtimeキューで適用する。変更ACKは対象Rackがcommand sequenceに対応したPlugin処理を完了し、Message Threadの情報変更通知とEdit Controller同期を通過してから返す。停止中は対象Rackだけを準備済み無音ブロックで処理し、その出力をMixerや録音へ送らない。Audio Device停止中は排他的なControl Realtime Ownerが処理する。未完了はエラーとなり、Rustは途中状態を正準コミットしない。復旧に失敗した場合は設定と復旧の両方の失敗理由を返す。
 
@@ -227,6 +229,8 @@ Effect・Device・Plugin State・Preset・Editor操作は`owner`で所有者を�
 `openPluginAudition` は検証済みの VST3 を Project の外で読み込み、そのエディタを開く。音源ならライブ MIDI が Track より先に届き、エフェクトなら選択中のオーディオ入力を処理する。エフェクトが入力を鳴らしている間は、Track の入力モニタリングと同じくフィードバック保護の対象になる。出力はアレンジメントの後に加算される。エディタのウィンドウを閉じるとプラグインは破棄され、その状態は Project に入らない。
 
 `prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、C++ の厳格デコーダが契約違反を `kind: timelineContract` として返し、グラフの準備処理へ進めない。投影の置換には prepare / commit / discard を使う。
+
+Execution Graphの`automation`は全対象共通の配列で、各Laneは`target`、`interpolation`、`points`を持つ。`target`は[正準モデル](data-model.md)と同じ識別子を使用し、Pointは`tick`と数値`value`だけを送る。Lane・Pointの編集用IDは音声処理へ送らない。未設定時も空配列を送る。実行できないDevice Laneは`AudioStatus.diagnostics.automationWarnings`へ返す。
 
 正準 Master Gain は `ExecutionGraph.masterGainDb` に含まれ、現役グラフの commit 時に出力へ適用される。`previewMasterGainDb` は一時プレビューのみを更新し、確定値は Host の `setMasterGainDb` が正準設定を更新して投影する。
 
@@ -301,7 +305,7 @@ C++ の出力は 3 つのレーンに分かれる。`control` は順序を保つ
 
 `response` と `error` は `control` レーンを通る。
 
-`transportStatus` は `state`（`stopped` / `starting` / `playing` / `faulted`）、`revision`、`timelineTick`、`timelineSample`、`audioClockSample`、`sampleRate`、`appliedCommandSequence`、`recordingPhase`、`recordingStartTick`、`recordingPassOrdinal`、`armedTrackIds`、`instrumentFaults`、`clockGeneration`、`discontinuity` を持つ。`timelineSample` は保留中の Seek 先を含み、`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`instrumentFaults` は現役グラフの同じ診断情報を `AudioStatus.diagnostics.instrumentFaults` と共有する。
+`transportStatus` は `state`（`stopped` / `starting` / `playing` / `paused` / `faulted`）、`revision`、`timelineTick`、`timelineSample`、`audioClockSample`、`sampleRate`、`appliedCommandSequence`、`recordingPhase`、`recordingStartTick`、`recordingPassOrdinal`、`armedTrackIds`、`instrumentFaults`、`clockGeneration`、`discontinuity` を持つ。Pause中は再生位置を保持し、Resume時にその位置から再開する。`timelineSample` は保留中の Seek 先を含み、`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`instrumentFaults` は現役グラフの同じ診断情報を `AudioStatus.diagnostics.instrumentFaults` と共有する。
 
 `audioMeters`の`trackMeters`と`busMeters`はIDと左右Peak/RMS、Masterは左右の最終出力Peakを持つ。NativeのMeter threadが約50 msごとに発行し、RustはRuntime投影の`projectId`を付けて`audio-meters` Host event（`AudioMeterFrame`）へ写像する。
 
@@ -473,7 +477,7 @@ Mixerの正準状態は`mixer.get`、Bus一覧は`mixer.bus.list`、Send一覧�
 | MIDI Clip / Note       | `midi-clip list`、`create`、`add-asset`、`update`、`move`、`trim`、`split`、`duplicate`、`midi-note add/insert/update/update-many/remove/remove-many/clear/quantize/transform/duplicate`                                                                                                                                                                |
 | Music Operations       | `music.midi-clip.create/resize`、`music.note.list/get/insert/update/remove`、`music.region.list`、`music.region.add`、`music.region.update`、`music.region.remove`、`music.harmony.resolve`、`music.harmony.list`、`music.harmony.insert`、`music.harmony.update`、`music.harmony.remove`、`music.harmony.realize`、`music.phrase.insert`               |
 | Timeline / Arrangement | `clip remove`、`clip paste`、`marker add/update/remove`、`timebase update`、`loop-range set`、`punch-range set`                                                                                                                                                                                                                                         |
-| Automation             | `automation get`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                                  |
+| Automation             | `automation get/list`(Canonical read)、`automation set`、`automation clear`                                                                                                                                                                                                                                                                             |
 | Asset / Project        | `asset import-midi`、`asset preview`、`project list/create/open/rename/export/import`                                                                                                                                                                                                                                                                   |
 | Instrument / Effect    | `plugin catalog list`、`instrument list/apply`、`plugin instrument`、`plugin scan/scan-start`、`instrument clear`、`effect add/remove/reorder`、`device bypass`、`device inspect`、`device parameter list/get/set`、`plugin preset list/get/set`、`plugin state get/set`                                                                                |
 | Runtime services       | `audio status/diagnostics/probe/channels-probe`、`audio driver get/set`、`audio recover/startup-retry`、`record start/another-take/stop/status/list/rename/archive/promote/tag/delete/duplicates`、`render start/stems`、`job get/cancel`、`library search/asset-update/related`、`analysis start`、`missing list/relink/disable-plugin/replace-plugin` |
@@ -496,7 +500,8 @@ Desktop の Tauri command 境界と Live Host の Control Server の機能分担
 | ライブラリ・解析・Asset preview                                      | Hostのshared service              | `runtimeUnavailable`                                                                |
 
 - エディタ窓・ダイアログ・窓管理は Desktop shell に残る。open / 録音 / プレビュー / スキャン / 図書館・解析の実行は Host 側を使い、エディタ由来の永続化は Host 内 coordinator の commit で完結する
-- `automation.get` は対象TrackのCanonicalなオートメーションレーンを読む。`parameter`は省略可能で、結果は `volume`、`pan` の順。読み取りはCanonical sequenceを変更しない
+- `automation.get/clear`は`target`を指定する。`get`は該当Laneを0件または1件の配列で返す。`automation.list`は任意の`owner`でTrack・Bus・Masterの所有するLaneへ絞り込み、省略時は全LaneをID順に返す。読み取りはCanonical sequenceを変更しない
+- `automation.set`は`target`、`interpolation`、`points`でLane全体を置き換える。Pointの`value`は数値、またはDevice用の表示文字列を受け付ける。表示文字列はLive Hostで変換し、正準状態には数値だけを保存する。`session.apply`も同じ契約を使い、変換や検証の失敗ではBatch全体をコミットしない
 - `render start` は接続先 Host の `RenderWorker` にジョブ開始し ID を返す。部分 Render は音楽座標の `start` / `end` と任意の `trackId` で指定する。状態は `job get`、停止は `job cancel` で行う。Worker の所有者は接続先 Host とする
 - `render.stems` は `allTracks` または `trackIds` のいずれか一方と共有 `range` を受け取り、接続先 Host の `RenderWorker` で1つの `renderStems` ジョブを開始する。結果には共通の開始・終了Tick、Sample Rate、フレーム数と各TrackのAsset ID・パスを含み、同じ内容を出力ディレクトリの `render.json` に保存する。明示IDが不正な要求はジョブ開始前に拒否する
 - 結果は全Stemの生成後にだけジョブへ設定される。キャンセルまたは失敗が先に確定した場合、作成済みのファイルとAsset登録を破棄する

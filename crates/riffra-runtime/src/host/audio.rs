@@ -285,6 +285,7 @@ impl HostState {
 
 fn audio_diagnostics_report(status: &AudioStatus) -> crate::api::output::AudioDiagnosticsReport {
     crate::api::output::AudioDiagnosticsReport {
+        automation_warnings: status.diagnostics.automation_warnings.clone(),
         device: crate::api::output::AudioDiagnosticsDevice {
             state: status.state,
             driver: status.driver.clone(),

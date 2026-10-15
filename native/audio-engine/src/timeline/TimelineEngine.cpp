@@ -234,6 +234,13 @@ std::optional<std::uint64_t> TimelineEngine::play() noexcept {
     return submit(command);
 }
 
+std::optional<std::uint64_t> TimelineEngine::pause() noexcept {
+    if (realtimeFrame.read().recordingPhase != RecordingPhase::idle) return std::nullopt;
+    RealtimeCommand command;
+    command.kind = RealtimeCommand::Kind::pause;
+    return submit(command);
+}
+
 std::optional<std::uint64_t> TimelineEngine::stop() noexcept {
     RealtimeCommand command;
     command.kind = RealtimeCommand::Kind::stop;
@@ -263,11 +270,26 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
     switch (command.kind) {
         case RealtimeCommand::Kind::play:
             state.transport = TransportState::playing;
+            if (state.graph != nullptr) state.graph->beginAutomationRead();
+            break;
+        case RealtimeCommand::Kind::pause:
+            if (state.recordingPhase == RecordingPhase::idle &&
+                (state.transport == TransportState::playing ||
+                 state.transport == TransportState::starting))
+                state.transport = TransportState::paused;
             break;
         case RealtimeCommand::Kind::setStarting:
             state.transport = TransportState::starting;
             break;
         case RealtimeCommand::Kind::stop:
+            if (state.transport == TransportState::paused ||
+                state.renderTransportState == RenderTransportState::paused) {
+                state.renderTransportState = RenderTransportState::stopped;
+                state.transportGain = 0.0f;
+                state.transportFadeStep = 0.0f;
+                state.transportFadeRemaining = 0;
+                if (state.graph != nullptr) resetPlaybackTrackState(*state.graph);
+            }
             state.transport = TransportState::stopped;
             state.recordingPhase = RecordingPhase::idle;
             break;
@@ -360,6 +382,8 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
 
 void TimelineEngine::publishGraph(RealtimeState& state, PreparedTimeline* const graph) noexcept {
     auto* const previous = std::exchange(state.graph, graph);
+    if (previous != nullptr) previous->restoreAutomation();
+    if (state.transport == TransportState::playing) graph->beginAutomationRead();
     if (previous == nullptr)
         state.timelineSample = 0;
     else if (!retiredGraphs.retire(previous))
@@ -458,6 +482,7 @@ TimelineStatus TimelineEngine::status() const {
             result.instrumentRuntimeCount = graph.summary.instrumentRuntimeCount;
             result.pluginCount = graph.summary.pluginCount;
             result.maximumLatencySamples = graph.summary.maximumLatencySamples;
+            result.automationWarnings = graph.summary.automationWarnings;
             result.armedTrackIds = graph.summary.armedTrackIds;
             result.liveMidiDrops = liveMidiQueueDrops.load(std::memory_order_relaxed);
             for (const auto& track : graph.tracks) {
@@ -574,6 +599,86 @@ bool TimelineEngine::setSendLevelControl(const juce::String& sendId, const float
                     return true;
                 }
         error = "send is unavailable";
+        return false;
+    });
+}
+
+bool TimelineEngine::previewAutomationValue(const AutomationTargetKind kind, const juce::String& id,
+                                            const juce::String& parameterId,
+                                            const std::optional<float> value,
+                                            const std::uint64_t previewToken, juce::String& error) {
+    if (previewToken == 0) {
+        error = "automation preview token is invalid";
+        return false;
+    }
+    const auto validRange = [&](const float minimum, const float maximum) {
+        if (!value.has_value()) return true;
+        if (std::isfinite(*value) && *value >= minimum && *value <= maximum) return true;
+        error = "automation preview value is outside its target range";
+        return false;
+    };
+    const auto rangeValid =
+        kind == AutomationTargetKind::trackPan || kind == AutomationTargetKind::busPan
+            ? validRange(-1.0f, 1.0f)
+        : kind == AutomationTargetKind::masterGain      ? validRange(-90.0f, 0.0f)
+        : kind == AutomationTargetKind::deviceParameter ? validRange(0.0f, 1.0f)
+                                                        : validRange(-90.0f, 24.0f);
+    if (!rangeValid) return false;
+    return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
+        auto* graph = graphs.latestCommitted;
+        if (graph == nullptr) {
+            error = "the active Timeline graph is unavailable";
+            return false;
+        }
+        const auto apply = [&](AutomationPreviewValue& preview) {
+            if (value)
+                preview.set(previewToken, *value);
+            else
+                preview.clear(previewToken);
+            return true;
+        };
+        switch (kind) {
+            case AutomationTargetKind::trackVolume:
+            case AutomationTargetKind::trackPan: {
+                auto* track = graph->findTrack(id);
+                if (track == nullptr) break;
+                return apply(kind == AutomationTargetKind::trackVolume
+                                 ? track->runtime->gainPreview
+                                 : track->runtime->panPreview);
+            }
+            case AutomationTargetKind::busGain:
+            case AutomationTargetKind::busPan: {
+                auto* bus = graph->mixer.findBus(id);
+                if (bus == nullptr) break;
+                return apply(kind == AutomationTargetKind::busGain ? bus->gainPreview
+                                                                   : bus->panPreview);
+            }
+            case AutomationTargetKind::masterGain:
+                return apply(graph->mixer.masterGainPreview);
+            case AutomationTargetKind::sendLevel:
+                for (auto* routes : {&graph->mixer.trackRoutes, &graph->mixer.busRoutes})
+                    for (auto& route : *routes)
+                        if (route->sendId == id && id.isNotEmpty())
+                            return apply(route->levelPreview);
+                break;
+            case AutomationTargetKind::deviceParameter: {
+                PluginRack* rack = nullptr;
+                for (auto& track : graph->tracks) {
+                    auto& runtime = *track->runtime;
+                    if (runtime.instrument() != nullptr && track->instrumentDeviceId == id)
+                        rack = runtime.instrument()->vst3Rack();
+                    if (rack == nullptr) rack = runtime.effects().findDevice(id);
+                    if (rack != nullptr) break;
+                }
+                if (rack == nullptr)
+                    for (auto& bus : graph->mixer.buses)
+                        if ((rack = bus->effects->findDevice(id)) != nullptr) break;
+                if (rack == nullptr) rack = graph->mixer.masterEffects->findDevice(id);
+                if (rack == nullptr) break;
+                return rack->setAutomationPreview(parameterId, previewToken, value, error);
+            }
+        }
+        error = "automation preview target is unavailable";
         return false;
     });
 }

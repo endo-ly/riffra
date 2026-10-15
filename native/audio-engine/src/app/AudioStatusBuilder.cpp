@@ -34,6 +34,8 @@ TransportStateSpec transportState(const TransportState state) noexcept {
             return TransportStateSpec::starting;
         case TransportState::playing:
             return TransportStateSpec::playing;
+        case TransportState::paused:
+            return TransportStateSpec::paused;
         case TransportState::faulted:
             return TransportStateSpec::faulted;
     }
@@ -107,6 +109,7 @@ AudioStatusSpec AudioStatusBuilder::currentStatus(juce::AudioDeviceManager& mana
         diagnostics.instrumentRuntimeCount = graph->instrumentRuntimeCount;
         diagnostics.pluginCount = graph->pluginCount;
         diagnostics.maximumLatencySamples = graph->maximumLatencySamples;
+        diagnostics.automationWarnings = graph->automationWarnings;
         diagnostics.graphRevision = graph->revision;
         diagnostics.instrumentFaults = graph->instrumentFaults;
         diagnostics.trackLoads = graph->trackLoads;

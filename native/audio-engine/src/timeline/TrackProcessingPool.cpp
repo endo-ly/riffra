@@ -67,7 +67,8 @@ void TrackProcessingPool::processAvailableTracks() noexcept {
         if (channels.empty())
             processTrackStage(*currentTracks[index], currentJob);
         else
-            channels[index]->process(currentJob.sampleCount);
+            channels[index]->process(currentJob.sampleCount, currentJob.rangeStart,
+                                     currentJob.playing);
         completedTracks.fetch_add(1, std::memory_order_acq_rel);
     }
 }
@@ -82,11 +83,14 @@ void TrackProcessingPool::run(const std::span<Track* const> currentTracks,
 }
 
 void TrackProcessingPool::runMixer(const std::span<MixerChannel* const> currentChannels,
-                                   const int sampleCount) noexcept {
+                                   const int sampleCount, const std::int64_t rangeStart,
+                                   const bool playing) noexcept {
     if (currentChannels.empty()) return;
     tracks = {};
     channels = currentChannels;
     job.sampleCount = sampleCount;
+    job.rangeStart = rangeStart;
+    job.playing = playing;
     execute(currentChannels.size());
 }
 
@@ -126,9 +130,12 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
             TimelineEngine::processInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    &runtime.midiBuffer, job.rangeStart);
         else
-            runtime.effects().process(runtime.mixBuffer.getArrayOfReadPointers(), 2,
-                                      runtime.processedBuffer.getArrayOfWritePointers(), 2,
-                                      job.sampleCount);
+            runtime.effects().process(
+                runtime.mixBuffer.getArrayOfReadPointers(), 2,
+                runtime.processedBuffer.getArrayOfWritePointers(), 2, job.sampleCount, nullptr,
+                runtime.deviceAutomation,
+                job.rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(),
+                true);
     } else if (runtime.instrumentTrack) {
         TimelineEngine::processLiveInstrumentTrack(*job.graph, track, job.sampleCount,
                                                    job.rangeStart, job.playing);
@@ -137,10 +144,11 @@ void processTrackStage(Track& track, const TrackStageJob& job) noexcept {
         runtime.processedBuffer.clear(0, job.sampleCount);
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                                   runtime.processedBuffer.getArrayOfWritePointers(), 2,
-                                  job.sampleCount);
+                                  job.sampleCount, nullptr, runtime.deviceAutomation,
+                                  job.rangeStart, false);
     }
     TimelineEngine::mixTrackOutput(track, job.rangeStart, job.sampleCount, job.transportGainStart,
-                                   job.transportGainStep);
+                                   job.transportGainStep, job.playing);
     const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();

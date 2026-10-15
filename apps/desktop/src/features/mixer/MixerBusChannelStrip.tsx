@@ -8,12 +8,14 @@ import styles from './Mixer.module.css';
 interface Props {
   sessionId: string;
   bus: MixBus;
+  automated: boolean;
   selected: boolean;
   api: ArrangeWorkspaceApi;
   missingDeviceIds: readonly string[];
   applyCanonicalState: (state: CanonicalState) => boolean;
   onSelect: () => void;
   onOpenDevices: () => void;
+  onOpenAutomation: () => void;
   onError: (message: string) => void;
   disabled?: boolean;
 }
@@ -51,6 +53,9 @@ export function MixerBusChannelStrip(props: Props) {
       >
         FX {bus.effects.length}
         {missing ? ' · MISSING' : ''}
+      </button>
+      <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
+        Automation {props.automated ? '· READ' : ''}
       </button>
       <label className={styles.panControl}>
         <span>

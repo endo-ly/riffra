@@ -1,21 +1,21 @@
 {
+  "kind": "event",
   "event": {
-    "arrangementRevision": 0,
-    "deviceId": "device-1",
-    "owner": {
-      "id": "track-1",
-      "kind": "track"
-    },
+    "type": "pluginStateChanged",
     "projectId": "project-1",
+    "owner": {
+      "kind": "track",
+      "id": "track-1"
+    },
+    "deviceId": "device-1",
     "state": {
-      "bypassed": false,
       "parameterValues": [
         0.25,
         0.75
       ],
-      "stateData": "opaque-state"
+      "stateData": "opaque-state",
+      "bypassed": false
     },
-    "type": "pluginStateChanged"
-  },
-  "kind": "event"
+    "arrangementRevision": 0
+  }
 }

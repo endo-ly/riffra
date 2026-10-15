@@ -9,8 +9,8 @@ use riffra_core::application::{
     SessionSettingsPatch, inspect_canonical_state,
 };
 use riffra_core::{
-    AutomationLane, AutomationParameter, CanonicalState, CreativeSession, MidiInputRoute,
-    TimelineTick, TrackPatch,
+    AutomationInterpolation, AutomationLane, AutomationTarget, CanonicalState, CreativeSession,
+    MidiInputRoute, TimelineTick, TrackPatch,
 };
 
 impl HostDispatcher<'_> {
@@ -318,20 +318,67 @@ impl HostDispatcher<'_> {
                 application,
             ),
             CanonicalCommand::AutomationGet(params) => Ok(ControlOutput::AutomationLanes(
-                automation_lanes(&canonical.session, params)?,
+                automation_lane(&canonical.session, params.target)?,
+            )),
+            CanonicalCommand::AutomationList(params) => Ok(ControlOutput::AutomationLanes(
+                automation_lanes(&canonical.session, params.owner)?,
             )),
             CanonicalCommand::AutomationSet(params) => self.created(
-                application.set_track_automation_with_created_ids(
-                    &params.track_id,
-                    params.parameter,
-                    params.points,
+                application.set_automation_with_created_ids(
+                    params.target.clone(),
+                    params.interpolation,
+                    params
+                        .points
+                        .into_iter()
+                        .map(|point| {
+                            let value = match point.value {
+                                crate::api::params::AutomationPointValue::Number(value) => value,
+                                crate::api::params::AutomationPointValue::Display(display) => {
+                                    let AutomationTarget::DeviceParameter {
+                                        device_id,
+                                        parameter_id,
+                                    } = &params.target
+                                    else {
+                                        return Err(DispatchError::invalid_request(
+                                            "display values require a device parameter target",
+                                        ));
+                                    };
+                                    let owner = canonical
+                                        .session
+                                        .arrangement
+                                        .device_owner(device_id)
+                                        .ok_or_else(|| {
+                                            DispatchError::invalid_request(
+                                                "unknown automation device",
+                                            )
+                                        })?;
+                                    self.audio
+                                        .ok_or_else(DispatchError::requires_live_host)?
+                                        .device_parameter_value_for_text(
+                                            &owner,
+                                            device_id,
+                                            parameter_id,
+                                            &display,
+                                        )
+                                        .map_err(|error| {
+                                            DispatchError::CommandFailed(error.to_string())
+                                        })?
+                                }
+                            };
+                            Ok(riffra_core::AutomationPoint {
+                                id: point.id,
+                                tick: TimelineTick(point.tick),
+                                value,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, DispatchError>>()?,
                 )?,
                 application,
             ),
             CanonicalCommand::AutomationClear(params) => self.created(
-                application.set_track_automation_with_created_ids(
-                    &params.track_id,
-                    params.parameter,
+                application.set_automation_with_created_ids(
+                    params.target,
+                    AutomationInterpolation::Linear,
                     Vec::new(),
                 )?,
                 application,
@@ -723,56 +770,93 @@ impl HostDispatcher<'_> {
     }
 }
 
-fn automation_lanes(
+fn automation_lane(
     session: &CreativeSession,
-    params: crate::api::params::AutomationGetParams,
+    target: AutomationTarget,
 ) -> Result<Vec<AutomationLane>, DispatchError> {
-    if !session
-        .arrangement
-        .tracks
-        .iter()
-        .any(|track| track.id == params.track_id)
-    {
-        return Err(DispatchError::invalid_request("track was not found"));
+    if !session.arrangement.has_automation_target(&target) {
+        return Err(DispatchError::invalid_request("unknown automation target"));
     }
-
-    let mut lanes = session
+    Ok(session
         .arrangement
         .automation_lanes
         .iter()
-        .filter(|lane| {
-            lane.track_id == params.track_id
-                && params
-                    .parameter
-                    .is_none_or(|parameter| lane.parameter == parameter)
+        .filter(|lane| lane.target == target)
+        .cloned()
+        .collect())
+}
+
+fn automation_lanes(
+    session: &CreativeSession,
+    owner: Option<riffra_core::EffectOwner>,
+) -> Result<Vec<AutomationLane>, DispatchError> {
+    use riffra_core::EffectOwner;
+    let arrangement = &session.arrangement;
+    match &owner {
+        Some(EffectOwner::Track { id })
+            if !arrangement.tracks.iter().any(|track| track.id == *id) =>
+        {
+            return Err(DispatchError::invalid_request("unknown track"));
+        }
+        Some(EffectOwner::Bus { id })
+            if !arrangement.mixer.buses.iter().any(|bus| bus.id == *id) =>
+        {
+            return Err(DispatchError::invalid_request("unknown bus"));
+        }
+        _ => {}
+    }
+    let mut lanes = arrangement
+        .automation_lanes
+        .iter()
+        .filter(|lane| match (&owner, &lane.target) {
+            (None, _) => true,
+            (Some(EffectOwner::Track { id }), AutomationTarget::TrackMix { track_id, .. }) => {
+                id == track_id
+            }
+            (Some(EffectOwner::Bus { id }), AutomationTarget::BusMix { bus_id, .. }) => {
+                id == bus_id
+            }
+            (Some(EffectOwner::Master), AutomationTarget::MasterGain) => true,
+            (Some(EffectOwner::Track { id }), AutomationTarget::SendLevel { send_id }) => {
+                arrangement
+                    .mixer
+                    .sends
+                    .iter()
+                    .any(|send| send.id == *send_id && send.track_id == *id)
+            }
+            (Some(owner), AutomationTarget::DeviceParameter { device_id, .. }) => {
+                arrangement.device(owner, device_id).is_ok()
+            }
+            _ => false,
         })
         .cloned()
         .collect::<Vec<_>>();
-    lanes.sort_by_key(|lane| match lane.parameter {
-        AutomationParameter::Volume => 0,
-        AutomationParameter::Pan => 1,
-    });
+    lanes.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(lanes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::params::AutomationGetParams;
-    use riffra_core::{AutomationPoint, TimelineTick, Track};
+    use riffra_core::{AutomationPoint, EffectOwner, TimelineTick, Track, TrackMixParameter};
 
     #[test]
-    fn automation_read_filters_by_track_and_parameter_in_stable_order() {
+    fn automation_read_resolves_targets_and_lists_channel_ownership() {
+        // Arrange
         let mut session = CreativeSession::new(1);
         session
             .arrangement
             .tracks
             .push(Track::audio("track:1".into(), "Audio".into()));
+        let pan = AutomationTarget::TrackMix {
+            track_id: "track:1".into(),
+            parameter: TrackMixParameter::Pan,
+        };
         session.arrangement.automation_lanes = vec![
             AutomationLane {
                 id: "pan".into(),
-                track_id: "track:1".into(),
-                parameter: AutomationParameter::Pan,
+                target: pan.clone(),
+                interpolation: AutomationInterpolation::Step,
                 points: vec![AutomationPoint {
                     id: "pan-point".into(),
                     tick: TimelineTick(20),
@@ -780,56 +864,52 @@ mod tests {
                 }],
             },
             AutomationLane {
-                id: "other-track".into(),
-                track_id: "track:2".into(),
-                parameter: AutomationParameter::Volume,
-                points: Vec::new(),
-            },
-            AutomationLane {
-                id: "volume".into(),
-                track_id: "track:1".into(),
-                parameter: AutomationParameter::Volume,
+                id: "master".into(),
+                target: AutomationTarget::MasterGain,
+                interpolation: AutomationInterpolation::Linear,
                 points: vec![AutomationPoint {
-                    id: "volume-point".into(),
-                    tick: TimelineTick(10),
+                    id: "master-point".into(),
+                    tick: TimelineTick(0),
                     value: -6.0,
                 }],
             },
         ];
 
-        let lanes = automation_lanes(
+        // Act
+        let all = automation_lanes(&session, None).unwrap();
+        let track = automation_lanes(
             &session,
-            AutomationGetParams {
-                track_id: "track:1".into(),
-                parameter: None,
-            },
+            Some(EffectOwner::Track {
+                id: "track:1".into(),
+            }),
         )
         .unwrap();
-        assert_eq!(
-            lanes
-                .iter()
-                .map(|lane| lane.id.as_str())
-                .collect::<Vec<_>>(),
-            ["volume", "pan"]
-        );
+        let lane = automation_lane(&session, pan).unwrap();
 
-        let filtered = automation_lanes(
-            &session,
-            AutomationGetParams {
-                track_id: "track:1".into(),
-                parameter: Some(AutomationParameter::Pan),
-            },
-        )
-        .unwrap();
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].id, "pan");
+        // Assert
+        assert_eq!(
+            all.iter().map(|lane| lane.id.as_str()).collect::<Vec<_>>(),
+            ["master", "pan"]
+        );
+        assert_eq!(track, lane);
+        assert_eq!(track.len(), 1);
+        assert_eq!(track[0].id, "pan");
+        assert!(
+            automation_lane(
+                &session,
+                AutomationTarget::TrackMix {
+                    track_id: "missing".into(),
+                    parameter: TrackMixParameter::Volume
+                }
+            )
+            .is_err()
+        );
         assert!(
             automation_lanes(
                 &session,
-                AutomationGetParams {
-                    track_id: "track:missing".into(),
-                    parameter: None,
-                }
+                Some(EffectOwner::Bus {
+                    id: "missing".into()
+                })
             )
             .is_err()
         );

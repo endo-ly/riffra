@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type {
   ArrangementMutationResult,
   CanonicalState,
+  AutomationLane,
+  AutomationTarget,
   InstrumentLibraryItem,
   PluginEntry,
 } from '@/model/domain';
@@ -14,6 +16,10 @@ import styles from './Devices.module.css';
 
 interface DevicesPanelProps {
   projectId: string;
+  automationLanes: AutomationLane[];
+  playing: boolean;
+  currentTick: number;
+  onOpenAutomation: (target: AutomationTarget) => void;
   target: DeviceTarget | null;
   api: ArrangeWorkspaceApi;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
@@ -80,6 +86,23 @@ export function DevicesPanel(props: DevicesPanelProps) {
         <DeviceParameterEditor
           key={`${props.projectId}:${JSON.stringify(target.owner)}:${device.id}:${plugin.path}`}
           api={props.api}
+          automationLanes={props.automationLanes}
+          automationReadActive={
+            props.playing &&
+            props.automationLanes.some(
+              (lane) =>
+                lane.target.kind === 'deviceParameter' && lane.target.deviceId === device.id,
+            )
+          }
+          currentTick={props.currentTick}
+          onOpenAutomation={(parameter) => {
+            if (parameter.parameterId)
+              props.onOpenAutomation({
+                kind: 'deviceParameter',
+                deviceId: device.id,
+                parameterId: parameter.parameterId,
+              });
+          }}
           owner={target.owner}
           deviceId={device.id}
           stateData={plugin.stateData}

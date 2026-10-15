@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <new>
 #include <regex>
 #include <vector>
@@ -25,6 +26,7 @@ void PluginRack::queueParameterValue(const int index, const float value) noexcep
         return;
     }
     const auto offset = static_cast<std::size_t>(index);
+    staticStateDirty.store(true, std::memory_order_release);
     const auto normalized = juce::jlimit(0.0f, 1.0f, value);
     queue->values[offset].store(normalized, std::memory_order_release);
     queue->dirty[offset].store(true, std::memory_order_release);
@@ -59,11 +61,20 @@ bool PluginRack::allocateParameterQueue(const std::size_t count, juce::String& e
         return false;
     }
     if (count > 0) {
+        candidate->automationRestore = std::unique_ptr<ParameterQueue::Restore[]>(
+            new (std::nothrow) ParameterQueue::Restore[count]);
+        if (candidate->automationRestore == nullptr) {
+            error = "plugin automation restore storage could not be allocated";
+            return false;
+        }
         candidate->values =
             std::unique_ptr<std::atomic<float>[]>(new (std::nothrow) std::atomic<float>[count]);
         candidate->dirty =
             std::unique_ptr<std::atomic<bool>[]>(new (std::nothrow) std::atomic<bool>[count]);
-        if (candidate->values == nullptr || candidate->dirty == nullptr) {
+        candidate->automationPreview = std::unique_ptr<AutomationPreviewValue[]>(
+            new (std::nothrow) AutomationPreviewValue[count]);
+        if (candidate->values == nullptr || candidate->dirty == nullptr ||
+            candidate->automationPreview == nullptr) {
             error = "The plugin parameter change queue could not be allocated.";
             return false;
         }
@@ -103,6 +114,10 @@ juce::String PluginRack::currentPluginName() const {
 }
 
 bool PluginRack::setParameter(const int index, const float value, juce::String& error) noexcept {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
     if (!loaded.load(std::memory_order_acquire)) {
         error = "No VST3 plugin is loaded.";
         return false;
@@ -117,6 +132,11 @@ bool PluginRack::setParameter(const int index, const float value, juce::String& 
 }
 
 bool PluginRack::setProgram(const int index, juce::String& error) {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     const juce::SpinLock::ScopedLockType lock(pluginLock);
     if (plugin == nullptr) {
         error = "No VST3 plugin is loaded.";
@@ -159,6 +179,35 @@ bool PluginRack::applyStateData(const juce::String& base64, juce::String& error)
 }
 
 bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String& error) noexcept {
+    if (isAutomationActive()) {
+        error = "device state editing is unavailable during automation read";
+        return false;
+    }
+    PluginStateSpec staticProjection;
+    try {
+        staticProjection = state;
+        if (!staticProjection.stateData || staticProjection.stateData->isEmpty()) {
+            const juce::SpinLock::ScopedLockType lock(pluginLock);
+            if (plugin == nullptr) {
+                error = "No VST3 plugin is loaded.";
+                return false;
+            }
+            const auto& parameters = plugin->getParameters();
+            const auto existingCount = staticProjection.parameterValues.size();
+            staticProjection.parameterValues.reserve(
+                std::max(existingCount, static_cast<std::size_t>(parameters.size())));
+            for (auto index = existingCount; index < static_cast<std::size_t>(parameters.size());
+                 ++index) {
+                const auto* parameter = parameters[static_cast<int>(index)];
+                staticProjection.parameterValues.push_back(
+                    parameter != nullptr ? parameter->getDefaultValue() : 0.0f);
+            }
+        }
+    } catch (...) {
+        error = "plugin static state projection could not be prepared";
+        return false;
+    }
+    staticStateDirty.store(true, std::memory_order_release);
     try {
         FaultInjection::before(FaultStage::stateApply);
     } catch (const std::exception& exception) {
@@ -196,6 +245,14 @@ bool PluginRack::applyPersistedState(const PluginStateSpec& state, juce::String&
         }
     }
     setBypassed(state.bypassed);
+    try {
+        const juce::SpinLock::ScopedLockType lock(pluginLock);
+        staticState = std::move(staticProjection);
+        staticStateDirty.store(false, std::memory_order_release);
+    } catch (...) {
+        error = "plugin static state projection could not be retained";
+        return false;
+    }
     return true;
 }
 
@@ -205,6 +262,8 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
         error = "No VST3 plugin is loaded.";
         return std::nullopt;
     }
+    if (staticState && (!staticStateDirty.load(std::memory_order_acquire) || isAutomationActive()))
+        return staticState;
     PluginStateSpec result;
     try {
         juce::MemoryBlock state;
@@ -223,7 +282,47 @@ std::optional<PluginStateSpec> PluginRack::persistedState(juce::String& error) c
     for (auto* parameter : parameters)
         result.parameterValues.push_back(parameter != nullptr ? parameter->getValue() : 0.0f);
     result.bypassed = bypassed.load(std::memory_order_acquire);
+    if (staticState) {
+        staticState = result;
+        staticStateDirty.store(false, std::memory_order_release);
+    }
     return result;
+}
+
+void PluginRack::restoreAutomation() noexcept {
+    auto* queue = parameterQueue.get();
+    if (queue != nullptr) {
+        for (std::size_t index = 0; index < queue->capacity; ++index) {
+            auto& restore = queue->automationRestore[index];
+            if (restore.parameter == nullptr) continue;
+            restore.parameter->setValue(restore.value);
+            restore.parameter = nullptr;
+            parameterControllerSyncPending.store(true, std::memory_order_release);
+        }
+    }
+    activeBindings = nullptr;
+    activeBindingCount = 0;
+    automationActive.store(false, std::memory_order_release);
+}
+
+void PluginRack::applyAutomation(std::span<PluginParameterAutomation> bindings,
+                                 const std::int64_t timelineSample, const bool playing) noexcept {
+    if (!playing || activeBindings != bindings.data() || activeBindingCount != bindings.size()) {
+        restoreAutomation();
+        activeBindings = bindings.data();
+        activeBindingCount = bindings.size();
+    }
+    if (!playing) return;
+    for (auto& binding : bindings) {
+        auto& restore = parameterQueue->automationRestore[binding.parameterIndex];
+        if (restore.parameter == nullptr) restore = {binding.parameter, binding.staticValue};
+        auto cursor = binding.lane.cursorAt(timelineSample - binding.inputLatency);
+        const auto preview = parameterQueue->automationPreview[binding.parameterIndex].current();
+        const auto value = preview.value_or(
+            cursor.valueAt(timelineSample - binding.inputLatency, binding.staticValue));
+        if (binding.parameter->getValue() != value) binding.parameter->setValue(value);
+        automationActive.store(true, std::memory_order_release);
+    }
 }
 
 void PluginRack::applyQueuedParameterChanges() noexcept {
@@ -292,6 +391,27 @@ std::optional<float> PluginRack::parameterValueForText(const int index, const ju
     return value;
 }
 
+std::optional<juce::String> PluginRack::parameterDisplayValue(const int index, const float value,
+                                                              juce::String& error) const {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr || index < 0 || static_cast<std::size_t>(index) >= parameterCount() ||
+        !std::isfinite(value) || value < 0.0f || value > 1.0f) {
+        error = "Plugin parameter display request is out of range.";
+        return std::nullopt;
+    }
+    const auto& parameters = plugin->getParameters();
+    if (index >= parameters.size() || parameters[index] == nullptr) {
+        error = "Plugin parameter index is out of range.";
+        return std::nullopt;
+    }
+    try {
+        return parameters[index]->getText(value, 96);
+    } catch (...) {
+        error = "Plugin parameter display conversion failed.";
+        return std::nullopt;
+    }
+}
+
 bool PluginRack::synchronizeParameterController(juce::String& error) {
     if (!parameterControllerSyncPending.load(std::memory_order_acquire)) return true;
     const juce::SpinLock::ScopedLockType lock(pluginLock);
@@ -339,6 +459,14 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
     if (plugin == nullptr) return result;
     const auto& parameters = plugin->getParameters();
     result.reserve(static_cast<std::size_t>(parameters.size()));
+    std::map<juce::String, int> idCounts;
+    for (auto* parameter : parameters) {
+        if (const auto* hosted =
+                dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter)) {
+            const auto id = hosted->getParameterID();
+            if (id.isNotEmpty()) ++idCounts[id];
+        }
+    }
     for (int index = 0; index < parameters.size(); ++index) {
         auto* parameter = parameters[index];
         if (parameter == nullptr) continue;
@@ -346,7 +474,14 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
         const auto discrete = parameter->isDiscrete();
         const auto steps =
             discrete ? static_cast<std::uint32_t>(std::max(0, parameter->getNumSteps())) : 0u;
+        std::optional<juce::String> parameterId;
+        if (const auto* hosted =
+                dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter)) {
+            const auto id = hosted->getParameterID();
+            if (id.isNotEmpty() && idCounts[id] == 1) parameterId = id;
+        }
         PluginParameterInfo info{index,
+                                 parameterId,
                                  parameter->getName(96),
                                  value,
                                  parameter->getDefaultValue(),
@@ -366,6 +501,97 @@ std::vector<PluginParameterInfo> PluginRack::parameters() const {
         result.push_back(std::move(info));
     }
     return result;
+}
+
+std::optional<PluginParameterAutomation> PluginRack::bindAutomation(
+    const juce::String& parameterId, AutomationRuntime lane, const PluginStateSpec& state,
+    const bool stepped, AutomationBindingFailure& failure, juce::String& error) {
+    failure = AutomationBindingFailure::invalidParameter;
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr) {
+        error = "automation device is unavailable";
+        return std::nullopt;
+    }
+
+    const auto& parameters = plugin->getParameters();
+    juce::AudioProcessorParameter* resolved = nullptr;
+    std::size_t index = 0;
+    for (int parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+        auto* parameter = parameters[parameterIndex];
+        const auto* hosted = dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameter);
+        if (hosted == nullptr || hosted->getParameterID() != parameterId) continue;
+        if (resolved != nullptr) {
+            failure = AutomationBindingFailure::laneUnavailable;
+            error = "automation parameter ID is ambiguous: " + parameterId;
+            return std::nullopt;
+        }
+        resolved = parameter;
+        index = static_cast<std::size_t>(parameterIndex);
+    }
+    if (resolved == nullptr) {
+        failure = AutomationBindingFailure::laneUnavailable;
+        error = "automation parameter ID is not present: " + parameterId;
+        return std::nullopt;
+    }
+    if (!resolved->isAutomatable() || (resolved->isDiscrete() && !stepped)) {
+        failure = AutomationBindingFailure::laneUnavailable;
+        error = "automation parameter is not automatable with this interpolation: " + parameterId;
+        return std::nullopt;
+    }
+    auto staticValue = resolved->getDefaultValue();
+    if (index < state.parameterValues.size())
+        staticValue = state.parameterValues[index];
+    else if (state.stateData.has_value() && state.stateData->isNotEmpty()) {
+        error = "automation static parameter state is unavailable: " + parameterId;
+        return std::nullopt;
+    }
+    if (!std::isfinite(staticValue) || staticValue < 0.0f || staticValue > 1.0f) {
+        error = "automation static parameter state is invalid: " + parameterId;
+        return std::nullopt;
+    }
+    if (parameterQueue == nullptr || index >= parameterQueue->capacity) {
+        failure = AutomationBindingFailure::unavailableStorage;
+        error = "automation parameter storage requires device reprepare";
+        return std::nullopt;
+    }
+    return PluginParameterAutomation{this, resolved, std::move(lane), staticValue, index};
+}
+
+bool PluginRack::setAutomationPreview(const juce::String& parameterId,
+                                      const std::uint64_t previewToken,
+                                      const std::optional<float> value, juce::String& error) {
+    const juce::SpinLock::ScopedLockType lock(pluginLock);
+    if (plugin == nullptr || parameterQueue == nullptr) {
+        error = "automation device is unavailable";
+        return false;
+    }
+    const auto& parameters = plugin->getParameters();
+    std::optional<std::size_t> resolvedIndex;
+    for (int index = 0; index < parameters.size(); ++index) {
+        const auto* hosted =
+            dynamic_cast<const juce::HostedAudioProcessorParameter*>(parameters[index]);
+        if (hosted == nullptr || hosted->getParameterID() != parameterId) continue;
+        if (resolvedIndex.has_value()) {
+            error = "automation parameter ID is ambiguous: " + parameterId;
+            return false;
+        }
+        resolvedIndex = static_cast<std::size_t>(index);
+    }
+    if (!resolvedIndex || *resolvedIndex >= parameterQueue->capacity) {
+        error = "automation parameter ID is not present: " + parameterId;
+        return false;
+    }
+    auto& preview = parameterQueue->automationPreview[*resolvedIndex];
+    if (value.has_value()) {
+        if (!std::isfinite(*value) || *value < 0.0f || *value > 1.0f) {
+            error = "automation preview value must be between 0 and 1";
+            return false;
+        }
+        preview.set(previewToken, *value);
+    } else {
+        preview.clear(previewToken);
+    }
+    return true;
 }
 
 PluginProgramStatus PluginRack::programStatus() const {

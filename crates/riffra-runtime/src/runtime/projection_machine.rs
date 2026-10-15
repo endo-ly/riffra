@@ -833,6 +833,7 @@ mod tests {
                 project_id: "project:test".into(),
                 revision,
                 graph: crate::execution::ExecutionGraph {
+                    automation: Vec::new(),
                     mixer: crate::execution::GraphMixer::default(),
                     mixdown: crate::execution::GraphMixdown::default(),
                     timebase: crate::execution::GraphTimebase {

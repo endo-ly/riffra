@@ -175,7 +175,6 @@ private:
     RecordingController recordingController;
 
     std::atomic<std::uint32_t> muteReasons{0};
-    std::atomic<float> targetGainLinear{1.0f};
     std::atomic<float> masterGainDb{0.0f};
     std::atomic<int> inputChannel{0};
     std::atomic<bool> resetGainOnNextCallback{true};

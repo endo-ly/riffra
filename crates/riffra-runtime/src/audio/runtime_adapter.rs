@@ -86,6 +86,10 @@ impl TransportDriver for AudioSupervisor {
             .map_err(RuntimeError::from)
     }
 
+    fn pause_timeline(&self) -> Result<(), RuntimeError> {
+        AudioSupervisor::pause_timeline(self).map_err(RuntimeError::from)
+    }
+
     fn stop_timeline(&self) -> Result<(), RuntimeError> {
         AudioSupervisor::stop_timeline(self)
             .map(|_| ())

@@ -315,4 +315,124 @@ TEST(PluginRackTest, SendsPanicControllersOnEveryMidiChannel) {
     }
 }
 
+TEST(PluginRackTest, BindsStableParameterIdsAndAppliesAutomationBeforeRealVstProcessing) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    PluginRack rack;
+    juce::String error;
+    ASSERT_FALSE(rack.load(RIFFRA_TEST_EFFECT_BUNDLE_PATH, kSampleRate, kBlockSize,
+                           PluginProcessingMode::offline)
+                     .has_value());
+    const auto parameters = rack.parameters();
+    ASSERT_FALSE(parameters.empty());
+    ASSERT_TRUE(parameters[0].parameterId.has_value());
+    const auto state = rack.persistedState(error);
+    ASSERT_TRUE(state.has_value()) << error;
+    ASSERT_TRUE(rack.applyPersistedState(*state, error)) << error;
+    AutomationRuntime lane;
+    lane.setPoints({{0, 0.25f}, {32, 0.75f}}, true);
+    AutomationBindingFailure failure = AutomationBindingFailure::invalidParameter;
+    auto binding =
+        rack.bindAutomation(*parameters[0].parameterId, lane, *state, true, failure, error);
+    ASSERT_TRUE(binding.has_value()) << error;
+    EXPECT_FLOAT_EQ(binding->staticValue, state->parameterValues[0]);
+    std::array<PluginParameterAutomation, 1> bindings{std::move(*binding)};
+    std::array<float, 32> input, left{}, right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act / Assert
+    ASSERT_TRUE(rack.setParameter(0, state->parameterValues[0], error)) << error;
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 0, true);
+    EXPECT_NEAR(left.back(), 0.0625f, 0.0001f);
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 32, true);
+    EXPECT_NEAR(left.back(), 0.1875f, 0.0001f);
+    EXPECT_FALSE(rack.setParameter(0, 0.9f, error));
+    EXPECT_FALSE(rack.applyPersistedState(*state, error));
+    EXPECT_FALSE(rack.setProgram(0, error));
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, {}, 48, true);
+    const auto restoredState = rack.persistedState(error);
+    ASSERT_TRUE(restoredState.has_value()) << error;
+    EXPECT_NEAR(restoredState->parameterValues[0], state->parameterValues[0], 0.0001f);
+    EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
+    rack.process(inputs.data(), 1, outputs.data(), 2, 32, nullptr, bindings, 64, false);
+    EXPECT_NEAR(rack.parameters()[0].value, state->parameterValues[0], 0.0001f);
+    EXPECT_FALSE(
+        rack.bindAutomation("absent-parameter", lane, *state, true, failure, error).has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error, "automation parameter ID is not present: absent-parameter");
+    const auto discrete =
+        std::find_if(parameters.begin(), parameters.end(), [](const auto& parameter) {
+            return parameter.discrete && parameter.parameterId.has_value();
+        });
+    ASSERT_NE(discrete, parameters.end());
+    EXPECT_FALSE(rack.bindAutomation(*discrete->parameterId, lane, *state, false, failure, error)
+                     .has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_TRUE(rack.bindAutomation(*discrete->parameterId, lane, *state, true, failure, error)
+                    .has_value());
+}
+
+TEST(PluginRackTest, AutomationBindingUsesProjectedStateWithoutCapturingPluginState) {
+    // Arrange
+    ProcessorTrace trace;
+    juce::String error;
+    auto rack = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace, true),
+                                            kSampleRate, kBlockSize, error);
+    ASSERT_NE(rack, nullptr) << error;
+    const auto parameters = rack->parameters();
+    ASSERT_EQ(parameters.size(), 1u);
+    ASSERT_TRUE(parameters[0].parameterId.has_value());
+    PluginStateSpec projected;
+    projected.parameterValues = {0.4f};
+    ASSERT_TRUE(rack->applyPersistedState(projected, error)) << error;
+    const auto retained = rack->persistedState(error);
+    ASSERT_TRUE(retained.has_value()) << error;
+    EXPECT_FLOAT_EQ(retained->parameterValues[0], projected.parameterValues[0]);
+    EXPECT_EQ(trace.stateCaptureCount, 0);
+    AutomationRuntime lane;
+    lane.setPoints({{0, 0.25f}, {32, 0.75f}}, true);
+
+    // Act
+    AutomationBindingFailure failure = AutomationBindingFailure::invalidParameter;
+    const auto binding =
+        rack->bindAutomation(*parameters[0].parameterId, lane, projected, true, failure, error);
+
+    // Assert
+    ASSERT_TRUE(binding.has_value()) << error;
+    EXPECT_FLOAT_EQ(binding->staticValue, projected.parameterValues[0]);
+    EXPECT_EQ(trace.stateCaptureCount, 0);
+
+    // An installed plugin may retain an old lane whose parameter is no longer automatable.
+    PluginRackTestPeer::addParameterAndPublishCount(
+        *rack, new juce::AudioParameterFloat(
+                   juce::ParameterID{"test.manual", 1}, "Manual Parameter",
+                   juce::NormalisableRange<float>{0.0f, 1.0f}, 0.5f,
+                   juce::AudioParameterFloatAttributes().withAutomatable(false)));
+    const auto unavailable =
+        rack->bindAutomation("test.manual", lane, projected, true, failure, error);
+    EXPECT_FALSE(unavailable.has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error,
+              "automation parameter is not automatable with this interpolation: test.manual");
+
+    // A newly duplicated stable ID must never bind to its first matching parameter.
+    PluginRackTestPeer::addParameterAndPublishCount(
+        *rack,
+        new juce::AudioParameterFloat(juce::ParameterID{"test.parameter", 1}, "Duplicate Parameter",
+                                      juce::NormalisableRange<float>{0.0f, 1.0f}, 0.25f));
+    const auto parametersAfterDuplicate = rack->parameters();
+    ASSERT_EQ(parametersAfterDuplicate.size(), 3u);
+    EXPECT_FALSE(parametersAfterDuplicate[0].parameterId.has_value());
+    EXPECT_FALSE(parametersAfterDuplicate[2].parameterId.has_value());
+    const auto ambiguous =
+        rack->bindAutomation("test.parameter", lane, projected, true, failure, error);
+    EXPECT_FALSE(ambiguous.has_value());
+    EXPECT_EQ(failure, AutomationBindingFailure::laneUnavailable);
+    EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
+    EXPECT_FALSE(rack->setAutomationPreview("test.parameter", 7, 0.5f, error));
+    EXPECT_EQ(error, "automation parameter ID is ambiguous: test.parameter");
+}
+
 }  // namespace riffra

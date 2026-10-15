@@ -247,6 +247,16 @@ MIDI とライブ入力の扱いは次の通り。
 - 停止時は短いグラフ境界でキャプチャ終了とエフェクト状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
 - 生成は正準のトラックエフェクトから一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
 
+AutomationはRustが所有する共通Laneから投影し、Nativeが処理位置に合わせて準備する。LinearはGainをdB、Panを左右位置、Device Parameterを正規化値で補間する。Stepは次のPointの時刻まで前の値を保持する。最初のPointより前と最後のPointより後は端点の値を保持する。Play・Seek・Loop・途中範囲のRenderでは楽曲全体の位置から評価し、Tempoと各経路のPDCを反映する。
+
+Track・BusのFader/Pan、Send Level、Master Gainはサンプル単位で適用する。VST3は処理ブロック先頭の位置で評価し、そのブロックのParameter値を設定する。Master GainはMaster FX後に1回適用し、Realtime安全処理はその後に置く。OfflineとStemも同じMixer経路と評価器を使用し、Stemでは他Trackの主出力だけを除外して共有経路とPDCを維持する。
+
+VST3のStable Parameter IDはグラフ準備時に実Parameterへ解決する。Missing / Disabled Device、Parameter IDの消失・重複、選択した補間でAutomation非対応のParameterのLaneは正準状態に残し、実行対象から外してRender結果にも診断を記録する。実行グラフやBindingの構造が不正な場合は準備に失敗する。音声スレッドでは準備済みの参照とPoint列を使用し、ID検索、状態保存、動的確保を行わない。適用したRustのPlugin State投影をRackの静的Snapshotとして保持し、Opaque Stateがない場合に値が省略されたParameterはPlugin定義の既定値で補う。グラフ準備では共有Rackの状態を読み書きしない。
+
+Automation Pointの連続編集はPrepared Graph上の一時Overrideへ送り、正準Lane、Undo履歴、保存状態を変更しない。PointerUpで一度だけ正準状態を更新し、Escape、PointerCancel、Project / Host切替でOverrideを解除する。GUIはTransport位置とLaneから有効値を求め、VST3の表示文字列は対象ParameterのPlugin変換を使う。
+
+Playback値はPluginの静的Stateへ保存しない。Rackは正準Stateと手動編集結果のSnapshotを保持し、Automation Read中はDevice Parameter・Preset・Stateの手動変更を拒否し、Native Editorの操作を止める。Pauseは短いフェードで無音にして再生位置と最後の有効値を保ち、Resume時に再開位置から再評価する。Stop・Lane解除・グラフ置換で静的値を復元する。Lane編集だけでは既存Plugin Instanceを再利用する。Mixerの静的値はRead中も編集でき、再生中はLaneを優先し、停止後に静的値を適用する。
+
 ### 5.2 投影の整合性
 
 投影要求の識別子は、正準状態のsequence、Arrangement revision、サイドカーの世代、音声環境のrevisionの組である。`Machine::step` は、入力と渡された時刻から次の状態と副作用を決める純粋な遷移関数である。要求の採用・待機・準備と候補の正準化の成否も副作用として返す。準備する要求と停止状態は状態機械だけが保持する。ワーカーは実行する仕事を状態機械へ求め、返された副作用に従ってネイティブの準備・確定・破棄を実行し、結果を返す。
@@ -255,11 +265,13 @@ MIDI とライブ入力の扱いは次の通り。
 
 正準の投影とProject ID・実行グラフ・診断が一致するグラフが、同じ実行環境で現役になった時点を「正準の採用」とする。現役・実行中・待機中のいずれかに一致するグラフがあれば再準備せず、必要な場合は完了を待って正準キーを適用する。表示だけの編集やrevisionの進行でも、この一致条件が成り立つ限り再構築しない。
 
-Play / Stop の順序は次の通り。
+Play / Pause / Stop の順序は次の通り。
 
 ```text
 Play（準備済み）→ 直ちに開始
 Play（準備中） → TransportStatus: starting を表示して投影完了を待つ
+Pause → 短いフェードで無音にし、再生位置と有効値を保持
+Play（Paused）→ 保持した位置から再開し、Automationを再評価
 Stop → 保留中の Play より優先。後続の準備完了でも自動再生しない
 投影失敗 → Play 意図を解除。再試行は呼び出し側の明示要求でのみ行う
 再起動・環境変更後 → 最新の正準スナップショットを新しい識別子で投影する
@@ -267,7 +279,7 @@ Stop → 保留中の Play より優先。後続の準備完了でも自動再�
 
 ### 5.3 トランスポート
 
-- Host Runtime が Play / Stop 要求の順序と、再生に必要な投影の有効性を判断する。Transport executor は決定済みの要求を音声ランタイムへ伝える
+- Host Runtime が Play / Pause / Stop 要求の順序と、再生に必要な投影の有効性を判断する。Transport executor は決定済みの要求を音声ランタイムへ伝える
 - 反映対象は最新の決定済み要求のみとし、古い要求や古い投影完了で現在の再生状態を変えない。投影が未準備の場合は `starting` を経由する
 - 音声デバイスの状態、投影グラフの状態、トランスポートの状態は別々に通知する
 
@@ -467,7 +479,9 @@ VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/job
 - ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
 - Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
 
-Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。必要な音声クリップ素材や、出力に使うMIDI音源を解決できない場合はJobを失敗させる。Missing Effectはチェーンから除外して残りを処理し、除外したDevice IDを結果の警告へ残す。通常RenderとStemには同じ方針を適用する。
+
+Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
 
 書き出し時は、入力されたMixdown設定が正準設定と異なる場合だけ設定を確定し、そのMutationの結果を受け取ってからRender Jobを開始する。同じ設定での書き出しは正準状態を変更しない。
 

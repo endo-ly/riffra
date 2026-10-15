@@ -103,31 +103,83 @@ bool decodeTickRange(const juce::var& value, const juce::String& path, TickRange
     return true;
 }
 
-bool decodeAutomation(const juce::var& value, const juce::String& path, const bool volume,
-                      std::vector<AutomationPointSpec>& output, juce::String& error) {
-    ContractReader reader(value, path, {"tick", "value"}, error);
-    AutomationPointSpec point;
-    if (!reader.unsignedInteger("tick", point.tick) || !reader.number("value", point.value) ||
-        !reader.finish())
+bool decodeAutomationLane(const juce::var& value, const juce::String& path,
+                          AutomationLaneSpec& output, juce::String& error) {
+    ContractReader reader(value, path, {"target", "interpolation", "points"}, error);
+    juce::var target;
+    juce::String interpolation;
+    juce::Array<juce::var> points;
+    if (!reader.object("target", target) || !reader.string("interpolation", interpolation) ||
+        !reader.array("points", points) || !reader.finish())
         return false;
-    const auto minimum = volume ? -90.0 : -1.0;
-    const auto maximum = volume ? 24.0 : 1.0;
-    if (point.value < minimum || point.value > maximum)
-        return fail(error, child(path, "value"),
-                    "must be between " + juce::String(minimum) + " and " + juce::String(maximum));
-    output.push_back(point);
-    return true;
-}
-
-bool decodeAutomationList(const juce::Array<juce::var>& values, const juce::String& path,
-                          const bool volume, std::vector<AutomationPointSpec>& output,
-                          juce::String& error) {
-    output.clear();
-    output.reserve(static_cast<std::size_t>(values.size()));
-    for (int index = 0; index < values.size(); ++index) {
-        if (!decodeAutomation(values.getReference(index), element(path, index), volume, output,
-                              error))
+    const auto targetPath = child(path, "target");
+    const auto kind = target.getProperty("kind", {}).toString();
+    juce::String parameter;
+    juce::String decodedKind;
+    if (kind == "trackMix" || kind == "busMix") {
+        const auto track = kind == "trackMix";
+        ContractReader t(target, targetPath, {"kind", track ? "trackId" : "busId", "parameter"},
+                         error);
+        if (!t.string("kind", decodedKind) || !t.string(track ? "trackId" : "busId", output.id) ||
+            !t.string("parameter", parameter) || !t.finish())
             return false;
+        if (track && parameter == "volume")
+            output.kind = AutomationTargetKind::trackVolume;
+        else if (track && parameter == "pan")
+            output.kind = AutomationTargetKind::trackPan;
+        else if (!track && parameter == "gain")
+            output.kind = AutomationTargetKind::busGain;
+        else if (!track && parameter == "pan")
+            output.kind = AutomationTargetKind::busPan;
+        else
+            return fail(error, targetPath, "unknown mix parameter");
+    } else if (kind == "masterGain") {
+        ContractReader t(target, targetPath, {"kind"}, error);
+        if (!t.string("kind", decodedKind) || !t.finish()) return false;
+        output.kind = AutomationTargetKind::masterGain;
+    } else if (kind == "sendLevel") {
+        ContractReader t(target, targetPath, {"kind", "sendId"}, error);
+        if (!t.string("kind", decodedKind) || !t.string("sendId", output.id) || !t.finish())
+            return false;
+        output.kind = AutomationTargetKind::sendLevel;
+    } else if (kind == "deviceParameter") {
+        ContractReader t(target, targetPath, {"kind", "deviceId", "parameterId"}, error);
+        if (!t.string("kind", decodedKind) || !t.string("deviceId", output.id) ||
+            !t.string("parameterId", output.parameterId) || !t.finish())
+            return false;
+        output.kind = AutomationTargetKind::deviceParameter;
+        if (output.parameterId.isEmpty())
+            return fail(error, targetPath, "parameter ID must be non-empty");
+    } else
+        return fail(error, targetPath, "unknown automation target");
+    if (output.kind != AutomationTargetKind::masterGain && output.id.isEmpty())
+        return fail(error, targetPath, "target ID must be non-empty");
+    int mode = 0;
+    if (!readEnum(interpolation, child(path, "interpolation"), {{"linear", 0}, {"step", 1}}, mode,
+                  error))
+        return false;
+    output.interpolation = static_cast<AutomationInterpolationSpec>(mode);
+    if (points.isEmpty() || points.size() > 16384)
+        return fail(error, child(path, "points"), "requires 1..16384 points");
+    const auto pan = output.kind == AutomationTargetKind::trackPan ||
+                     output.kind == AutomationTargetKind::busPan;
+    const auto device = output.kind == AutomationTargetKind::deviceParameter;
+    const auto minimum = pan ? -1.0 : device ? 0.0 : -90.0;
+    const auto maximum = pan || device                                     ? 1.0
+                         : output.kind == AutomationTargetKind::masterGain ? 0.0
+                                                                           : 24.0;
+    for (int index = 0; index < points.size(); ++index) {
+        const auto pointPath = element(child(path, "points"), index);
+        ContractReader p(points.getReference(index), pointPath, {"tick", "value"}, error);
+        AutomationPointSpec point;
+        if (!p.unsignedInteger("tick", point.tick) || !p.number("value", point.value) ||
+            !p.finish())
+            return false;
+        if (point.value < minimum || point.value > maximum)
+            return fail(error, child(pointPath, "value"), "outside target value range");
+        if (!output.points.empty() && point.tick <= output.points.back().tick)
+            return fail(error, child(pointPath, "tick"), "ticks must be strictly increasing");
+        output.points.push_back(point);
     }
     return true;
 }
@@ -377,18 +429,15 @@ bool decodeMidiClip(const juce::var& value, const juce::String& path, MidiClipSp
 
 bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& output,
                  juce::String& error) {
-    ContractReader reader(
-        value, path,
-        {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput", "audioInput",
-         "midiInput", "volumeAutomation", "panAutomation", "effects", "instrument", "audioClips",
-         "midiClips", "panLaw", "externalAudioSourceTrackId", "outputBusId"},
-        error);
+    ContractReader reader(value, path,
+                          {"id", "kind", "gainDb", "pan", "muted", "solo", "armed", "monitorInput",
+                           "audioInput", "midiInput", "effects", "instrument", "audioClips",
+                           "midiClips", "panLaw", "externalAudioSourceTrackId", "outputBusId"},
+                          error);
     juce::String kind;
     juce::var audioInput;
     juce::var midiInput;
     juce::var instrument;
-    juce::Array<juce::var> volumeAutomation;
-    juce::Array<juce::var> panAutomation;
     juce::Array<juce::var> effects;
     juce::Array<juce::var> audioClips;
     juce::Array<juce::var> midiClips;
@@ -401,10 +450,9 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
         !reader.boolean("armed", output.armed) ||
         !reader.boolean("monitorInput", output.monitorInput) ||
         !reader.value("audioInput", audioInput) || !reader.object("midiInput", midiInput) ||
-        !reader.array("volumeAutomation", volumeAutomation) ||
-        !reader.array("panAutomation", panAutomation) || !reader.array("effects", effects) ||
-        !reader.value("instrument", instrument) || !reader.array("audioClips", audioClips) ||
-        !reader.array("midiClips", midiClips) || !reader.finish())
+        !reader.array("effects", effects) || !reader.value("instrument", instrument) ||
+        !reader.array("audioClips", audioClips) || !reader.array("midiClips", midiClips) ||
+        !reader.finish())
         return false;
     int trackKind = 0;
     if (!readEnum(kind, child(path, "kind"), {{"audio", 0}, {"instrument", 1}}, trackKind, error))
@@ -436,11 +484,6 @@ bool decodeTrack(const juce::var& value, const juce::String& path, TrackSpec& ou
         (*output.midiInput.channel < 1 || *output.midiInput.channel > 16))
         return fail(error, child(child(path, "midiInput"), "channel"), "must be in 1..=16");
 
-    if (!decodeAutomationList(volumeAutomation, child(path, "volumeAutomation"), true,
-                              output.volumeAutomation, error) ||
-        !decodeAutomationList(panAutomation, child(path, "panAutomation"), false,
-                              output.panAutomation, error))
-        return false;
     for (int index = 0; index < effects.size(); ++index) {
         PluginDeviceSpec device;
         if (!decodePluginDevice(effects.getReference(index), element(child(path, "effects"), index),
@@ -539,7 +582,7 @@ bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGrap
                  juce::String& error) {
     ContractReader reader(value, path,
                           {"timebase", "loopRange", "punchRange", "metronomeEnabled",
-                           "masterGainDb", "tracks", "mixdown", "mixer"},
+                           "masterGainDb", "tracks", "mixdown", "mixer", "automation"},
                           error);
     juce::var timebase;
     juce::var loopRange;
@@ -547,11 +590,13 @@ bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGrap
     juce::var mixdown;
     juce::var mixer;
     juce::Array<juce::var> tracks;
+    juce::Array<juce::var> automation;
     if (!reader.object("timebase", timebase) || !reader.object("loopRange", loopRange) ||
         !reader.value("punchRange", punchRange) ||
         !reader.boolean("metronomeEnabled", output.metronomeEnabled) ||
         !reader.number("masterGainDb", output.masterGainDb) || !reader.array("tracks", tracks) ||
-        !reader.object("mixdown", mixdown) || !reader.object("mixer", mixer) || !reader.finish() ||
+        !reader.object("mixdown", mixdown) || !reader.object("mixer", mixer) ||
+        !reader.array("automation", automation) || !reader.finish() ||
         !decodeMixer(mixer, child(path, "mixer"), output.mixer, error))
         return false;
     ContractReader mixReader(mixdown, child(path, "mixdown"),
@@ -579,6 +624,13 @@ bool decodeGraph(const juce::var& value, const juce::String& path, ExecutionGrap
                          error))
             return false;
         output.tracks.push_back(std::move(track));
+    }
+    for (int index = 0; index < automation.size(); ++index) {
+        AutomationLaneSpec lane;
+        if (!decodeAutomationLane(automation.getReference(index),
+                                  element(child(path, "automation"), index), lane, error))
+            return false;
+        output.automation.push_back(std::move(lane));
     }
     return validateMixerGraph(output, error);
 }

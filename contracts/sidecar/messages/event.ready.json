@@ -111,6 +111,7 @@
         "instrumentRuntimeCount": 1,
         "pluginCount": 1,
         "maximumLatencySamples": 64,
+        "automationWarnings": [],
         "instrumentFaults": [
           {
             "trackId": "track-1",

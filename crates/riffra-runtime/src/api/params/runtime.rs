@@ -75,6 +75,15 @@ pub struct ChannelMixParams {
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(optional_fields = nullable)]
+pub struct AutomationPreviewParams {
+    pub target: riffra_core::AutomationTarget,
+    pub value: Option<f64>,
+    pub preview_token: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MuteParams {
     pub muted: bool,
 }

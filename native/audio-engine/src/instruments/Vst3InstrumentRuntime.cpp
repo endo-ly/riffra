@@ -36,7 +36,7 @@ bool Vst3InstrumentRuntime::isLoaded() const noexcept {
 
 void Vst3InstrumentRuntime::process(float* const* outputChannels, const int outputChannelCount,
                                     const int numSamples, const juce::MidiBuffer* const midi,
-                                    const InstrumentProcessContext&) noexcept {
+                                    const InstrumentProcessContext& context) noexcept {
     if (rack == nullptr) {
         if (outputChannels != nullptr)
             for (int channel = 0; channel < outputChannelCount; ++channel)
@@ -44,7 +44,8 @@ void Vst3InstrumentRuntime::process(float* const* outputChannels, const int outp
                     juce::FloatVectorOperations::clear(outputChannels[channel], numSamples);
         return;
     }
-    rack->process(nullptr, 0, outputChannels, outputChannelCount, numSamples, midi);
+    rack->process(nullptr, 0, outputChannels, outputChannelCount, numSamples, midi,
+                  context.automation, context.timelineSample, context.playing);
 }
 
 bool Vst3InstrumentRuntime::enqueueMidi(const juce::MidiMessage& message) noexcept {

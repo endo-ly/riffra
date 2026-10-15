@@ -71,6 +71,73 @@ TEST(TimelineRealtimeTest, AppliesEveryCommandOfABlockInSubmissionOrder) {
     EXPECT_EQ(frame.appliedCommandSequence, *stop);
 }
 
+TEST(TimelineRealtimeTest, PauseFreezesThePlayheadUntilResumeAndStopRestoresTransport) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    startAudioOwnedTimeline(engine, formats);
+    std::array<float, kBlockSamples> left{};
+    std::array<float, kBlockSamples> right{};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+    ASSERT_TRUE(engine.play());
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    ASSERT_GT(engine.status().frame.timelineSample, 0);
+
+    // Act
+    ASSERT_TRUE(engine.pause());
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto paused = engine.status().frame;
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto held = engine.status().frame;
+    ASSERT_TRUE(engine.play());
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    const auto resumed = engine.status().frame;
+
+    // Assert
+    EXPECT_EQ(paused.transportState, TransportState::paused);
+    EXPECT_EQ(held.transportState, TransportState::paused);
+    EXPECT_EQ(held.timelineSample, paused.timelineSample);
+    EXPECT_EQ(resumed.transportState, TransportState::playing);
+    EXPECT_GT(resumed.timelineSample, held.timelineSample);
+
+    ASSERT_TRUE(engine.pause());
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    ASSERT_EQ(engine.status().frame.transportState, TransportState::paused);
+    ASSERT_TRUE(engine.stop());
+    (void)engine.beginBlock(kBlockSamples);
+    engine.mix(outputs.data(), 2, kBlockSamples);
+    EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
+}
+
+TEST(TimelineRealtimeTest, RejectsPauseWhileArrangeRecordingIsActive) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    startAudioOwnedTimeline(engine, formats);
+    juce::String error;
+    ASSERT_EQ(engine.startRecording(0, error), RealtimeRequest::accepted);
+    (void)engine.beginBlock(kBlockSamples);
+    ASSERT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
+
+    // Act
+    const auto pause = engine.pause();
+
+    // Assert
+    EXPECT_FALSE(pause.has_value());
+    EXPECT_EQ(engine.status().frame.transportState, TransportState::playing);
+    EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
+
+    engine.setRealtimeOwner(RealtimeOwner::control);
+    ASSERT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+}
+
 TEST(TimelineRealtimeTest, ReportsAPendingSeekTargetWhileStopped) {
     // Arrange
     juce::AudioFormatManager formats;

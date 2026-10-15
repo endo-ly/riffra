@@ -96,6 +96,7 @@ private:
     void handle(const SendTrackMidiCommand& command, CommandResponder responder);
     void handle(const PanicTrackMidiCommand& command, CommandResponder responder);
     void handle(const SetSendLevelCommand& command, CommandResponder responder);
+    void handle(const PreviewAutomationValueCommand& command, CommandResponder responder);
     void handle(const SetChannelMixCommand& command, CommandResponder responder);
     void handle(const SetDeviceBypassedCommand& command, CommandResponder responder);
     void handle(const SetDeviceParameterCommand& command, CommandResponder responder);

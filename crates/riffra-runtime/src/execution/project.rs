@@ -1,7 +1,7 @@
 use super::*;
 use riffra_core::{
-    AudioTakeVariant, AutomationParameter, CreativeSession, FadeShape, InternalInstrumentResource,
-    MidiEventKind, MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
+    AudioTakeVariant, CreativeSession, FadeShape, InternalInstrumentResource, MidiEventKind,
+    MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
 };
 
 /// Builds a live snapshot from canonical session state and already-resolved resources.
@@ -165,23 +165,6 @@ pub(crate) fn project_graph(
                 })
                 .collect();
 
-            let mut volume_automation = Vec::new();
-            let mut pan_automation = Vec::new();
-            for lane in arrangement
-                .automation_lanes
-                .iter()
-                .filter(|lane| lane.track_id == track.id)
-            {
-                let target = match lane.parameter {
-                    AutomationParameter::Volume => &mut volume_automation,
-                    AutomationParameter::Pan => &mut pan_automation,
-                };
-                target.extend(lane.points.iter().map(|point| GraphAutomationPoint {
-                    tick: point.tick.0,
-                    value: point.value,
-                }));
-            }
-
             GraphTrack {
                 pan_law: track.pan_law,
                 external_audio_source_track_id: track.external_audio_source_track_id.clone(),
@@ -204,8 +187,6 @@ pub(crate) fn project_graph(
                     device_id: track.midi_input.device_id.clone(),
                     channel: track.midi_input.channel,
                 },
-                volume_automation,
-                pan_automation,
                 effects,
                 instrument,
                 audio_clips,
@@ -257,6 +238,22 @@ pub(crate) fn project_graph(
             }),
             metronome_enabled: session.settings.metronome_enabled,
             master_gain_db: session.settings.master_db,
+            automation: arrangement
+                .automation_lanes
+                .iter()
+                .map(|lane| GraphAutomationLane {
+                    target: lane.target.clone(),
+                    interpolation: lane.interpolation,
+                    points: lane
+                        .points
+                        .iter()
+                        .map(|point| GraphAutomationPoint {
+                            tick: point.tick.0,
+                            value: point.value,
+                        })
+                        .collect(),
+                })
+                .collect(),
             tracks,
         },
         diagnostics,
@@ -326,8 +323,9 @@ fn plugin_state(
 mod tests {
     use super::*;
     use riffra_core::{
-        AudioClip, AudioInputRoute, AutomationLane, AutomationPoint, EffectDevice, MidiClip,
-        MidiEvent, MidiInputRoute, MidiNote, Track, TrackInstrument,
+        AudioClip, AudioInputRoute, AutomationLane, AutomationPoint, AutomationTarget,
+        EffectDevice, MidiClip, MidiEvent, MidiInputRoute, MidiNote, Track, TrackInstrument,
+        TrackMixParameter,
     };
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
@@ -530,8 +528,11 @@ mod tests {
         session.arrangement.automation_lanes = vec![
             AutomationLane {
                 id: "lane:volume".into(),
-                track_id: "track:audio".into(),
-                parameter: AutomationParameter::Volume,
+                target: AutomationTarget::TrackMix {
+                    track_id: "track:audio".into(),
+                    parameter: TrackMixParameter::Volume,
+                },
+                interpolation: riffra_core::AutomationInterpolation::Linear,
                 points: vec![AutomationPoint {
                     id: "point:ignored".into(),
                     tick: riffra_core::TimelineTick(240),
@@ -540,8 +541,11 @@ mod tests {
             },
             AutomationLane {
                 id: "lane:pan".into(),
-                track_id: "track:audio".into(),
-                parameter: AutomationParameter::Pan,
+                target: AutomationTarget::TrackMix {
+                    track_id: "track:audio".into(),
+                    parameter: TrackMixParameter::Pan,
+                },
+                interpolation: riffra_core::AutomationInterpolation::Linear,
                 points: vec![AutomationPoint {
                     id: "point:pan".into(),
                     tick: riffra_core::TimelineTick(360),
@@ -549,6 +553,37 @@ mod tests {
                 }],
             },
         ];
+
+        let targets = [
+            AutomationTarget::BusMix {
+                bus_id: "bus:group".into(),
+                parameter: riffra_core::BusMixParameter::Gain,
+            },
+            AutomationTarget::BusMix {
+                bus_id: "bus:return".into(),
+                parameter: riffra_core::BusMixParameter::Pan,
+            },
+            AutomationTarget::MasterGain,
+            AutomationTarget::SendLevel {
+                send_id: "send:audio".into(),
+            },
+            AutomationTarget::DeviceParameter {
+                device_id: "device:master".into(),
+                parameter_id: "stable-gain".into(),
+            },
+        ];
+        for (index, target) in targets.iter().enumerate() {
+            session.arrangement.automation_lanes.push(AutomationLane {
+                id: format!("lane:{index}"),
+                target: target.clone(),
+                interpolation: riffra_core::AutomationInterpolation::Step,
+                points: vec![AutomationPoint {
+                    id: format!("point:{index}"),
+                    tick: riffra_core::TimelineTick(240),
+                    value: 0.0,
+                }],
+            });
+        }
 
         let projection_resources = ResolvedResources::for_projection(
             PathBuf::from("data-root"),
@@ -609,8 +644,23 @@ mod tests {
             graph.tracks[0].audio_input.as_ref().unwrap().channel_index,
             3
         );
-        assert_eq!(graph.tracks[0].volume_automation[0].value, -3.0);
-        assert_eq!(graph.tracks[0].pan_automation[0].value, 0.75);
+        assert_eq!(graph.automation[0].points[0].value, -3.0);
+        assert_eq!(graph.automation[1].points[0].value, 0.75);
+        assert_eq!(graph.automation.len(), 7);
+        for (lane, target) in graph.automation[2..].iter().zip(targets) {
+            assert_eq!(lane.target, target);
+            assert_eq!(
+                lane.interpolation,
+                riffra_core::AutomationInterpolation::Step
+            );
+            assert_eq!(
+                lane.points,
+                vec![GraphAutomationPoint {
+                    tick: 240,
+                    value: 0.0
+                }]
+            );
+        }
         assert_eq!(
             graph.tracks[1].midi_input.device_id.as_deref(),
             Some("midi:1")

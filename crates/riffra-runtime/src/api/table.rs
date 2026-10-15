@@ -261,6 +261,7 @@ control_commands! {
         TimebaseSetMap = "timebase.set-map" (TimebaseSetMapParams) -> ArrangementMutation, mutation(batch), project;
         LoopRangeSet = "loop-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
         PunchRangeSet = "punch-range.set" (RangeParams) -> ArrangementMutation, mutation(batch), project;
+        AutomationList = "automation.list" (AutomationListParams) -> AutomationLanes, read, project;
         AutomationGet = "automation.get" (AutomationGetParams) -> AutomationLanes, read, project;
         AutomationSet = "automation.set" (AutomationSetParams) -> ArrangementMutation, mutation(batch), project;
         AutomationClear = "automation.clear" (AutomationClearParams) -> ArrangementMutation, mutation(batch), project;
@@ -349,12 +350,14 @@ control_commands! {
         RuntimeProjectionGet = "runtime.projection.get" (EmptyParams) -> RuntimeProjection, project;
         RuntimeProjectionRetry = "runtime.projection.retry" (EmptyParams) -> RuntimeProjection, project;
         TransportPlay = "transport.play" (EmptyParams) -> Ok, project;
+        TransportPause = "transport.pause" (EmptyParams) -> Ok, project;
         TransportStop = "transport.stop" (EmptyParams) -> Ok, project;
         TransportGoToStart = "transport.go-to-start" (EmptyParams) -> Ok, project;
         TransportSeek = "transport.seek" (SeekParams) -> Ok, project;
         MasterGainPreview = "audio.master-gain.preview" (MasterGainParams) -> Ok, project;
         SendLevelPreview = "mixer.send.preview" (SendLevelPreviewParams) -> Ok, project;
         ChannelMixPreview = "mixer.channel.preview" (ChannelMixParams) -> Ok, project;
+        AutomationPreview = "automation.preview" (AutomationPreviewParams) -> Ok, project;
 
         AudioStatus = "audio.status" (EmptyParams) -> AudioStatus, host;
         AudioDiagnostics = "audio.diagnostics" (AudioDiagnosticsParams) -> AudioDiagnostics, host;
@@ -385,6 +388,7 @@ control_commands! {
         DeviceInspect = "device.inspect" (DeviceParams) -> DeviceInspection, project;
         DeviceParameterList = "device.parameter.list" (DeviceParams) -> DeviceParameters, project;
         DeviceParameterGet = "device.parameter.get" (DeviceParameterGetParams) -> DeviceParameter, project;
+        DeviceParameterFormat = "device.parameter.format" (DeviceParameterFormatParams) -> DeviceParameterText, project;
         PluginPresetList = "plugin.preset.list" (DeviceParams) -> PluginPresets, project;
         PluginPresetGet = "plugin.preset.get" (DeviceParams) -> PluginPreset, project;
         PluginPresetSet = "plugin.preset.set" (PluginPresetSetParams) -> ArrangementMutation, project;
@@ -481,7 +485,7 @@ mod tests {
     fn automation_get_is_a_project_scoped_canonical_read() {
         let command = ControlCommand::decode(
             "automation.get",
-            json!({"trackId": "track:1", "parameter": "volume"}),
+            json!({"target": {"kind":"trackMix", "trackId": "track:1", "parameter": "volume"}}),
         )
         .unwrap();
 

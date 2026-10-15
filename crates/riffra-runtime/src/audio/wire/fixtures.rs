@@ -36,6 +36,7 @@ fn snapshot() -> TimelineSnapshot {
         project_id: "project-1".into(),
         revision: 3,
         graph: ExecutionGraph {
+            automation: Vec::new(),
             mixer: crate::execution::GraphMixer::default(),
             mixdown: crate::execution::GraphMixdown::default(),
             timebase: GraphTimebase {
@@ -79,6 +80,7 @@ fn command_samples() -> Vec<SidecarCommand> {
         SidecarCommand::DiscardTimelineSnapshot,
         SidecarCommand::WaitForTimelineIdle { timeout_ms: 1_500 },
         SidecarCommand::PlayTimeline,
+        SidecarCommand::PauseTimeline,
         SidecarCommand::SetTransportStarting,
         SidecarCommand::StopTimeline,
         SidecarCommand::SeekTimeline { tick: 960 },
@@ -101,6 +103,14 @@ fn command_samples() -> Vec<SidecarCommand> {
             send_id: "send:1".into(),
             level_db: -6.0,
         },
+        SidecarCommand::PreviewAutomationValue {
+            target: riffra_core::AutomationTarget::TrackMix {
+                track_id: track(),
+                parameter: riffra_core::TrackMixParameter::Volume,
+            },
+            value: Some(-3.0),
+            preview_token: 17,
+        },
         SidecarCommand::SetDeviceBypassed {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
@@ -120,6 +130,18 @@ fn command_samples() -> Vec<SidecarCommand> {
         SidecarCommand::GetDeviceParameters {
             owner: riffra_core::EffectOwner::Track { id: track() },
             device_id: device(),
+        },
+        SidecarCommand::GetDeviceParameterValueForText {
+            owner: riffra_core::EffectOwner::Track { id: track() },
+            device_id: device(),
+            parameter_id: "stable-gain".into(),
+            display: "-6 dB".into(),
+        },
+        SidecarCommand::GetDeviceParameterDisplayValue {
+            owner: riffra_core::EffectOwner::Track { id: track() },
+            device_id: device(),
+            parameter_index: 2,
+            value: 0.5,
         },
         SidecarCommand::GetDevicePrograms {
             owner: riffra_core::EffectOwner::Track { id: track() },

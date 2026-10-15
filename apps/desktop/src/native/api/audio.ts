@@ -6,6 +6,7 @@ import type {
   AssetId,
   DeviceChannels,
   ArrangementMutationResult,
+  AutomationTarget,
 } from '@/model/domain';
 import type { AssetPreviewOptions } from '../contracts';
 import { offlineAudioStatus } from '@/shared/audio/audio-defaults';
@@ -110,6 +111,17 @@ export async function setMasterGainDb(gainDb: number): Promise<ArrangementMutati
 
 export async function previewMasterGainDb(gainDb: number): Promise<void> {
   await dispatchControl({ command: 'audio.master-gain.preview', params: { gainDb } });
+}
+
+export async function previewAutomationValue(
+  target: AutomationTarget,
+  value: number | null,
+  previewToken: number,
+): Promise<void> {
+  await dispatchControl({
+    command: 'automation.preview',
+    params: { target, value, previewToken },
+  });
 }
 
 export async function previewChannelMix(

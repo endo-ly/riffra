@@ -13,10 +13,10 @@ use crate::app::AppCore;
 use crate::domain::asset::AssetId;
 use crate::domain::{
     Arrangement, AudioClip, AudioClipMove, AudioClipPatch, AudioInputRoute, AudioTakeVariant,
-    AutomationLane, AutomationParameter, AutomationPoint, CreativeSession, EffectDevice,
-    FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent, MidiInputRoute, MidiNote,
-    ProjectTimebase, TakeAudioSource, TimelineTick, Track, TrackInstrument, TrackKind, TrackPatch,
-    Vst3Plugin,
+    AutomationInterpolation, AutomationLane, AutomationPoint, AutomationTarget, CreativeSession,
+    EffectDevice, FrameRange, Marker, MidiClip, MidiClipMove, MidiClipPatch, MidiEvent,
+    MidiInputRoute, MidiNote, ProjectTimebase, TakeAudioSource, TimelineTick, Track,
+    TrackInstrument, TrackKind, TrackPatch, Vst3Plugin,
 };
 use crate::errors::ApplicationError;
 use crate::ports::SessionStorage;

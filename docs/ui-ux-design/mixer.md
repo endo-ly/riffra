@@ -24,6 +24,8 @@ Gain、Pan、Send Levelの連続操作は、編集中の値をNativeへ一時プ
 
 正準値と値域は[データモデル](../data-model.md)、命令と世代管理は[IPC契約](../ipc.md)に従う。
 
+Track・Group・Return・MasterのAutomationボタンは、同じ時間軸の[Lane Editor](arrange-screen.md#310-automation)を開く。RoutingのSendとDevicesのParameterからも該当対象を開ける。LaneのあるMix操作にはAUTOを表示する。Faderと数値表示は静的値を示し、再生中のLaneの有効値を正準値として取り込まない。
+
 ## 4. Meterと安全状態
 
 Track MeterはEffect、Fader、Pan、Automationを通った主出力を表示する。Group・Return MeterはそのチャンネルのEffect、Gain、Panを通ったMaster向け出力を表示する。左右のPeakとRMSを表示し、1.0を超えるPeakも保持する。

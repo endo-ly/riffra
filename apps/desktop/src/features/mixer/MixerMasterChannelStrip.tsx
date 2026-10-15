@@ -13,6 +13,7 @@ interface MixerMasterChannelStripProps {
   api: Pick<ArrangeWorkspaceApi, 'previewMasterGainDb' | 'setMasterGainDb'>;
   applyCanonicalState: (canonical: CanonicalState) => boolean;
   onOpenDevices: () => void;
+  onOpenAutomation: () => void;
   onOpenMixdown: () => void;
   missingDeviceIds: readonly string[];
   disabled?: boolean;
@@ -77,6 +78,9 @@ export function MixerMasterChannelStrip(props: MixerMasterChannelStripProps) {
           )
             ? ' · MISSING'
             : ''}
+        </button>
+        <button type="button" className={styles.routeButton} onClick={props.onOpenAutomation}>
+          Automation
         </button>
         <button type="button" onClick={props.onOpenMixdown}>
           Mixdown…

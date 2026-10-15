@@ -1,6 +1,7 @@
 #include "PluginChain.h"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 
 namespace riffra {
@@ -55,7 +56,9 @@ void PluginChain::allNotesOff() noexcept {
 
 void PluginChain::process(const float* const* inputChannels, const int inputChannelCount,
                           float* const* outputChannels, const int outputChannelCount,
-                          const int sampleCount, const juce::MidiBuffer* midi) noexcept {
+                          const int sampleCount, const juce::MidiBuffer* midi,
+                          std::span<PluginParameterAutomation> automation,
+                          const std::int64_t timelineSample, const bool playing) noexcept {
     if (devices.empty()) {
         for (int channel = 0; channel < outputChannelCount; ++channel) {
             if (outputChannels[channel] == nullptr) continue;
@@ -76,8 +79,19 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
         auto& target = index % 2 == 0 ? firstBuffer : secondBuffer;
         auto* const* targetChannels = last ? outputChannels : target.getArrayOfWritePointers();
         const auto targetCount = last ? outputChannelCount : target.getNumChannels();
+        auto first =
+            std::lower_bound(automation.begin(), automation.end(), devices[index].rack.get(),
+                             [](const PluginParameterAutomation& binding, const PluginRack* rack) {
+                                 return std::less<const PluginRack*>{}(binding.rack, rack);
+                             });
+        auto lastBinding = first;
+        while (lastBinding != automation.end() && lastBinding->rack == devices[index].rack.get())
+            ++lastBinding;
+        const auto deviceAutomation = std::span<PluginParameterAutomation>(
+            first, static_cast<std::size_t>(std::distance(first, lastBinding)));
         devices[index].rack->process(currentInput, currentInputCount, targetChannels, targetCount,
-                                     sampleCount, index == 0 ? midi : nullptr);
+                                     sampleCount, index == 0 ? midi : nullptr, deviceAutomation,
+                                     timelineSample, playing);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }

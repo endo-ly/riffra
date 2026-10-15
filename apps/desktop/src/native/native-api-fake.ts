@@ -115,6 +115,7 @@ export function fakeAudioStatus(overrides: Partial<AudioStatus> = {}): AudioStat
       instrumentRuntimeCount: 0,
       pluginCount: 0,
       maximumLatencySamples: 0,
+      automationWarnings: [],
       projectionDurationMs: 0,
       audioEnvironmentRevision: 0,
       protocolErrors: 0,
@@ -405,6 +406,9 @@ export class FakeNativeApi implements NativeApi {
   previewMasterGainDb(...args: Parameters<NativeApi['previewMasterGainDb']>) {
     return this.command('previewMasterGainDb', args);
   }
+  previewAutomationValue(...args: Parameters<NativeApi['previewAutomationValue']>) {
+    return this.command('previewAutomationValue', args);
+  }
   previewChannelMix(...args: Parameters<NativeApi['previewChannelMix']>) {
     return this.command('previewChannelMix', args);
   }
@@ -504,8 +508,8 @@ export class FakeNativeApi implements NativeApi {
   updateTrack(...args: Parameters<NativeApi['updateTrack']>) {
     return this.command('updateTrack', args);
   }
-  setTrackAutomation(...args: Parameters<NativeApi['setTrackAutomation']>) {
-    return this.command('setTrackAutomation', args);
+  setAutomation(...args: Parameters<NativeApi['setAutomation']>) {
+    return this.command('setAutomation', args);
   }
   setTrackAudioInput(...args: Parameters<NativeApi['setTrackAudioInput']>) {
     return this.command('setTrackAudioInput', args);
@@ -569,6 +573,9 @@ export class FakeNativeApi implements NativeApi {
   }
   getDeviceParameter(...args: Parameters<NativeApi['getDeviceParameter']>) {
     return this.command('getDeviceParameter', args);
+  }
+  formatDeviceParameterValue(...args: Parameters<NativeApi['formatDeviceParameterValue']>) {
+    return this.command('formatDeviceParameterValue', args);
   }
   listPluginPresets(...args: Parameters<NativeApi['listPluginPresets']>) {
     return this.command('listPluginPresets', args);
@@ -662,6 +669,10 @@ export class FakeNativeApi implements NativeApi {
   }
   playTimeline(...args: Parameters<NativeApi['playTimeline']>) {
     return this.command('playTimeline', args);
+  }
+
+  pauseTimeline(...args: Parameters<NativeApi['pauseTimeline']>) {
+    return this.command('pauseTimeline', args);
   }
   stopTimeline(...args: Parameters<NativeApi['stopTimeline']>) {
     return this.command('stopTimeline', args);
@@ -1131,7 +1142,7 @@ const arrangementMutationMethodNames = new Set<keyof NativeApi>([
   'crossfadeAudioClips',
   'addTrack',
   'updateTrack',
-  'setTrackAutomation',
+  'setAutomation',
   'setTrackAudioInput',
   'setTrackMidiInput',
   'applyInstrument',
@@ -1191,10 +1202,12 @@ const voidMethodNames = new Set<keyof NativeApi>([
   'deleteRecording',
   'installAppUpdate',
   'previewMasterGainDb',
+  'previewAutomationValue',
   'previewSendLevel',
   'previewChannelMix',
   'openPluginEditor',
   'playTimeline',
+  'pauseTimeline',
   'stopTimeline',
   'goToStartTimeline',
   'seekTimeline',

@@ -41,15 +41,93 @@ juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     return std::visit([](const auto& value) { return value.id; }, *instrument);
 }
 
-bool matchesExecutedEffects(const PluginChain& chain,
-                            const std::vector<PluginDeviceSpec>& effects) {
-    for (const auto& effect : effects) {
-        const auto* rack = chain.findDevice(effect.id);
-        if (rack == nullptr) return false;
-        juce::String error;
-        const auto state = rack->persistedState(error);
-        if (!state || *state != effect.state) return false;
+AutomationRuntime prepareLane(const AutomationLaneSpec& lane, const PreparedTimeline& prepared) {
+    AutomationRuntime runtime;
+    std::vector<AutomationRuntime::Point> points;
+    points.reserve(lane.points.size());
+    for (const auto& point : lane.points)
+        points.push_back({prepared.timebase.tickToSample(point.tick, prepared.outputSampleRate),
+                          static_cast<float>(point.value)});
+    runtime.setPoints(std::move(points), lane.interpolation == AutomationInterpolationSpec::step);
+    return runtime;
+}
+
+AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
+                                    const AutomationTargetKind kind, const juce::String& id = {}) {
+    for (const auto& lane : graph.automation)
+        if (lane.kind == kind && lane.id == id) return prepareLane(lane, prepared);
+    return {};
+}
+
+bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prepared,
+                             juce::String& error) {
+    for (const auto& lane : graph.automation) {
+        if (lane.kind != AutomationTargetKind::deviceParameter) continue;
+        PluginRack* rack = nullptr;
+        std::int64_t inputLatency = 0;
+        const PluginStateSpec* state = nullptr;
+        std::vector<PluginParameterAutomation>* bindings = nullptr;
+        const auto findEffect = [&](PluginChain& chain, const std::vector<PluginDeviceSpec>& specs,
+                                    std::vector<PluginParameterAutomation>& target) {
+            std::int64_t latency = 0;
+            for (const auto& spec : specs) {
+                auto* effect = chain.findDevice(spec.id);
+                if (spec.id != lane.id) {
+                    if (effect != nullptr) latency += effect->latencySamples();
+                    continue;
+                }
+                inputLatency = latency;
+                rack = chain.findDevice(spec.id);
+                state = &spec.state;
+                bindings = &target;
+            }
+        };
+        for (auto& track : prepared.tracks) {
+            auto& runtime = *track->runtime;
+            if (track->instrument &&
+                std::holds_alternative<Vst3InstrumentSpec>(*track->instrument)) {
+                const auto& instrument = std::get<Vst3InstrumentSpec>(*track->instrument);
+                if (instrument.id == lane.id && runtime.instrument() != nullptr) {
+                    rack = runtime.instrument()->vst3Rack();
+                    state = &instrument.state;
+                    bindings = &runtime.deviceAutomation;
+                }
+            }
+            findEffect(runtime.effects(), track->effects, runtime.deviceAutomation);
+        }
+        for (auto& bus : prepared.mixer.buses)
+            findEffect(*bus->effects, bus->effectSpecs, bus->deviceAutomation);
+        findEffect(*prepared.mixer.masterEffects, prepared.mixer.masterEffectSpecs,
+                   prepared.mixer.masterDeviceAutomation);
+        juce::String warning;
+        if (rack == nullptr || state == nullptr)
+            warning = "automation device is unavailable";
+        else {
+            AutomationBindingFailure failure = AutomationBindingFailure::invalidParameter;
+            if (auto binding = rack->bindAutomation(
+                    lane.parameterId, prepareLane(lane, prepared), *state,
+                    lane.interpolation == AutomationInterpolationSpec::step, failure, warning)) {
+                binding->inputLatency = inputLatency;
+                bindings->push_back(std::move(*binding));
+            } else if (failure != AutomationBindingFailure::laneUnavailable) {
+                error = lane.id + "/" + lane.parameterId + ": " + warning;
+                return false;
+            }
+        }
+        if (warning.isNotEmpty())
+            prepared.summary.automationWarnings.push_back(lane.id + "/" + lane.parameterId + ": " +
+                                                          warning);
     }
+    const auto byDevice = [](const auto& left, const auto& right) {
+        return std::less<PluginRack*>{}(left.rack, right.rack);
+    };
+    for (auto& track : prepared.tracks)
+        std::sort(track->runtime->deviceAutomation.begin(), track->runtime->deviceAutomation.end(),
+                  byDevice);
+    for (auto& bus : prepared.mixer.buses)
+        std::sort(bus->deviceAutomation.begin(), bus->deviceAutomation.end(), byDevice);
+    std::sort(prepared.mixer.masterDeviceAutomation.begin(),
+              prepared.mixer.masterDeviceAutomation.end(), byDevice);
     return true;
 }
 
@@ -93,6 +171,17 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
         prepared->timebaseChangeSamples.end());
+    for (const auto& lane : graph.automation)
+        for (const auto& point : lane.points) {
+            const auto sample = prepared->timebase.tickToSeconds(point.tick) * outputSampleRate;
+            const auto limit = static_cast<double>(std::numeric_limits<std::int64_t>::max()) -
+                               std::numeric_limits<int>::max();
+            if (!std::isfinite(sample) || sample < 0.0 || sample >= limit) {
+                error =
+                    "automation tick cannot be represented at the active sample rate: " + lane.id;
+                return false;
+            }
+        }
     prepared->preparedBlockSize = maximumBlockSize;
     prepared->masterGainDb = static_cast<float>(graph.masterGainDb);
     prepared->metronomeEnabled = graph.metronomeEnabled;
@@ -137,19 +226,10 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             trackSpec.audioInput.has_value() ? static_cast<int>(trackSpec.audioInput->channelIndex)
                                              : -1;
 
-        std::vector<AutomationRuntime::Point> volumeAutomation;
-        std::vector<AutomationRuntime::Point> panAutomation;
-        volumeAutomation.reserve(trackSpec.volumeAutomation.size());
-        panAutomation.reserve(trackSpec.panAutomation.size());
-        for (const auto& point : trackSpec.volumeAutomation)
-            volumeAutomation.push_back(
-                {prepared->timebase.tickToSample(point.tick, outputSampleRate),
-                 static_cast<float>(point.value)});
-        for (const auto& point : trackSpec.panAutomation)
-            panAutomation.push_back({prepared->timebase.tickToSample(point.tick, outputSampleRate),
-                                     static_cast<float>(point.value)});
-        track->runtime->volumeAutomation.setPoints(std::move(volumeAutomation));
-        track->runtime->panAutomation.setPoints(std::move(panAutomation));
+        track->runtime->volumeAutomation =
+            prepareAutomation(graph, *prepared, AutomationTargetKind::trackVolume, trackSpec.id);
+        track->runtime->panAutomation =
+            prepareAutomation(graph, *prepared, AutomationTargetKind::trackPan, trackSpec.id);
 
         track->effects = trackSpec.effects;
         track->instrument = trackSpec.instrument;
@@ -229,9 +309,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
             track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
             track->reuseRuntimeDevices =
-                (existing->effects == track->effects ||
-                 matchesExecutedEffects(existing->runtime->effects(), track->effects)) &&
-                existing->instrument == track->instrument &&
+                existing->effects == track->effects && existing->instrument == track->instrument &&
                 existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
             if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
         });
@@ -431,6 +509,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                     change + track->runtime->externalAudioSource->routeLatencySamples);
     }
     if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
+    if (!prepareDeviceAutomation(graph, *prepared, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
@@ -468,6 +547,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
                                            const PluginProcessingMode mode, juce::String& error) {
     auto& mixer = prepared.mixer;
+    mixer.masterGainAutomation =
+        prepareAutomation(graph, prepared, AutomationTargetKind::masterGain);
     const auto blockSize = prepared.preparedBlockSize;
     const auto sampleRate = prepared.outputSampleRate;
     mixer.masterInput.setSize(2, blockSize);
@@ -481,6 +562,10 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         auto bus = std::make_unique<MixerChannel>();
         bus->id = spec.id;
         bus->effectSpecs = spec.effects;
+        bus->gainAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::busGain, spec.id);
+        bus->panAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::busPan, spec.id);
         bus->gainDb.store(static_cast<float>(spec.gainDb));
         bus->pan.store(static_cast<float>(spec.pan));
         bus->unityCenterStereo = spec.panLaw == "unityCenterStereo";
@@ -496,8 +581,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 return;
             const auto* existing = previous->mixer.findBus(spec.id);
             if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
-                (existing->effectSpecs == spec.effects ||
-                 matchesExecutedEffects(*existing->effects, spec.effects))) {
+                existing->effectSpecs == spec.effects) {
                 bus->effects = existing->effects;
                 reused = true;
             }
@@ -516,8 +600,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (previous != nullptr && !graphs.devicesNeedReprepare &&
             previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
             sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
-            (previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs ||
-             matchesExecutedEffects(*previous->mixer.masterEffects, mixer.masterEffectSpecs))) {
+            previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs) {
             mixer.masterEffects = previous->mixer.masterEffects;
             masterReused = true;
         }
@@ -543,6 +626,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         route->audible = audible;
         route->allowLowLatencyBypass = allowLowLatencyBypass;
         route->sendId = sendId;
+        route->levelAutomation =
+            prepareAutomation(graph, prepared, AutomationTargetKind::sendLevel, sendId);
         if (destination != nullptr) {
             destination->hasInput = true;
             destination->hasAudibleInput = destination->hasAudibleInput || audible;
@@ -575,7 +660,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto lowLatencyPdcCandidate =
             (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
             !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
-            spec.volumeAutomation.empty() && spec.panAutomation.empty();
+            track.volumeAutomation.empty() && track.panAutomation.empty();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
                       1.0f, mainSelected && !spec.muted, lowLatencyPdcCandidate, {});
         for (const auto& send : graph.mixer.sends) {

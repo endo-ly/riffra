@@ -18,7 +18,7 @@ inline constexpr std::uint32_t kSidecarProtocolVersion = 4;
 
 enum class AudioStateSpec { ready, muted, faulted };
 enum class RecoveryStatusSpec { clean, partial };
-enum class TransportStateSpec { stopped, starting, playing, faulted };
+enum class TransportStateSpec { stopped, starting, playing, paused, faulted };
 enum class RecordingPhaseSpec { idle, countingIn, recording, stopping };
 
 struct AudioChannelSpec final {
@@ -149,6 +149,7 @@ struct AudioDiagnosticsSpec final {
     std::uint64_t instrumentRuntimeCount = 0;
     std::uint64_t pluginCount = 0;
     std::uint64_t maximumLatencySamples = 0;
+    std::vector<juce::String> automationWarnings;
     std::vector<InstrumentFaultSpec> instrumentFaults;
 };
 
@@ -272,6 +273,7 @@ struct DeviceParameterChoiceSpec final {
 
 struct DeviceParameterSpec final {
     std::uint32_t index = 0;
+    std::optional<juce::String> parameterId;
     juce::String name;
     float value = 0.0f;
     float defaultValue = 0.0f;
@@ -371,6 +373,7 @@ using SidecarEventSpec =
 struct OfflineRenderCompleteSpec final {
     std::uint64_t frames = 0;
     std::uint32_t sampleRate = 0;
+    std::vector<juce::String> automationWarnings;
 };
 
 /// Every response `type` written on stdout.

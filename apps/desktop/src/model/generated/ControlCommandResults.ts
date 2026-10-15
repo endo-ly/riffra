@@ -9,8 +9,8 @@ export type ControlCommandResults = {
   'session.apply': OutputValue<'batchMutation'>;
   'session.settings.update': OutputValue<'arrangementMutation'>;
   'history.get': OutputValue<'history'>;
-  'undo': OutputValue<'arrangementMutation'>;
-  'redo': OutputValue<'arrangementMutation'>;
+  undo: OutputValue<'arrangementMutation'>;
+  redo: OutputValue<'arrangementMutation'>;
   'audio.master-gain.set': OutputValue<'arrangementMutation'>;
   'mixer.get': OutputValue<'mixer'>;
   'mixer.bus.list': OutputValue<'mixBuses'>;
@@ -49,6 +49,7 @@ export type ControlCommandResults = {
   'timebase.set-map': OutputValue<'arrangementMutation'>;
   'loop-range.set': OutputValue<'arrangementMutation'>;
   'punch-range.set': OutputValue<'arrangementMutation'>;
+  'automation.list': OutputValue<'automationLanes'>;
   'automation.get': OutputValue<'automationLanes'>;
   'automation.set': OutputValue<'arrangementMutation'>;
   'automation.clear': OutputValue<'arrangementMutation'>;
@@ -129,12 +130,14 @@ export type ControlCommandResults = {
   'runtime.projection.get': OutputValue<'runtimeProjection'>;
   'runtime.projection.retry': OutputValue<'runtimeProjection'>;
   'transport.play': OutputValue<'ok'>;
+  'transport.pause': OutputValue<'ok'>;
   'transport.stop': OutputValue<'ok'>;
   'transport.go-to-start': OutputValue<'ok'>;
   'transport.seek': OutputValue<'ok'>;
   'audio.master-gain.preview': OutputValue<'ok'>;
   'mixer.send.preview': OutputValue<'ok'>;
   'mixer.channel.preview': OutputValue<'ok'>;
+  'automation.preview': OutputValue<'ok'>;
   'audio.status': OutputValue<'audioStatus'>;
   'audio.diagnostics': OutputValue<'audioDiagnostics'>;
   'audio.probe': OutputValue<'audioProbe'>;
@@ -162,6 +165,7 @@ export type ControlCommandResults = {
   'device.inspect': OutputValue<'deviceInspection'>;
   'device.parameter.list': OutputValue<'deviceParameters'>;
   'device.parameter.get': OutputValue<'deviceParameter'>;
+  'device.parameter.format': OutputValue<'deviceParameterText'>;
   'plugin.preset.list': OutputValue<'pluginPresets'>;
   'plugin.preset.get': OutputValue<'pluginPreset'>;
   'plugin.preset.set': OutputValue<'arrangementMutation'>;

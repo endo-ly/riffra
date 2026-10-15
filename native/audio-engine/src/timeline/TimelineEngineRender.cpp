@@ -14,6 +14,48 @@ constexpr double kTransportFadeSeconds = 0.005;
 
 }  // namespace
 
+void TimelineEngine::applyMasterGain(float* const* outputChannels, const int channelCount,
+                                     const int sampleCount, const float staticGainDb) noexcept {
+    const auto* graph = realtime.graph;
+    const auto preview = graph != nullptr ? graph->mixer.masterGainPreview.current() : std::nullopt;
+    const auto fixedGain = juce::Decibels::decibelsToGain(preview.value_or(staticGainDb));
+    if (graph == nullptr || preview.has_value() || graph->mixer.masterGainAutomation.empty()) {
+        for (int channel = 0; channel < channelCount; ++channel)
+            if (outputChannels[channel] != nullptr)
+                juce::FloatVectorOperations::multiply(outputChannels[channel], fixedGain,
+                                                      sampleCount);
+        return;
+    }
+    int segmentIndex = 0;
+    auto cursor = graph->mixer.masterGainAutomation.cursorAt(0);
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        while (segmentIndex < realtime.metronomeTransportSegmentCount &&
+               sample >=
+                   realtime.metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)]
+                           .destinationStart +
+                       realtime.metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)]
+                           .sampleCount)
+            ++segmentIndex;
+        auto gain = fixedGain;
+        if (segmentIndex < realtime.metronomeTransportSegmentCount) {
+            const auto& segment =
+                realtime.metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)];
+            if (segment.active && sample >= segment.destinationStart) {
+                auto position = segment.rangeStart + sample - segment.destinationStart;
+                const auto loopLength = graph->loopEndSample - graph->loopStartSample;
+                if (graph->loopEnabled && loopLength > 0 &&
+                    segment.rangeStart < graph->loopEndSample && position >= graph->loopEndSample)
+                    position =
+                        graph->loopStartSample + (position - graph->loopEndSample) % loopLength;
+                position -= static_cast<std::int64_t>(graph->summary.maximumLatencySamples);
+                gain = juce::Decibels::decibelsToGain(cursor.valueAt(position, staticGainDb));
+            }
+        }
+        for (int channel = 0; channel < channelCount; ++channel)
+            if (outputChannels[channel] != nullptr) outputChannels[channel][sample] *= gain;
+    }
+}
+
 void TimelineEngine::mixMetronome(float* const* outputChannels, const int channelCount,
                                   const int sampleCount) noexcept {
     if (sampleCount <= 0) return;
@@ -192,7 +234,8 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
     for (auto& stage : prepared.processingStages)
         pool->run(stage, {TrackStageKind::playback, &prepared, rangeStart, destinationStart,
                           sampleCount, transportGainStart, transportGainStep, true});
-    mixProductionOutput(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
+                        sampleCount, true);
     if (prepared.fadeOutSamples > 0) {
         const auto fadeStart = prepared.mixEndSample - prepared.fadeOutSamples;
         for (int sample = 0; sample < sampleCount; ++sample) {
@@ -294,7 +337,8 @@ void TimelineEngine::processLiveInstrumentTracks(
     for (auto& stage : prepared.processingStages)
         pool->run(stage, {TrackStageKind::live, &prepared, rangeStart, destinationStart,
                           sampleCount, 1.0f, 0.0f, false});
-    mixProductionOutput(prepared, outputChannels, channelCount, destinationStart, sampleCount);
+    mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
+                        sampleCount, false);
 }
 
 void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -307,6 +351,8 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
                                       ? 0
                                       : runtime.externalAudioSource->routeLatencySamples;
         auto context = instrumentProcessContext(prepared, rangeStart - inputLatency, true);
+        context.automation = runtime.deviceAutomation;
+        context.timelineSample = rangeStart - inputLatency;
         context.timelineEvents = runtime.instrumentEvents.data();
         context.timelineEventCount = runtime.instrumentEventCount;
         if (runtime.externalAudioSource != nullptr) {
@@ -319,8 +365,11 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
     } else {
         runtime.mixBuffer.clear(0, sampleCount);
     }
-    runtime.effects().process(runtime.mixBuffer.getArrayOfReadPointers(), 2,
-                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
+    runtime.effects().process(
+        runtime.mixBuffer.getArrayOfReadPointers(), 2,
+        runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount, nullptr,
+        runtime.deviceAutomation,
+        rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(), true);
 }
 
 void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -335,6 +384,8 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
         return;
     }
     auto context = instrumentProcessContext(prepared, rangeStart, playing);
+    context.automation = runtime.deviceAutomation;
+    context.timelineSample = rangeStart;
     if (runtime.externalAudioSource != nullptr) {
         context.externalInput =
             runtime.externalAudioSource->routedOutputBuffer.getArrayOfReadPointers();
@@ -343,7 +394,8 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
     runtime.instrument()->process(runtime.liveInputBuffer.getArrayOfWritePointers(), 2, sampleCount,
                                   nullptr, context);
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
-                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount);
+                              runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
+                              nullptr, runtime.deviceAutomation, rangeStart, playing);
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
@@ -363,7 +415,7 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     }
     for (auto& bus : graph->mixer.buses) {
         bus->input.clear(0, sampleCount);
-        bus->process(sampleCount);
+        bus->process(sampleCount, 0, false);
     }
     graph->mixer.masterInput.clear(0, sampleCount);
     graph->mixer.masterEffects->process(graph->mixer.masterInput.getArrayOfReadPointers(), 2,
@@ -373,7 +425,7 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
 
 void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
                                     const int sampleCount, const float transportGainStart,
-                                    const float transportGainStep) noexcept {
+                                    const float transportGainStep, const bool playing) noexcept {
     auto& runtime = *track.runtime;
     const auto lowLatencyPdcBypassActive = runtime.lowLatencyPdcBypassActive();
     if (lowLatencyPdcBypassActive != runtime.postEffectLowLatencyBypassActive) {
@@ -385,116 +437,56 @@ void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
         0, runtime.postEffectCompensationDelaySamples +
                (lowLatencyPdcBypassActive ? runtime.timelinePdcDelaySamples : 0));
     const auto postEffectDelaySize = runtime.postEffectDelayBuffer.getNumSamples();
-    auto volumeCursor = runtime.volumeAutomation.cursorAt(rangeStart);
-    auto panCursor = runtime.panAutomation.cursorAt(rangeStart);
-    const auto volumeAutomated = !runtime.volumeAutomation.empty();
-    const auto panAutomated = !runtime.panAutomation.empty();
-    const auto staticGainDb = runtime.gainDb.load(std::memory_order_acquire);
-    const auto staticPan = runtime.pan.load(std::memory_order_acquire);
-    const auto fixedPanAngle = (staticPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
-    const auto fixedGain = juce::Decibels::decibelsToGain(staticGainDb);
-    const auto panScale = runtime.unityCenterStereo ? std::sqrt(2.0f) : 1.0f;
-    const auto fixedLeftGain = fixedGain * std::min(1.0f, std::cos(fixedPanAngle) * panScale);
-    const auto fixedRightGain = fixedGain * std::min(1.0f, std::sin(fixedPanAngle) * panScale);
-    const auto blockEnd = rangeStart + sampleCount;
+    MixAutomationCursor mixCursor(
+        runtime.volumeAutomation, runtime.panAutomation, rangeStart - runtime.routeLatencySamples,
+        sampleCount, runtime.gainDb.load(std::memory_order_acquire),
+        runtime.pan.load(std::memory_order_acquire), runtime.unityCenterStereo, playing,
+        runtime.gainPreview.current(), runtime.panPreview.current());
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
     double sumSquaresLeft = 0.0;
     double sumSquaresRight = 0.0;
-    int processed = 0;
-    while (processed < sampleCount) {
-        const auto absoluteSample = rangeStart + processed;
-        const auto volumeSegment =
-            volumeAutomated ? volumeCursor.segmentAt(absoluteSample, blockEnd, staticGainDb)
-                            : AutomationRuntime::Segment{blockEnd, staticGainDb, staticGainDb};
-        const auto panSegment = panAutomated
-                                    ? panCursor.segmentAt(absoluteSample, blockEnd, staticPan)
-                                    : AutomationRuntime::Segment{blockEnd, staticPan, staticPan};
-        const auto segmentEnd = std::min({blockEnd, volumeSegment.endSample, panSegment.endSample});
-        const auto segmentSamples =
-            static_cast<int>(std::max<std::int64_t>(1, segmentEnd - absoluteSample));
-
-        auto currentGain = fixedGain;
-        auto gainRatio = 1.0f;
-        auto currentCos = std::cos(fixedPanAngle);
-        auto currentSin = std::sin(fixedPanAngle);
-        auto deltaCos = 1.0f;
-        auto deltaSin = 0.0f;
-        if (volumeAutomated) {
-            const auto startGain = juce::Decibels::decibelsToGain(
-                juce::jlimit(-90.0f, 24.0f, volumeSegment.startValue));
-            const auto endGain =
-                juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, volumeSegment.endValue));
-            currentGain = startGain;
-            gainRatio =
-                startGain > 0.0f ? std::pow(endGain / startGain, 1.0f / segmentSamples) : 1.0f;
-        }
-        if (panAutomated) {
-            const auto startAngle = (juce::jlimit(-1.0f, 1.0f, panSegment.startValue) + 1.0f) *
-                                    juce::MathConstants<float>::pi * 0.25f;
-            const auto endAngle = (juce::jlimit(-1.0f, 1.0f, panSegment.endValue) + 1.0f) *
-                                  juce::MathConstants<float>::pi * 0.25f;
-            currentCos = std::cos(startAngle);
-            currentSin = std::sin(startAngle);
-            const auto delta = (endAngle - startAngle) / segmentSamples;
-            deltaCos = std::cos(delta);
-            deltaSin = std::sin(delta);
-        }
-
-        for (int offset = 0; offset < segmentSamples && processed < sampleCount;
-             ++offset, ++processed) {
-            auto leftGain = fixedLeftGain;
-            auto rightGain = fixedRightGain;
-            if (volumeAutomated || panAutomated) {
-                leftGain = currentGain * std::min(1.0f, currentCos * panScale);
-                rightGain = currentGain * std::min(1.0f, currentSin * panScale);
+    for (int processed = 0; processed < sampleCount; ++processed) {
+        const auto gains = mixCursor.next();
+        const auto leftGain = gains.left;
+        const auto rightGain = gains.right;
+        float left = runtime.processedBuffer.getSample(0, processed);
+        float right = runtime.processedBuffer.getSample(1, processed);
+        auto postEffectLeft = runtime.postEffectClipBuffer.getSample(0, processed);
+        auto postEffectRight = runtime.postEffectClipBuffer.getSample(1, processed);
+        if (postEffectDelaySize > 0) {
+            const auto write = runtime.postEffectDelayWritePosition;
+            runtime.postEffectDelayBuffer.setSample(0, static_cast<int>(write), postEffectLeft);
+            runtime.postEffectDelayBuffer.setSample(1, static_cast<int>(write), postEffectRight);
+            if (postEffectDelay > 0) {
+                const auto read =
+                    (write - postEffectDelay + postEffectDelaySize) % postEffectDelaySize;
+                postEffectLeft = runtime.postEffectDelayBuffer.getSample(0, static_cast<int>(read));
+                postEffectRight =
+                    runtime.postEffectDelayBuffer.getSample(1, static_cast<int>(read));
             }
-            float left = runtime.processedBuffer.getSample(0, processed);
-            float right = runtime.processedBuffer.getSample(1, processed);
-            auto postEffectLeft = runtime.postEffectClipBuffer.getSample(0, processed);
-            auto postEffectRight = runtime.postEffectClipBuffer.getSample(1, processed);
-            if (postEffectDelaySize > 0) {
-                const auto write = runtime.postEffectDelayWritePosition;
-                runtime.postEffectDelayBuffer.setSample(0, static_cast<int>(write), postEffectLeft);
-                runtime.postEffectDelayBuffer.setSample(1, static_cast<int>(write),
-                                                        postEffectRight);
-                if (postEffectDelay > 0) {
-                    const auto read =
-                        (write - postEffectDelay + postEffectDelaySize) % postEffectDelaySize;
-                    postEffectLeft =
-                        runtime.postEffectDelayBuffer.getSample(0, static_cast<int>(read));
-                    postEffectRight =
-                        runtime.postEffectDelayBuffer.getSample(1, static_cast<int>(read));
-                }
-                runtime.postEffectDelayWritePosition = (write + 1) % postEffectDelaySize;
-            }
-            left += postEffectLeft;
-            right += postEffectRight;
-            const auto sampleGain =
-                juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
-            runtime.preFaderOutputBuffer.setSample(0, processed, left * sampleGain);
-            runtime.preFaderOutputBuffer.setSample(1, processed, right * sampleGain);
-            runtime.routedOutputBuffer.setSample(0, processed, left * leftGain);
-            runtime.routedOutputBuffer.setSample(1, processed, right * rightGain);
-            auto masterLeft = left * leftGain;
-            auto masterRight = right * rightGain;
-            const auto postFaderLeft = masterLeft * sampleGain;
-            const auto postFaderRight = masterRight * sampleGain;
-            runtime.trackOutputBuffer.setSample(0, processed, postFaderLeft);
-            runtime.trackOutputBuffer.setSample(1, processed, postFaderRight);
-            const auto contributionLeft = runtime.mainOutputAudible ? postFaderLeft : 0.0f;
-            const auto contributionRight = runtime.mainOutputAudible ? postFaderRight : 0.0f;
-            peakLeft = std::max(peakLeft, std::abs(contributionLeft));
-            peakRight = std::max(peakRight, std::abs(contributionRight));
-            sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;
-            sumSquaresRight += static_cast<double>(contributionRight) * contributionRight;
-            if (volumeAutomated) currentGain *= gainRatio;
-            if (panAutomated) {
-                const auto nextCos = currentCos * deltaCos - currentSin * deltaSin;
-                currentSin = currentSin * deltaCos + currentCos * deltaSin;
-                currentCos = nextCos;
-            }
+            runtime.postEffectDelayWritePosition = (write + 1) % postEffectDelaySize;
         }
+        left += postEffectLeft;
+        right += postEffectRight;
+        const auto sampleGain =
+            juce::jlimit(0.0f, 1.0f, transportGainStart + transportGainStep * processed);
+        runtime.preFaderOutputBuffer.setSample(0, processed, left * sampleGain);
+        runtime.preFaderOutputBuffer.setSample(1, processed, right * sampleGain);
+        runtime.routedOutputBuffer.setSample(0, processed, left * leftGain);
+        runtime.routedOutputBuffer.setSample(1, processed, right * rightGain);
+        auto masterLeft = left * leftGain;
+        auto masterRight = right * rightGain;
+        const auto postFaderLeft = masterLeft * sampleGain;
+        const auto postFaderRight = masterRight * sampleGain;
+        runtime.trackOutputBuffer.setSample(0, processed, postFaderLeft);
+        runtime.trackOutputBuffer.setSample(1, processed, postFaderRight);
+        const auto contributionLeft = runtime.mainOutputAudible ? postFaderLeft : 0.0f;
+        const auto contributionRight = runtime.mainOutputAudible ? postFaderRight : 0.0f;
+        peakLeft = std::max(peakLeft, std::abs(contributionLeft));
+        peakRight = std::max(peakRight, std::abs(contributionRight));
+        sumSquaresLeft += static_cast<double>(contributionLeft) * contributionLeft;
+        sumSquaresRight += static_cast<double>(contributionRight) * contributionRight;
     }
     if (sampleCount > 0) {
         runtime.meter.recordBlock(
@@ -505,16 +497,19 @@ void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
 }
 
 void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* const* outputChannels,
-                                         const int channelCount, const int destinationStart,
-                                         const int sampleCount) noexcept {
+                                         const int channelCount, const std::int64_t rangeStart,
+                                         const int destinationStart, const int sampleCount,
+                                         const bool playing) noexcept {
     auto& mixer = prepared.mixer;
     mixer.masterInput.clear(0, sampleCount);
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
-    for (auto& route : mixer.trackRoutes) route->mix(sampleCount);
-    pool->runMixer(mixer.parallelChannels, sampleCount);
-    for (auto& route : mixer.busRoutes) route->mix(sampleCount);
+    for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
+    pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing);
+    for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
     mixer.masterEffects->process(mixer.masterInput.getArrayOfReadPointers(), 2,
-                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount);
+                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount,
+                                 nullptr, mixer.masterDeviceAutomation,
+                                 rangeStart - mixer.masterInputLatency, playing);
     for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
         if (outputChannels[channel] != nullptr)
             juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,
@@ -529,6 +524,7 @@ void TimelineEngine::resetPlaybackTrackState(PreparedTimeline& prepared) noexcep
 }
 
 void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcept {
+    prepared.restoreAutomation();
     prepared.mixer.reset();
     for (auto& trackPtr : prepared.tracks) {
         auto& track = *trackPtr;
@@ -602,6 +598,10 @@ void TimelineEngine::finishTransportFade(PreparedTimeline& prepared) noexcept {
     realtime.transportGain = 0.0f;
     realtime.transportFadeStep = 0.0f;
     realtime.transportFadeRemaining = 0;
+    if (realtime.transport == TransportState::paused) {
+        realtime.renderTransportState = RenderTransportState::paused;
+        return;
+    }
     realtime.renderTransportState = RenderTransportState::stopped;
     resetPlaybackTrackState(prepared);
     if (realtime.recordingPhase != RecordingPhase::recording) resetRecordingTrackState(prepared);
@@ -645,15 +645,22 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         realtime.transportGain = 0.0f;
         realtime.transportFadeStep = 0.0f;
         applyPendingSeek(*active);
+        if (currentState == TransportState::paused)
+            realtime.renderTransportState = RenderTransportState::paused;
         realtime.seekRequestedWhileStopped = false;
     }
     if (realtime.seekPending && realtime.renderTransportState != RenderTransportState::stopped &&
         realtime.renderTransportState != RenderTransportState::fadingOut) {
         beginTransportFade(false, sampleRate);
     } else if (currentState == TransportState::playing &&
-               realtime.renderTransportState == RenderTransportState::stopped) {
+               (realtime.renderTransportState == RenderTransportState::stopped ||
+                realtime.renderTransportState == RenderTransportState::paused)) {
         if (realtime.seekPending) applyPendingSeek(*active);
         beginTransportFade(true, sampleRate);
+    } else if (currentState == TransportState::paused &&
+               realtime.renderTransportState == RenderTransportState::stopped) {
+        realtime.renderTransportState = RenderTransportState::paused;
+        realtime.transportGain = 0.0f;
     } else if (currentState != TransportState::playing &&
                (realtime.renderTransportState == RenderTransportState::playing ||
                 realtime.renderTransportState == RenderTransportState::fadingIn))
@@ -676,8 +683,28 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
                                             const std::int64_t rangeStart, const bool segmentActive,
                                             const float gainStart, const float gainStep) noexcept {
-        if (rangeSamples <= 0 || realtime.metronomeTransportSegmentCount >=
-                                     static_cast<int>(realtime.metronomeTransportSegments.size()))
+        if (rangeSamples <= 0) return;
+        if (realtime.metronomeTransportSegmentCount > 0) {
+            auto& previous = realtime.metronomeTransportSegments[static_cast<std::size_t>(
+                realtime.metronomeTransportSegmentCount - 1)];
+            auto nextPosition = previous.rangeStart + previous.sampleCount;
+            const auto loopLength = active->loopEndSample - active->loopStartSample;
+            if (active->loopEnabled && loopLength > 0 && previous.active &&
+                previous.rangeStart < active->loopEndSample &&
+                nextPosition >= active->loopEndSample)
+                nextPosition =
+                    active->loopStartSample + (nextPosition - active->loopEndSample) % loopLength;
+            if (previous.active == segmentActive &&
+                previous.destinationStart + previous.sampleCount == destinationStart &&
+                nextPosition == rangeStart && previous.gainStep == gainStep &&
+                std::abs(previous.gainStart + previous.gainStep * previous.sampleCount -
+                         gainStart) < 0.000001f) {
+                previous.sampleCount += rangeSamples;
+                return;
+            }
+        }
+        if (realtime.metronomeTransportSegmentCount >=
+            static_cast<int>(realtime.metronomeTransportSegments.size()))
             return;
         auto& segment = realtime.metronomeTransportSegments[static_cast<std::size_t>(
             realtime.metronomeTransportSegmentCount++)];
@@ -689,6 +716,12 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
         segment.active = segmentActive;
     };
 
+    if (realtime.renderTransportState == RenderTransportState::paused) {
+        for (int channel = 0; channel < channelCount; ++channel)
+            if (outputChannels[channel] != nullptr)
+                juce::FloatVectorOperations::clear(outputChannels[channel], sampleCount);
+        return;
+    }
     if (realtime.renderTransportState == RenderTransportState::stopped) {
         applyPendingSeek(*active);
         const auto stoppedPosition = realtime.timelineSample;
@@ -707,6 +740,14 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     auto consumed = blockPlaybackOffset;
     while (consumed < sampleCount) {
         auto chunk = std::min(sampleCount - consumed, active->preparedBlockSize);
+        if (realtime.renderTransportState == RenderTransportState::paused) {
+            for (int channel = 0; channel < channelCount; ++channel)
+                if (outputChannels[channel] != nullptr)
+                    juce::FloatVectorOperations::clear(outputChannels[channel] + consumed,
+                                                       sampleCount - consumed);
+            appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
+            break;
+        }
         if (realtime.renderTransportState == RenderTransportState::stopped) {
             appendMetronomeSegment(consumed, sampleCount - consumed, position, false, 0.0f, 0.0f);
             processStoppedRange(consumed, sampleCount - consumed, position);

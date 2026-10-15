@@ -4,4 +4,4 @@ import type { DeviceParameterChoice } from "./DeviceParameterChoice";
 /**
  * One runtime-reported plugin parameter.
  */
-export type DeviceParameterInfo = { index: number, name?: string, value: number, defaultValue: number, automatable: boolean, displayValue: string, label: string, discrete: boolean, stepCount: number, choices: Array<DeviceParameterChoice>, };
+export type DeviceParameterInfo = { parameterId: string | null, index: number, name?: string, value: number, defaultValue: number, automatable: boolean, displayValue: string, label: string, discrete: boolean, stepCount: number, choices: Array<DeviceParameterChoice>, };

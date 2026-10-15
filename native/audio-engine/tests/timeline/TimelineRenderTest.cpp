@@ -154,7 +154,11 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     auto snapshot = makeAudioTrackSnapshot(1, true, false);
-    snapshot.graph.tracks.front().volumeAutomation.push_back({0, -12.0});
+    snapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                         snapshot.graph.tracks.front().id,
+                                         {},
+                                         AutomationInterpolationSpec::linear,
+                                         {{0, -12.0}}});
 
     TimelineEngine engine;
     juce::String error;
@@ -167,6 +171,7 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     const std::array<const float*, 1> inputs{input.data()};
     const std::array<float*, 2> outputs{left.data(), right.data()};
 
+    ASSERT_TRUE(engine.play());
     // Act: render the automation value, then preview a different static gain.
     engine.mix(inputs.data(), 1, outputs.data(), 2, static_cast<int>(input.size()));
     const auto automatedPeak =
@@ -186,8 +191,16 @@ TEST(TimelineEngineTest, TrackAutomationOverridesStaticMixPreview) {
     // Verify volume and pan automation reach their late-block values in one
     // realtime callback, rather than only preserving a static automation point.
     auto rampSnapshot = makeAudioTrackSnapshot(1, true, false);
-    rampSnapshot.graph.tracks.front().volumeAutomation = {{0, -24.0}, {20, 0.0}};
-    rampSnapshot.graph.tracks.front().panAutomation = {{0, -1.0}, {20, 1.0}};
+    rampSnapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                             rampSnapshot.graph.tracks.front().id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -24.0}, {20, 0.0}}});
+    rampSnapshot.graph.automation.push_back({AutomationTargetKind::trackPan,
+                                             rampSnapshot.graph.tracks.front().id,
+                                             {},
+                                             AutomationInterpolationSpec::linear,
+                                             {{0, -1.0}, {20, 1.0}}});
     TimelineEngine rampEngine;
     ASSERT_TRUE(loadTestSnapshot(rampEngine, rampSnapshot, formats, 48'000.0, 512, error))
         << error.toStdString();
@@ -286,37 +299,67 @@ TEST(TimelineEngineTest, ProcessesEachTrackEffectChainOnce) {
     EXPECT_TRUE(passed);
 }
 
-TEST(TimelineEngineTest, RendersBuiltInInstrumentThroughOfflineRenderer) {
-    // Arrange
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    test::TemporaryDirectory directory;
-    const auto destination = directory.get().getChildFile("built-in.wav");
-    OfflineRenderer::Result result;
-    juce::String error;
+TEST(TimelineEngineTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOfflineRenderer) {
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    for (const bool vst3 : {false, true}) {
+        // Arrange
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        test::TemporaryDirectory directory;
+        const auto destination = directory.get().getChildFile("built-in.wav");
+        OfflineRenderer::Result result;
+        juce::String error;
 
-    // Act
-    const auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
-    const auto rendered = renderTestSnapshot(snapshot.graph, formats, destination, 0, 960, 48'000,
-                                             512, false, result, error);
+        // Act
+        auto snapshot = makeBuiltInInstrumentSnapshot("track:offline");
+        if (vst3) {
+            auto& track = snapshot.graph.tracks.front();
+            track.panLaw = "unityCenterStereo";
+            track.instrument =
+                Vst3InstrumentSpec{"instrument:vst", RIFFRA_TEST_INSTRUMENT_BUNDLE_PATH, {}};
+            track.midiClips[0].notes[0].durationTicks = 960;
+            snapshot.graph.automation = {{AutomationTargetKind::deviceParameter,
+                                          "instrument:vst",
+                                          "3165055",
+                                          AutomationInterpolationSpec::step,
+                                          {{0, 0.25}, {240, 0.75}}}};
+        }
+        const auto rendered = renderTestSnapshot(snapshot.graph, formats, destination, 0, 960,
+                                                 48'000, 512, false, result, error);
 
-    // Assert
-    ASSERT_TRUE(rendered) << error.toStdString();
-    ASSERT_TRUE(destination.existsAsFile());
-    ASSERT_GT(result.frames, 0u);
-    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
-    ASSERT_NE(reader, nullptr);
-    ASSERT_EQ(reader->numChannels, 2u);
-    ASSERT_GT(reader->lengthInSamples, 0);
-    const auto frameCount = static_cast<int>(reader->lengthInSamples);
-    juce::AudioBuffer<float> output(2, frameCount);
-    ASSERT_TRUE(reader->read(&output, 0, frameCount, 0, true, true));
-    for (int channel = 0; channel < output.getNumChannels(); ++channel)
-        for (int sample = 0; sample < output.getNumSamples(); ++sample)
-            ASSERT_TRUE(std::isfinite(output.getSample(channel, sample)));
-    EXPECT_GT(
-        std::max(output.getMagnitude(0, 0, frameCount), output.getMagnitude(1, 0, frameCount)),
-        0.0f);
+        // Assert
+        ASSERT_TRUE(rendered) << error.toStdString();
+        ASSERT_TRUE(destination.existsAsFile());
+        ASSERT_GT(result.frames, 0u);
+        auto reader =
+            std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
+        ASSERT_NE(reader, nullptr);
+        ASSERT_EQ(reader->numChannels, 2u);
+        ASSERT_GT(reader->lengthInSamples, 0);
+        const auto frameCount = static_cast<int>(reader->lengthInSamples);
+        juce::AudioBuffer<float> output(2, frameCount);
+        ASSERT_TRUE(reader->read(&output, 0, frameCount, 0, true, true));
+        for (int channel = 0; channel < output.getNumChannels(); ++channel)
+            for (int sample = 0; sample < output.getNumSamples(); ++sample)
+                ASSERT_TRUE(std::isfinite(output.getSample(channel, sample)));
+        EXPECT_GT(
+            std::max(output.getMagnitude(0, 0, frameCount), output.getMagnitude(1, 0, frameCount)),
+            0.0f);
+        if (vst3) {
+            EXPECT_NEAR(output.getSample(0, 1000), 0.0625f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 10000), 0.1875f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 6143), 0.0625f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 6144), 0.1875f, 0.0001f);
+            auto invalid = snapshot.graph;
+            invalid.automation.front().parameterId = "absent";
+            EXPECT_TRUE(renderTestSnapshot(invalid, formats,
+                                           directory.get().getChildFile("unresolved.wav"), 0, 960,
+                                           48'000, 512, false, result, error))
+                << error.toStdString();
+            ASSERT_EQ(result.automationWarnings.size(), 1u);
+            EXPECT_TRUE(result.automationWarnings.front().contains("instrument:vst/absent"));
+        }
+    }
 }
 
 TEST(TimelineEngineTest, MonitorsAudioTrackInputThroughTheTrackEffectChain) {
@@ -504,7 +547,106 @@ TEST(TimelineEngineTest, NormalizesAnOfflineRenderToTheTargetPeak) {
     EXPECT_NEAR(peak, 0.98f, 0.02f);
 }
 
-TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
+TEST(MixerRoutingTest, AutomationFollowsMixerRoutesAndRestoresStaticValuesOnStop) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto snapshot = makeAudioTrackSnapshot(1, true, false);
+    const auto trackId = snapshot.graph.tracks.front().id;
+    snapshot.graph.tracks.front().outputBusId = "group";
+    snapshot.graph.tracks.front().panLaw = "unityCenterStereo";
+    snapshot.graph.mixer.buses = {
+        {"group", MixBusKindSpec::group, 0.0, 0.0, "unityCenterStereo", false, false, {}},
+        {"return", MixBusKindSpec::returnBus, 0.0, 0.0, "unityCenterStereo", false, false, {}}};
+    snapshot.graph.mixer.sends = {
+        {"send", trackId, "return", 0.0, SendPositionSpec::preFader, true}};
+    snapshot.graph.automation = {{AutomationTargetKind::trackVolume,
+                                  trackId,
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::trackPan,
+                                  trackId,
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 0.0}, {20, 1.0}}},
+                                 {AutomationTargetKind::busGain,
+                                  "group",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::busPan,
+                                  "group",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -1.0}, {20, 0.0}}},
+                                 {AutomationTargetKind::busGain,
+                                  "return",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::busPan,
+                                  "return",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 1.0}, {20, 0.0}}},
+                                 {AutomationTargetKind::sendLevel,
+                                  "send",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}},
+                                 {AutomationTargetKind::masterGain,
+                                  {},
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, -6.0}, {20, -12.0}}}};
+    TimelineEngine engine;
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 1024, error))
+        << error.toStdString();
+    std::array<float, 1024> input, left{}, right{};
+    input.fill(0.25f);
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{left.data(), right.data()};
+
+    // Act
+    ASSERT_TRUE(engine.play());
+    engine.mix(inputs.data(), 1, outputs.data(), 2, 1024);
+    engine.applyMasterGain(outputs.data(), 2, 1024, 0.0f);
+
+    // Assert: exact Step boundary at tick 20 (sample 500), after the transport fade.
+    const auto first = 0.25f * std::pow(10.0f, -18.0f / 20.0f);
+    EXPECT_NEAR(left[499], first, 0.00001f);
+    EXPECT_NEAR(right[499], first, 0.00001f);
+    const auto late = 0.25f * std::pow(10.0f, -36.0f / 20.0f);
+    EXPECT_NEAR(left[500], late, 0.00001f);
+    EXPECT_NEAR(right[500], 2.0f * late, 0.00001f);
+    ASSERT_TRUE(engine.stop());
+    for (int block = 0; block < 2; ++block) {
+        left.fill(0.0f);
+        right.fill(0.0f);
+        engine.mix(inputs.data(), 1, outputs.data(), 2, 1024);
+        engine.applyMasterGain(outputs.data(), 2, 1024, 0.0f);
+    }
+    EXPECT_NEAR(left.back(), 0.5f, 0.00001f);
+    EXPECT_NEAR(right.back(), 0.5f, 0.00001f);
+    auto looped = snapshot;
+    looped.graph.loopRange = {true, 0, 2};
+    looped.graph.automation.back().points = {{0, -6.0}, {1, -12.0}};
+    TimelineEngine loopEngine;
+    ASSERT_TRUE(loadTestSnapshot(loopEngine, looped, formats, 48'000.0, 4096, error)) << error;
+    ASSERT_TRUE(loopEngine.play());
+    std::array<float, 4096> loopInput, loopLeft{}, loopRight{};
+    loopInput.fill(0.25f);
+    const std::array<const float*, 1> loopInputs{loopInput.data()};
+    const std::array<float*, 2> loopOutputs{loopLeft.data(), loopRight.data()};
+    loopEngine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, 4096);
+    loopEngine.applyMasterGain(loopOutputs.data(), 2, 4096, 0.0f);
+    EXPECT_NEAR(loopLeft[4000], first, 0.00001f);
+    EXPECT_NEAR(loopLeft[4025], first * std::pow(10.0f, -6.0f / 20.0f), 0.00001f);
+}
+
+TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesOnlyWhenProjectedStateMatches) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;
     test::TemporaryDirectory directory;
@@ -573,12 +715,33 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
         EXPECT_GT(meters[0].peakLeft, 0.01);
         const auto groupEffects = graph->mixer.buses[0]->effects;
         const auto masterEffects = graph->mixer.masterEffects;
+        const auto automatedOwner = EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"};
+        const auto staticState = engine.devicePersistedState(automatedOwner, "fx:group", error);
+        ASSERT_TRUE(staticState.has_value()) << error;
+        const auto parameterInfo = groupEffects->findDevice("fx:group")->parameters();
+        ASSERT_TRUE(parameterInfo[0].parameterId.has_value());
+        candidate.graph.automation = {{AutomationTargetKind::deviceParameter,
+                                       "fx:group",
+                                       *parameterInfo[0].parameterId,
+                                       AutomationInterpolationSpec::step,
+                                       {{0, 0.25}}}};
         candidate.graph.mixer.buses[0].gainDb = -3.0;
         candidate.graph.mixer.sends[0].levelDb = -6.0;
         ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
         graph = TimelineEngineTestPeer::committedGraph(engine);
         EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
         EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        ASSERT_EQ(graph->mixer.buses[0]->deviceAutomation.size(), 1u);
+        output.clear();
+        engine.mix(output.getArrayOfWritePointers(), 2, 64);
+        EXPECT_EQ(engine.devicePersistedState(automatedOwner, "fx:group", error), staticState);
+        EXPECT_FALSE(engine.setDeviceParameter(automatedOwner, "fx:group", 0, 0.9f, error));
+        candidate.graph.automation.clear();
+        ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
+        EXPECT_EQ(TimelineEngineTestPeer::committedGraph(engine)->mixer.buses[0]->effects,
+                  groupEffects);
+        EXPECT_NEAR(groupEffects->findDevice("fx:group")->parameters()[0].value,
+                    staticState->parameterValues[0], 0.0001f);
         for (const auto& [owner, id] : std::array<std::pair<EffectOwnerSpec, juce::String>, 3>{
                  std::pair{EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"},
                            juce::String("fx:group")},
@@ -615,8 +778,8 @@ TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {
         candidate.graph.mixer.buses[0].gainDb = -9.0;
         ASSERT_TRUE(loadTestSnapshot(engine, candidate, formats, 48'000.0, 64, error)) << error;
         graph = TimelineEngineTestPeer::committedGraph(engine);
-        EXPECT_EQ(graph->mixer.buses[0]->effects, groupEffects);
-        EXPECT_EQ(graph->mixer.masterEffects, masterEffects);
+        EXPECT_NE(graph->mixer.buses[0]->effects, groupEffects);
+        EXPECT_NE(graph->mixer.masterEffects, masterEffects);
         ASSERT_TRUE(engine.setChannelMixControl(
             EffectOwnerSpec{EffectOwnerKindSpec::bus, "bus:group"}, -9.0f, 0.2f, error));
         ASSERT_TRUE(engine.setSendLevelControl("send:first", -12.0f, error));
@@ -820,8 +983,17 @@ TEST(MixerRoutingTest, DisablesLowLatencyPdcBypassForDependentOrAutomatedTracks)
         clip.durationSampleRate = 48'000;
         monitoredTrack.audioClips.push_back(clip);
         if (restriction == Restriction::volumeAutomation)
-            monitoredTrack.volumeAutomation = {{0, -6.0}};
-        if (restriction == Restriction::panAutomation) monitoredTrack.panAutomation = {{0, 0.5}};
+            snapshot.graph.automation.push_back({AutomationTargetKind::trackVolume,
+                                                 monitoredTrack.id,
+                                                 {},
+                                                 AutomationInterpolationSpec::linear,
+                                                 {{0, -6.0}}});
+        if (restriction == Restriction::panAutomation)
+            snapshot.graph.automation.push_back({AutomationTargetKind::trackPan,
+                                                 monitoredTrack.id,
+                                                 {},
+                                                 AutomationInterpolationSpec::linear,
+                                                 {{0, 0.5}}});
 
         auto highLatencyTrack = makeAudioTrack("track:high-latency");
         highLatencyTrack.audioClips.push_back(clip);

@@ -1,49 +1,108 @@
-import { useEffect, useState } from 'react';
-import type { AutomationLane, AutomationParameter, AutomationPoint, Track } from '@/model/domain';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import type {
+  AutomationInterpolation,
+  AutomationLane,
+  AutomationPoint,
+  AutomationTarget,
+} from '@/model/domain';
+import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
+import { automationValueAt } from '@/features/arrange/model/automation-value';
+import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
 import styles from '../WorkspaceArrange.module.css';
 
-const HEIGHT = 84;
+const HEIGHT = 128;
 
 interface AutomationLaneViewProps {
-  track: Track;
+  option: AutomationOption;
+  options: AutomationOption[];
   lane?: AutomationLane;
-  parameter: AutomationParameter;
+  error?: string | null;
   timelineWidth: number;
   pixelsPerTick: number;
+  playheadTick: number;
+  playheadTickRef: MutableRefObject<number>;
+  previewScope: string;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
-  onParameter: (parameter: AutomationParameter) => void;
-  onCommit: (points: AutomationPoint[]) => void;
-}
-
-function parameterRange(parameter: AutomationParameter) {
-  return parameter === 'volume'
-    ? { min: -90, max: 24, label: 'dB' }
-    : { min: -1, max: 1, label: '' };
+  onTarget: (target: AutomationTarget) => void;
+  onClose: () => void;
+  onPreview: (value: number | null, token: number) => void | Promise<void>;
+  formatValue?: (value: number) => Promise<string>;
+  onCommit: (
+    points: AutomationPoint[],
+    interpolation: AutomationInterpolation,
+  ) => void | Promise<unknown>;
 }
 
 export function AutomationLaneView(props: AutomationLaneViewProps) {
-  const { min, max, label } = parameterRange(props.parameter);
+  const { min, max, unit: label, name, staticValue: baseValue } = props.option;
+  const { formatValue, previewScope } = props;
+  const interpolation = props.lane?.interpolation ?? (props.option.discrete ? 'step' : 'linear');
+  const cancelDrag = useRef<(() => void) | null>(null);
+  const pendingPreview = useRef<{
+    value: number | null;
+    token: number;
+    onPreview: AutomationLaneViewProps['onPreview'];
+  } | null>(null);
+  const previewDraining = useRef(false);
+  const drainPreview = useRef<() => void>(() => undefined);
+  drainPreview.current = () => {
+    if (previewDraining.current) return;
+    previewDraining.current = true;
+    void (async () => {
+      while (pendingPreview.current) {
+        const request = pendingPreview.current;
+        pendingPreview.current = null;
+        try {
+          await request.onPreview(request.value, request.token);
+        } catch {
+          // A failed preview must not block a newer value or the final clear.
+        }
+      }
+      previewDraining.current = false;
+      if (pendingPreview.current) drainPreview.current();
+    })();
+  };
+  const queuePreview = (value: number | null, token: number) => {
+    pendingPreview.current = { value, token, onPreview: props.onPreview };
+    drainPreview.current();
+  };
+  useEffect(() => {
+    return () => cancelDrag.current?.();
+  }, [previewScope]);
   const [points, setPoints] = useState(props.lane?.points ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  useEffect(() => setPoints(props.lane?.points ?? []), [props.lane]);
+  useEffect(() => {
+    cancelDrag.current?.();
+    setPoints(props.lane?.points ?? []);
+  }, [props.lane]);
+
+  const effectiveValue =
+    baseValue === undefined
+      ? undefined
+      : automationValueAt(points, interpolation, props.playheadTick, baseValue);
+  const effectiveText = useAutomationValueDisplay(effectiveValue, formatValue);
 
   const yForValue = (value: number) => ((max - value) / (max - min)) * HEIGHT;
   const valueFromY = (clientY: number, top: number) => {
     const amount = Math.min(1, Math.max(0, (clientY - top) / HEIGHT));
     const value = max - amount * (max - min);
-    return props.parameter === 'volume'
-      ? Math.round(value * 10) / 10
-      : Math.round(value * 100) / 100;
+    if (props.option.discrete && (props.option.steps ?? 0) >= 2) {
+      const steps = props.option.steps! - 1;
+      return Math.round(value * steps) / steps;
+    }
+    return label === 'dB' ? Math.round(value * 10) / 10 : Math.round(value * 100) / 100;
   };
-  const baseValue = props.parameter === 'volume' ? props.track.gainDb : props.track.pan;
 
   const addPoint = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || event.target !== event.currentTarget) return;
     const bounds = event.currentTarget.getBoundingClientRect();
+    const tick = props.snapTick((event.clientX - bounds.left) / props.pixelsPerTick, event.altKey);
     const point: AutomationPoint = {
-      id: `automation-point:${crypto.randomUUID()}`,
-      tick: props.snapTick((event.clientX - bounds.left) / props.pixelsPerTick, event.altKey),
+      id:
+        points.find((point) => point.tick === tick)?.id ??
+        `automation-point:${crypto.randomUUID()}`,
+      tick,
       value: valueFromY(event.clientY, bounds.top),
     };
     const next = [...points.filter((candidate) => candidate.tick !== point.tick), point].sort(
@@ -51,18 +110,20 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
     );
     setPoints(next);
     setSelectedId(point.id);
-    props.onCommit(next);
+    void props.onCommit(next, interpolation);
   };
 
   const movePoint = (event: React.PointerEvent<HTMLButtonElement>, pointId: string) => {
     event.preventDefault();
     event.stopPropagation();
+    cancelDrag.current?.();
     setSelectedId(pointId);
     event.currentTarget.parentElement?.focus();
     const lane = event.currentTarget.parentElement;
     if (!lane) return;
     const bounds = lane.getBoundingClientRect();
     let preview = points;
+    const previewToken = crypto.getRandomValues(new Uint32Array(1))[0] || 1;
     const move = (pointer: PointerEvent) => {
       const ordered = [...preview].sort((left, right) => left.tick - right.tick);
       const index = ordered.findIndex((point) => point.id === pointId);
@@ -83,19 +144,38 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
           : point,
       );
       setPoints(preview);
+      queuePreview(
+        automationValueAt(preview, interpolation, props.playheadTickRef.current, baseValue ?? 0),
+        previewToken,
+      );
     };
     const finish = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
-      props.onCommit(preview);
+      window.removeEventListener('keydown', key);
+      cancelDrag.current = null;
+      void Promise.resolve(props.onCommit(preview, interpolation)).finally(() =>
+        queuePreview(null, previewToken),
+      );
     };
     const cancel = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', key);
+      cancelDrag.current = null;
       setPoints(props.lane?.points ?? []);
+      queuePreview(null, previewToken);
     };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancel();
+      }
+    };
+    cancelDrag.current = cancel;
+    window.addEventListener('keydown', key);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', cancel);
@@ -104,22 +184,54 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
   return (
     <div className={styles.automationRow}>
       <aside className={styles.automationHeader}>
-        <strong>AUTOMATION</strong>
-        <span>{props.track.name}</span>
+        <strong>AUTOMATION · READ</strong>
+        <button type="button" onClick={props.onClose} aria-label={`Close ${name} automation`}>
+          ×
+        </button>
         <select
-          aria-label={`${props.track.name} automation parameter`}
-          value={props.parameter}
-          onChange={(event) => props.onParameter(event.target.value as AutomationParameter)}
+          aria-label="Automation target"
+          value={automationTargetKey(props.option.target)}
+          onChange={(event) => {
+            const selected = props.options.find(
+              (option) => automationTargetKey(option.target) === event.target.value,
+            );
+            if (selected) props.onTarget(selected.target);
+          }}
         >
-          <option value="volume">Volume</option>
-          <option value="pan">Pan</option>
+          {props.options.map((option) => (
+            <option
+              key={automationTargetKey(option.target)}
+              value={automationTargetKey(option.target)}
+            >
+              {option.name}
+            </option>
+          ))}
         </select>
+        <select
+          aria-label="Automation interpolation"
+          value={interpolation}
+          disabled={!points.length}
+          onChange={(event) =>
+            void props.onCommit(points, event.target.value as AutomationInterpolation)
+          }
+        >
+          <option value="linear" disabled={props.option.discrete}>
+            Linear
+          </option>
+          <option value="step">Step</option>
+        </select>
+        <span title={props.error ?? undefined}>
+          {props.error ?? `Static: ${baseValue === undefined ? '—' : baseValue} ${label}`}
+          {effectiveValue !== undefined && (
+            <small> Current: {effectiveText ?? `${effectiveValue.toFixed(3)} ${label}`}</small>
+          )}
+        </span>
       </aside>
       <div
         className={styles.automationLane}
         style={{ width: props.timelineWidth }}
         tabIndex={0}
-        aria-label={`${props.track.name} ${props.parameter} automation`}
+        aria-label={`${name} automation`}
         onPointerDown={addPoint}
         onKeyDown={(event) => {
           if (event.key !== 'Delete' || !selectedId) return;
@@ -128,18 +240,32 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
           const next = points.filter((point) => point.id !== selectedId);
           setPoints(next);
           setSelectedId(null);
-          props.onCommit(next);
+          void props.onCommit(next, interpolation);
         }}
       >
-        <span
-          className={styles.automationBase}
-          style={{ top: yForValue(Math.min(max, Math.max(min, baseValue))) }}
-        />
+        {baseValue !== undefined && (
+          <span
+            className={styles.automationBase}
+            style={{ top: yForValue(Math.min(max, Math.max(min, baseValue))) }}
+          />
+        )}
         <svg width={props.timelineWidth} height={HEIGHT} aria-hidden="true">
           <polyline
-            points={points
-              .map((point) => `${point.tick * props.pixelsPerTick},${yForValue(point.value)}`)
-              .join(' ')}
+            points={
+              points.length
+                ? [
+                    `0,${yForValue(points[0].value)}`,
+                    ...points.flatMap((point, index) => {
+                      const x = point.tick * props.pixelsPerTick;
+                      const current = `${x},${yForValue(point.value)}`;
+                      return interpolation === 'step' && index > 0
+                        ? [`${x},${yForValue(points[index - 1].value)}`, current]
+                        : [current];
+                    }),
+                    `${props.timelineWidth},${yForValue(points.at(-1)!.value)}`,
+                  ].join(' ')
+                : ''
+            }
           />
         </svg>
         {points.map((point) => (
@@ -152,7 +278,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
               left: point.tick * props.pixelsPerTick,
               top: yForValue(point.value),
             }}
-            aria-label={`${props.parameter} ${point.value}${label} at tick ${point.tick}`}
+            aria-label={`${name} ${point.value}${label} at tick ${point.tick}`}
             title={`${point.value}${label} · Tick ${point.tick}`}
             onPointerDown={(event) => movePoint(event, point.id)}
           />

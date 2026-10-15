@@ -84,6 +84,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   api.previewChannelMix = vi.fn().mockResolvedValue(undefined);
   api.previewSendLevel = vi.fn().mockResolvedValue(undefined);
   const open = vi.fn();
+  const openAutomation = vi.fn();
   function Harness() {
     const [current, setCurrent] = useState<CreativeSession>(structuredClone(session));
     const [owner, setOwner] = useState<EffectOwner | null>(null);
@@ -96,6 +97,7 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
         onOpenOwnerDevices={open}
         onSelectTrack={() => undefined}
         onOpenDevices={() => undefined}
+        onOpenAutomation={openAutomation}
         missingDeviceIds={[]}
         api={api}
         applyCanonicalState={(state) => {
@@ -119,6 +121,8 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   await waitFor(() => expect(screen.getByLabelText('Main output')).toHaveValue('bus:group'));
   fireEvent.change(screen.getByLabelText('Add Send'), { target: { value: 'bus:return' } });
   const slider = await screen.findByLabelText('Send send:1 level');
+  fireEvent.click(within(slider.closest('fieldset')!).getByRole('button', { name: 'Automation' }));
+  expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'sendLevel', sendId: 'send:1' });
   const enabled = screen.getByRole('checkbox', { name: 'Enabled' });
   fireEvent.click(enabled);
   await waitFor(() => expect(session.arrangement.mixer.sends[0].enabled).toBe(false));
@@ -143,6 +147,12 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(await screen.findByRole('button', { name: 'Group · 1 Sends' })).toBeInTheDocument();
   const group = screen.getByRole('article', { name: 'Group mixer channel' });
+  fireEvent.click(within(group).getByRole('button', { name: 'Automation' }));
+  expect(openAutomation).toHaveBeenLastCalledWith({
+    kind: 'busMix',
+    busId: 'bus:group',
+    parameter: 'gain',
+  });
   const gain = within(group).getByLabelText('Group gain');
   fireEvent.pointerDown(gain);
   fireEvent.change(gain, { target: { value: '-9' } });
@@ -165,4 +175,11 @@ it('edits Group and Send routes, commits their controls, and opens Bus and Maste
     ),
   );
   expect(open).toHaveBeenLastCalledWith({ kind: 'master' });
+  fireEvent.click(
+    within(screen.getByRole('complementary', { name: 'Master mixer channel' })).getByRole(
+      'button',
+      { name: 'Automation' },
+    ),
+  );
+  expect(openAutomation).toHaveBeenLastCalledWith({ kind: 'masterGain' });
 });

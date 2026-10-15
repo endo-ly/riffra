@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Arrangement, ArrangementMutationResult, Send, Track } from '@/model/domain';
+import type {
+  Arrangement,
+  ArrangementMutationResult,
+  AutomationTarget,
+  Send,
+  Track,
+} from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
 import styles from './Mixer.module.css';
 
@@ -9,6 +15,7 @@ interface Props {
   api: ArrangeWorkspaceApi;
   commit: (operation: Promise<ArrangementMutationResult>) => void;
   onClose: () => void;
+  onOpenAutomation: (target: AutomationTarget) => void;
 }
 
 function SendLevel({
@@ -116,7 +123,14 @@ function SendLevel({
   );
 }
 
-export function MixerRouting({ arrangement, track, api, commit, onClose }: Props) {
+export function MixerRouting({
+  arrangement,
+  track,
+  api,
+  commit,
+  onClose,
+  onOpenAutomation,
+}: Props) {
   const returns = arrangement.mixer.buses.filter((bus) => bus.kind === 'return');
   const sends = arrangement.mixer.sends.filter((send) => send.trackId === track.id);
   return (
@@ -179,6 +193,12 @@ export function MixerRouting({ arrangement, track, api, commit, onClose }: Props
                   ))}
               </select>
             </label>
+            <button
+              type="button"
+              onClick={() => onOpenAutomation({ kind: 'sendLevel', sendId: send.id })}
+            >
+              Automation
+            </button>
             <SendLevel send={send} api={api} commit={commit} />
             <label>
               Position{' '}

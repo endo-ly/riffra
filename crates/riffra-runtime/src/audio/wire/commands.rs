@@ -36,6 +36,7 @@ pub(crate) enum SidecarCommand {
         timeout_ms: u64,
     },
     PlayTimeline,
+    PauseTimeline,
     SetTransportStarting,
     StopTimeline,
     SeekTimeline {
@@ -62,6 +63,11 @@ pub(crate) enum SidecarCommand {
         send_id: String,
         level_db: f64,
     },
+    PreviewAutomationValue {
+        target: riffra_core::AutomationTarget,
+        value: Option<f64>,
+        preview_token: u64,
+    },
     SetDeviceBypassed {
         owner: riffra_core::EffectOwner,
         device_id: String,
@@ -81,6 +87,18 @@ pub(crate) enum SidecarCommand {
     GetDeviceParameters {
         owner: riffra_core::EffectOwner,
         device_id: String,
+    },
+    GetDeviceParameterValueForText {
+        owner: riffra_core::EffectOwner,
+        device_id: String,
+        parameter_id: String,
+        display: String,
+    },
+    GetDeviceParameterDisplayValue {
+        owner: riffra_core::EffectOwner,
+        device_id: String,
+        parameter_index: u32,
+        value: f32,
     },
     GetDevicePrograms {
         owner: riffra_core::EffectOwner,
@@ -201,6 +219,7 @@ impl SidecarCommand {
             | Self::StartArrangeRecording { .. }
             | Self::StopArrangeRecording => ExpectedResponse::AudioStatus,
             Self::PlayTimeline
+            | Self::PauseTimeline
             | Self::SetTransportStarting
             | Self::StopTimeline
             | Self::SeekTimeline { .. } => ExpectedResponse::TransportAccepted,
@@ -209,13 +228,17 @@ impl SidecarCommand {
             | Self::DiscardTimelineSnapshot => ExpectedResponse::TimelineAck,
             Self::WaitForTimelineIdle { .. } => ExpectedResponse::TimelineIdleAck,
             Self::SendTrackMidi { .. } | Self::PanicTrackMidi { .. } => ExpectedResponse::MidiAck,
-            Self::SetChannelMix { .. } | Self::SetSendLevel { .. } => ExpectedResponse::MixAck,
+            Self::SetChannelMix { .. }
+            | Self::SetSendLevel { .. }
+            | Self::PreviewAutomationValue { .. } => ExpectedResponse::MixAck,
             Self::SetDeviceBypassed { .. }
             | Self::SetDeviceParameter { .. }
             | Self::SetPluginState { .. }
             | Self::OpenPluginEditor { .. } => ExpectedResponse::DeviceAck,
             Self::GetDeviceStatus { .. } => ExpectedResponse::DeviceStatus,
-            Self::GetDeviceParameters { .. } => ExpectedResponse::DeviceParameters,
+            Self::GetDeviceParameters { .. }
+            | Self::GetDeviceParameterValueForText { .. }
+            | Self::GetDeviceParameterDisplayValue { .. } => ExpectedResponse::DeviceParameters,
             Self::GetDevicePrograms { .. } => ExpectedResponse::DevicePrograms,
             Self::GetPluginState { .. } => ExpectedResponse::PluginState,
             Self::SetDeviceProgram { .. } => ExpectedResponse::DeviceProgramChanged,

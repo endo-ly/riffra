@@ -89,6 +89,18 @@ export function getDeviceParameter(owner: EffectOwner, deviceId: string, paramet
   });
 }
 
+export async function formatDeviceParameterValue(
+  owner: EffectOwner,
+  deviceId: string,
+  parameterIndex: number,
+  value: number,
+): Promise<string> {
+  return dispatchControl({
+    command: 'device.parameter.format',
+    params: { owner, deviceId, parameterIndex, value },
+  });
+}
+
 export function listPluginPresets(owner: EffectOwner, deviceId: string) {
   return dispatchControl({ command: 'plugin.preset.list', params: { owner, deviceId } });
 }

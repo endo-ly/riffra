@@ -182,6 +182,7 @@ pub struct AudioDiagnostics {
     pub instrument_runtime_count: u64,
     pub plugin_count: u64,
     pub maximum_latency_samples: u64,
+    pub automation_warnings: Vec<String>,
     pub projection_duration_ms: u64,
     pub audio_environment_revision: u64,
     /// Sidecar output lines that did not match the protocol.
@@ -205,6 +206,8 @@ pub struct AudioInstrumentFault {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDiagnosticsReport {
+    /// Parameters that could not be bound in the active execution graph.
+    pub automation_warnings: Vec<String>,
     pub device: AudioDiagnosticsDevice,
     pub mute: AudioDiagnosticsMute,
     pub realtime: AudioDiagnosticsRealtime,

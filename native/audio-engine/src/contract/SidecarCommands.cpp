@@ -229,11 +229,13 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
-    if (type == "playTimeline" || type == "setTransportStarting" || type == "stopTimeline") {
+    if (type == "playTimeline" || type == "pauseTimeline" || type == "setTransportStarting" ||
+        type == "stopTimeline") {
         auto fields = reader({"type"});
         if (!fields.string("type", ignoredType) || !fields.finish()) return false;
         output =
             TransportCommand{type == "playTimeline"           ? TransportCommandKind::play
+                             : type == "pauseTimeline"        ? TransportCommandKind::pause
                              : type == "setTransportStarting" ? TransportCommandKind::setStarting
                                                               : TransportCommandKind::stop,
                              0};
@@ -306,6 +308,63 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
         output = command;
         return true;
     }
+    if (type == "previewAutomationValue") {
+        auto fields = reader({"type", "target", "value", "previewToken"});
+        PreviewAutomationValueCommand command;
+        juce::var target;
+        juce::String targetKind, parameter;
+        if (!fields.string("type", ignoredType) || !fields.object("target", target) ||
+            !fields.optionalNumber("value", command.value) ||
+            !fields.unsignedInteger("previewToken", command.previewToken) || !fields.finish())
+            return false;
+        const auto kind = target.getProperty("kind", {}).toString();
+        if (kind == "trackMix" || kind == "busMix") {
+            const auto track = kind == "trackMix";
+            ContractReader targetReader(target, "$.command.target",
+                                        {"kind", track ? "trackId" : "busId", "parameter"}, error);
+            if (!targetReader.string("kind", targetKind) ||
+                !targetReader.string(track ? "trackId" : "busId", command.id) ||
+                !targetReader.string("parameter", parameter) || !targetReader.finish())
+                return false;
+            if (track && parameter == "volume")
+                command.kind = AutomationTargetKind::trackVolume;
+            else if (track && parameter == "pan")
+                command.kind = AutomationTargetKind::trackPan;
+            else if (!track && parameter == "gain")
+                command.kind = AutomationTargetKind::busGain;
+            else if (!track && parameter == "pan")
+                command.kind = AutomationTargetKind::busPan;
+            else
+                return fail(error, "$.command.target", "unknown mix parameter");
+        } else if (kind == "masterGain") {
+            ContractReader targetReader(target, "$.command.target", {"kind"}, error);
+            if (!targetReader.string("kind", targetKind) || !targetReader.finish()) return false;
+            command.kind = AutomationTargetKind::masterGain;
+        } else if (kind == "sendLevel") {
+            ContractReader targetReader(target, "$.command.target", {"kind", "sendId"}, error);
+            if (!targetReader.string("kind", targetKind) ||
+                !targetReader.string("sendId", command.id) || !targetReader.finish())
+                return false;
+            command.kind = AutomationTargetKind::sendLevel;
+        } else if (kind == "deviceParameter") {
+            ContractReader targetReader(target, "$.command.target",
+                                        {"kind", "deviceId", "parameterId"}, error);
+            if (!targetReader.string("kind", targetKind) ||
+                !targetReader.string("deviceId", command.id) ||
+                !targetReader.string("parameterId", command.parameterId) || !targetReader.finish())
+                return false;
+            command.kind = AutomationTargetKind::deviceParameter;
+        } else {
+            return fail(error, "$.command.target", "unknown automation target");
+        }
+        if (command.previewToken == 0 ||
+            (command.kind != AutomationTargetKind::masterGain && command.id.isEmpty()) ||
+            (command.kind == AutomationTargetKind::deviceParameter &&
+             command.parameterId.isEmpty()))
+            return fail(error, "$.command", "automation preview target and token are required");
+        output = std::move(command);
+        return true;
+    }
     if (type == "setDeviceBypassed") {
         auto fields = reader({"type", "owner", "deviceId", "bypassed"});
         SetDeviceBypassedCommand command;
@@ -334,6 +393,32 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
                 return fail(error, field("value"), "must be between 0 and 1");
             command.value = static_cast<float>(*parameterValue);
         }
+        output = command;
+        return true;
+    }
+    if (type == "getDeviceParameterValueForText") {
+        auto fields = reader({"type", "owner", "deviceId", "parameterId", "display"});
+        GetDeviceCommand command;
+        command.query = DeviceQuery::parameterText;
+        if (!fields.string("type", ignoredType) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
+            !fields.string("parameterId", command.parameterId) ||
+            !fields.string("display", command.display) || !fields.finish())
+            return false;
+        output = command;
+        return true;
+    }
+    if (type == "getDeviceParameterDisplayValue") {
+        auto fields = reader({"type", "owner", "deviceId", "parameterIndex", "value"});
+        GetDeviceCommand command;
+        command.query = DeviceQuery::parameterDisplay;
+        if (!fields.string("type", ignoredType) ||
+            !decodeDevice(fields, command.owner, command.deviceId, error) ||
+            !fields.unsigned32("parameterIndex", command.parameterIndex) ||
+            !fields.number("value", command.parameterValue) || !fields.finish())
+            return false;
+        if (command.parameterValue < 0.0 || command.parameterValue > 1.0)
+            return fail(error, "$.command.value", "must be between 0 and 1");
         output = command;
         return true;
     }
