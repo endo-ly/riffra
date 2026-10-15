@@ -8,6 +8,7 @@ import type {
 import { automationTargetKey, type AutomationOption } from '../model/automation-targets';
 import { isEditableTarget } from '@/features/arrange/model/interaction';
 import { automationValueAt } from '@/features/arrange/model/automation-value';
+import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
 import styles from '../WorkspaceArrange.module.css';
 
 const HEIGHT = 128;
@@ -38,18 +39,39 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
   const { formatValue, previewScope } = props;
   const interpolation = props.lane?.interpolation ?? (props.option.discrete ? 'step' : 'linear');
   const cancelDrag = useRef<(() => void) | null>(null);
-  const previewQueue = useRef(Promise.resolve());
+  const pendingPreview = useRef<{
+    value: number | null;
+    token: number;
+    onPreview: AutomationLaneViewProps['onPreview'];
+  } | null>(null);
+  const previewDraining = useRef(false);
+  const drainPreview = useRef<() => void>(() => undefined);
+  drainPreview.current = () => {
+    if (previewDraining.current) return;
+    previewDraining.current = true;
+    void (async () => {
+      while (pendingPreview.current) {
+        const request = pendingPreview.current;
+        pendingPreview.current = null;
+        try {
+          await request.onPreview(request.value, request.token);
+        } catch {
+          // A failed preview must not block a newer value or the final clear.
+        }
+      }
+      previewDraining.current = false;
+      if (pendingPreview.current) drainPreview.current();
+    })();
+  };
   const queuePreview = (value: number | null, token: number) => {
-    previewQueue.current = previewQueue.current
-      .catch(() => undefined)
-      .then(() => props.onPreview(value, token));
+    pendingPreview.current = { value, token, onPreview: props.onPreview };
+    drainPreview.current();
   };
   useEffect(() => {
     return () => cancelDrag.current?.();
   }, [previewScope]);
   const [points, setPoints] = useState(props.lane?.points ?? []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [effectiveText, setEffectiveText] = useState<string | null>(null);
   useEffect(() => {
     cancelDrag.current?.();
     setPoints(props.lane?.points ?? []);
@@ -59,24 +81,7 @@ export function AutomationLaneView(props: AutomationLaneViewProps) {
     baseValue === undefined
       ? undefined
       : automationValueAt(points, interpolation, props.playheadTick, baseValue);
-  useEffect(() => {
-    let current = true;
-    if (effectiveValue === undefined || !formatValue) {
-      setEffectiveText(null);
-      return;
-    }
-    void formatValue(effectiveValue).then(
-      (formatted) => {
-        if (current) setEffectiveText(formatted);
-      },
-      () => {
-        if (current) setEffectiveText(null);
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [effectiveValue, formatValue]);
+  const effectiveText = useAutomationValueDisplay(effectiveValue, formatValue);
 
   const yForValue = (value: number) => ((max - value) / (max - min)) * HEIGHT;
   const valueFromY = (clientY: number, top: number) => {

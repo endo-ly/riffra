@@ -234,6 +234,7 @@ describe('DevicesPanel', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Reset Level' })).toBeEnabled(),
       );
+      expect(api.formatDeviceParameterValue).toHaveBeenCalledTimes(1);
       fireEvent.click(screen.getByRole('button', { name: 'Reset Level' }));
       await waitFor(() =>
         expect(api.setDeviceParameter).toHaveBeenLastCalledWith(owner, effect.id, 0, 0.25),

@@ -1,4 +1,4 @@
-import { useEffect, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MutableRefObject } from 'react';
 import type {
   AutomationInterpolation,
   AutomationPoint,
@@ -42,8 +42,8 @@ interface Props {
 }
 
 export function AutomationLaneEditor(props: Props) {
-  const owner = automationOwner(props.session.arrangement, props.target);
-  const ownerKey = JSON.stringify(owner);
+  const ownerKey = JSON.stringify(automationOwner(props.session.arrangement, props.target));
+  const owner = useMemo(() => JSON.parse(ownerKey) as EffectOwner | null, [ownerKey]);
   const devices = owner ? automationDevices(props.session, owner) : [];
   const deviceKey = JSON.stringify(devices.map((device) => [device.id, device.plugin]));
   const [parameters, setParameters] = useState<Record<string, DeviceParameterInfo[]>>({});
@@ -75,10 +75,25 @@ export function AutomationLaneEditor(props: Props) {
       disposed = true;
     };
   }, [ownerKey, deviceKey, props.session.sessionId, props.api]);
+  const deviceId = props.target.kind === 'deviceParameter' ? props.target.deviceId : undefined;
+  const parameterId =
+    props.target.kind === 'deviceParameter' ? props.target.parameterId : undefined;
+  const parameterIndex =
+    deviceId && parameterId
+      ? (parameters[deviceId] ?? []).find((parameter) => parameter.parameterId === parameterId)
+          ?.index
+      : undefined;
+  const formatValue = useCallback(
+    (value: number) => {
+      if (!owner || !deviceId || parameterIndex === undefined)
+        return Promise.resolve(value.toFixed(3));
+      return props.api.formatDeviceParameterValue(owner, deviceId, parameterIndex, value);
+    },
+    [props.api, owner, deviceId, parameterIndex],
+  );
   if (!owner) return null;
   const options = automationOptions(props.session, owner, parameters);
   const key = automationTargetKey(props.target);
-  const deviceTarget = props.target.kind === 'deviceParameter' ? props.target : null;
   let selected = options.find((option) => automationTargetKey(option.target) === key);
   if (!selected && props.target.kind === 'deviceParameter') {
     selected = {
@@ -92,20 +107,6 @@ export function AutomationLaneEditor(props: Props) {
     options.push(selected);
   }
   if (!selected) return null;
-  const formattedParameter = deviceTarget
-    ? (parameters[deviceTarget.deviceId] ?? []).find(
-        (parameter) => parameter.parameterId === deviceTarget.parameterId,
-      )
-    : undefined;
-  const formatValue = (value: number) => {
-    if (!owner || !formattedParameter || !deviceTarget) return Promise.resolve(value.toFixed(3));
-    return props.api.formatDeviceParameterValue(
-      owner,
-      deviceTarget.deviceId,
-      formattedParameter.index,
-      value,
-    );
-  };
   const lane = props.session.arrangement.automationLanes.find(
     (lane) => automationTargetKey(lane.target) === key,
   );

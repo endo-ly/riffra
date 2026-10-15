@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AutomationLane,
   CanonicalState,
@@ -8,6 +8,7 @@ import type {
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
 import { automationValueAt } from '@/features/arrange/model/automation-value';
+import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
 import styles from './Devices.module.css';
 
 interface DeviceParameterEditorProps {
@@ -25,48 +26,41 @@ interface DeviceParameterEditorProps {
 
 function ParameterControl({
   parameter,
+  api,
+  owner,
+  deviceId,
   canonicalValue,
   disabled,
   onCommit,
   automated,
   onOpenAutomation,
   automationValue,
-  formatAutomationValue,
 }: {
   parameter: DeviceParameterInfo;
+  api: ArrangeWorkspaceApi;
+  owner: EffectOwner;
+  deviceId: string;
   canonicalValue: number;
   disabled: boolean;
   onCommit: (value: number) => Promise<boolean>;
   automated: boolean;
   onOpenAutomation: () => void;
   automationValue?: number;
-  formatAutomationValue: (value: number) => Promise<string>;
 }) {
   const [draft, setDraft] = useState(parameter.value);
-  const [automationDisplay, setAutomationDisplay] = useState<string | null>(null);
+  const ownerKey = JSON.stringify(owner);
+  const formatterOwner = useMemo(() => JSON.parse(ownerKey) as EffectOwner, [ownerKey]);
+  const formatAutomationValue = useCallback(
+    (value: number) =>
+      api.formatDeviceParameterValue(formatterOwner, deviceId, parameter.index, value),
+    [api, formatterOwner, deviceId, parameter.index],
+  );
+  const automationDisplay = useAutomationValueDisplay(automationValue, formatAutomationValue);
   const submitted = useRef(parameter.value);
   useEffect(() => {
     setDraft(parameter.value);
     submitted.current = parameter.value;
   }, [parameter]);
-  useEffect(() => {
-    let current = true;
-    if (automationValue === undefined) {
-      setAutomationDisplay(null);
-      return;
-    }
-    void formatAutomationValue(automationValue).then(
-      (display) => {
-        if (current) setAutomationDisplay(display);
-      },
-      () => {
-        if (current) setAutomationDisplay(null);
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [automationValue, formatAutomationValue]);
   const commit = async (value: number) => {
     if (disabled || value === submitted.current) return;
     submitted.current = value;
@@ -247,19 +241,14 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
               return (
                 <ParameterControl
                   key={parameter.index}
+                  api={props.api}
+                  owner={props.owner}
+                  deviceId={props.deviceId}
                   automated={Boolean(lane)}
                   onOpenAutomation={() => props.onOpenAutomation(parameter)}
                   parameter={parameter}
                   canonicalValue={staticValue}
                   automationValue={currentValue}
-                  formatAutomationValue={(value) =>
-                    props.api.formatDeviceParameterValue(
-                      props.owner,
-                      props.deviceId,
-                      parameter.index,
-                      value,
-                    )
-                  }
                   disabled={loading || saving || props.automationReadActive}
                   onCommit={(value) =>
                     mutate(() =>
