@@ -37,6 +37,7 @@ struct RenderPlan {
     tail_seconds: f64,
     block_size: u32,
     graph: ExecutionGraph,
+    dependency_warnings: Vec<String>,
     start_tick: u64,
     end_tick: u64,
     sample_rate: u32,
@@ -246,6 +247,7 @@ fn render_timeline_with_renderer(
         session.settings.mixdown.mastering.as_ref(),
         cancelled,
     )?;
+    warnings.extend(plan.dependency_warnings.iter().cloned());
     warnings.append(&mut automation_warnings);
 
     let timebase = &session.arrangement.timebase;
@@ -573,6 +575,7 @@ fn render_stems_with_renderer(
         frames = Some(stem_frames);
         let (measurements, mut warnings) =
             mastering::measure_output(&plan.output_path, sample_rate, None, None, cancelled)?;
+        warnings.extend(plan.dependency_warnings.iter().cloned());
         warnings.append(&mut automation_warnings);
         completed.push((
             track,
@@ -818,7 +821,7 @@ fn build_render_plan_with_conditions(
     }
     let resources = resolve(data_root, built_in_instruments, &render_session);
     let (graph, diagnostics) = project_graph(&render_session, &resources);
-    fail_for_missing_dependencies(&diagnostics)?;
+    let dependency_warnings = validate_render_dependencies(&render_session, &diagnostics)?;
 
     Ok(RenderPlan {
         tail_seconds,
@@ -833,6 +836,7 @@ fn build_render_plan_with_conditions(
             |conditions| conditions.block_size,
         ),
         graph,
+        dependency_warnings,
         start_tick,
         end_tick,
         sample_rate,
@@ -942,26 +946,69 @@ fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64,
     }
 }
 
-fn fail_for_missing_dependencies(diagnostics: &ProjectionDiagnostics) -> Result<(), String> {
+fn validate_render_dependencies(
+    session: &CreativeSession,
+    diagnostics: &ProjectionDiagnostics,
+) -> Result<Vec<String>, String> {
     if !diagnostics.unavailable_clip_ids.is_empty() {
         return Err(format!(
             "Offline Render cannot resolve clip assets: {}",
             diagnostics.unavailable_clip_ids.join(", ")
         ));
     }
-    if !diagnostics.missing_device_ids.is_empty() {
+
+    let audible_tracks = audible_track_ids(session);
+    let midi_source_tracks = session
+        .arrangement
+        .midi_clips
+        .iter()
+        .filter(|clip| !clip.muted && audible_tracks.contains(clip.track_id.as_str()))
+        .map(|clip| clip.track_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let instrument_ids = session
+        .arrangement
+        .tracks
+        .iter()
+        .filter_map(|track| track.instrument.as_ref())
+        .map(|instrument| instrument.id.as_str())
+        .collect::<Vec<_>>();
+    let missing_instruments = session
+        .arrangement
+        .tracks
+        .iter()
+        .filter(|track| midi_source_tracks.contains(track.id.as_str()))
+        .filter_map(|track| track.instrument.as_ref())
+        .filter(|instrument| diagnostics.missing_device_ids.contains(&instrument.id))
+        .map(|instrument| instrument.id.as_str())
+        .collect::<Vec<_>>();
+    if !missing_instruments.is_empty() {
         return Err(format!(
-            "Offline Render cannot load Track Devices: {}",
-            diagnostics.missing_device_ids.join(", ")
+            "Offline Render cannot load Track Instruments: {}",
+            missing_instruments.join(", ")
         ));
     }
-    Ok(())
+
+    let missing_effects = diagnostics
+        .missing_device_ids
+        .iter()
+        .filter(|id| !instrument_ids.contains(&id.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if missing_effects.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![format!(
+        "Missing Effects were omitted from Offline Render: {}",
+        missing_effects.join(", ")
+    )])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AudioClip, MidiClip, TimelineLoopRange, TimelineTick, Track};
+    use riffra_core::{
+        AudioClip, EffectDevice, MidiClip, TimelineLoopRange, TimelineTick, Track, TrackInstrument,
+    };
 
     fn session_with_clips() -> CreativeSession {
         let mut session = CreativeSession::new(1);
@@ -1019,6 +1066,139 @@ mod tests {
             bytes[offset + 2..offset + 4].copy_from_slice(&sample.to_le_bytes());
         }
         bytes
+    }
+
+    #[test]
+    fn render_omits_missing_effects_but_rejects_missing_sources_and_instruments() {
+        // Arrange
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].effects.push(
+            EffectDevice::new(
+                "effect:missing".into(),
+                "Missing FX".into(),
+                "fx.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let mut unused_instrument = Track::instrument("track:unused".into(), "Unused".into());
+        unused_instrument.instrument = Some(
+            TrackInstrument::vst3(
+                "instrument:unused".into(),
+                "Unused Synth".into(),
+                "unused.vst3".into(),
+            )
+            .unwrap(),
+        );
+        session.arrangement.tracks.push(unused_instrument);
+        let effect_diagnostics = ProjectionDiagnostics {
+            missing_device_ids: vec!["effect:missing".into(), "instrument:unused".into()],
+            ..ProjectionDiagnostics::default()
+        };
+
+        // Act
+        let effect_result = validate_render_dependencies(&session, &effect_diagnostics);
+
+        // Assert
+        assert_eq!(
+            effect_result.unwrap(),
+            ["Missing Effects were omitted from Offline Render: effect:missing"]
+        );
+
+        // Arrange: an unavailable instrument is required to produce the MIDI source.
+        session.arrangement.tracks[0].instrument = Some(
+            TrackInstrument::vst3(
+                "instrument:missing".into(),
+                "Missing Synth".into(),
+                "synth.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let instrument_diagnostics = ProjectionDiagnostics {
+            missing_device_ids: vec!["effect:missing".into(), "instrument:missing".into()],
+            ..ProjectionDiagnostics::default()
+        };
+
+        // Assert
+        assert!(
+            validate_render_dependencies(&session, &instrument_diagnostics)
+                .unwrap_err()
+                .contains("Track Instruments: instrument:missing")
+        );
+        assert!(
+            validate_render_dependencies(
+                &session,
+                &ProjectionDiagnostics {
+                    unavailable_clip_ids: vec!["clip:missing-source".into()],
+                    ..ProjectionDiagnostics::default()
+                }
+            )
+            .unwrap_err()
+            .contains("clip:missing-source")
+        );
+    }
+
+    #[test]
+    fn missing_effect_diagnostics_reach_mixdown_and_stem_results() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-missing-effect-render-{}",
+            riffra_control::new_instance_id()
+        ));
+        let mut session = session_with_clips();
+        session.arrangement.tracks[0].effects.push(
+            EffectDevice::new(
+                "effect:missing".into(),
+                "Missing FX".into(),
+                "missing-effect.vst3".into(),
+            )
+            .unwrap(),
+        );
+        let warning = "Missing Effects were omitted from Offline Render: effect:missing";
+
+        // Act
+        let mixdown = render_timeline_with_renderer(
+            &root,
+            empty_catalog(),
+            &session,
+            20,
+            RenderOptions::default(),
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+        let mut pending_stems = render_stems_with_renderer(
+            StemRenderContext {
+                data_root: &root,
+                built_in_instruments: empty_catalog(),
+                session: &session,
+                project_id: "project:missing-effect",
+                source_sequence: 1,
+                created_at_ms: 21,
+                selection: select_stem_tracks(&session, true, &[]).unwrap(),
+                range: RenderRange::EntireArrangement,
+            },
+            |request| {
+                fs::write(&request.destination, wav(request.sample_rate, 128)).unwrap();
+                Ok(Vec::new())
+            },
+            None,
+        )
+        .unwrap();
+
+        // Assert
+        assert!(mixdown.warnings.iter().any(|item| item == warning));
+        assert_eq!(pending_stems.result.stems.len(), 1);
+        assert!(
+            pending_stems.result.stems[0]
+                .warnings
+                .iter()
+                .any(|item| item == warning)
+        );
+        pending_stems.output.commit();
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn register_source(root: &Path, name: &str, sample_rate: u32, frames: u32) -> AssetId {

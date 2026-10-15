@@ -479,7 +479,9 @@ VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/job
 - ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
 - Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
 
-Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。必要な音声クリップ素材や、出力に使うMIDI音源を解決できない場合はJobを失敗させる。Missing Effectはチェーンから除外して残りを処理し、除外したDevice IDを結果の警告へ残す。通常RenderとStemには同じ方針を適用する。
+
+Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
 
 書き出し時は、入力されたMixdown設定が正準設定と異なる場合だけ設定を確定し、そのMutationの結果を受け取ってからRender Jobを開始する。同じ設定での書き出しは正準状態を変更しない。
 
