@@ -115,6 +115,29 @@ TEST(TimelineRealtimeTest, PauseFreezesThePlayheadUntilResumeAndStopRestoresTran
     EXPECT_EQ(engine.status().frame.transportState, TransportState::stopped);
 }
 
+TEST(TimelineRealtimeTest, RejectsPauseWhileArrangeRecordingIsActive) {
+    // Arrange
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    startAudioOwnedTimeline(engine, formats);
+    juce::String error;
+    ASSERT_EQ(engine.startRecording(0, error), RealtimeRequest::accepted);
+    (void)engine.beginBlock(kBlockSamples);
+    ASSERT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
+
+    // Act
+    const auto pause = engine.pause();
+
+    // Assert
+    EXPECT_FALSE(pause.has_value());
+    EXPECT_EQ(engine.status().frame.transportState, TransportState::playing);
+    EXPECT_EQ(engine.status().frame.recordingPhase, RecordingPhase::recording);
+
+    engine.setRealtimeOwner(RealtimeOwner::control);
+    ASSERT_EQ(engine.stopArrangeRecording(error), RealtimeRequest::accepted);
+}
+
 TEST(TimelineRealtimeTest, ReportsAPendingSeekTargetWhileStopped) {
     // Arrange
     juce::AudioFormatManager formats;

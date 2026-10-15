@@ -235,6 +235,7 @@ std::optional<std::uint64_t> TimelineEngine::play() noexcept {
 }
 
 std::optional<std::uint64_t> TimelineEngine::pause() noexcept {
+    if (realtimeFrame.read().recordingPhase != RecordingPhase::idle) return std::nullopt;
     RealtimeCommand command;
     command.kind = RealtimeCommand::Kind::pause;
     return submit(command);
@@ -272,8 +273,9 @@ void TimelineEngine::applyRealtimeCommand(RealtimeState& state,
             if (state.graph != nullptr) state.graph->beginAutomationRead();
             break;
         case RealtimeCommand::Kind::pause:
-            if (state.transport == TransportState::playing ||
-                state.transport == TransportState::starting)
+            if (state.recordingPhase == RecordingPhase::idle &&
+                (state.transport == TransportState::playing ||
+                 state.transport == TransportState::starting))
                 state.transport = TransportState::paused;
             break;
         case RealtimeCommand::Kind::setStarting:

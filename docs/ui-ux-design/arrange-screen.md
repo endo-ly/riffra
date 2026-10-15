@@ -640,7 +640,7 @@ Loop / Metronome / Count-in / Tempo / Signature
 
 Timeline と Lower Area のどこへ Keyboard Focus があっても同じ Playhead と Recording state を参照する。
 
-Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。Pause は短いフェードで音を止め、再生位置とAutomationの有効値を保持する。PausedでPlayを押すと同じ位置から再開する。Stop は保持中の有効値を静的値へ戻し、保留中のPlayより優先される。Stop後に準備が終わっても自動再生せず、投影失敗時はPlay意図を解除して失敗を通知する。
+Play は投影済みのグラフがあれば直ちに再生し、グラフ準備中なら Transport を `Starting` と表示して待機する。Pause は短いフェードで音を止め、再生位置とAutomationの有効値を保持する。Arrange Recording中のPauseは拒否し、録音状態を保ったまま理由を通知する。録音をStopしてキャプチャを確定してからPauseする。PausedでPlayを押すと同じ位置から再開する。Stop は保持中の有効値を静的値へ戻し、保留中のPlayより優先される。Stop後に準備が終わっても自動再生せず、投影失敗時はPlay意図を解除して失敗を通知する。
 
 Track Arm は録音対象の Track を選択する操作であり、Focus とは分離する。Global Record は Arm された Track の Timeline Recording を開始する操作で、Count-in の設定に従い Recording 開始とともに Arrangement Transport も進行する。Arm された Track が存在しない場合は Recording と Transport を開始せず、録音対象を Arm するよう利用者へ通知する。
 
