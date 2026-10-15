@@ -376,30 +376,37 @@ Busの部分更新は`name`、`gainDb`、`pan`、`panLaw`、`muted`、`solo`を�
 
 `session apply`では`mixer.bus.add/update/remove`、`mixer.output.set`、`mixer.send.add/update/remove`を使用できる。後続操作の`busName`と`returnBusName`は、そのBatchで作成したBusも含めてIDへ解決する。同じ名前が複数ある場合はIDを指定する。
 
-#### Automation(volume / pan)
+#### Automation
 
-TrackのvolumeとpanをTimeline上で制御する。`points`の配列で該当するTrackのレーン全体を置き換え、空配列を渡すとレーンが削除される。`automation clear`は空配列での置換と同じである。
+`automation set`は指定対象のLane全体を置き換える。対象は次の引数で指定する。
+
+| 対象              | 引数                                          |
+| ----------------- | --------------------------------------------- |
+| Track Mix         | `--track-id <id> --parameter volume\|pan`     |
+| Group・Return Mix | `--bus-id <id> --parameter gain\|pan`         |
+| Master Gain       | `--master --parameter gain`                   |
+| Send Level        | `--send-id <id> --parameter level`            |
+| VST3 Parameter    | `--device-id <id> --parameter-id <stable-id>` |
 
 ```powershell
 riffra --attach automation set `
-  --track-id track:01j... --parameter volume `
+  --track-id track:01j... --parameter volume --interpolation linear `
   --points-json '[{"id":"v1","tick":0,"value":-6},{"id":"v2","tick":3840,"value":0}]'
 
 riffra --attach automation set `
-  --track-id track:01j... --parameter pan `
-  --points-json '[{"id":"p1","tick":3840,"value":-0.5},{"id":"p2","tick":7680,"value":0.5}]'
+  --device-id device:effect:01j... --parameter-id 3165055 --interpolation step `
+  --points-file ./parameter-points.json
 
-riffra --attach automation get --track-id track:01j...
 riffra --attach automation get --track-id track:01j... --parameter volume
+riffra --attach automation list --track-id track:01j...
 riffra --attach automation clear --track-id track:01j... --parameter volume
 ```
 
-- `automation get`は対象Trackの全レーンをvolume、panの順で返す。`--parameter`を指定するとそのレーンだけを返し、未設定なら空配列を返す。Track IDが見つからない場合は入力エラーになる
-- `value`の意味は`parameter`で決まる。`volume`はdB(-90..24へclamp)、`pan`は-1.0..1.0へclampされる。0..1の正規化値ではない
-- 各点は`id`(レーン内で一意、空は不可)、`tick`(u64)、`value`を持つ。同一tickの重複は失敗し、点はtick順に正規化される。1レーンの上限は16,384点である
-- `tick`はTimeline上の絶対位置である。`bar:beat`からの変換は`session inspect`で得た`ppq`と拍子を用いて行い、PPQを固定値として扱わない
-- レーンIDは`automation:{trackId}:{volume|pan}`で採番され、新規作成時は`createdEntityIds.automationLanes`に入る
-- 非空のレーンがある区間では、volumeとpanはTrackの静的な`--gain-db`/`--pan`を置き換える。点の範囲外では静的な値へ戻る。Mute/SoloはAutomationと独立にTrack出力の可否を決める
+`set`は`--points-json`または`--points-file`の一方を指定する。`--interpolation`は`linear`（既定）または`step`で、離散Plugin Parameterは`step`を使う。`get`と`clear`は同じ対象引数を使い、未設定の`get`は空配列を返す。`list`は全Laneを返し、`--track-id`、`--bus-id`、`--master`のいずれかで所有者へ絞り込む。
+
+Pointは`id`、`tick`、`value`を持つ。Tickは楽曲全体の絶対位置であり、音楽座標からの変換には`session inspect`の`project.ppq`と拍子を使う。値の単位、値域、一意性と上限は[データモデル](../../../../../docs/data-model.md)に従う。Deviceの`value`は正規化数値、またはPluginの表示文字列（例：`"250 ms"`）を指定できる。文字列の変換にはLive Hostが必要で、変換できない場合は保存しない。
+
+更新はLane IDを維持し、新規LaneのIDは`createdEntityIds.automationLanes`へ返す。空のPoint配列と`clear`はLaneを削除する。端点の保持、補間と静的値の復元は[音声アーキテクチャ](../../../../../docs/architecture.md)を参照する。
 
 音源制御は`instrument-event list --clip-id <id>`で参照する。`add --clip-id <id> --tick <tick> --kind-json <JSON|@file>`、`set --clip-id <id> --events-json <JSON|@file>`、`update --clip-id <id> --event-json <JSON|@file>`、`remove --clip-id <id> --event-id <id>`で編集する。TickはClip相対で終端を含む。種類は`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`。Parameter Changeは`parameter`と`nativeValue`を保持する。
 
@@ -476,6 +483,7 @@ device inspectはmetadataとcapabilityだけを返し、stateData本体や全par
 
 | フィールド     | 意味                                                                               |
 | -------------- | ---------------------------------------------------------------------------------- |
+| `parameterId`  | Automationへ指定するStable ID。一意で非空のIDを公開できない場合は`null`            |
 | `index`        | set/get へ渡す Parameter index                                                     |
 | `name`         | Plugin が返した Parameter 名                                                       |
 | `value`        | normalized 0..1 の現在値                                                           |
@@ -487,7 +495,7 @@ device inspectはmetadataとcapabilityだけを返し、stateData本体や全par
 | `stepCount`    | 離散状態数。Continuous は 0                                                        |
 | `choices`      | 2〜256 個の状態を列挙できる場合の `{ value, displayValue }` 配列。それ以外は空配列 |
 
-`name` で Parameter を特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
+Automationは`automatable: true`かつ`parameterId`が非nullのParameterを選び、そのIDを指定する。手動操作では`name`でParameterを特定し、離散値は `choices[].displayValue` から目的の状態を選んで、その `value` を `device parameter set --value` へ渡す。変更後は `device parameter list` を再取得し、他の Parameter の表示や選択肢の変化も確認する。Continuous の表示が空の場合も、値を Plugin 固有の単位へ変換して推測しない。Default への復元には `defaultValue` を渡す。
 
 `device parameter set`は`--value`と`--display`の一方だけを指定する。`--display "250.00 ms"`はLive HostのPluginに変換を依頼し、表示へ戻した結果が入力と等価な場合だけ適用する。単位の違い、未対応・不正な文字列はエラーとなり、正準状態は変更されない。Surge XT Effects 1.3.4のFX Typeは文字列変換に対応していないため、一覧で確認した正規化値を`--value`へ渡す。Live Hostでは停止中も対象Pluginの処理とController同期を終えてから設定成功を返す。
 

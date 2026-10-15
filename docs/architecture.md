@@ -247,6 +247,14 @@ MIDI とライブ入力の扱いは次の通り。
 - 停止時は短いグラフ境界でキャプチャ終了とエフェクト状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
 - 生成は正準のトラックエフェクトから一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
 
+AutomationはRustが所有する共通Laneから投影し、Nativeが処理位置に合わせて準備する。LinearはGainをdB、Panを左右位置、Device Parameterを正規化値で補間する。Stepは次のPointの時刻まで前の値を保持する。最初のPointより前と最後のPointより後は端点の値を保持する。Play・Seek・Loop・途中範囲のRenderでは楽曲全体の位置から評価し、Tempoと各経路のPDCを反映する。
+
+Track・BusのFader/Pan、Send Level、Master Gainはサンプル単位で適用する。VST3は処理ブロック先頭の位置で評価し、そのブロックのParameter値を設定する。Master GainはMaster FX後に1回適用し、Realtime安全処理はその後に置く。OfflineとStemも同じMixer経路と評価器を使用し、Stemでは他Trackの主出力だけを除外して共有経路とPDCを維持する。
+
+VST3のStable Parameter IDはグラフ準備時に実Parameterへ解決する。IDが空・重複・不在、Automation非対応、離散ParameterへのLinear指定は実行診断へ返す。音声スレッドでは準備済みの参照とPoint列を使用し、ID検索、状態保存、動的確保を行わない。解決できないLaneは正準状態へ保持し、Offline Renderは不完全なAutomationでの書き出しを拒否する。
+
+Playback値はPluginの静的Stateへ保存しない。Rackは正準Stateと手動編集結果のSnapshotを保持し、Automation Read中はDevice Parameter・Preset・Stateの手動変更を拒否し、Native Editorの操作を止める。Stop・Lane解除・グラフ置換で静的値を復元する。Lane編集だけでは既存Plugin Instanceを再利用する。Mixerの静的値はRead中も編集でき、再生中はLaneを優先し、停止後に静的値を適用する。
+
 ### 5.2 投影の整合性
 
 投影要求の識別子は、正準状態のsequence、Arrangement revision、サイドカーの世代、音声環境のrevisionの組である。`Machine::step` は、入力と渡された時刻から次の状態と副作用を決める純粋な遷移関数である。要求の採用・待機・準備と候補の正準化の成否も副作用として返す。準備する要求と停止状態は状態機械だけが保持する。ワーカーは実行する仕事を状態機械へ求め、返された副作用に従ってネイティブの準備・確定・破棄を実行し、結果を返す。

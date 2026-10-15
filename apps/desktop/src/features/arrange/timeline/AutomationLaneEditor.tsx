@@ -20,6 +20,7 @@ interface Props {
   session: CreativeSession;
   target: AutomationTarget;
   api: ArrangeWorkspaceApi;
+  warnings: readonly string[];
   timelineWidth: number;
   pixelsPerTick: number;
   snapTick: (tick: number, temporaryOff?: boolean) => number;
@@ -91,7 +92,15 @@ export function AutomationLaneEditor(props: Props) {
       option={selected}
       options={options}
       lane={lane}
-      error={error}
+      error={
+        props.target.kind === 'deviceParameter'
+          ? (props.warnings.find(
+              (warning) =>
+                props.target.kind === 'deviceParameter' &&
+                warning.startsWith(`${props.target.deviceId}/${props.target.parameterId}:`),
+            ) ?? error)
+          : error
+      }
       timelineWidth={props.timelineWidth}
       pixelsPerTick={props.pixelsPerTick}
       snapTick={props.snapTick}

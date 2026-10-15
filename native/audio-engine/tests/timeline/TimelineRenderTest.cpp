@@ -348,6 +348,8 @@ TEST(TimelineEngineTest, RendersBuiltInAndAutomatedVst3InstrumentsThroughOffline
         if (vst3) {
             EXPECT_NEAR(output.getSample(0, 1000), 0.0625f, 0.0001f);
             EXPECT_NEAR(output.getSample(0, 10000), 0.1875f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 6143), 0.0625f, 0.0001f);
+            EXPECT_NEAR(output.getSample(0, 6144), 0.1875f, 0.0001f);
             auto invalid = snapshot.graph;
             invalid.automation.front().parameterId = "absent";
             EXPECT_FALSE(renderTestSnapshot(invalid, formats,
@@ -626,6 +628,20 @@ TEST(MixerRoutingTest, AutomationFollowsMixerRoutesAndRestoresStaticValuesOnStop
     }
     EXPECT_NEAR(left.back(), 0.5f, 0.00001f);
     EXPECT_NEAR(right.back(), 0.5f, 0.00001f);
+    auto looped = snapshot;
+    looped.graph.loopRange = {true, 0, 2};
+    looped.graph.automation.back().points = {{0, -6.0}, {1, -12.0}};
+    TimelineEngine loopEngine;
+    ASSERT_TRUE(loadTestSnapshot(loopEngine, looped, formats, 48'000.0, 4096, error)) << error;
+    ASSERT_TRUE(loopEngine.play());
+    std::array<float, 4096> loopInput, loopLeft{}, loopRight{};
+    loopInput.fill(0.25f);
+    const std::array<const float*, 1> loopInputs{loopInput.data()};
+    const std::array<float*, 2> loopOutputs{loopLeft.data(), loopRight.data()};
+    loopEngine.mix(loopInputs.data(), 1, loopOutputs.data(), 2, 4096);
+    loopEngine.applyMasterGain(loopOutputs.data(), 2, 4096, 0.0f);
+    EXPECT_NEAR(loopLeft[4000], first, 0.00001f);
+    EXPECT_NEAR(loopLeft[4025], first * std::pow(10.0f, -6.0f / 20.0f), 0.00001f);
 }
 
 TEST(MixerRoutingTest, AlignsRealVstPathsAndReusesDevicesForMixEdits) {

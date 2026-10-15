@@ -58,6 +58,10 @@ inline bool validateMixerGraph(const ExecutionGraph& graph, juce::String& error)
             return false;
         }
     }
+    if (graph.automation.size() > 16'384) {
+        error = "graph cannot contain more than 16384 automation lanes";
+        return false;
+    }
     std::set<std::tuple<AutomationTargetKind, juce::String, juce::String>> targets;
     for (const auto& lane : graph.automation) {
         bool resolved = true;

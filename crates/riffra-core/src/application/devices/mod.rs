@@ -82,10 +82,12 @@ where
                 ));
             }
             if let Some(previous) = &track.instrument
-                && !instrument.as_ref().is_some_and(|replacement| same_plugin_identity(previous, replacement))
+                && !instrument
+                    .as_ref()
+                    .is_some_and(|replacement| same_plugin_identity(previous, replacement))
             {
                 let previous_id = &previous.id;
-                session.arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::DeviceParameter { device_id, .. } if device_id == previous_id));
+                remove_device_automation(&mut session.arrangement.automation_lanes, previous_id);
             }
             track.instrument = instrument;
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
@@ -119,7 +121,7 @@ where
                 && !same_plugin_identity(previous, &instrument)
             {
                 let previous_id = &previous.id;
-                session.arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::DeviceParameter { device_id, .. } if device_id == previous_id));
+                remove_device_automation(&mut session.arrangement.automation_lanes, previous_id);
             }
             track.instrument = Some(instrument);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
@@ -199,7 +201,7 @@ where
                     "channel effect is not registered".into(),
                 ));
             }
-            session.arrangement.automation_lanes.retain(|lane| !matches!(&lane.target, AutomationTarget::DeviceParameter { device_id: id, .. } if id == device_id));
+            remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
         })
@@ -398,13 +400,20 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            match find_any_device_mut(session, device_id)? {
+            let changed_plugin = match find_any_device_mut(session, device_id)? {
                 DeviceMut::Instrument(_) => {
                     return Err(ApplicationError::InvalidCommand(
                         "VST3 instrument replacement must use an instrument source".into(),
                     ));
                 }
-                DeviceMut::Effect(current) => *current = device,
+                DeviceMut::Effect(current) => {
+                    let changed = current.plugin.path != device.plugin.path;
+                    *current = device;
+                    changed
+                }
+            };
+            if changed_plugin {
+                remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
@@ -423,20 +432,25 @@ where
             ));
         }
         self.core.commit(self.storage, |session| {
-            match find_any_device_mut(session, device_id)? {
+            let changed_plugin = match find_any_device_mut(session, device_id)? {
                 DeviceMut::Instrument(current) => {
                     if current.as_vst3().is_none() {
                         return Err(ApplicationError::InvalidCommand(
                             "built-in instruments cannot be replaced as missing plugins".into(),
                         ));
                     }
+                    let changed = !same_plugin_identity(current, &instrument);
                     *current = instrument;
+                    changed
                 }
                 DeviceMut::Effect(_) => {
                     return Err(ApplicationError::InvalidCommand(
                         "replacement device is not an instrument".into(),
                     ));
                 }
+            };
+            if changed_plugin {
+                remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
@@ -455,21 +469,28 @@ where
         path: String,
     ) -> Result<crate::PreparedSession, ApplicationError> {
         PreparedSession::from_snapshot(&self.core.snapshot(), |session| {
-            match find_any_device_mut(session, device_id)? {
+            let changed_plugin = match find_any_device_mut(session, device_id)? {
                 DeviceMut::Instrument(current) => {
                     if current.as_vst3().is_none() {
                         return Err(ApplicationError::InvalidCommand(
                             "built-in instruments cannot be replaced as missing plugins".into(),
                         ));
                     }
+                    let changed = current.as_vst3().is_some_and(|plugin| plugin.path != path);
                     *current =
                         TrackInstrument::vst3(device_id.to_owned(), name.clone(), path.clone())
                             .map_err(ApplicationError::InvalidCommand)?;
+                    changed
                 }
                 DeviceMut::Effect(current) => {
+                    let changed = current.plugin.path != path;
                     *current = EffectDevice::new(device_id.to_owned(), name, path)
                         .map_err(ApplicationError::InvalidCommand)?;
+                    changed
                 }
+            };
+            if changed_plugin {
+                remove_device_automation(&mut session.arrangement.automation_lanes, device_id);
             }
             session.arrangement.revision = session.arrangement.revision.saturating_add(1);
             Ok(())
@@ -481,4 +502,10 @@ fn same_plugin_identity(left: &TrackInstrument, right: &TrackInstrument) -> bool
     left.id == right.id
         && matches!((&left.source, &right.source),
         (crate::TrackInstrumentSource::Vst3(left), crate::TrackInstrumentSource::Vst3(right)) if left.path == right.path)
+}
+
+fn remove_device_automation(lanes: &mut Vec<AutomationLane>, device_id: &str) {
+    lanes.retain(|lane| {
+        !matches!(&lane.target, AutomationTarget::DeviceParameter { device_id: id, .. } if id == device_id)
+    });
 }

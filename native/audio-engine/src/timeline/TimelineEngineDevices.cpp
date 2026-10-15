@@ -318,6 +318,7 @@ std::optional<DeviceParametersSpec> TimelineEngine::deviceParameterValueForText(
     if (!normalized) return std::nullopt;
     auto result = *found;
     result.value = *normalized;
+    result.displayValue = display;
     return DeviceParametersSpec{{std::move(result)}};
 }
 

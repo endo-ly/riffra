@@ -165,6 +165,17 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     prepared->timebaseChangeSamples.erase(
         std::unique(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end()),
         prepared->timebaseChangeSamples.end());
+    for (const auto& lane : graph.automation)
+        for (const auto& point : lane.points) {
+            const auto sample = prepared->timebase.tickToSeconds(point.tick) * outputSampleRate;
+            const auto limit = static_cast<double>(std::numeric_limits<std::int64_t>::max()) -
+                               std::numeric_limits<int>::max();
+            if (!std::isfinite(sample) || sample < 0.0 || sample >= limit) {
+                error =
+                    "automation tick cannot be represented at the active sample rate: " + lane.id;
+                return false;
+            }
+        }
     prepared->preparedBlockSize = maximumBlockSize;
     prepared->masterGainDb = static_cast<float>(graph.masterGainDb);
     prepared->metronomeEnabled = graph.metronomeEnabled;

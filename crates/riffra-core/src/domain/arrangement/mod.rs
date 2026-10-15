@@ -1653,6 +1653,9 @@ impl Arrangement {
                 .find(|track| track.id == clip.track_id);
             clip.validate_and_normalize(track)?;
         }
+        if arrangement.automation_lanes.len() > automation::MAX_AUTOMATION_LANES {
+            return Err("an arrangement cannot contain more than 16384 automation lanes".into());
+        }
         let mut lane_keys = std::collections::HashSet::new();
         let mut lane_ids = std::collections::HashSet::new();
         for lane in &arrangement.automation_lanes {

@@ -744,6 +744,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
                 />
                 {automationTargets[track.id] && (
                   <AutomationLaneEditor
+                    warnings={props.audio.diagnostics.automationWarnings}
                     session={props.session}
                     target={automationTargets[track.id]!}
                     api={props.api}
@@ -764,6 +765,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
           )}
           {mixerAutomationTarget && (
             <AutomationLaneEditor
+              warnings={props.audio.diagnostics.automationWarnings}
               session={props.session}
               target={mixerAutomationTarget}
               api={props.api}

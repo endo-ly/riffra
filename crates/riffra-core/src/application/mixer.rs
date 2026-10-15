@@ -536,6 +536,32 @@ mod tests {
         assert_eq!(deleted.arrangement.automation_lanes, original_lanes);
         assert_eq!(deleted.arrangement.mixer.sends.len(), 1);
         assert_eq!(deleted.arrangement.mixer.sends[0].track_id, "track:source");
+
+        let device_id = &deleted.arrangement.tracks[0].effects[0].id;
+        let retained = core
+            .application(&storage)
+            .prepare_track_plugin_replacement(device_id, "Delay".into(), "C:/Delay.vst3".into())
+            .unwrap();
+        assert_eq!(
+            retained.session().arrangement.automation_lanes,
+            original_lanes
+        );
+        let replacement = core
+            .application(&storage)
+            .prepare_track_plugin_replacement(device_id, "Reverb".into(), "C:/Reverb.vst3".into())
+            .unwrap();
+        let replaced = core
+            .application(&storage)
+            .commit_prepared(replacement)
+            .unwrap();
+        assert_eq!(replaced.arrangement.automation_lanes.len(), 2);
+        assert!(
+            replaced
+                .arrangement
+                .automation_lanes
+                .iter()
+                .all(|lane| { !matches!(&lane.target, AutomationTarget::DeviceParameter { .. }) })
+        );
     }
 
     #[test]

@@ -40,9 +40,13 @@ void TimelineEngine::applyMasterGain(float* const* outputChannels, const int cha
             const auto& segment =
                 realtime.metronomeTransportSegments[static_cast<std::size_t>(segmentIndex)];
             if (segment.active && sample >= segment.destinationStart) {
-                const auto position =
-                    segment.rangeStart + sample - segment.destinationStart -
-                    static_cast<std::int64_t>(graph->summary.maximumLatencySamples);
+                auto position = segment.rangeStart + sample - segment.destinationStart;
+                const auto loopLength = graph->loopEndSample - graph->loopStartSample;
+                if (graph->loopEnabled && loopLength > 0 &&
+                    segment.rangeStart < graph->loopEndSample && position >= graph->loopEndSample)
+                    position =
+                        graph->loopStartSample + (position - graph->loopEndSample) % loopLength;
+                position -= static_cast<std::int64_t>(graph->summary.maximumLatencySamples);
                 gain = juce::Decibels::decibelsToGain(cursor.valueAt(position, staticGainDb));
             }
         }
@@ -666,8 +670,28 @@ void TimelineEngine::mixActiveGraph(const float* const* inputChannels, const int
     const auto appendMetronomeSegment = [&](const int destinationStart, const int rangeSamples,
                                             const std::int64_t rangeStart, const bool segmentActive,
                                             const float gainStart, const float gainStep) noexcept {
-        if (rangeSamples <= 0 || realtime.metronomeTransportSegmentCount >=
-                                     static_cast<int>(realtime.metronomeTransportSegments.size()))
+        if (rangeSamples <= 0) return;
+        if (realtime.metronomeTransportSegmentCount > 0) {
+            auto& previous = realtime.metronomeTransportSegments[static_cast<std::size_t>(
+                realtime.metronomeTransportSegmentCount - 1)];
+            auto nextPosition = previous.rangeStart + previous.sampleCount;
+            const auto loopLength = active->loopEndSample - active->loopStartSample;
+            if (active->loopEnabled && loopLength > 0 && previous.active &&
+                previous.rangeStart < active->loopEndSample &&
+                nextPosition >= active->loopEndSample)
+                nextPosition =
+                    active->loopStartSample + (nextPosition - active->loopEndSample) % loopLength;
+            if (previous.active == segmentActive &&
+                previous.destinationStart + previous.sampleCount == destinationStart &&
+                nextPosition == rangeStart && previous.gainStep == gainStep &&
+                std::abs(previous.gainStart + previous.gainStep * previous.sampleCount -
+                         gainStart) < 0.000001f) {
+                previous.sampleCount += rangeSamples;
+                return;
+            }
+        }
+        if (realtime.metronomeTransportSegmentCount >=
+            static_cast<int>(realtime.metronomeTransportSegments.size()))
             return;
         auto& segment = realtime.metronomeTransportSegments[static_cast<std::size_t>(
             realtime.metronomeTransportSegmentCount++)];

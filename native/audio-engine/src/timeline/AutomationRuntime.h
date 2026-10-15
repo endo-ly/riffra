@@ -91,8 +91,6 @@ public:
 
     void setPoints(std::vector<Point> next, const bool stepped = false) noexcept {
         step = stepped;
-        std::sort(next.begin(), next.end(),
-                  [](const Point& left, const Point& right) { return left.sample < right.sample; });
         points = std::move(next);
     }
 

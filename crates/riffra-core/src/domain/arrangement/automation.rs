@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ts_rs::TS;
 
+pub(super) const MAX_AUTOMATION_LANES: usize = 16_384;
+
 /// A Track mix parameter controlled on the Arrangement timeline.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -159,7 +161,7 @@ impl AutomationLane {
         self.points.sort_by_key(|point| point.tick);
         let mut point_ids = HashSet::new();
         let mut previous_tick = None;
-        for point in &mut self.points {
+        for point in &self.points {
             if point.id.trim().is_empty() || !point_ids.insert(point.id.as_str()) {
                 return Err(format!(
                     "automation lane '{}' has invalid or duplicate point id '{}'",

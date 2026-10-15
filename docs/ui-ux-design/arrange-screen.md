@@ -284,7 +284,7 @@ Instrument Track の作成では Add Instrument Browser へつなぎ、音源選
 
 ### 3.10 Automation
 
-Automation は対象 Track の直下へ Lane として展開し、Timeline と同じ時間軸を使う。
+AutomationはTimelineと同じPlayhead、Snap、Zoomを使う共通Lane Editorで操作する。TrackのMixとDeviceはTrack直下に展開し、Group・Return・MasterはTrack群の下の編集領域へ表示する。MixerとDevicesのAutomation操作から対象Laneを開ける。
 
 ```text
 Track: Synth
@@ -295,7 +295,9 @@ Track: Synth
                  •────────────•
 ```
 
-Parameter Selector から編集対象を選び、Point の追加、移動、削除を Lane 上で行う。Playhead、Snap、Zoom は Clip と Automation で同じ基準を共有する。表示状態は Track ごとに保持する。
+対象SelectorはMix、Send、Plugin Parameterを所有者ごとに列挙する。Pluginの離散Parameterでは選択肢へ値を合わせ、Stepだけを選べる。Laneヘッダーには補間方式、静的値のガイド、Read状態を表示する。対象Parameterが見つからない場合もLaneを保持し、実行診断を表示する。
+
+Lane上でPointを追加・移動・削除する。同じTickへの追加は既存PointのIDを保って値を更新し、最後のPointを削除するとLaneを解除する。Drag中はPreviewを表示して確定時だけ保存し、Escape・PointerCancelで操作を取り消す。AltでSnapを一時解除する。Trackごとの対象選択は表示状態として保持し、Project切替で解除する。
 
 ### 3.11 録音中の表示
 
