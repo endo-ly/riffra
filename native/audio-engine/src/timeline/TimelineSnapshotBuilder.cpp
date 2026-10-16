@@ -298,11 +298,13 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
         // Device instances already published are shared, never prepared again:
         // the audio thread may be processing them.
-        engine.graphRegistry.access([&track](ControlGraphRegistry::State& graphs) {
+        engine.graphRegistry.access([&track, &graph](ControlGraphRegistry::State& graphs) {
             if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
             const auto* existing = graphs.latestCommitted->findTrack(track->id);
             if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
                 !sameInstrumentTopology(existing->instrument, track->instrument) ||
+                !existing->runtime->effects().usesSameSidechainTargets(
+                    graph.mixer.sidechainSends) ||
                 existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
                 existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
                 return;
@@ -314,8 +316,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
         });
         if (!track->reuseRuntimeDevices &&
-            !track->runtime->effects().load(track->effects, outputSampleRate, maximumBlockSize,
-                                            processingMode, error, track->id + "/track-effect"))
+            !track->runtime->effects().load(track->effects, graph.mixer.sidechainSends,
+                                            outputSampleRate, maximumBlockSize, processingMode,
+                                            error, track->id + "/track-effect"))
             return false;
         if (track->instrument.has_value() && !track->reuseRuntimeDevices) {
             const auto roleError = [&track, &error](const juce::String& role,
@@ -581,13 +584,14 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 return;
             const auto* existing = previous->mixer.findBus(spec.id);
             if (existing != nullptr && sameEffectTopology(existing->effectSpecs, spec.effects) &&
-                existing->effectSpecs == spec.effects) {
+                existing->effectSpecs == spec.effects &&
+                existing->effects->usesSameSidechainTargets(graph.mixer.sidechainSends)) {
                 bus->effects = existing->effects;
                 reused = true;
             }
         });
-        if (!reused && !bus->effects->load(spec.effects, sampleRate, blockSize, mode, error,
-                                           spec.id + "/bus-effect"))
+        if (!reused && !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate,
+                                           blockSize, mode, error, spec.id + "/bus-effect"))
             return false;
         prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
         mixer.parallelChannels.push_back(bus.get());
@@ -600,13 +604,15 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (previous != nullptr && !graphs.devicesNeedReprepare &&
             previous->preparedBlockSize == blockSize && previous->outputSampleRate == sampleRate &&
             sameEffectTopology(previous->mixer.masterEffectSpecs, mixer.masterEffectSpecs) &&
-            previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs) {
+            previous->mixer.masterEffectSpecs == mixer.masterEffectSpecs &&
+            previous->mixer.masterEffects->usesSameSidechainTargets(graph.mixer.sidechainSends)) {
             mixer.masterEffects = previous->mixer.masterEffects;
             masterReused = true;
         }
     });
-    if (!masterReused && !mixer.masterEffects->load(mixer.masterEffectSpecs, sampleRate, blockSize,
-                                                    mode, error, "master-effect"))
+    if (!masterReused &&
+        !mixer.masterEffects->load(mixer.masterEffectSpecs, graph.mixer.sidechainSends, sampleRate,
+                                   blockSize, mode, error, "master-effect"))
         return false;
     prepared.summary.pluginCount += static_cast<std::uint64_t>(mixer.masterEffects->size());
     const auto busSpec = [&](const juce::String& id) -> const MixBusSpec* {

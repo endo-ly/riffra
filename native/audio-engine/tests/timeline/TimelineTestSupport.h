@@ -400,7 +400,7 @@ public:
                                const double sampleRate, const int blockSize, juce::String& error) {
         auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error);
         if (rack == nullptr) return false;
-        chain.devices.push_back(PluginChain::Device{id, std::move(rack)});
+        chain.devices.push_back(PluginChain::Device{id, std::move(rack), {}});
         chain.prepareBuffers(blockSize);
         return true;
     }

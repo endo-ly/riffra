@@ -13,12 +13,25 @@ class PluginChainTestPeer final {
 public:
     static bool addDevice(PluginChain& chain, const juce::String& id,
                           std::unique_ptr<juce::AudioProcessor> processor, double sampleRate,
-                          int blockSize, juce::String& error) {
-        auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error);
+                          int blockSize, juce::String& error, bool sidechain = false) {
+        auto rack = PluginRackTestPeer::install(std::move(processor), sampleRate, blockSize, error,
+                                                false, sidechain);
         if (rack == nullptr) return false;
         chain.prepareBuffers(blockSize);
-        chain.devices.push_back(PluginChain::Device{id, std::move(rack)});
+        chain.devices.push_back(PluginChain::Device{id, std::move(rack), {}});
+        if (sidechain) chain.prepareSidechainInput(chain.devices.back(), blockSize);
         return true;
+    }
+
+    static void setSidechainTargets(PluginChain& chain,
+                                    const std::vector<SidechainSendSpec>& sidechainSends) {
+        chain.sidechainTargets = PluginChain::enabledSidechainTargets(sidechainSends);
+    }
+
+    static juce::AudioBuffer<float>* sidechainBuffer(PluginChain& chain, const juce::String& id) {
+        for (auto& device : chain.devices)
+            if (device.id == id) return &device.sidechainBuffer;
+        return nullptr;
     }
 };
 
@@ -162,6 +175,68 @@ TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
         EXPECT_NEAR(liveQueued->parameterValues[offset], value, 0.0001f);
         EXPECT_NEAR(recordingQueued->parameterValues[offset], value, 0.0001f);
     }
+}
+
+TEST(PluginChainTest, PassesSidechainAudioOnlyToTheTargetedDevice) {
+    SidechainTrace plainTrace;
+    SidechainTrace targetTrace;
+    juce::String error;
+    PluginChain chain;
+    ASSERT_TRUE(PluginChainTestPeer::addDevice(
+        chain, "device-plain", std::make_unique<TestSidechainProcessor>(true, false, plainTrace),
+        kSampleRate, kBlockSize, error))
+        << error;
+    ASSERT_TRUE(PluginChainTestPeer::addDevice(
+        chain, "device-target", std::make_unique<TestSidechainProcessor>(true, false, targetTrace),
+        kSampleRate, kBlockSize, error, true))
+        << error;
+
+    auto* aux = PluginChainTestPeer::sidechainBuffer(chain, "device-target");
+    ASSERT_NE(aux, nullptr);
+    ASSERT_EQ(aux->getNumChannels(), 1);
+    juce::FloatVectorOperations::fill(aux->getWritePointer(0), 0.25f, kBlockSize);
+
+    std::array<float, kBlockSize> inputLeft{};
+    std::array<float, kBlockSize> inputRight{};
+    std::array<float, kBlockSize> outputLeft{};
+    std::array<float, kBlockSize> outputRight{};
+    inputLeft.fill(0.125f);
+    inputRight.fill(0.125f);
+    const std::array<const float*, 2> inputs{inputLeft.data(), inputRight.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+    chain.process(inputs.data(), 2, outputs.data(), 2, kBlockSize);
+
+    EXPECT_EQ(plainTrace.auxBusChannels, 0);
+    EXPECT_FLOAT_EQ(plainTrace.auxPeak, 0.0f);
+    EXPECT_EQ(targetTrace.auxBusChannels, 1);
+    EXPECT_FLOAT_EQ(targetTrace.auxPeak, 0.25f);
+    EXPECT_FLOAT_EQ(outputLeft.front(), 0.375f);
+    EXPECT_FLOAT_EQ(outputRight.front(), 0.375f);
+}
+
+TEST(PluginChainTest, RepreparesWhenEnabledSidechainTargetsChange) {
+    const SidechainSendSpec send{"send-1", "track-1", "device-a", -6.0, SendPositionSpec::postFader,
+                                 true};
+    PluginChain chain;
+    PluginChainTestPeer::setSidechainTargets(chain, {send});
+    EXPECT_TRUE(chain.usesSameSidechainTargets({send}));
+
+    auto leveled = send;
+    leveled.levelDb = -12.0;
+    EXPECT_TRUE(chain.usesSameSidechainTargets({leveled}));
+
+    auto disabled = send;
+    disabled.enabled = false;
+    EXPECT_FALSE(chain.usesSameSidechainTargets({disabled}));
+    EXPECT_FALSE(chain.usesSameSidechainTargets({}));
+
+    const SidechainSendSpec otherTarget{
+        "send-2", "track-1", "device-b", 0.0, SendPositionSpec::preFader, true};
+    EXPECT_FALSE(chain.usesSameSidechainTargets({send, otherTarget}));
+
+    const SidechainSendSpec secondSource{
+        "send-3", "track-2", "device-a", 0.0, SendPositionSpec::postFader, true};
+    EXPECT_TRUE(chain.usesSameSidechainTargets({send, secondSource}));
 }
 
 }  // namespace riffra

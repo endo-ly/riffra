@@ -6,9 +6,12 @@
 
 namespace riffra {
 
-bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double sampleRate,
-                       const int blockSize, const PluginProcessingMode mode, juce::String& error,
+bool PluginChain::load(const std::vector<PluginDeviceSpec>& values,
+                       const std::vector<SidechainSendSpec>& sidechainSends,
+                       const double sampleRate, const int blockSize,
+                       const PluginProcessingMode mode, juce::String& error,
                        const juce::String& runtimeRole) {
+    auto targets = enabledSidechainTargets(sidechainSends);
     std::vector<Device> candidate;
     for (const auto& value : values) {
         const auto& id = value.id;
@@ -17,8 +20,9 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double
             error = "Plugin Chain devices require an id and path.";
             return false;
         }
+        const auto sidechain = std::find(targets.begin(), targets.end(), id) != targets.end();
         auto rack = std::make_unique<PluginRack>();
-        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, false)) {
+        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, sidechain)) {
             error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": " +
                     loadError->message;
             return false;
@@ -27,11 +31,35 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double
             error = runtimeRole + " device " + id + " failed at stateApply: " + error;
             return false;
         }
-        candidate.push_back(Device{id, std::move(rack)});
+        Device device{id, std::move(rack), {}};
+        if (sidechain) prepareSidechainInput(device, blockSize);
+        candidate.push_back(std::move(device));
     }
     devices = std::move(candidate);
+    sidechainTargets = std::move(targets);
     prepareBuffers(blockSize);
     return true;
+}
+
+std::vector<juce::String> PluginChain::enabledSidechainTargets(
+    const std::vector<SidechainSendSpec>& sidechainSends) {
+    std::vector<juce::String> targets;
+    targets.reserve(sidechainSends.size());
+    for (const auto& send : sidechainSends)
+        if (send.enabled) targets.push_back(send.targetDeviceId);
+    std::sort(targets.begin(), targets.end());
+    targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+    return targets;
+}
+
+bool PluginChain::usesSameSidechainTargets(
+    const std::vector<SidechainSendSpec>& sidechainSends) const noexcept {
+    return enabledSidechainTargets(sidechainSends) == sidechainTargets;
+}
+
+void PluginChain::prepareSidechainInput(Device& device, const int blockSize) noexcept {
+    const auto channels = device.rack->status().sidechain.channels;
+    device.sidechainBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
 }
 
 void PluginChain::prepareBuffers(const int blockSize) noexcept {
@@ -48,7 +76,10 @@ void PluginChain::release() noexcept {
     for (auto& device : devices) device.rack->release();
 }
 
-void PluginChain::clear() noexcept { devices.clear(); }
+void PluginChain::clear() noexcept {
+    devices.clear();
+    sidechainTargets.clear();
+}
 
 void PluginChain::allNotesOff() noexcept {
     for (auto& device : devices) device.rack->allNotesOff();
@@ -89,9 +120,13 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
             ++lastBinding;
         const auto deviceAutomation = std::span<PluginParameterAutomation>(
             first, static_cast<std::size_t>(std::distance(first, lastBinding)));
-        devices[index].rack->process(currentInput, currentInputCount, nullptr, 0, targetChannels,
-                                     targetCount, sampleCount, index == 0 ? midi : nullptr,
-                                     deviceAutomation, timelineSample, playing);
+        const auto auxChannelCount = devices[index].sidechainBuffer.getNumChannels();
+        const auto* const* auxChannels =
+            auxChannelCount > 0 ? devices[index].sidechainBuffer.getArrayOfReadPointers() : nullptr;
+        devices[index].rack->process(currentInput, currentInputCount, auxChannels, auxChannelCount,
+                                     targetChannels, targetCount, sampleCount,
+                                     index == 0 ? midi : nullptr, deviceAutomation, timelineSample,
+                                     playing);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }

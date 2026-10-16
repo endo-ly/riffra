@@ -14,8 +14,10 @@ class TimelineEngineTestPeer;
 
 class PluginChain final {
 public:
-    bool load(const std::vector<PluginDeviceSpec>& devices, double sampleRate, int blockSize,
-              PluginProcessingMode mode, juce::String& error, const juce::String& runtimeRole);
+    bool load(const std::vector<PluginDeviceSpec>& devices,
+              const std::vector<SidechainSendSpec>& sidechainSends, double sampleRate,
+              int blockSize, PluginProcessingMode mode, juce::String& error,
+              const juce::String& runtimeRole);
     void reset() noexcept;
     void release() noexcept;
     void clear() noexcept;
@@ -34,6 +36,10 @@ public:
     [[nodiscard]] int latencySamples() const noexcept;
     [[nodiscard]] int tailSamples() const noexcept;
     [[nodiscard]] int size() const noexcept;
+    /// True when the enabled sidechain connections resolve to the same device targets as the
+    /// prepared chain, so its auxiliary inputs stay valid.
+    [[nodiscard]] bool usesSameSidechainTargets(
+        const std::vector<SidechainSendSpec>& sidechainSends) const noexcept;
     [[nodiscard]] PluginRack* findDevice(const juce::String& deviceId) noexcept;
     [[nodiscard]] const PluginRack* findDevice(const juce::String& deviceId) const noexcept;
 
@@ -41,14 +47,21 @@ private:
     friend class PluginChainTestPeer;
     friend class TimelineEngineTestPeer;
 
-    void prepareBuffers(int blockSize) noexcept;
-
     struct Device final {
         juce::String id;
         std::unique_ptr<PluginRack> rack;
+        juce::AudioBuffer<float> sidechainBuffer;
     };
 
+    void prepareBuffers(int blockSize) noexcept;
+    /// Sizes the device auxiliary input buffer to the layout the rack enabled.
+    void prepareSidechainInput(Device& device, int blockSize) noexcept;
+    /// Enabled sidechain connection targets, sorted and deduplicated.
+    [[nodiscard]] static std::vector<juce::String> enabledSidechainTargets(
+        const std::vector<SidechainSendSpec>& sidechainSends);
+
     std::vector<Device> devices;
+    std::vector<juce::String> sidechainTargets;
     juce::AudioBuffer<float> firstBuffer;
     juce::AudioBuffer<float> secondBuffer;
 };
