@@ -31,7 +31,7 @@ impl HostDispatcher<'_> {
         )
         .map_err(|error| {
             DispatchError::invalid_request(format!(
-                "sidechain target '{device_id}' capability could not be verified: {error}"
+                "sidechain target '{device_id}' capability is unknown; verification failed: {error}"
             ))
         })
     }

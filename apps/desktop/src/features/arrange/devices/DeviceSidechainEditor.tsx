@@ -29,8 +29,8 @@ export function DeviceSidechainEditor({
   commit,
   onOpenAutomation,
 }: DeviceSidechainEditorProps) {
-  if (!capabilities.available || isInstrument) return null;
   const sends = arrangement.mixer.sidechainSends.filter((send) => send.targetDeviceId === deviceId);
+  if (isInstrument || (!capabilities.available && sends.length === 0)) return null;
   const canAddSource = capabilities.mono || capabilities.stereo;
   const candidates = arrangement.tracks.filter(
     (track) =>
@@ -44,6 +44,11 @@ export function DeviceSidechainEditor({
         Sidechain input · {input} · {capabilities.channels} channel
         {capabilities.channels === 1 ? '' : 's'}
       </h4>
+      {!canAddSource && (
+        <p>
+          {capabilities.reason ?? 'This VST3 does not support a mono or stereo auxiliary input.'}
+        </p>
+      )}
       {sends.map((send) => (
         <SidechainSendControls
           key={send.id}

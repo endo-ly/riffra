@@ -414,7 +414,14 @@ describe('DevicesPanel', () => {
   });
 
   it('disables adding a sidechain source when no mono or stereo layout is supported', async () => {
-    const api = runtimeApi({ available: true, mono: false, stereo: false, channels: 0 });
+    const reason = 'The VST3 does not support a mono or stereo auxiliary input.';
+    const api = runtimeApi({
+      available: true,
+      mono: false,
+      stereo: false,
+      channels: 0,
+      reason,
+    });
     const currentSession = defaultSession();
     currentSession.arrangement.tracks = [
       structuredClone(track),
@@ -427,6 +434,43 @@ describe('DevicesPanel', () => {
     expect(
       await screen.findByText('Sidechain input · Unavailable · 0 channels'),
     ).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Sidechain source')).toBeDisabled();
+  });
+
+  it('keeps a stored sidechain route visible and removable when the effect has no auxiliary bus', async () => {
+    const reason = 'The VST3 does not expose an auxiliary input bus.';
+    const api = runtimeApi({
+      available: false,
+      mono: false,
+      stereo: false,
+      channels: 0,
+      reason,
+    });
+    const currentSession = defaultSession();
+    currentSession.arrangement.tracks = [
+      structuredClone(track),
+      { ...structuredClone(track), id: 'track:2', name: 'Drums', effects: [] },
+    ];
+    currentSession.arrangement.mixer.sidechainSends = [
+      {
+        id: 'sidechain:stored',
+        sourceTrackId: 'track:2',
+        targetDeviceId: effect.id,
+        levelDb: -6,
+        position: 'postFader',
+        enabled: true,
+      },
+    ];
+
+    render(<Harness api={api} initialSession={structuredClone(currentSession)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+
+    expect(
+      await screen.findByText('Sidechain input · Unavailable · 0 channels'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Sidechain' })).toBeInTheDocument();
     expect(screen.getByLabelText('Add Sidechain source')).toBeDisabled();
   });
 });
