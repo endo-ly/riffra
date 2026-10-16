@@ -593,8 +593,7 @@ bool TimelineEngine::setSendLevelControl(const juce::String& sendId, const float
     }
     return graphRegistry.access([&](ControlGraphRegistry::State& graphs) {
         if (graphs.latestCommitted != nullptr && sendId.isNotEmpty()) {
-            const auto level =
-                juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, levelDb));
+            const auto level = juce::Decibels::decibelsToGain(juce::jlimit(-90.0f, 24.0f, levelDb));
             const auto storeGain = [&](MixerRoute& route) {
                 route.gain.store(level, std::memory_order_release);
             };
