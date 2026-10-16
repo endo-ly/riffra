@@ -16,7 +16,7 @@ RoutingのSidechain欄には、そのTrackから送信しているEffect名と�
 
 Group・Returnには名前と種類、FX件数とMissing状態、Pan、左右Meter、Gain、Mute・Soloを表示する。ヘッダーで種類と名前を指定して追加し、選択したBusの名前と削除を操作する。参照中のBusを削除すると、参照を解除する必要がある旨と対象IDをエラーで表示する。
 
-Mute・Soloによる可聴経路は[音声アーキテクチャ](../architecture.md)を参照する。GroupのMuteと、Trackから直接分岐するSendは別の操作である。
+Mute・Soloによる可聴経路は[音声エンジンの設計](../audio-engine.md)を参照する。GroupのMuteと、Trackから直接分岐するSendは別の操作である。
 
 ## 3. FXと連続操作
 

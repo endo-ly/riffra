@@ -1,521 +1,284 @@
 # Riffra アーキテクチャ
 
-## 1. ドキュメントの目的とスコープ
+Riffraのシステム構造と、すべての制作操作に共通する仕組みを記述する。状態の所有、プロセスの構成、編集の流れ、永続化の保証を定め、機能の設計や変更のときに前提となる土台を提供する。
 
-本書はRiffraのシステム構造と主要機構を記述する。「どの層が何の正準状態を持ち、どのように整合するか」を対象とする。個々の型の詳細は `data-model.md`、境界の契約は `ipc.md`、画面の設計は `ui-ux-design/arrange-screen.md` を参照する。
-
-### 書くこと
-
-- プロセス構成（Tauriシェルとサイドカー群）
-- レイヤー構成と依存方向
-- セッション正準化、ランタイム投影、永続化・回復、セーフモード、ライブラリ索引、バックグラウンドジョブの各機構
-- ドメインが守る不変条件
-
-### 書かないこと
-
-- 個別のTauri命令・IPCプロトコルの詳細（`ipc.md`）
-- エンティティのフィールド定義（`data-model.md`、code参照）
-- 画面の操作仕様（`ui-ux-design/`）
+| 文書                          | 対象                                             |
+| ----------------------------- | ------------------------------------------------ |
+| CONCEPT.md                    | 製品構想                                         |
+| architecture.md(本書)         | システム構造と共通の仕組み                       |
+| audio-engine.md               | 音声実行の設計(投影、経路、録音、音源、安全機構) |
+| data-model.md                 | 正準モデルのカタログと規則                       |
+| ipc.md                        | 境界の契約(命令、イベント、プロトコル)           |
+| test-strategy.md              | テスト戦略                                       |
+| ui-ux-design/                 | 画面の設計                                       |
+| native/audio-engine/README.md | 音声エンジンのコード構成とビルド                 |
 
 ---
 
-## 2. プロセス構成
+## 1. 設計原則
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│ Tauri シェル                                                     │
-│ ┌──────────────────────┐   ┌──────────────────────────────────┐ │
-│ │ WebView (React)      │   │ Rust バックエンド                │ │
-│ │ 表示・操作・表示状態  │◀──▶│ HostConnectionManager / adapter │ │
-│ │ NativeApi 経由で指令 │   │ Embedded / Attached Host       │ │
-│ └──────────────────────┘   └──────────────────────────────────┘ │
-└──────┬──────────────────────────┬───────────────────────────────┘
-       │ JSON Lines (stdin/stdout)
-       │ 1つのコマンド + 1行の応答
-┌───────────────────────┐  ┌─────────────────────┐  ┌─────────────────┐
-│ riffra-audio          │  │ riffra-plugin-scan  │  │ riffra-render   │
-│ リアルタイム音声       │  │ VST3スキャン        │  │ オフライン      │
-│ JUCE / ASIO / WASAPI  │  │ (起動時・再スキャン) │  │ レンダリング    │
-│ 投影・演奏・録音・監視 │  │                     │  │                 │
-│ VST3 ホスティング     │  │                     │  │                 │
-└───────────────────────┘  └─────────────────────┘  └─────────────────┘
-```
-
-| プロセス            | 役割                                                                | 所有状態                                   |
-| ------------------- | ------------------------------------------------------------------- | ------------------------------------------ |
-| Tauri シェル        | DesktopのUI、Host接続、Tauri event bridge                           | UI接続、window、dialog、Host選択           |
-| `riffra serve` Host | GUIなしの正準状態、履歴、ローカルControl、Runtime投影を監督         | DataRootLease、AppCore、Runtime状態        |
-| riffra-audio        | リアルタイム音声。デバイス、Built-in / VST3グラフ、演奏・録音・監視 | ランタイムグラフ（投影される一時状態のみ） |
-| riffra-plugin-scan  | VST3の列挙・検証（`--probe` 系と分離された専用起動モード）          | なし                                       |
-| riffra-render       | タイムラインのオフラインレンダリング                                | なし                                       |
-
-- リアルタイム音声は常にサイドカーが担当し、Host プロセスは音声コールバックやプラグインコードを実行しない
-- GUI を使わない構成では `riffra serve` が共有 `DawHost` をフォアグラウンドで起動する
-- セーフモードの扱いは §7 を参照
+1. **正準状態はRustが所有する。** 永続化される制作状態の正本は CreativeSession である。GUI・CLI・サイドカーはそれぞれの窓口を通じてこの状態を扱い、ネイティブ側で生まれた変更も、Hostの正準コミットを一度経てから制作状態になる
+2. **実行状態は正準状態の投影である。** 音声エンジンの実行グラフと準備済みの実行状態は、正準状態から生成する派生物である。投影はいつでも作り直せ、投影が消えても制作状態は残る
+3. **GUIとCLIは同じ契約のクライアントである。** 制作操作はControl Commandとして1つの命令表に集約される。デスクトップもCLIも同じ命令を同じHostへ送り、同じ正準状態と履歴を共有する
+4. **音声とプラグインは専用プロセスで動く。** リアルタイム音声とプラグインコードはC++のサイドカーが実行する。Hostプロセスは実時間処理から切り離され、サイドカーの障害はHostと独立に回復する
+5. **境界の契約は厳格である。** 境界をまたぐデータは必ず検証し、契約からの逸脱は明示的な失敗として扱う。型の正本はRustに置き、TypeScriptはそこから生成し、C++とは契約フィクスチャで整合を保つ
+6. **データは手元で完結する。** セッション・素材・ライブラリはすべてローカルディスクに保存し、制作にネットワークは不要である
+7. **失敗は明示する。** 検証と保存に成功したものだけが正準状態になる。失敗は原因と影響範囲を構造化した情報として伝え、成功と明確に区別する
 
 ---
 
-## 3. レイヤー構成
+## 2. プロセスと接続形態
 
-依存は上位から下位への一方向。下位層は上位層を知らない。たとえば riffra-core は Tauri の存在を知らないため、Desktop と CLI のどちらからも使い回せる。
+### 2.1 プロセス
 
-```text
-React フロントエンド
-  ├─ 状態: CreativeSession を保持・描画する
-  ├─ 編集: 機能別の窓口（NativeApi capability）経由で Control Command を送る
-  ├─ app: 起動処理（bootstrap）/ アプリ全体の組み立て（Composition）/ 全体のRuntime寿命管理
-  ├─ features: 機能ごとの状態・操作・UI・テスト（arrange、audio、browser、instruments、library、plugins、project、recording、transport）
-  ├─ shared: 機能に属さない共通UI・汎用部品（Toast、ContextMenu、audio meters など）
-  ├─ native: ReactとTauriの境界（窓口の定義・invoke実装・テスト用の偽装 FakeNativeApi）
-  └─ model: src/model/generated（Rust の ts-rs 出力を gen-barrel.js で束ねた型）
-
-Tauri 命令層 (src-tauri/src)
-  └─ Host への操作は dispatch_control 1 本で受け、Desktop 固有の命令だけを個別に持つ（ipc.md §3.1）
-
-Desktop adapter (apps/desktop/src-tauri/src)
-  ├─ Tauri の命令・通知・窓（command / event / window）との境界を担当
-  ├─ 接続状態を管理する（HostConnectionManager。内蔵 Embedded ／別プロセス Attached ／未接続 Disconnected）
-  ├─ 内蔵構成では進行役本体（riffra-runtime::DawHost）を所有し、別プロセス構成では接続用具（LocalHostClient）を利用
-  └─ 現在Hostの操作・起動情報・通知（operation、bootstrap、event）をWebViewへ接続
-
-riffra-runtime（crates/riffra-runtime）: Desktop / Headless Host が共有するlive Runtime基盤
-  ├─ 頼める操作の定義（api: Control Command の表・Params・結果型・性質。ipc.md §3.2）
-  ├─ Host本体・設定・利用権（DawHost / HostConfig / DataRootLease）を含むHostの構成
-  ├─ 音声の監督（AudioSupervisor）/ 内蔵音源の実行基盤（Instrument Runtime）/ 正準と再生用複製の突き合わせ（RuntimeReconciler）/ 再生順の整理（Transport ordering）
-  ├─ 同梱内蔵音源の一覧（Built-in instrument catalog。起動時の組み立て元から渡す）
-  ├─ 書き出し子プロセス（`riffra-render` executable）の起動・制御口（adapter）
-  ├─ 出来事の受付（HostEventSink）/ 配信所（HostEventHub）/ 起動情報（Host bootstrap）
-  └─ 別プロセスからの操作要求（command connection）と出来事購読（events connection）の受付（Local Control Server）
-
-riffra-control（crates/riffra-control）: current-user Local Host接続基盤
-  ├─ Hostの名乗り（identity）/ 接続先情報（endpoint descriptor）/ 一覧（Local Host Registry）
-  ├─ 接続用具（LocalHostClient）/ 要求と応答のやり取り / 出来事の流れ（event stream）
-  └─ プロセス間通信路（Named Pipe / Unix Domain Socket）での区切り（framing）と権限の境界
-
-riffra-host（crates/riffra-host）: Desktop / CLI 共通のOS境界
-  ├─ Projectの出し入れ（ProjectStore）/ Project単位の楽曲保存（SessionStore）/ 素材置き場（Asset Repository）/ 可搬形式（Project package）
-  ├─ WAVの付帯情報とMIDIファイル（SMF）の読み取り
-  └─ 多重起動を防ぐ利用権（DataRootLease）
-
-riffra-core（crates/riffra-core）: プラットフォーム非依存のApplication / Domain / Ports
-  ├─ 楽曲データの形（domain: CreativeSession / Arrangement / Recording / Asset / Plugin）
-  ├─ 操作の手順（application: Session / Arrangement / Recording / Devices / Transport / History）
-  ├─ 永続化との接続口（ports: SessionStorage）
-  ├─ 1つのProjectの正準状態と履歴（AppCore）
-  ├─ 保存前の検査と整形（validate_and_normalize）
-  └─ Tauri・WebView・OS統合を含まない
-
-CLI ホスト（apps/cli）
-  ├─ 利用権・Project保存・楽曲保存（DataRootLease / ProjectStore / SessionStore）を取得する
-  ├─ 決まりごと（AppCore）と保存口（SessionStorage Port）を直接利用する
-  ├─ 一回きりの起動引数も対話入力も型付きの Control Command にして同じ振り分け（Dispatcher）へ渡す
-  └─ ファイル編集専用の Standalone と、進行役を起動する serve の二つの使い方を持つ
-
-Attached CLI（apps/cli --attach）
-  ├─ 起動中の Host の操作受付口（制御エンドポイント）を見つけてつなぐ
-  ├─ 接続先の決まりごと・保存・利用権（AppCore / SessionStore / DataRootLease）は直接開かず、借りて使う
-  └─ 操作受付（Host Control Server）経由で正準操作を頼む
-
-永続化・外部境界
-  ├─ riffra-host: Project保存 / 楽曲保存 / 素材置き場 / 可搬形式 / ファイル読み取り部品（ProjectStore / SessionStore / Asset Repository / Project package / file parsers）
-  ├─ ProjectStore: workspace.json + projects/<project-id>（§6）
-  ├─ SessionStore: projects/<project-id>/session.json + generations（§6）
-  ├─ ライブラリ索引: SQLite リードモデル（§8）
-  └─ ランタイム境界: 音声の監督 → 音声サイドカー（AudioSupervisor → riffra-audio。§5）
+```mermaid
+flowchart TB
+    WEB["WebView (React)<br/>表示と操作"] <-->|"Tauri IPC"| SHELL["Tauriシェル (Rust)<br/>HostConnectionManager"]
+    HOST["Riffra Host (DawHost)<br/>正準状態・履歴・保存・投影"]
+    SHELL -.->|"Embedded:<br/>プロセス内で実行"| HOST
+    SERVE["riffra serve<br/>フォアグラウンドのHost"] -.->|"別プロセスで実行"| HOST
+    SHELL -->|"Attached:<br/>パイプ・ソケットで接続"| SERVE
+    CLI["riffra-cli"] -->|"Attached: 接続"| SERVE
+    HOST -->|"JSON Lines (stdin/stdout)"| AUDIO["riffra-audio<br/>リアルタイム音声 (C++/JUCE)"]
+    HOST -->|"要求ごとに1プロセス"| RENDER["riffra-render<br/>オフラインレンダリング"]
+    HOST -->|"要求ごとに1プロセス"| SCAN["riffra-plugin-scan<br/>VST3スキャン"]
 ```
 
-- 制作状態を変更する命令は Core の Application 層を通り、確定した `CanonicalState` が同じ順序でフロントエンドへ返る
-- 起動中 Host の外部制御と実行モード別の状態所有は `ipc.md` §8（境界F）を参照
+| プロセス           | 役割                                                 | 所有する状態                             |
+| ------------------ | ---------------------------------------------------- | ---------------------------------------- |
+| Tauriシェル        | UI、Hostへの接続、イベントの橋渡し                   | 接続状態、ウィンドウ、ダイアログ         |
+| Host               | 正準状態・履歴・保存・投影・ジョブの監督             | DataRootLease、AppCore、Runtime状態      |
+| riffra-audio       | リアルタイム音声。デバイス、グラフの実行、録音、MIDI | 準備済み実行状態(投影される一時状態のみ) |
+| riffra-render      | オフラインレンダリング                               | 状態を持たない                           |
+| riffra-plugin-scan | VST3の列挙と検証                                     | 状態を持たない                           |
+| riffra-cli         | 命令の送信。StandaloneではCoreと保存を直接利用       | Standalone時はDataRootLeaseとAppCore     |
+
+リアルタイム音声は常にサイドカーが担う。音声コールバックもプラグインコードもHostプロセスで実行されることはない。
+
+### 2.2 実行モード
+
+RiffraのHostは、正準状態を誰が持つかによって4つの形で動く。
+
+| モード                 | 状態の所有者                       | 要求の経路                 |
+| ---------------------- | ---------------------------------- | -------------------------- |
+| Standalone(CLI)        | CLI自身のDataRootLease・保存・Core | CoreとHostの部品を直接利用 |
+| serve(CLI)             | 起動したHost                       | Host Control Serverを公開  |
+| Attached(CLI・Desktop) | 接続先のHost                       | Host Control Serverへ接続  |
+| Desktop(Embedded)      | デスクトップ内蔵のHost             | プロセス内でHostへ委ねる   |
+
+- DataRootの所有者は1つのHostに限られる。所有者がいるとき、Standaloneと`serve`は起動に失敗し、Desktopは既存Hostへの接続へ回る
+- Attachedは接続先HostのDataRootを借りて使う。保存も正準状態も接続先Hostのものを共有する
+- 起動中のHostは自分の存在を `<data_root>/control/host.json` とユーザー単位のRegistryに公開する。Attachedの探索先はRegistryである
+- 接続のプロトコルの詳細は ipc.md「境界F」を参照
 
 ---
 
-## 4. 制作状態とコミット
+## 3. レイヤーと依存方向
 
-### 4.1 正準状態の所有
+依存は上位から下位への一方向であり、下位層は上位層を知らない。たとえば riffra-core はTauriの存在を知らないため、DesktopとCLIのどちらからも使える。
 
-永続化される制作状態は `CreativeSession` に集約する。`AppCore` は、1つのProjectのID、確定スナップショット、Undo/Redo履歴を持つ値型である。編集規則と保存成功後の確定をCoreが担当し、音声ランタイムや並行実行の管理はHostが担当する。
-
-Hostの `ProjectCell` は、現在のProjectのCore、保存先、回復状態を一体として所有する。書き込み側は `ProjectWriter` を取得し、読み取り側は公開済みの確定スナップショットを取得する。読み取りは編集中の候補を見ず、書き込みの完了も待たない。Projectの切替は、次のProjectの読込・音声候補の準備・workspace保存を済ませてから、この所有単位を丸ごと差し替える。
-
-### 4.2 コミットと通知
-
-正準状態を変更する処理は、書き込み権を保持したまま次の順で確定する。
-
-1. Application操作が更新候補を作り、Domainが検証・正準化する
-2. 対象Projectの保存先へ候補を永続化する
-3. 保存成功後にCoreの正準状態と履歴を交換し、確定スナップショットを公開する
-4. Hostがそのコミットのスナップショットでライブラリ索引を更新する
-5. 同じスナップショットを正準状態の変更イベントとして通知し、音声ランタイムへ投影を要求する
-
-検証または保存に失敗した候補は、正準状態にも履歴にも反映しない。コミット後の処理は `publish_commit` に集約し、書き込み権を保持したまま実行するため、別のコミットが後処理へ割り込まない。命令の結果も、そのコミット自身のスナップショットを返す。Standaloneでは索引の更新までを行う。
-
-### 4.3 書き込み権とロック順序
-
-命令が書き込み権を取得する範囲は、守る対象と準備時間によって決める。
-
-| 命令の範囲                         | 書き込み権の取得範囲                                                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Projectに属する短い命令            | 読み取り命令も含め、入口からコミット後の処理と結果の確定まで保持する                                                 |
-| Projectに属する長い命令            | 確定スナップショットで準備し、コミット直前に取得する。Project IDとsequenceが準備時と一致しなければ競合として拒否する |
-| Host全体の命令・Host内部の読み取り | 確定スナップショットを読み、Projectの書き込み権を取得しない                                                          |
-
-ネイティブのプラグインエディタが生成した状態やパラメータも、内部の保存処理がProjectの書き込み権を取得してCoreへ反映する。Project切替は、閉じるProjectの保留イベントを受け取り、自分が保持する書き込み権で反映してから差し替える。保留イベントは適用成功を確認するまで保存処理が保持し、失敗した変更と未処理の変更を再試行できる。録音の後処理は、書き込み権を取得して自身の変更を現在の正準状態へ適用し、処理中の別の編集を維持する。
-
-複数のロックが必要な場合は、次の順に取得する。
-
-```text
-HostLifecycle（read）→ startup_gate → ProjectCell.writer → RuntimeReconciler / HostEventHubの内部ロック
+```mermaid
+flowchart TD
+    DESK["riffra-desktop<br/>Tauriシェル"] --> RUN["riffra-runtime<br/>Host本体"]
+    CLI["riffra-cli<br/>CLI / Headless Host"] --> RUN
+    RUN --> HOSTC["riffra-host<br/>OS境界・保存"]
+    RUN --> CTRL["riffra-control<br/>Host間の接続"]
+    RUN --> CORE["riffra-core<br/>ドメイン・規則"]
+    HOSTC --> CORE
 ```
 
-`HostLifecycle` は命令の受け付けと終了を管理し、`startup_gate` はランタイム起動と再試行を直列化する。右側のロックを保持したまま左側を取得せず、書き込み権を持つ処理から `ProjectCell::write()` を再度呼ばない。コミット後の処理も受け取った書き込み権を使う。Hostの終了時は新しい命令を拒否し、ネイティブ処理の待機をキャンセルしてから受け付け済みの処理を待つ。
+| クレート       | 責務                                                                                                                                                        |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| riffra-core    | ドメインとアプリケーションの規則。正準モデル(CreativeSession等)、編集の手順、検証と正準化、1 Projectの正準状態と履歴(AppCore)。プラットフォームに依存しない |
+| riffra-host    | OS境界。DataRootの所有と排他(DataRootLease)、Projectの保存(SessionStore)、素材の管理、可搬形式(`.riffra`)、WAVとMIDIファイルの読み取り                      |
+| riffra-control | 起動中のHostへの接続基盤。Hostの名乗りと接続先情報、一覧(Registry)、パイプ/ソケット上の要求・応答とイベントの流れ                                           |
+| riffra-runtime | Host本体。Control Commandの表と実行、正準コミット、実行グラフの投影と調停、サイドカーの起動と通信、録音・レンダー・スキャンのジョブ、ライブラリ索引         |
+| riffra-desktop | Tauriシェル。WebViewとHostの接続(Embedded / Attached)、命令の窓口、イベントの橋渡し                                                                         |
+| riffra-cli     | Standalone編集、`riffra serve`、Attached接続、対話モード                                                                                                    |
+
+フロントエンドの構成は次の通りである。
+
+| 領域       | 責務                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `app`      | 起動処理とアプリ全体の組み立て                                                                                                 |
+| `features` | 機能ごとの状態・操作・UI・テスト(arrange、audio、browser、instruments、library、mixer、plugins、project、recording、transport) |
+| `shared`   | 機能に属さない共通のUI部品                                                                                                     |
+| `native`   | ReactとTauriの境界。命令の窓口とテスト用の偽装(FakeNativeApi)                                                                  |
+| `model`    | Rustから生成した型(`npm run gen:types`)                                                                                        |
+
+フロントエンドが下位のAPIに触れるのは `native/` 配下に限る。
 
 ---
 
-## 5. ランタイム投影とトランスポート
+## 4. 状態のモデル
 
-リアルタイム音声グラフは正準状態の**投影（projection）**である。正準セッションが変わると、投影だけが再構築される。
+制作状態は3つの層で管理する。上位の層が真実であり、下位の層は上位から生成する。
 
-### 5.1 投影プロトコル
-
-正準状態からサイドカーへ渡す実行内容は、`riffra-runtime` が所有する型付き `ExecutionGraph` として定義する。`TimelineSnapshot` は Project ID、Arrangement revision、実行グラフを持ち、ライブ再生とオフラインレンダーは同じグラフ契約を使う。Core は実行グラフの型やサイドカー境界を持たない。
-
-投影生成は、素材・プラグイン・内蔵プリセットを解決する I/O 段階と、解決済み資源からグラフを構築する純関数段階に分かれる。出力は `ProjectedTimeline { snapshot, diagnostics }` であり、実行できない素材やデバイスはグラフから除外して診断へ記録する。
-
-| 操作                                  | 意味                                                                                    |
-| ------------------------------------- | --------------------------------------------------------------------------------------- |
-| `prepare_timeline_snapshot(snapshot)` | 型付き投影候補をサイドカーへ渡して事前構築（VST読み込み・グラフ構築）。まだ再生されない |
-| `commit_timeline_snapshot()`          | 準備済みの投影を現役グラフへ昇格                                                        |
-| `discard_timeline_snapshot()`         | 準備済みの候補を破棄                                                                    |
-| `wait_for_timeline_idle()`            | タイムライン処理の競合時に、サイドカーのライフサイクル処理が完了するまで待つ            |
-
-正準コミット後は投影結果を調停役へ渡す。グラフの再利用と実行順序の判断は §5.2 を参照。
-
-再生状態の所有分担は次の通り。
-
-| 所有者                           | 範囲                                                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `TrackRuntime`（Track ごと）     | Instrument Runtime、Effect Chain、MIDI Scheduler、ライブ MIDI 状態、Automation、PDC 用バッファ、録音キャプチャ状態 |
-| Device Runtime（TrackRuntime内） | プラグインインスタンス。投影間で共有される単位（§5.6）                                                             |
-| `TimelineEngine`                 | グラフの公開、処理順序、Transport、ループ、クロックの調停。スレッドごとの所有は §5.6                               |
-
-- Arrangement の MIDI と Play Surface / 外部 MIDI の入力は同じ Instrument Runtime へ合流する。ライブ入力専用の音源やエフェクト経路は設けない
-
-音声の基本経路は次のとおりである。
-
-```text
-Audio Track
-Timeline Audio ──┐
-Live Audio ─────┴─ Track Effect Chain → Pre-Fader Send → Gain / Pan / Automation → Post-Fader Send
-
-Instrument Track
-Timeline MIDI ──┐
-Live MIDI ──────┴─ Instrument Runtime → Track Effect Chain → 同じTrackの分岐・ミックス処理
-
-Track主出力 ──→ Groupの合流・Effect・Gain/Pan ──┐
-Track主出力 ───────────────────────────────────┤
-Track Send ──→ Returnの合流・Effect・Gain/Pan ──┴─ Master Effect → Master Gain → 制作Mix
+```mermaid
+flowchart LR
+    CANON["正準状態<br/>CreativeSession"] -->|"投影"| GRAPH["実行グラフ<br/>ExecutionGraph"]
+    GRAPH -->|"prepare → commit"| PREP["準備済み実行状態<br/>サイドカー内部"]
+    PREP -.->|"ネイティブでの変更は<br/>正準コミットとして反映"| CANON
 ```
 
-Group・Return・MasterのEffectsはTrackと同じPluginChainを使う。Rustは保存状態と接続先を含むExecution Graphを投影し、NativeはそのGraphからStereoの準備済みMixerを作る。GroupとReturnは音声合流・Effect・ミックス処理を共有し、Track固有の音源・MIDI・録音処理を持たない。構成と音声環境が一致するDeviceは現役Graphから共有し、GainやSend Levelの変更で作り直さない。
+| 層               | 内容                                            | 正本       | 寿命                         |
+| ---------------- | ----------------------------------------------- | ---------- | ---------------------------- |
+| 正準状態         | CreativeSession。制作の真実                     | 唯一の正本 | 永続化する                   |
+| 実行グラフ       | 正準状態から生成した実行の設計(audio-engine.md) | 正準状態   | いつでも破棄して再構築する   |
+| 準備済み実行状態 | サイドカーが実行のために保持する状態            | 実行グラフ | サイドカーの世代と共に消える |
 
-SidechainSendはTrackのEffect後のPre-FaderまたはGain・Pan適用後のPost-Fader信号を、指定したEffect Deviceの最初の補助入力へ分岐する。Mono入力には左右を合成し、Stereo入力には左右を保持する。複数送信はDeviceごとに合流させ、そのDeviceの主出力だけを後続Effectへ渡す。接続の追加・有効化前にVST3の実バス能力を確認し、Mono・Stereoのどちらも扱えないDeviceを拒否する。保存済み接続のDeviceが後から欠落または非対応になった場合は接続を保持し、実行可能な補助入力経路だけを準備する。Missing Pluginは既存の診断へ残し、補助入力非対応のEffectは通常のEffect処理を続ける。
+- 下位の層は上位の層を書き換えない。ネイティブ側で生まれた変更は、正準コミットとして上位へ反映する
+- 正準状態が変わると、実行グラフと準備済み状態を順に作り直す。逆に下位の層が消えても、制作状態は失われない
 
-External AudioとSidechainの依存関係を合わせてTrackの処理順序を決め、同じ段階内の独立Trackを並列実行する。各送信先Deviceの主入力と補助入力の累積遅延を比較してPDCを配置し、そのDevice以降の遅延へ反映する。Track処理後にGroup・Return、最後にMasterへ補助入力を渡す。Sidechainの送信元と、Track上の受信先は低遅延監視のPDCバイパス対象に含めない。
+---
 
-入力の累積レイテンシを合流先ごとに比較し、遅い経路へ揃える補償を接続に配置する。External Audioの依存Trackを先に処理し、独立TrackとGroup・Returnには同じワーカープールを利用する。MasterのEffectレイテンシも含めて補償する。低遅延監視中は、Track Effect直前に分かれているTimeline音声だけをその経路のPDC分遅らせ、ライブ入力はMixer routeの補償を迂回する。MIDIクリップはScheduler上のイベント位置を同量遅らせ、Post-Effects takeは出力段の補償へ加算するため、Track Effect Chainを複製せずにライブ監視の応答を保ちながらTimeline素材を同期できる。別TrackのExternal Audio入力に使われるTrack、External Audio入力を使うTrack、有効なSendを持つTrack、Volume/Panオートメーションを持つTrackには、このバイパスを適用せず、通常の経路PDCを適用する。Group出力のPDCは、すべての入力Trackが低遅延監視経路として接続されている場合にだけ迂回する。必要なバッファとDeviceはGraph準備時に確保し、Audio callbackでは確保・ロック待ち・ファイルI/O・プラグイン生成を行わない。
+## 5. 編集のライフサイクル
 
-Mute・Soloは主出力と並列Sendの可聴経路を決める。複数Soloは加算し、Muteを優先する。
+### 5.1 一つの命令の流れ
 
-| 操作        | 可聴経路                                                             |
-| ----------- | -------------------------------------------------------------------- |
-| Track Mute  | 主出力と、そのTrackの全Sendを止める                                  |
-| Group Mute  | GroupからMasterへの出力を止める。Groupへ入る前のTrack Sendは維持する |
-| Return Mute | そのReturnのMaster向け出力を止める                                   |
-| Track Solo  | そのTrackの主出力、所属Group、そのTrack由来のSendを通す              |
-| Group Solo  | 所属Trackの主出力とGroup出力を通す                                   |
-| Return Solo | そのReturnへのSendとWet出力を通し、Dry主出力を抑制する               |
+制作状態を変更する命令は、すべて同じ順序で確定する。
 
-SidechainはSoloによる主出力の分離後も維持し、送信元TrackのMuteまたはSendの無効化で無音にする。GroupのMuteはTrackからのSidechainを止めず、対象EffectのBypassも接続を保持する。Seek・Loop・Stop・Graph切替では補助入力と補償用バッファをリセットし、直前の処理区間の信号を持ち越さない。
-
-Master FXは制作Mixを処理する。Metronome・Preview・Plugin Auditionは制作Mixの後で合成し、RealtimeのSafety Limiter・Feedback Protectionなどは最終出力へ維持する。Offlineも同じ制作Graphを使い、指定されたTailとGlobal Fadeを適用する。
-
-MIDI とライブ入力の扱いは次の通り。
-
-- MIDI イベントは投影時に時系列へ整列し、再生時はカーソル周辺の必要範囲のみ取り出す。ループは事前展開せず、境界の Note Off と次周の Note On を同一スケジューラで処理する
-- TimelineとLiveは同一Track DSPを通る。ライブ演奏対象と監視中の入力では補償バッファの更新を維持しながら経路の補償遅延を迂回し、共有Busを通すことによる不要な監視遅延を避ける
-- ライブ MIDI は固定容量のキューで受け、超過分は破棄して診断値へ記録する
-- Audio Track の入力監視は、その Track の Effect Chain を一度だけ通る
-- Audio Track の入力を監視するかは、モニタリング設定（`on`、またはアーム中の `auto`）から投影時に決め、グラフの `monitorInput` として渡す。Instrument Track の低遅延監視（アーム中、またはライブ演奏の対象）は実行中に変わるため、サイドカーが判断する
-
-録音キャプチャの扱いは次の通り。
-
-- リアルタイム中は入力のRawテイクを保存し、Sidechainを受けるTrackではDeviceへ届いた補助入力も同じキャプチャ窓で保存する。ライターとバッファは録音開始前に用意し、コールバックは有界キューへ渡す。ファイル書き込みは専用スレッドが行う
-- 停止時は短いグラフ境界でキャプチャ終了とエフェクト状態を確定し、Transport 停止後にグラフ外で Processed Variant を生成する
-- 生成は正準のトラックエフェクトから一時的な Effect Chain を構築し、ブロック単位で書き出す。録音時間に比例する作業用バッファも、録音専用の常設 Effect Chain も使わない
-
-Processed Variantは保存したDevice別の補助入力と主入力の補償設定を使い、Rawと同じファイル内区間で再生する。ライブ入力やLoopの各周回も録音時の制御信号を再利用できる。制御信号が欠損・不完全な場合はそのTrackのProcessed生成を省略し、理由をマニフェストへ記録してRawのみを完成したテイクとして保持する。
-
-AutomationはRustが所有する共通Laneから投影し、Nativeが処理位置に合わせて準備する。LinearはGainをdB、Panを左右位置、Device Parameterを正規化値で補間する。Stepは次のPointの時刻まで前の値を保持する。最初のPointより前と最後のPointより後は端点の値を保持する。Play・Seek・Loop・途中範囲のRenderでは楽曲全体の位置から評価し、Tempoと各経路のPDCを反映する。
-
-Track・BusのFader/Pan、Send Level、Master Gainはサンプル単位で適用する。VST3は処理ブロック先頭の位置で評価し、そのブロックのParameter値を設定する。Master GainはMaster FX後に1回適用し、Realtime安全処理はその後に置く。OfflineとStemも同じMixer経路と評価器を使用し、Stemでは他Trackの主出力だけを除外して共有経路とPDCを維持する。
-
-VST3のStable Parameter IDはグラフ準備時に実Parameterへ解決する。Missing / Disabled Device、Parameter IDの消失・重複、選択した補間でAutomation非対応のParameterのLaneは正準状態に残し、実行対象から外してRender結果にも診断を記録する。実行グラフやBindingの構造が不正な場合は準備に失敗する。音声スレッドでは準備済みの参照とPoint列を使用し、ID検索、状態保存、動的確保を行わない。適用したRustのPlugin State投影をRackの静的Snapshotとして保持し、Opaque Stateがない場合に値が省略されたParameterはPlugin定義の既定値で補う。グラフ準備では共有Rackの状態を読み書きしない。
-
-Automation Pointの連続編集はPrepared Graph上の一時Overrideへ送り、正準Lane、Undo履歴、保存状態を変更しない。PointerUpで一度だけ正準状態を更新し、Escape、PointerCancel、Project / Host切替でOverrideを解除する。GUIはTransport位置とLaneから有効値を求め、VST3の表示文字列は対象ParameterのPlugin変換を使う。
-
-Playback値はPluginの静的Stateへ保存しない。Rackは正準Stateと手動編集結果のSnapshotを保持し、Automation Read中はDevice Parameter・Preset・Stateの手動変更を拒否し、Native Editorの操作を止める。Pauseは短いフェードで無音にして再生位置と最後の有効値を保ち、Resume時に再開位置から再評価する。Stop・Lane解除・グラフ置換で静的値を復元する。Lane編集だけでは既存Plugin Instanceを再利用する。Mixerの静的値はRead中も編集でき、再生中はLaneを優先し、停止後に静的値を適用する。
-
-### 5.2 投影の整合性
-
-投影要求の識別子は、正準状態のsequence、Arrangement revision、サイドカーの世代、音声環境のrevisionの組である。`Machine::step` は、入力と渡された時刻から次の状態と副作用を決める純粋な遷移関数である。要求の採用・待機・準備と候補の正準化の成否も副作用として返す。準備する要求と停止状態は状態機械だけが保持する。ワーカーは実行する仕事を状態機械へ求め、返された副作用に従ってネイティブの準備・確定・破棄を実行し、結果を返す。
-
-状態機械は、最後に求められた正準の投影、現役グラフ、実行中の1件、次に準備する1件を保持する。次の要求は後勝ちで置き換え、置き換えられた待機者には失効を返す。準備に失敗しても現役グラフを維持する。世代や音声環境が変われば現役グラフを無効にし、待機者を直ちに失敗させる。変化前に開始した準備結果は確定せずに破棄する。
-
-正準の投影とProject ID・実行グラフ・診断が一致するグラフが、同じ実行環境で現役になった時点を「正準の採用」とする。現役・実行中・待機中のいずれかに一致するグラフがあれば再準備せず、必要な場合は完了を待って正準キーを適用する。表示だけの編集やrevisionの進行でも、この一致条件が成り立つ限り再構築しない。
-
-Play / Pause / Stop の順序は次の通り。
-
-```text
-Play（準備済み）→ 直ちに開始
-Play（準備中） → TransportStatus: starting を表示して投影完了を待つ
-Pause → 短いフェードで無音にし、再生位置と有効値を保持
-Play（Paused）→ 保持した位置から再開し、Automationを再評価
-Stop → 保留中の Play より優先。後続の準備完了でも自動再生しない
-投影失敗 → Play 意図を解除。再試行は呼び出し側の明示要求でのみ行う
-再起動・環境変更後 → 最新の正準スナップショットを新しい識別子で投影する
+```mermaid
+flowchart TD
+    A["命令の受付<br/>WebView / CLI / Host制御"] --> B["検証と正準化<br/>riffra-core"]
+    B --> C["保存先への永続化"]
+    C --> D["正準状態と履歴の交換<br/>確定スナップショットの公開"]
+    D --> E["ライブラリ索引の更新"]
+    D --> G["音声ランタイムへの投影要求"]
+    E --> F["変更イベントの通知<br/>WebView / CLI"]
 ```
 
-### 5.3 トランスポート
+この順序が保証するものは次の通りである。
 
-- Host Runtime が Play / Pause / Stop 要求の順序と、再生に必要な投影の有効性を判断する。Transport executor は決定済みの要求を音声ランタイムへ伝える
-- 反映対象は最新の決定済み要求のみとし、古い要求や古い投影完了で現在の再生状態を変えない。投影が未準備の場合は `starting` を経由する
-- 音声デバイスの状態、投影グラフの状態、トランスポートの状態は別々に通知する
+- **正準状態が進むのは保存に成功した後である。** 検証や保存に失敗した候補は、正準状態にも履歴にも現れない
+- 命令の応答に含まれる確定スナップショットは、その命令自身が確定した状態である
+- 通知と投影要求は同じスナップショットから作る。受け手の間で状態がずれることはない
 
-### 5.4 デバイス、安全状態、診断
+命令の応答・正準状態・保存・イベントの間の整合は、次の3つの観点で捉える。
 
-デバイスの有効化とグラフ投影は別の操作である。
+| 観点     | 意味                                                 |
+| -------- | ---------------------------------------------------- |
+| 直列化点 | 正準シーケンスが進む瞬間。保存成功後の正準状態の交換 |
+| 永続化点 | ディスクに確定する瞬間。アトミックな置換(§6.2)       |
+| 可視化点 | 外へ見えるようになる瞬間。確定イベントの通知         |
 
-```text
-setAudioDriver → 要求された設定（ドライバ・デバイス・サンプルレート・バッファサイズ）を Native 側で有効化 → 応答
-  → 有効化失敗: 以前のデバイスを復元する
-  → 有効化後の投影失敗: デバイスは戻さず、EngineTransition 保持のまま投影失敗を報告する
-  → 要求拒否＋復元成功: 以前の音声環境へ正準グラフを再投影してから遷移を完了する
-```
+### 5.2 書き込み権の方針
 
-- 有効化する設定は明示されたものに限り、別の設定への置き換えは行わない
+Project単位の書き込み権で競合を防ぐ。取得する範囲は、守る対象と準備に必要な時間で決める。
 
-安全ミュートは Native の atomic bitmask で所有者別に管理する（ユーザー操作・エンジン遷移・デバイス障害・フィードバック保護は独立）。状態通知の分担は次の通り。
+| 命令の種類                                 | 方針                                                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| 短い命令(読み取りを含む)                   | 受付から後処理の完了まで書き込み権を保持する                                                                   |
+| 長い命令(プラグイン読み込みを伴う編集など) | 確定スナップショットで準備し、コミット直前に取得する。準備時とProject ID・シーケンスが一致するときだけ反映する |
+| Host全体の命令・Host内部の読み取り         | 確定スナップショットを読み、書き込み権は取得しない                                                             |
 
-| 通知                      | 表す状態                                                                                  |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| `AudioStatus`             | デバイスとコールバックの状態                                                              |
-| `RuntimeProjectionStatus` | グラフ投影の状態と現役グラフの `activeDiagnostics`                                        |
-| `TransportStatus`         | トランスポート状態と再生位置、録音状態、適用済み命令番号、現役グラフの `instrumentFaults` |
+- ネイティブのプラグインエディタが生んだ状態の反映、プロジェクト切替時の保留イベントの反映、録音の後処理も、書き込み権を取得して正準コミットとして行う
+- コミット後の処理(索引・通知・投影要求)は書き込み権を保持したまま行い、別のコミットが割り込む余地を残さない
 
-未解決クリップと欠落デバイスの診断は Rust が保持し、`RuntimeProjectionStatus.activeDiagnostics` で通知する。`TransportStatus` は `timelineSample`（保留中の Seek 先を含む）、`audioClockSample`、録音状態、`appliedCommandSequence`、現役グラフの `instrumentFaults` を表し、投影診断は持たない。`revision` と `sampleRate` は現役グラフがない場合に `null` となる。`sampleRate` と `instrumentFaults` は `GraphSummary` から読み、`AudioStatus.diagnostics.instrumentFaults` と同じグラフ診断を使う。
+### 5.3 イベントの配信
 
-Audio Status の診断値は、コールバック計測（累計回数・累計オーバーラン、直近1秒の窓の回数・平均/最大処理時間・オーバーラン）、同じ窓のトラック別処理時間、出力診断（準備前ピーク・リミッターのゲインリダクション・最終ハードクリップ数）、ライブ MIDI のドロップ数、規模（Track / Runtime / Plugin 数・最大レイテンシ）、投影時間、音声環境 revision を含む。これらは障害の推測材料ではなく、同じ世代の音声処理状態を確認するための値である。
-
-フィードバック保護の検知中は `FeedbackProtection` ミュートを保持する。解除は安全確認後の明示リセット操作で行い、他の所有者のミュートは維持する。
-
-### 5.5 Mixer previewとメーター
-
-正準MixerはArrangementに所属し、Master GainはSessionSettingsが保持する。Track・BusのGain/Panと有効なSend LevelはNativeの現役Graphへ一時プレビューし、確定時にCoreの通常Mutationを行う。無効SendのLevelはプレビューせず正準値だけを更新し、有効化時にその値を実行グラフへ反映する。プレビューは音声ブロックでatomicsから読み込み、保存、履歴、投影入力には戻さない。
-
-Master Gainの一時値も、次のGraph公開で正準値に戻る。サイドカー再起動や音声環境変更では、最新正準状態を投影してMixer全体を復元する。
-
-Meter accumulatorは音声スレッドが更新し、Meter threadが約50 msごとにTrack・Busの左右Peak/RMSとMaster出力Peakを通知する。Rustは投影と一致するProject・世代のFrameだけを転送し、Desktopは専用のexternal storeから表示する。高頻度の測定値はSessionやAudio Statusへ複製しない。
-
-### 5.6 音声スレッドの所有権
-
-`riffra-audio` の状態は、書き手が 1 つに決まる単位で所有者を分ける。2 つ以上の値が不変条件で結ばれた状態、または状態遷移を持つ状態は atomic の集まりで表さず、所有者だけが書く。
-
-| 状態                                                                                                       | 所有者                                                                        | 他スレッドからのアクセス                          |
-| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
-| 現役グラフ、Transport、再生位置、録音フェーズ、カウントイン、キャプチャ窓、ライブ演奏の対象、保留中の Seek | 音声スレッド（`RealtimeState`）。デバイス停止中とオフラインレンダーでは制御側 | 変更は命令キュー、読み取りは `RealtimeFrame` だけ |
-| 準備済み・コミット済み・退役待ちのグラフ、Track key、MIDI 入力元の表                                       | 制御側（`ControlGraphRegistry`、mutex で保護）                                | 音声スレッドは触らない                            |
-| 公開後のグラフの不変部分（Track、ルーティング、クリップ、`GraphSummary`）                                  | なし（公開後は誰も書かない）                                                  | どのスレッドからも読める                          |
-| 単独で意味が完結するスカラー（Track の Gain / Pan プレビュー、ミュート理由、メーター、カウンタ）           | atomic                                                                        | 他の値と不変条件で結ばれないものに限る            |
-
-所有者の切り替えは `AudioDeviceController` の開始・停止コールバックで行う。音声コールバックが止まっている間は制御側が同じ適用関数で命令を処理するため、所有者が同時に 2 つになることはない。
-
-Device変更の完了には、値の適用、対象Pluginの処理、Message Threadの情報通知とController同期、Snapshot取得が必要である。停止中は変更要求のあるRackだけを準備済み無音ブロックで処理し、ライブMIDI・Panic・Mixer出力・録音へ干渉しない。Lifecycle ExecutorはDevice命令をFIFOで直列化し、Realtime完了待ちの間はMessage ThreadとGraph Registryのロックを占有しない。受け付けた命令は受付時点から実行開始期限を持ち、期限を過ぎた命令は処理を開始せず失敗する。この期限は呼び出し元の応答期限より短くし、実行開始後のWatchdogとは分けて管理する。Graphのprepare・commit・discardはDevice命令と同時に進めず、Graph操作中のDevice命令はキューへ入れる前に`timelineBusy`で拒否する。先に受け付けたDevice命令はFIFO順にGraph操作より先に処理する。プラグイン試聴の初期化も同じ排他予約を使う。実行時にはOwnerとDeviceを解決する。Pluginのレイテンシが変化した場合は、正準状態の投影時に既存のGraph準備とPDC計算へ反映する。
-
-EditorのSnapshotは採取時のArrangement revisionを持つ。保存時にrevisionが進んでいる場合は現役Pluginの確定状態を取得し直し、古いSnapshotをPluginへ再適用しない。Parameter情報だけの通知は状態編集として保存しない。プログラム変更を伴う通知は最新Snapshotを取得し、正準状態と内容が異なる場合にだけCommitする。
-
-**命令と状態の公開**
-
-```text
-制御スレッド ── RealtimeCommand ──▶ RealtimeCommandQueue（256、生産側は mutex で直列化）
-                                          │ ブロックの先頭で全件を適用
-                                          ▼
-                                   音声スレッド: RealtimeState
-                                          │ ブロックごとに公開
-                                          ▼
-テレメトリ・命令処理 ◀── RealtimeFrame ── SeqLockFrame（単一の書き手、複数の読み手）
-```
-
-- 命令は確保を伴わない固定長の値で、Track は文字列 ID ではなくプロセス内で一意な Track key で指す。Seek はティックで送り、音声スレッドが現役グラフのタイムベースでサンプルへ変換する
-- ブロック内の命令はカウントインの進行より先に適用する。同じブロックでカウントインが終わっても Stop が優先される
-- キューが満杯なら命令は `realtimeQueueFull` で失敗し、黙って捨てない
-- ステータスは 1 つの `RealtimeFrame` と現役グラフの `GraphSummary` から組み立てる。フレームの `appliedCommandSequence` が、どの命令まで適用されたかを示す。テレメトリはこのスナップショットだけを読み、`timelineLock` や音声スレッド所有の `RealtimeState` へ直接触れない
-
-**グラフの公開・退役・回収**
-
-1. メッセージスレッドでグラフを準備し、コミットで `ControlGraphRegistry` に登録して `publishGraph` 命令を送る
-2. 音声スレッドは現役グラフを差し替え、同じブロックでグラフの Master Gain を出力へ適用し、外したグラフを `RetireQueue` で返す
-3. 制御側は返ってきたグラフだけを破棄する。破棄は Engine を構築したスレッド（メッセージスレッド）が、ライフサイクル処理の後と 100 ms ごとのタイマーで行う
-
-プラグインを含むグラフが音声スレッドや命令スレッドで破棄されることはない。
-
-プレビューの状態、音声バッファとインストゥルメントセッションも、専用の命令キューで公開し、音声側の参照が外れた状態を退役キューで制御側へ返して回収する。安全ミュート中も命令の適用と退役を進め、再生位置は進めない。出力が無音の間は停止待ちのフェードとリリースを完了させ、終了したプレビューの参照を返却する。全停止はサンプル・インストゥルメント・シンセを1命令で停止し、MIDI待受の解除はこの命令を受け付けてから制御状態を変更する。プレビュー状態の読み取りは、各ブロック末尾に公開する atomic の状態値を使う。録音 sink はタイムラインの命令キューで設定・解除する。制御側は退役キューで sink の返却を確認してから破棄し、1秒以内に返却されなければ録音エラーとして保持する。
-
-**デバイスの共有**
-
-トポロジーと保存状態が一致する Track は、新しいグラフが前のグラフと同じ Device Runtime を `shared_ptr` で共有する。公開済みのインスタンスを制御側が準備し直すことはなく、必要な Timeline MIDI 容量が既存のインスタンスを超える Track には新しいインスタンスを準備する。音声スレッドは `shared_ptr` を複製・破棄しないため、最後の参照はメッセージスレッドでのグラフ破棄時に外れる。
-
-**ライブ MIDI**
-
-MIDI 入力コールバックは、入力元の index と 3 バイトまでのメッセージを固定容量（1024）のキューへ送るだけである。音声スレッドがブロックの先頭で現役グラフのルーティングに従い各 Track へ振り分け、録音中は同じ時刻で記録する。キューに入らなかったメッセージは `liveMidiDrops` に数える。ライブ演奏の送信とパニックは命令キューを通る。
-
-Tempo・拍子変更点はRustの正準時間軸からExecution Graphへ渡す。Nativeは同じ区間契約からイベントのSample位置とTransportの音楽的位置を準備する。Sonalloyの音源制御イベントはNote ID、精度を保った値、パラメータHandleとCatalog Revisionを準備して実行し、音声コールバックで文字列解決や正規化を行わない。
-
-Track間のExternal Audioは依存段階をグラフ準備時に確定し、同じ段階の独立Trackを既存Worker Poolで処理する。Sourceのエフェクト・レイテンシ補正・Gainを適用した信号をConsumerへ渡し、MuteによるMasterへの加算と入力信号の供給を分ける。
+- 通知は接続の世代に紐づく。Host切替の後は、新しいHostのイベントだけが届く
+- メーターや再生位置のような高頻度の値は正準状態と切り離し、独立したイベントで配信する
+- 正準状態の変更イベントはCoreの確定順序どおりに届く。受け手が順序を組み立て直す必要はない
 
 ---
 
 ## 6. 永続化と回復
 
-- Project は DataRoot 内の制作単位であり、正準状態を `projects/<project-id>/session.json` に保持する
-- Project 切替は Project 一覧の操作のみで行う
-- `.riffra` は Project の portable package であり、Import / Export 時のみ扱う。正準そのものではない
-- 音声 Render の結果は Project package とは別に `renders/` へ保存する
-
-### 6.1 ディスクレイアウト
+### 6.1 ディスクの構成
 
 ```text
 <data_root>/
 ├─ workspace.json            # Active Project の識別
 ├─ .riffra.lock              # DataRoot の排他所有
-├─ projects/
-│  └─ <project-id>/          # UUID形式のProject container
-│     ├─ session.json        # Projectの現行CreativeSession（セッション文書）
-│     └─ generations/        # 世代スナップショット（最大20件）
-├─ library/riffra.db        # ライブラリ索引（SQLite リードモデル）
-├─ recordings/
-│  ├─ inbox/                # 録音キャプチャ（録音直後のテイク置き場）
-│  ├─ archive/              # アーカイブ済みテイク
-│  └─ library/              # ライブラリへ昇格済みテイク
-├─ assets/
-│  └─ imports/              # 外部ファイルのインポート先（register で登録）
-└─ renders/
-   └─ render-{ms}/          # レンダリング出力（timeline.wav + render.json）
+├─ projects/<project-id>/    # Project container(UUID)
+│  ├─ session.json           # 現行の CreativeSession
+│  └─ generations/           # 世代スナップショット
+├─ library/riffra.db         # ライブラリ索引(SQLite 読み取りモデル)
+├─ recordings/               # 録音テイク(inbox / archive / library)
+├─ assets/imports/           # 取り込んだ素材
+└─ renders/                  # レンダリング出力
 ```
 
-### 6.2 アトミック保存と世代管理
+- ProjectはDataRoot内の制作単位であり、`session.json` に正準状態を保持する。Desktopの既定のDataRootはユーザーの `Music/Riffra` 配下である
+- `.riffra` はProjectの持ち出し用パッケージであり、Import / Exportでのみ扱う。正準そのものではない
+- レンダリング結果は `renders/` へ保存し、正準状態やパッケージには含めない
 
-`riffra-host::SessionStore` は、Projectごとに、クラッシュしても `session.json` が「完全な旧内容か完全な新内容」のどちらかになるよう保存する。
+### 6.2 保存の保証
 
-1. 現在の `session.json` を同じProjectの `generations/` へコピー
-2. 新内容を `.tmp` へ書き、`sync_all`（fsync）
-3. `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`（Windows）または `rename` で置換
-4. 古い世代を20件を超えて削除
+- 保存はアトミックである。クラッシュ後も `session.json` は「完全な旧内容か完全な新内容」のどちらか一方として読める
+- 保存の前に世代ファイルへ現在の内容を残す。これが手動・自動の回復の材料になる
+- 保存の前にProject領域の空き容量を検証し、不足時は保存を拒否する
+- 正準状態は保存に成功した後に進む。ディスク上の内容が正準状態に追いつかないことはない(§5.1)
 
-保存前に Project 領域の空き容量を検証し、容量不足時は保存を拒否する。保存はプロセス内のグローバルロックで直列化する。
+### 6.3 読み込みと回復
 
-### 6.3 ロードと回復
+読み込みでは、検証と正準化に合格したものだけを採用する。
 
-`session.json` と世代ファイルは `{"schemaVersion": 1, "session": {...}}` 形式のセッション文書である。`deserialize_session_document` は版を先に読み、現行の版でなければセッションを読まずに版の不一致として拒否する。
+```mermaid
+flowchart TD
+    S["session.json を読み込む"] --> V{"検証・正準化・<br/>参照の検査に合格?"}
+    V -->|合格| OK["その内容を正準状態として採用"]
+    V -->|不合格| G["generations/ を新しい順に検査"]
+    G --> GV{"合格する世代があるか"}
+    GV -->|ある| GOK["最新の合格世代を採用<br/>(recovered_from_generation)"]
+    GV -->|ない| N["Active Project の場合:<br/>新しい空の Project を作成して Active にする。<br/>既存のファイルは保持し、Project一覧に<br/>読込エラー付きで残す"]
+```
 
-`ProjectStore` はDataRootの初期化時に最初のProjectを作成するか、`workspace.json` のActive Projectを選ぶ。各Projectの `SessionStore` は以下の順で解決する。
+- 破損した `session.json` は上書きしない。唯一の回復手段であるためである
+- 世代からの復元は、利用者が選択した世代を検証の上で正準状態として復元する。検証に合格した世代だけが採用の対象になる
 
-1. `session.json` を読み、`deserialize_session_document` → `validate_and_normalize` → **アセット参照検証** を通れば採用
-2. 破損・参照不正なら同じProjectの `generations/` を新しい順に読み、**スキーマ検証に通る最新世代** を `recovered_from_generation: true` として採用
-3. 新規DataRootにProjectが無い場合だけ、空のCreativeSessionを作成して保存
+### 6.4 参照の整合
 
-破損した `session.json` は上書きしない（唯一の回復手段のため）。世代回復の手順は次の通り。
+- セッションが参照するアセットIDは、すべて登録済みである。未登録のIDを含むセッションは保存・読み込みともに採用されない
+- 参照先のファイルが見つからない素材は欠落(Missing)として列挙され、制作は続行できる
 
-- `recovery_candidates()` が世代ファイルからメタデータのみ軽量に読み、一覧として提示する
-- ユーザー選択の `restore_generation()` が指定世代を正準状態として復元・保存する
-- Active Project 以外の読込不能 Project も一覧に残し、読込エラー付きで表示する
+### 6.5 取り込みと書き出し
 
-Active Project の `session.json` と世代がすべて読めない場合（版の不一致・破損）、`ProjectStore` はその Project のファイルに一切触れず、新しい空の Project を作成して Active にし、`workspace.json` を更新する。読めなかった Project の ID とエラーは警告ログに記録し、Project 一覧には読込エラー付きで残る。
+- `.riffra` のImportは、既存のProjectを上書きせず、新しいProjectとして追加する
+- Sonalloy Bundleの取り込みは、検証(Manifest・ファイル一覧・ハッシュ・参照先)→ 新規Projectの作成とリソースの保存 → Runtimeの準備 → 切替、の順で進める。途中で失敗したときは新しく作ったものを取り除き、既存のProjectと履歴は元のままである
+- 取り込んだProjectは元のBundleを参照せず、音源定義とアセットをProject自身が所有する
 
-### 6.4 参照整合
+### 6.6 セッション文書の版
 
-保存・ロードの両方で `asset::validate_session_references` が実行され、セッションが参照する全アセットIDが登録済みであることを保証する。コンテンツファイルの欠落は MissingDependency として UI に列挙して継続するが、未登録のアセットIDを含むセッションの保存・ロードは拒否する。
-
-Sonalloy Bundleのインポートでは、HostがManifest・ファイル一覧・SHA-256・参照先を検証し、同梱CLIがDemoとInstrumentを検証する。Runtimeが通常のCreativeSessionへ変換し、音源とアセットをProject専用Snapshotへ所有させる。新規Projectとリソースの保存、Runtimeの準備・確定を終えてから既存Activation経路で切り替える。失敗時は新規所有物を除去し、既存Projectと履歴を維持する。
-
-### 6.5 DataRootの所有
-
-- Desktop Embedded Host の既定 DataRoot はユーザーの `Music/Riffra` 配下である。Standalone CLI と `riffra serve` は指定された DataRoot を使う。Attached mode の Desktop と Attached CLI は接続先 Host の DataRoot を利用する（直接開かない）
-- ローカル Host は起動時に `riffra-host::DataRootLease` を取得し、生存期間中保持する
-- 排他にはロックファイルではなく OS のファイルロックを使うため、異常終了後の残骸があっても新規ホストは起動できる
-- 使用中の DataRoot を別プロセスが開いた場合は明示的な使用中エラーを返す
-
----
-
-## 7. セーフモード
-
-起動条件は `--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数（`1` / `true` / `yes` / `on`）である。対象はサイドカーの起動・デバイスアクセス・プラグイン読み込みの省略であり、`riffra serve --safe-mode` も同じ扱いで `AudioSupervisor` をオフライン実装として生成する。
-
-- 初期化は「セッション読込 + ライブラリ索引」のみで完了し、`BootstrapState.safeMode: true` がUIに通知される
-- 音声・録音・再生・プレビュー・VST3読込系の命令はセーフモードではエラーとして無効化される。オフライン解析・書き出し・ライブラリ操作は通常モードと同一に利用できる
-- 外部デバイスやプラグインが原因のハングを切り分けるための診断手段であり、データの読み書きは通常モードと同一
-
-セーフモードの判定材料は `--safe-mode` の明示のみとし、他の起動引数（`--serve` など）からの推定は行わない。
+- セッション文書は版(`schemaVersion`)を持ち、読み込みでは版を先に確認する。現行の版だけを採用する
+- 旧版のための互換分岐や自動変換は用意せず、版を上げるときは明示的な変換の経路を検討する
 
 ---
 
-## 8. ライブラリ索引（リードモデル）
+## 7. 横断機構
 
-ライブラリは SQLite の**読み取りモデル**であり、正準状態は常にセッションと Assets である。Instrument Library のお気に入り・カテゴリ上書き・ユーザータグ・コレクションは、このモデルに属するユーザー設定として保存し、Project Session の sequence には含めない。
+### 7.1 セーフモード
 
-- 素材（Asset）、録音（Recording Session/Pass/Take）、セッション内容の全文検索用の眺めを提供する
-- 正準コミットごとに `library::index::refresh()` が索引を同期更新する。Hostのコミット後の処理で呼ばれ、失敗時は警告に留める
-- UI の検索・一覧の読み先はこのモデルに統一する
+サイドカーの起動・デバイスアクセス・プラグイン読み込みを省略して起動する診断モードである。
 
----
+- 起動方法は `--safe-mode` フラグまたは `RIFFRA_SAFE_MODE` 環境変数である。判定はこの明示だけで行う
+- 初期化は「セッション読み込み + ライブラリ索引」だけで完了する
+- 音声・録音・再生・プレビュー・VST3読み込み系の命令は明示的なエラーを返す。オフライン解析・書き出し・ライブラリ操作は通常モードと同じに使える
+- 目的は外部デバイスやプラグインが原因のハングの切り分けであり、データの読み書きは通常モードと同一である
 
-## 9. バックグラウンドジョブ
+### 7.2 ライブラリ索引
 
-VST3スキャンとOffline RenderはJobRegistry（`crates/riffra-runtime/src/jobs/`）のジョブとして実行される。
+ライブラリはSQLiteの**読み取りモデル**であり、正準状態は常にセッションとアセットである。
 
-- **種類**: `Scan`、`Render`、`RenderStems`。`kind`が結果ペイロードの型を固定する（`BackgroundJobStatus`はtagged union）
-- **状態遷移**: `Queued → Running → Cancelling → Cancelled | Completed | Failed`。終端状態は確定し、`Running` への復帰はない
-- ジョブは `progress` / `message` 付きで UI へ状態を配信する。登録とクエリは ID で行う
-- Render Jobは`riffra-runtime::render`でExecution Graphと範囲を準備し、`riffra-render` executableを子プロセスとして起動・制御する
+- 素材・録音・セッション内容の検索と一覧のための眺めを提供する
+- 正準コミットごとに索引を同期更新する。更新に失敗しても制作状態には影響しない
+- お気に入り・カテゴリ上書き・ユーザータグなどの利用者の設定は索引側に保存し、Projectの正準シーケンスには含めない
+- UIの検索と一覧の読み先はこのモデルに統一する
 
-Offline Renderは本番処理の前にTrack・Bus・Return・Masterの各Effect Chainへ無音ブロックを送り、ウォームアップ後は同じPlugin DeviceをリセットしてからNativeの処理レイテンシを補正したFloat WAVへMaster MixとGlobal Fadeを出力する。必要な音声クリップ素材や、出力に使うMIDI音源を解決できない場合はJobを失敗させる。Missing Effectはチェーンから除外して残りを処理し、除外したDevice IDを結果の警告へ残す。通常RenderとStemには同じ方針を適用する。
+### 7.3 バックグラウンドジョブ
 
-Mastering設定がある場合はRustのRender JobがFFmpegの2-pass loudnormを実行し、完成WAVのLoudnessとTrue Peak、目標からの偏差を保存する。True Peakが目標を超える場合はGain補正後に再測定する。FFmpegが利用できない場合、Masteringを要求したJobは失敗する。
+VST3スキャンとオフラインレンダリングはジョブとして管理する。
 
-書き出し時は、入力されたMixdown設定が正準設定と異なる場合だけ設定を確定し、そのMutationの結果を受け取ってからRender Jobを開始する。同じ設定での書き出しは正準状態を変更しない。
-
-完成WAVのSample Peakを実サンプルから測定し、Masteringを適用しない書き出しでもFFmpegのラウドネス測定を試みる。測定のために音声Graphを再実行しない。FFmpegの利用不可は通常Renderの成功と区別し、測定不能の理由を結果へ含める。
-
-単一Trackと各Stemは、選択TrackのGroup・Return・Master FXを通す。External Audioと有効なSidechainの送信元、およびそのExternal Audio依存元の処理を維持し、他Trackの主出力とReturn向けSendは混ぜない。送信元のMuteは維持し、Sidechainは指定Deviceの補助入力だけへ渡す。Stemは開始・終了・Sample Rate・Frame数を共有し、個別Masteringを行わない。共有Compressorなど非線形FXでは、Stemを加算した結果と全体Mixの厳密な一致を保証しない。
-
----
-
-## 10. ドメイン不変条件
-
-riffra-core が `validate_and_normalize` と各モジュールで強制する不変条件。
-
-| 対象           | 不変条件                                                                                                                                              |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AssetId        | `asset:<UUIDv7>` の形式のみ有効                                                                                                                       |
-| 素材コンテンツ | 生成済み素材のコンテンツは**不変**。内容変更は新しい Asset を mint する。変更できるのは管理メタデータ（name / tag / note）のみ                        |
-| 参照整合       | セッションが参照する AssetId は登録済みとする（§6.4）                                                                                                 |
-| セッション     | ロード・保存前に `validate_and_normalize` を必ず通過。master gain などの安全限界は正準化でクランプされる                                              |
-| 更新順序       | Coreが制作状態を確定し、Hostが書き込み権の下でその順序を保ってUIとランタイムへ渡す                                                                    |
-| ランタイム     | 現役の投影グラフはセッションに保存されない。投影はいつでも破棄・再構築でき、識別子に世代と音声環境を含む                                              |
-| 安全           | サイドカーは所有者別ミュート、起動時のフェードイン、非有限値拒否、DCブロック、音響フィードバック検知を安全チェーンとして持つ（`native/audio-engine`） |
+- ジョブの種別が結果の形を決める。状態は `queued → running → cancelling → cancelled / completed / failed` で進み、終端から戻らない
+- 進捗とメッセージをUIへ配信し、IDで照会・キャンセルできる
+- レンダリングの実行の設計は audio-engine.md「オフラインレンダリング」を、スキャンの意味は audio-engine.md「カタログと解決」を参照
 
 ---
 
-## 11. Presentationの責務
+## 8. フロントエンドの責務
 
-- フロントエンドは CreativeSession を描画し、ユーザー操作を Feature 別 NativeApi capability の命令へ変換する。応答は Core の確定順序で適用する。競合解決・部分マージ・全体 mutation queue は Core / Host 側に集約する
-- 選択、パネル幅、ズーム、ダイアログは Presentation State であり、CreativeSession とは別に管理する。Undo/Redo の可否は Core が返す履歴状態を表示し、ランタイム投影の構築や再試行は Host の Runtime へ委ねる
+- フロントエンドは CreativeSession を描画し、利用者の操作を命令へ変換する。応答はCoreの確定順序どおりに適用する
+- 競合の解決・部分マージ・命令の待ち行列はCore / Host側に集約する。フロントエンドは応答を画面へ反映することに専念する
+- 選択・パネル幅・ズーム・ダイアログは表示状態であり、正準状態とは別に管理する
+- Undo / Redoの可否はCoreが返す履歴状態を表示する。投影の構築や再試行はHostのRuntimeへ委ねる

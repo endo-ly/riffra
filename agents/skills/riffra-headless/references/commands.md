@@ -426,7 +426,7 @@ riffra --attach automation clear --track-id track:01j... --parameter volume
 
 Pointは`id`、`tick`、`value`を持つ。Tickは楽曲全体の絶対位置であり、音楽座標からの変換には`session inspect`の`project.ppq`と拍子を使う。値の単位、値域、一意性と上限は[データモデル](../../../../../docs/data-model.md)に従う。Deviceの`value`は正規化数値、またはPluginの表示文字列（例：`"250 ms"`）を指定できる。文字列の変換にはLive Hostが必要で、変換できない場合は保存しない。
 
-更新はLane IDを維持し、新規LaneのIDは`createdEntityIds.automationLanes`へ返す。空のPoint配列と`clear`はLaneを削除する。端点の保持、補間と静的値の復元は[音声アーキテクチャ](../../../../../docs/architecture.md)を参照する。
+更新はLane IDを維持し、新規LaneのIDは`createdEntityIds.automationLanes`へ返す。空のPoint配列と`clear`はLaneを削除する。端点の保持、補間と静的値の復元は[音声エンジンの設計](../../../../../docs/audio-engine.md)を参照する。
 
 音源制御は`instrument-event list --clip-id <id>`で参照する。`add --clip-id <id> --tick <tick> --kind-json <JSON|@file>`、`set --clip-id <id> --events-json <JSON|@file>`、`update --clip-id <id> --event-json <JSON|@file>`、`remove --clip-id <id> --event-id <id>`で編集する。TickはClip相対で終端を含む。種類は`sustainPedal`、`pitchBend`、`modWheel`、`aftertouch`、`parameterChange`。Parameter Changeは`parameter`と`nativeValue`を保持する。
 

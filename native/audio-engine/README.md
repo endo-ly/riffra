@@ -6,7 +6,7 @@
 - 内蔵音源: Sonalloy C API（`CMakeLists.txt` の既定バージョンに追従）とビルトインリソースバンドル
 - 通信: 子プロセスの stdin / stdout 上の JSON Lines（1 コマンド = 1 行、1 応答 = 1 行）。stdout はプロトコル専用で、VST3 をロードするモードでは起動時にプロセス自身の出力は stderr へ切り離す
 
-関連する全体設計は [`docs/architecture.md`](../../docs/architecture.md)、通信契約の正本は [`docs/ipc.md`](../../docs/ipc.md) を参照。この README はネイティブ側の構成と振る舞いを日本語でまとめたものである。
+関連する設計は [`docs/architecture.md`](../../docs/architecture.md) と [`docs/audio-engine.md`](../../docs/audio-engine.md)、通信契約の正本は [`docs/ipc.md`](../../docs/ipc.md) を参照。この README はネイティブ側の構成と振る舞いを日本語でまとめたものである。
 
 ## 実行形態
 
