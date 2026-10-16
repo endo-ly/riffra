@@ -874,7 +874,7 @@ TEST(MixerRoutingTest, AppliesMuteAndAdditiveSoloToDryAndParallelPaths) {
     }
 }
 
-TEST(MixerRoutingTest, SendsSidechainAudioToTrackGroupAndMasterDevices) {
+TEST(MixerRoutingTest, SendsSidechainAudioToSupportedTargetsAndKeepsUnsupportedTargetsOnline) {
     // Arrange
     juce::ScopedJuceInitialiser_GUI initialiser;
     test::TemporaryDirectory directory;
@@ -883,8 +883,8 @@ TEST(MixerRoutingTest, SendsSidechainAudioToTrackGroupAndMasterDevices) {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
 
-    enum class Target { track, group, master };
-    for (const auto target : {Target::track, Target::group, Target::master}) {
+    enum class Target { track, group, master, unsupported };
+    for (const auto target : {Target::track, Target::group, Target::master, Target::unsupported}) {
         SCOPED_TRACE(static_cast<int>(target));
         const auto build = [&](const bool withSend) {
             auto snapshot = makeTestSnapshot();
@@ -902,10 +902,13 @@ TEST(MixerRoutingTest, SendsSidechainAudioToTrackGroupAndMasterDevices) {
             if (target == Target::group) audio.outputBusId = "bus:group";
             snapshot.graph.tracks.push_back(std::move(audio));
             juce::String deviceId;
-            if (target == Target::track) {
+            if (target == Target::track || target == Target::unsupported) {
                 auto owner = makeAudioTrack("track:target");
                 owner.panLaw = "unityCenterStereo";
-                owner.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+                owner.effects.push_back({"fx:target",
+                                         target == Target::track ? RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH
+                                                                 : RIFFRA_TEST_EFFECT_BUNDLE_PATH,
+                                         {}});
                 deviceId = "fx:target";
                 snapshot.graph.tracks.push_back(std::move(owner));
             } else if (target == Target::group) {
@@ -930,28 +933,52 @@ TEST(MixerRoutingTest, SendsSidechainAudioToTrackGroupAndMasterDevices) {
         std::array<juce::AudioBuffer<float>, 2> outputs{juce::AudioBuffer<float>(2, 704),
                                                         juce::AudioBuffer<float>(2, 704)};
         for (int variant = 0; variant < 2; ++variant) {
+            SCOPED_TRACE(variant == 0 ? "without sidechain" : "with sidechain");
             TimelineEngine engine(true);
             juce::String error;
-            ASSERT_TRUE(loadTestSnapshot(engine, build(variant == 1), formats, 48'000.0, 64, error))
-                << error;
-            ASSERT_TRUE(engine.play());
-            auto& rendered = outputs[static_cast<std::size_t>(variant)];
-            rendered.clear();
-            engine.mix(rendered.getArrayOfWritePointers(), 2, 704);
+            {
+                SCOPED_TRACE("load snapshot");
+                ASSERT_TRUE(
+                    loadTestSnapshot(engine, build(variant == 1), formats, 48'000.0, 64, error))
+                    << error;
+                if (target == Target::unsupported && variant == 1) {
+                    const auto* graph = TimelineEngineTestPeer::committedGraph(engine);
+                    ASSERT_NE(graph, nullptr);
+                    EXPECT_TRUE(graph->mixer.sidechainRoutes.empty());
+                    const auto* targetTrack = graph->findTrack("track:target");
+                    ASSERT_NE(targetTrack, nullptr);
+                    EXPECT_EQ(targetTrack->runtime->effects().sidechainBuffer("fx:target"),
+                              nullptr);
+                }
+            }
+            {
+                SCOPED_TRACE("start playback");
+                ASSERT_TRUE(engine.play());
+            }
+            {
+                SCOPED_TRACE("mix output");
+                auto& rendered = outputs[static_cast<std::size_t>(variant)];
+                rendered.clear();
+                engine.mix(rendered.getArrayOfWritePointers(), 2, 704);
+            }
         }
 
-        // Assert: the auxiliary copy of the source arrives once, sample-aligned
-        // with the source's own path through the same device.
+        // Assert
         auto doubledPeak = 0.0f;
         for (int sample = 0; sample < 704; ++sample) {
             for (int channel = 0; channel < 2; ++channel) {
-                const auto expected = 2.0f * outputs[0].getSample(channel, sample);
-                EXPECT_NEAR(outputs[1].getSample(channel, sample), expected, 0.0001f)
-                    << "sample " << sample;
-                doubledPeak = std::max(doubledPeak, std::abs(expected));
+                const auto baseline = outputs[0].getSample(channel, sample);
+                const auto rendered = outputs[1].getSample(channel, sample);
+                if (target == Target::unsupported) {
+                    EXPECT_NEAR(rendered, baseline, 0.0001f) << "sample " << sample;
+                } else {
+                    const auto expected = 2.0f * baseline;
+                    EXPECT_NEAR(rendered, expected, 0.0001f) << "sample " << sample;
+                    doubledPeak = std::max(doubledPeak, std::abs(expected));
+                }
             }
         }
-        EXPECT_GT(doubledPeak, 0.3f);
+        if (target != Target::unsupported) EXPECT_GT(doubledPeak, 0.3f);
     }
 }
 

@@ -268,6 +268,49 @@ TEST(TimelineRealtimeTest, ReusedTracksShareTheirDeviceInstances) {
     EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
 }
 
+TEST(TimelineRealtimeTest, SidechainSourceLatencyChangesReuseTheTargetPluginInstance) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    TimelineEngine engine;
+    juce::String error;
+    const auto build = [](const juce::String& sourceTrackId) {
+        auto snapshot = makeTestSnapshot();
+        snapshot.graph.tracks.push_back(makeAudioTrack("track:source:direct"));
+        auto delayedSource = makeAudioTrack("track:source:delayed");
+        delayedSource.effects.push_back({"fx:source-latency", RIFFRA_TEST_EFFECT_BUNDLE_PATH, {}});
+        snapshot.graph.tracks.push_back(std::move(delayedSource));
+        auto target = makeAudioTrack("track:target");
+        target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+        snapshot.graph.tracks.push_back(std::move(target));
+        snapshot.graph.mixer.sidechainSends.push_back(
+            {"send:sidechain", sourceTrackId, "fx:target", 0.0, SendPositionSpec::postFader, true});
+        return snapshot;
+    };
+    ASSERT_TRUE(loadTestSnapshot(engine, build("track:source:direct"), formats, kSampleRate,
+                                 kBlockSamples, error))
+        << error;
+    const auto* first = TimelineEngineTestPeer::committedGraph(engine);
+    const auto* firstTarget = first->findTrack("track:target");
+    ASSERT_NE(firstTarget, nullptr);
+    const auto* firstEffects = &firstTarget->runtime->effects();
+    EXPECT_EQ(firstTarget->runtime->effectAlignment.delaySamples("fx:target"), 0);
+
+    // Act
+    ASSERT_TRUE(loadTestSnapshot(engine, build("track:source:delayed"), formats, kSampleRate,
+                                 kBlockSamples, error))
+        << error;
+
+    // Assert
+    const auto* second = TimelineEngineTestPeer::committedGraph(engine);
+    const auto* secondTarget = second->findTrack("track:target");
+    ASSERT_NE(secondTarget, nullptr);
+    EXPECT_TRUE(secondTarget->reuseEffects);
+    EXPECT_EQ(&secondTarget->runtime->effects(), firstEffects);
+    EXPECT_EQ(secondTarget->runtime->effectAlignment.delaySamples("fx:target"), 8);
+}
+
 TEST(TimelineRealtimeTest, ValidatesLiveMidiTargetAgainstOnlyTheCommittedGraph) {
     // Arrange
     juce::AudioFormatManager formats;

@@ -334,10 +334,7 @@ jobs:
           RIFFRA_RUN_SLOW_TESTS: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           RUSTC_WRAPPER: sccache
           SCCACHE_GHA_ENABLED: 'true'
-        run: |
-          sccache --start-server
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\native\audio-engine\build.ps1 -Configuration Debug
+        run: .\native\audio-engine\build.ps1 -Configuration Debug
 
       - name: Exercise native Headless Host contract
         shell: pwsh

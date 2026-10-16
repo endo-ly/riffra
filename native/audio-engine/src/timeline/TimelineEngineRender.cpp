@@ -390,7 +390,8 @@ void TimelineEngine::processInstrumentTrack(const PreparedTimeline& prepared, Tr
         runtime.mixBuffer.getArrayOfReadPointers(), 2,
         runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount, nullptr,
         runtime.deviceAutomation,
-        rangeStart - runtime.routeLatencySamples + runtime.effects().latencySamples(), true);
+        rangeStart - runtime.routeLatencySamples + runtime.effectLatencySamples(), true,
+        &runtime.effectAlignment);
 }
 
 void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared, Track& track,
@@ -416,7 +417,8 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
                                   nullptr, context);
     runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
                               runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
-                              nullptr, runtime.deviceAutomation, rangeStart, playing);
+                              nullptr, runtime.deviceAutomation, rangeStart, playing,
+                              &runtime.effectAlignment);
     runtime.markLiveMidiProcessed(sampleCount);
 }
 
@@ -432,8 +434,8 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
                                           sampleCount, nullptr,
                                           instrumentProcessContext(*graph, 0, false));
         runtime.effects().process(runtime.liveInputBuffer.getArrayOfReadPointers(), 2,
-                                  runtime.processedBuffer.getArrayOfWritePointers(), 2,
-                                  sampleCount);
+                                  runtime.processedBuffer.getArrayOfWritePointers(), 2, sampleCount,
+                                  nullptr, {}, 0, false, &runtime.effectAlignment);
     }
     for (auto& bus : graph->mixer.buses) {
         bus->input.clear(0, sampleCount);
@@ -442,7 +444,8 @@ void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     graph->mixer.masterInput.clear(0, sampleCount);
     graph->mixer.masterEffects->process(graph->mixer.masterInput.getArrayOfReadPointers(), 2,
                                         graph->mixer.masterOutput.getArrayOfWritePointers(), 2,
-                                        sampleCount);
+                                        sampleCount, nullptr, {}, 0, false,
+                                        &graph->mixer.masterEffectAlignment);
 }
 
 void TimelineEngine::mixTrackOutput(Track& track, const std::int64_t rangeStart,
@@ -546,10 +549,10 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
     for (auto& route : mixer.trackRoutes) route->mix(sampleCount, rangeStart, playing);
     pool->runMixer(mixer.parallelChannels, sampleCount, rangeStart, playing);
     for (auto& route : mixer.busRoutes) route->mix(sampleCount, rangeStart, playing);
-    mixer.masterEffects->process(mixer.masterInput.getArrayOfReadPointers(), 2,
-                                 mixer.masterOutput.getArrayOfWritePointers(), 2, sampleCount,
-                                 nullptr, mixer.masterDeviceAutomation,
-                                 rangeStart - mixer.masterInputLatency, playing);
+    mixer.masterEffects->process(
+        mixer.masterInput.getArrayOfReadPointers(), 2, mixer.masterOutput.getArrayOfWritePointers(),
+        2, sampleCount, nullptr, mixer.masterDeviceAutomation,
+        rangeStart - mixer.masterInputLatency, playing, &mixer.masterEffectAlignment);
     for (int channel = 0; channel < std::min(2, channelCount); ++channel) {
         if (outputChannels[channel] != nullptr)
             juce::FloatVectorOperations::add(outputChannels[channel] + destinationStart,
@@ -581,6 +584,7 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.postEffectLowLatencyBypassActive = false;
         runtime.resetTimelineInputDelay();
         runtime.effects().resetSidechainState();
+        runtime.effectAlignment.reset();
     }
 }
 

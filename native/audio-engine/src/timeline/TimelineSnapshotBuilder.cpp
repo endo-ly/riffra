@@ -81,7 +81,8 @@ bool computeSidechainAlignment(const PluginChain& chain, const std::vector<Plugi
         SidechainAlignment entry;
         entry.deviceId = spec.id;
         const auto found = sendsByTargetDevice.find(spec.id);
-        if (found != sendsByTargetDevice.end()) entry.sends = found->second;
+        if (found != sendsByTargetDevice.end() && chain.sidechainBuffer(spec.id) != nullptr)
+            entry.sends = found->second;
         std::int64_t latestSource = 0;
         for (const auto* send : entry.sends)
             latestSource =
@@ -108,24 +109,11 @@ std::vector<std::pair<juce::String, int>> alignmentDelays(
     return delays;
 }
 
-/// Loads the alignment into a prepared chain. A chain shared with a committed
-/// graph is replaced instead of mutated; the committed graph keeps processing
-/// its own instance.
-bool alignedEffectsChain(std::shared_ptr<PluginChain>& chain, const bool shared,
-                         const std::vector<PluginDeviceSpec>& specs,
-                         const std::vector<SidechainSendSpec>& sends,
-                         const std::vector<std::pair<juce::String, int>>& delays,
-                         const double sampleRate, const int blockSize,
-                         const PluginProcessingMode mode, const juce::String& role,
-                         juce::String& error) {
-    if (chain->usesSameMainInputDelays(delays)) return true;
-    if (shared) {
-        auto replacement = std::make_shared<PluginChain>();
-        if (!replacement->load(specs, sends, sampleRate, blockSize, mode, error, role))
-            return false;
-        chain = std::move(replacement);
-    }
-    return chain->prepareMainInputDelays(delays, error);
+std::vector<juce::String> effectDeviceIds(const std::vector<PluginDeviceSpec>& specs) {
+    std::vector<juce::String> ids;
+    ids.reserve(specs.size());
+    for (const auto& spec : specs) ids.push_back(spec.id);
+    return ids;
 }
 
 AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
@@ -203,17 +191,18 @@ bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
         std::int64_t inputLatency = 0;
         const PluginStateSpec* state = nullptr;
         std::vector<PluginParameterAutomation>* bindings = nullptr;
-        const auto findEffect = [&](PluginChain& chain, const std::vector<PluginDeviceSpec>& specs,
+        const auto findEffect = [&](PluginChain& chain, const PluginChainAlignment& alignment,
+                                    const std::vector<PluginDeviceSpec>& specs,
                                     std::vector<PluginParameterAutomation>& target) {
             std::int64_t latency = 0;
             for (const auto& spec : specs) {
                 auto* effect = chain.findDevice(spec.id);
                 if (spec.id != lane.id) {
                     if (effect != nullptr)
-                        latency += effect->latencySamples() + chain.mainInputDelay(spec.id);
+                        latency += effect->latencySamples() + alignment.delaySamples(spec.id);
                     continue;
                 }
-                inputLatency = latency + chain.mainInputDelay(spec.id);
+                inputLatency = latency + alignment.delaySamples(spec.id);
                 rack = effect;
                 state = &spec.state;
                 bindings = &target;
@@ -230,12 +219,14 @@ bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
                     bindings = &runtime.deviceAutomation;
                 }
             }
-            findEffect(runtime.effects(), track->effects, runtime.deviceAutomation);
+            findEffect(runtime.effects(), runtime.effectAlignment, track->effects,
+                       runtime.deviceAutomation);
         }
         for (auto& bus : prepared.mixer.buses)
-            findEffect(*bus->effects, bus->effectSpecs, bus->deviceAutomation);
-        findEffect(*prepared.mixer.masterEffects, prepared.mixer.masterEffectSpecs,
-                   prepared.mixer.masterDeviceAutomation);
+            findEffect(*bus->effects, bus->effectAlignment, bus->effectSpecs,
+                       bus->deviceAutomation);
+        findEffect(*prepared.mixer.masterEffects, prepared.mixer.masterEffectAlignment,
+                   prepared.mixer.masterEffectSpecs, prepared.mixer.masterDeviceAutomation);
         juce::String warning;
         if (rack == nullptr || state == nullptr)
             warning = "automation device is unavailable";
@@ -599,7 +590,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         for (const auto& send : snapshot.graph.mixer.sidechainSends) {
             if (!send.enabled) continue;
             if (!std::any_of(effects.begin(), effects.end(),
-                             [&](const auto& spec) { return spec.id == send.targetDeviceId; }))
+                             [&](const auto& spec) { return spec.id == send.targetDeviceId; }) ||
+                runtime.effects().sidechainBuffer(send.targetDeviceId) == nullptr)
                 continue;
             trackDependencies[index].push_back(
                 prepared->findTrack(send.sourceTrackId)->runtime.get());
@@ -639,10 +631,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                            *prepared, sourceLatency + instrumentLatency, entries,
                                            error))
                 return false;
-            if (!alignedEffectsChain(runtime.effectChainHandle(), track->reuseEffects,
-                                     track->effects, graph.mixer.sidechainSends,
-                                     alignmentDelays(entries), outputSampleRate, maximumBlockSize,
-                                     processingMode, track->id + "/track-effect", error))
+            if (!runtime.effectAlignment.prepare(effectDeviceIds(track->effects),
+                                                 alignmentDelays(entries), maximumBlockSize, error))
                 return false;
             if (!appendSidechainRoutes(graph, *prepared, runtime.effects(), entries, error))
                 return false;
@@ -730,7 +720,6 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                        std::any_of(graph.mixer.buses.begin(), graph.mixer.buses.end(),
                                    [](const auto& bus) { return bus.solo; });
     const MixerAudibility audibility{prepared.hasSolo};
-    std::vector<bool> busReused;
     for (const auto& spec : graph.mixer.buses) {
         auto bus = std::make_unique<MixerChannel>();
         bus->id = spec.id;
@@ -763,7 +752,6 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (!reused && !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate,
                                            blockSize, mode, error, spec.id + "/bus-effect"))
             return false;
-        busReused.push_back(reused);
         prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
         mixer.parallelChannels.push_back(bus.get());
         mixer.buses.push_back(std::move(bus));
@@ -786,6 +774,13 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                    blockSize, mode, error, "master-effect"))
         return false;
     prepared.summary.pluginCount += static_cast<std::uint64_t>(mixer.masterEffects->size());
+    const auto hasPreparedSidechainTarget = [&](const juce::String& deviceId) {
+        for (const auto& track : prepared.tracks)
+            if (track->runtime->effects().sidechainBuffer(deviceId) != nullptr) return true;
+        for (const auto& bus : mixer.buses)
+            if (bus->effects->sidechainBuffer(deviceId) != nullptr) return true;
+        return mixer.masterEffects->sidechainBuffer(deviceId) != nullptr;
+    };
     const auto busSpec = [&](const juce::String& id) -> const MixBusSpec* {
         for (const auto& spec : graph.mixer.buses)
             if (spec.id == id) return &spec;
@@ -831,12 +826,17 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             std::any_of(prepared.tracks.begin(), prepared.tracks.end(), [&](const auto& candidate) {
                 return candidate->runtime->externalAudioSource == &track;
             });
-        const auto isSidechainSource = std::any_of(
-            graph.mixer.sidechainSends.begin(), graph.mixer.sidechainSends.end(),
-            [&](const auto& send) { return send.enabled && send.sourceTrackId == spec.id; });
-        const auto ownsSidechainTarget = std::any_of(
-            prepared.tracks[index]->effects.begin(), prepared.tracks[index]->effects.end(),
-            [&](const auto& effect) { return sendsByTargetDevice.contains(effect.id); });
+        const auto isSidechainSource =
+            std::any_of(graph.mixer.sidechainSends.begin(), graph.mixer.sidechainSends.end(),
+                        [&](const auto& send) {
+                            return send.enabled && send.sourceTrackId == spec.id &&
+                                   hasPreparedSidechainTarget(send.targetDeviceId);
+                        });
+        const auto ownsSidechainTarget =
+            std::any_of(prepared.tracks[index]->effects.begin(),
+                        prepared.tracks[index]->effects.end(), [&](const auto& effect) {
+                            return track.effects().sidechainBuffer(effect.id) != nullptr;
+                        });
         const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
         track.mainOutputAudible =
             mainSelected && !spec.muted && (group == nullptr || !group->muted);
@@ -862,9 +862,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (!computeSidechainAlignment(*bus.effects, bus.effectSpecs, sendsByTargetDevice, prepared,
                                        bus.inputLatency, entries, error))
             return false;
-        if (!alignedEffectsChain(bus.effects, busReused[busIndex], bus.effectSpecs,
-                                 graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
-                                 blockSize, mode, bus.id + "/bus-effect", error))
+        if (!bus.effectAlignment.prepare(effectDeviceIds(bus.effectSpecs), alignmentDelays(entries),
+                                         blockSize, error))
             return false;
         if (!appendSidechainRoutes(graph, prepared, *bus.effects, entries, error)) return false;
     }
@@ -872,7 +871,9 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         const auto* spec = busSpec(bus->id);
         bus->audible =
             audibility.busOutput(spec->solo, bus->hasInput, bus->hasAudibleInput, spec->muted);
-        bus->outputLatency = bus->hasInput ? bus->inputLatency + bus->effects->latencySamples() : 0;
+        bus->outputLatency = bus->hasInput ? bus->inputLatency + bus->effects->latencySamples() +
+                                                 bus->effectAlignment.latencySamples()
+                                           : 0;
         if (bus->hasInput)
             mixer.masterInputLatency = std::max(mixer.masterInputLatency, bus->outputLatency);
     }
@@ -882,9 +883,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                        sendsByTargetDevice, prepared, mixer.masterInputLatency,
                                        entries, error))
             return false;
-        if (!alignedEffectsChain(mixer.masterEffects, masterReused, mixer.masterEffectSpecs,
-                                 graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
-                                 blockSize, mode, "master-effect", error))
+        if (!mixer.masterEffectAlignment.prepare(effectDeviceIds(mixer.masterEffectSpecs),
+                                                 alignmentDelays(entries), blockSize, error))
             return false;
         if (!appendSidechainRoutes(graph, prepared, *mixer.masterEffects, entries, error))
             return false;
@@ -900,8 +900,10 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             return false;
         if (route->allowLowLatencyBypass) {
             const auto downstreamEffectLatency =
-                route->destinationBus != nullptr ? route->destinationBus->effects->latencySamples()
-                                                 : 0;
+                route->destinationBus != nullptr
+                    ? route->destinationBus->effects->latencySamples() +
+                          route->destinationBus->effectAlignment.latencySamples()
+                    : 0;
             route->track->timelinePdcDelaySamples = std::max<std::int64_t>(
                 0, mixer.masterInputLatency - route->track->routeLatencySamples -
                        downstreamEffectLatency);
@@ -933,7 +935,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             false, true, false);
         runtime.postEffectDelayBuffer.clear();
     }
-    const auto finalLatency = mixer.masterInputLatency + mixer.masterEffects->latencySamples();
+    const auto finalLatency = mixer.masterInputLatency + mixer.masterEffects->latencySamples() +
+                              mixer.masterEffectAlignment.latencySamples();
     prepared.summary.maximumLatencySamples = static_cast<std::uint64_t>(finalLatency);
     return true;
 }

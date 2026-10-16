@@ -3,6 +3,7 @@ use riffra_core::{
     AudioTakeVariant, CreativeSession, FadeShape, InternalInstrumentResource, MidiEventKind,
     MonitoringState, Track, TrackInstrumentSource, TrackKind, Vst3Plugin,
 };
+use std::collections::HashSet;
 
 /// Builds a live snapshot from canonical session state and already-resolved resources.
 pub(crate) fn project(
@@ -219,46 +220,69 @@ pub(crate) fn project_graph(
         sends: arrangement.mixer.sends.clone(),
         sidechain_sends: arrangement.mixer.sidechain_sends.clone(),
     };
-    (
-        ExecutionGraph {
-            mixer,
-            mixdown: GraphMixdown {
-                musical_end_tick: session.settings.mixdown.musical_end_tick,
-                tail_seconds: session.settings.mixdown.tail_seconds,
-                fade_out_seconds: session.settings.mixdown.fade_out_seconds,
-            },
-            timebase: arrangement.timebase.clone(),
-            loop_range: GraphLoopRange {
-                enabled: arrangement.loop_range.enabled,
-                start_tick: arrangement.loop_range.start_tick.0,
-                end_tick: arrangement.loop_range.end_tick.0,
-            },
-            punch_range: arrangement.punch_range.map(|range| GraphTickRange {
-                start_tick: range.start_tick.0,
-                end_tick: range.end_tick.0,
-            }),
-            metronome_enabled: session.settings.metronome_enabled,
-            master_gain_db: session.settings.master_db,
-            automation: arrangement
-                .automation_lanes
-                .iter()
-                .map(|lane| GraphAutomationLane {
-                    target: lane.target.clone(),
-                    interpolation: lane.interpolation,
-                    points: lane
-                        .points
-                        .iter()
-                        .map(|point| GraphAutomationPoint {
-                            tick: point.tick.0,
-                            value: point.value,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            tracks,
+    let mut graph = ExecutionGraph {
+        mixer,
+        mixdown: GraphMixdown {
+            musical_end_tick: session.settings.mixdown.musical_end_tick,
+            tail_seconds: session.settings.mixdown.tail_seconds,
+            fade_out_seconds: session.settings.mixdown.fade_out_seconds,
         },
-        diagnostics,
-    )
+        timebase: arrangement.timebase.clone(),
+        loop_range: GraphLoopRange {
+            enabled: arrangement.loop_range.enabled,
+            start_tick: arrangement.loop_range.start_tick.0,
+            end_tick: arrangement.loop_range.end_tick.0,
+        },
+        punch_range: arrangement.punch_range.map(|range| GraphTickRange {
+            start_tick: range.start_tick.0,
+            end_tick: range.end_tick.0,
+        }),
+        metronome_enabled: session.settings.metronome_enabled,
+        master_gain_db: session.settings.master_db,
+        automation: arrangement
+            .automation_lanes
+            .iter()
+            .map(|lane| GraphAutomationLane {
+                target: lane.target.clone(),
+                interpolation: lane.interpolation,
+                points: lane
+                    .points
+                    .iter()
+                    .map(|point| GraphAutomationPoint {
+                        tick: point.tick.0,
+                        value: point.value,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        tracks,
+    };
+    let executable_effect_ids: HashSet<_> = graph
+        .tracks
+        .iter()
+        .flat_map(|track| track.effects.iter())
+        .chain(graph.mixer.buses.iter().flat_map(|bus| bus.effects.iter()))
+        .chain(graph.mixer.master_effects.iter())
+        .map(|effect| effect.id.as_str())
+        .collect();
+    graph
+        .mixer
+        .sidechain_sends
+        .retain(|send| executable_effect_ids.contains(send.target_device_id.as_str()));
+    let executable_sidechain_ids: HashSet<_> = graph
+        .mixer
+        .sidechain_sends
+        .iter()
+        .map(|send| send.id.as_str())
+        .collect();
+    graph.automation.retain(|lane| match &lane.target {
+        riffra_core::AutomationTarget::SidechainSendLevel { sidechain_send_id } => {
+            executable_sidechain_ids.contains(sidechain_send_id.as_str())
+        }
+        _ => true,
+    });
+
+    (graph, diagnostics)
 }
 
 fn project_effects(
@@ -839,5 +863,79 @@ mod tests {
             );
             assert_eq!(diagnostics.missing_device_ids, [expected_id], "{label}");
         }
+    }
+
+    #[test]
+    fn excludes_sidechain_routes_to_missing_effects_and_their_automation() {
+        // Arrange
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:source".into(), "Source".into()));
+        let mut target = Track::audio("track:target".into(), "Target".into());
+        target.effects.push(plugin_device(
+            "device:missing",
+            "Missing",
+            "missing.vst3",
+            false,
+        ));
+        target.effects.push(plugin_device(
+            "device:available",
+            "Available",
+            "fx.vst3",
+            false,
+        ));
+        session.arrangement.tracks.push(target);
+        session.arrangement.mixer.sidechain_sends = vec![
+            riffra_core::SidechainSend {
+                id: "sidechain:missing".into(),
+                source_track_id: "track:source".into(),
+                target_device_id: "device:missing".into(),
+                level_db: -6.0,
+                position: riffra_core::SendPosition::PostFader,
+                enabled: true,
+            },
+            riffra_core::SidechainSend {
+                id: "sidechain:available".into(),
+                source_track_id: "track:source".into(),
+                target_device_id: "device:available".into(),
+                level_db: -6.0,
+                position: riffra_core::SendPosition::PostFader,
+                enabled: true,
+            },
+        ];
+        session.arrangement.automation_lanes = ["sidechain:missing", "sidechain:available"]
+            .into_iter()
+            .map(|sidechain_send_id| AutomationLane {
+                id: format!("lane:{sidechain_send_id}"),
+                target: AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: sidechain_send_id.into(),
+                },
+                interpolation: riffra_core::AutomationInterpolation::Linear,
+                points: vec![AutomationPoint {
+                    id: format!("point:{sidechain_send_id}"),
+                    tick: riffra_core::TimelineTick(0),
+                    value: -6.0,
+                }],
+            })
+            .collect();
+
+        // Act
+        let (graph, diagnostics) = project_graph(&session, &resources());
+
+        // Assert
+        assert_eq!(diagnostics.missing_device_ids, ["device:missing"]);
+        assert_eq!(
+            graph.mixer.sidechain_sends,
+            [session.arrangement.mixer.sidechain_sends[1].clone()]
+        );
+        assert_eq!(graph.automation.len(), 1);
+        assert_eq!(
+            graph.automation[0].target,
+            AutomationTarget::SidechainSendLevel {
+                sidechain_send_id: "sidechain:available".into()
+            }
+        );
     }
 }

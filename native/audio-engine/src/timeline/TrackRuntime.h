@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -239,10 +240,17 @@ public:
         if (next == 0) liveMidiActiveState.store(false, std::memory_order_release);
     }
 
+    [[nodiscard]] int effectLatencySamples() const noexcept {
+        const auto total = static_cast<std::int64_t>(effectChain->latencySamples()) +
+                           effectAlignment.latencySamples();
+        return static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
+    }
+
     [[nodiscard]] int pluginLatencySamples() const noexcept {
-        return effectChain->latencySamples() + (instrumentBlock->runtime != nullptr
-                                                    ? instrumentBlock->runtime->latencySamples()
-                                                    : 0);
+        const auto total =
+            static_cast<std::int64_t>(effectLatencySamples()) +
+            (instrumentBlock->runtime != nullptr ? instrumentBlock->runtime->latencySamples() : 0);
+        return static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
     }
 
     [[nodiscard]] int totalPluginTailSamples() const noexcept {
@@ -253,6 +261,7 @@ public:
     // Prepared timeline state. The snapshot builder allocates these buffers;
     // realtime code only clears and processes their existing storage.
     std::vector<MidiScheduler::CompiledMidiClip> midiClips;
+    PluginChainAlignment effectAlignment;
     std::int64_t timelinePdcDelaySamples = 0;
     juce::AudioBuffer<float> mixBuffer;
     juce::AudioBuffer<float> processedBuffer;

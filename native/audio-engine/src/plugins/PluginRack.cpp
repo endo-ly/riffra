@@ -282,6 +282,8 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(
         layout.sidechain.available && (acceptsLayout(2, 1) || acceptsLayout(1, 1));
     layout.sidechain.stereo =
         layout.sidechain.available && (acceptsLayout(2, 2) || acceptsLayout(1, 2));
+    const auto enableSidechainInput =
+        sidechainInput && (layout.sidechain.mono || layout.sidechain.stereo);
     if (!layout.sidechain.available) {
         layout.sidechain.reason = "The VST3 does not expose an auxiliary input bus.";
     } else if (!layout.sidechain.mono && !layout.sidechain.stereo) {
@@ -289,7 +291,7 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(
     }
 
     std::optional<juce::AudioProcessor::BusesLayout> selected;
-    if (sidechainInput) {
+    if (enableSidechainInput) {
         if (layout.sidechain.available) {
             for (const auto mainChannels : {2, 1}) {
                 for (const auto auxChannels : {2, 1}) {
@@ -326,7 +328,7 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(
     if (!selected || !processor.setBusesLayout(*selected)) {
         return PluginLoadError{
             "pluginLayout",
-            sidechainInput ? "The VST3 does not support a mono or stereo auxiliary input."
+            enableSidechainInput ? "The VST3 does not support a mono or stereo auxiliary input."
             : hasInputBus
                 ? "The VST3 supports neither stereo-to-stereo nor mono-to-stereo processing."
                 : "The VST3 does not support stereo output.",
@@ -355,9 +357,11 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(
     }
 
     // Record where the enabled buses publish their channels in the process block buffer.
-    for (int channel = 0; channel < processor.getChannelCountOfBus(true, auxBusIndex); ++channel)
-        layout.auxInputOffsets.push_back(
-            processor.getChannelIndexInProcessBlockBuffer(true, auxBusIndex, channel));
+    if (auxBusIndex >= 0)
+        for (int channel = 0; channel < processor.getChannelCountOfBus(true, auxBusIndex);
+             ++channel)
+            layout.auxInputOffsets.push_back(
+                processor.getChannelIndexInProcessBlockBuffer(true, auxBusIndex, channel));
     layout.sidechain.channels = static_cast<int>(layout.auxInputOffsets.size());
     auto inputChannels = 0;
     for (int bus = 0; bus < processor.getBusCount(true); ++bus)

@@ -14,12 +14,53 @@ use riffra_core::{
 };
 
 impl HostDispatcher<'_> {
+    fn validate_sidechain_activation(
+        &self,
+        command: &CanonicalCommand,
+        canonical: &CanonicalState,
+    ) -> Result<(), DispatchError> {
+        let Some(target_device_id) = sidechain_target_to_activate(command, canonical) else {
+            return Ok(());
+        };
+        let Some(audio) = self.audio else {
+            return Ok(());
+        };
+        let arrangement = &canonical.session.arrangement;
+        let Some(owner) = arrangement.device_owner(&target_device_id) else {
+            return Ok(());
+        };
+        let Ok(riffra_core::DeviceRef::Effect(effect)) =
+            arrangement.device(&owner, &target_device_id)
+        else {
+            return Ok(());
+        };
+        if effect.plugin.disabled_placeholder {
+            return Err(DispatchError::invalid_request(format!(
+                "sidechain target '{target_device_id}' is not an available effect"
+            )));
+        }
+        let inspection = audio
+            .inspect_device(&owner, &target_device_id)
+            .map_err(|error| {
+                DispatchError::invalid_request(format!(
+                    "sidechain target '{target_device_id}' could not be inspected: {error}"
+                ))
+            })?;
+        if inspection.capabilities.sidechain.mono || inspection.capabilities.sidechain.stereo {
+            return Ok(());
+        }
+        Err(DispatchError::invalid_request(format!(
+            "sidechain target '{target_device_id}' does not support mono or stereo auxiliary input"
+        )))
+    }
+
     pub(super) fn run_canonical<S: riffra_core::SessionStorage + ?Sized>(
         &self,
         application: &mut riffra_core::application::Application<'_, S>,
         command: CanonicalCommand,
         canonical: CanonicalState,
     ) -> Result<ControlOutput, DispatchError> {
+        self.validate_sidechain_activation(&command, &canonical)?;
         let timebase = canonical.session.arrangement.timebase.clone();
         let tick = |position| {
             timebase
@@ -790,6 +831,33 @@ impl HostDispatcher<'_> {
     }
 }
 
+fn sidechain_target_to_activate(
+    command: &CanonicalCommand,
+    canonical: &CanonicalState,
+) -> Option<String> {
+    match command {
+        CanonicalCommand::SidechainSendAdd(params) => Some(params.target_device_id.clone()),
+        CanonicalCommand::SidechainSendUpdate(params) => canonical
+            .session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .iter()
+            .find(|send| send.id == params.sidechain_send_id)
+            .and_then(|send| {
+                let target = params
+                    .patch
+                    .target_device_id
+                    .as_deref()
+                    .unwrap_or(&send.target_device_id);
+                let enabled = params.patch.enabled.unwrap_or(send.enabled);
+                (enabled && (!send.enabled || target != send.target_device_id))
+                    .then(|| target.to_owned())
+            }),
+        _ => None,
+    }
+}
+
 fn automation_lane(
     session: &CreativeSession,
     target: AutomationTarget,
@@ -867,9 +935,81 @@ fn automation_lanes(
 mod tests {
     use super::*;
     use riffra_core::{
-        AutomationPoint, EffectOwner, SendPosition, SidechainSend, TimelineTick, Track,
-        TrackMixParameter,
+        AutomationPoint, EffectOwner, SendPosition, SidechainSend, SidechainSendPatch,
+        TimelineTick, Track, TrackMixParameter,
     };
+
+    #[test]
+    fn capability_validation_only_runs_when_a_sidechain_route_becomes_active() {
+        let mut session = CreativeSession::new(1);
+        session
+            .arrangement
+            .tracks
+            .push(Track::audio("track:source".into(), "Source".into()));
+        session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .push(SidechainSend {
+                id: "sidechain:1".into(),
+                source_track_id: "track:source".into(),
+                target_device_id: "device:first".into(),
+                level_db: -6.0,
+                position: SendPosition::PostFader,
+                enabled: false,
+            });
+        let canonical =
+            riffra_core::AppCore::new("project:test".into(), session, 0).canonical_state();
+
+        let add = CanonicalCommand::SidechainSendAdd(crate::api::params::SidechainSendAddParams {
+            source_track_id: "track:source".into(),
+            target_device_id: "device:first".into(),
+            level_db: -6.0,
+            position: SendPosition::PostFader,
+        });
+        let activate =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            });
+        let level_change =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    level_db: Some(-12.0),
+                    ..Default::default()
+                },
+            });
+        let retarget =
+            CanonicalCommand::SidechainSendUpdate(crate::api::params::SidechainSendUpdateParams {
+                sidechain_send_id: "sidechain:1".into(),
+                patch: SidechainSendPatch {
+                    target_device_id: Some("device:second".into()),
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            });
+
+        assert_eq!(
+            sidechain_target_to_activate(&add, &canonical).as_deref(),
+            Some("device:first")
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&activate, &canonical).as_deref(),
+            Some("device:first")
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&level_change, &canonical),
+            None
+        );
+        assert_eq!(
+            sidechain_target_to_activate(&retarget, &canonical).as_deref(),
+            Some("device:second")
+        );
+    }
 
     #[test]
     fn automation_read_resolves_targets_and_lists_channel_ownership() {

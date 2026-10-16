@@ -133,7 +133,8 @@ bool TimelineEngine::finalizeRecording(juce::String& error) {
             OfflineRecordingTrack offline{track->id, track->effects, {}, {}};
             for (const auto& effect : track->effects) {
                 auto& chain = track->runtime->effects();
-                offline.mainInputDelays.emplace_back(effect.id, chain.mainInputDelay(effect.id));
+                offline.mainInputDelays.emplace_back(
+                    effect.id, track->runtime->effectAlignment.delaySamples(effect.id));
                 if (chain.sidechainBuffer(effect.id) != nullptr)
                     offline.sidechainInputs.push_back({"capture:" + effect.id,
                                                        {},
@@ -223,9 +224,20 @@ bool TimelineEngine::generateProcessedVariants(
                                  PluginProcessingMode::offline, error,
                                  track.id + "/offline-processing"))
             return false;
-        if (!offlineEffects.prepareMainInputDelays(track.mainInputDelays, error)) return false;
+        std::vector<juce::String> deviceIds;
+        deviceIds.reserve(track.effects.size());
+        for (const auto& effect : track.effects) deviceIds.push_back(effect.id);
+        PluginChainAlignment offlineAlignment;
+        if (!offlineAlignment.prepare(deviceIds, track.mainInputDelays, blockSize, error))
+            return false;
         if (progress) progress();
-        const auto delay = std::max(0, offlineEffects.latencySamples());
+        const auto totalDelay = static_cast<std::int64_t>(offlineEffects.latencySamples()) +
+                                offlineAlignment.latencySamples();
+        if (totalDelay > std::numeric_limits<int>::max()) {
+            error = "recorded sidechain alignment exceeds the supported buffer size";
+            return false;
+        }
+        const auto delay = static_cast<int>(std::max<std::int64_t>(0, totalDelay));
         for (const auto& [segStart, segEnd] : segments) {
             const auto segmentLength = segEnd - segStart;
             if (segmentLength > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
@@ -235,6 +247,7 @@ bool TimelineEngine::generateProcessedVariants(
             const auto segmentSamples = static_cast<int>(segmentLength);
             if (segmentSamples <= 0) continue;
             offlineEffects.reset();
+            offlineAlignment.reset();
             juce::AudioBuffer<float> blockBuffer(2, blockSize);
             juce::AudioBuffer<float> processedBlock(2, blockSize);
             int discarded = delay;
@@ -284,7 +297,8 @@ bool TimelineEngine::generateProcessedVariants(
                     }
                 }
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
-                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                                       processedBlock.getArrayOfWritePointers(), 2, count, nullptr,
+                                       {}, 0, false, &offlineAlignment);
                 if (!consumeProcessedBlock(count)) return false;
                 if (progress) progress();
                 remaining -= count;
@@ -296,7 +310,8 @@ bool TimelineEngine::generateProcessedVariants(
                 blockBuffer.clear();
                 offlineEffects.clearSidechainBuffers();
                 offlineEffects.process(blockBuffer.getArrayOfReadPointers(), 2,
-                                       processedBlock.getArrayOfWritePointers(), 2, count);
+                                       processedBlock.getArrayOfWritePointers(), 2, count, nullptr,
+                                       {}, 0, false, &offlineAlignment);
                 if (!consumeProcessedBlock(count)) return false;
                 if (progress) progress();
             }

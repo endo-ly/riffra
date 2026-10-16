@@ -412,4 +412,21 @@ describe('DevicesPanel', () => {
     expect(screen.getByRole('option', { name: 'Drums' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'Audio' })).not.toBeInTheDocument();
   });
+
+  it('disables adding a sidechain source when no mono or stereo layout is supported', async () => {
+    const api = runtimeApi({ available: true, mono: false, stereo: false, channels: 0 });
+    const currentSession = defaultSession();
+    currentSession.arrangement.tracks = [
+      structuredClone(track),
+      { ...structuredClone(track), id: 'track:2', name: 'Drums', effects: [] },
+    ];
+
+    render(<Harness api={api} initialSession={structuredClone(currentSession)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+
+    expect(
+      await screen.findByText('Sidechain input · Unavailable · 0 channels'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Sidechain source')).toBeDisabled();
+  });
 });

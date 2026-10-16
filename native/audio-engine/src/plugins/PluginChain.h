@@ -13,6 +13,32 @@ namespace riffra {
 class PluginChainTestPeer;
 class TimelineEngineTestPeer;
 
+/// Graph-owned main-input delays required to align an effect chain's sidechain inputs.
+class PluginChainAlignment final {
+public:
+    bool prepare(const std::vector<juce::String>& deviceIds,
+                 const std::vector<std::pair<juce::String, int>>& delays, int blockSize,
+                 juce::String& error);
+    void reset() noexcept;
+    [[nodiscard]] int delaySamples(const juce::String& deviceId) const noexcept;
+    [[nodiscard]] int latencySamples() const noexcept { return totalDelaySamples; }
+    [[nodiscard]] const float* const* delayDeviceInput(const juce::String& deviceId,
+                                                       const float* const* channels,
+                                                       int channelCount, int sampleCount) noexcept;
+
+private:
+    struct Delay final {
+        juce::String deviceId;
+        int samples = 0;
+        int position = 0;
+        juce::AudioBuffer<float> ring;
+    };
+
+    std::vector<Delay> delays;
+    juce::AudioBuffer<float> delayedInputBuffer;
+    int totalDelaySamples = 0;
+};
+
 class PluginChain final {
 public:
     bool load(const std::vector<PluginDeviceSpec>& devices,
@@ -27,7 +53,8 @@ public:
                  float* const* outputChannels, int outputChannelCount, int sampleCount,
                  const juce::MidiBuffer* midi = nullptr,
                  std::span<PluginParameterAutomation> automation = {},
-                 std::int64_t timelineSample = 0, bool playing = false) noexcept;
+                 std::int64_t timelineSample = 0, bool playing = false,
+                 PluginChainAlignment* inputAlignment = nullptr) noexcept;
     bool setBypassed(const juce::String& deviceId, bool bypassed) noexcept;
     bool setParameter(const juce::String& deviceId, int parameterIndex, float value,
                       juce::String& error) noexcept;
@@ -41,18 +68,10 @@ public:
     /// prepared chain, so its auxiliary inputs stay valid.
     [[nodiscard]] bool usesSameSidechainTargets(
         const std::vector<SidechainSendSpec>& sidechainSends) const noexcept;
-    /// True when the prepared alignment delays match, so reused racks keep their sidechain
-    /// timing without mutation.
-    [[nodiscard]] bool usesSameMainInputDelays(
-        const std::vector<std::pair<juce::String, int>>& delays) const noexcept;
-    /// Applies the alignment delay in front of each device main input. Succeeds without
-    /// mutation when the chain already carries the requested alignment.
-    bool prepareMainInputDelays(const std::vector<std::pair<juce::String, int>>& delays,
-                                juce::String& error) noexcept;
     /// Auxiliary input destination of a prepared sidechain target device.
     [[nodiscard]] juce::AudioBuffer<float>* sidechainBuffer(const juce::String& deviceId) noexcept;
-    /// Alignment delay in samples applied to a device main input.
-    [[nodiscard]] int mainInputDelay(const juce::String& deviceId) const noexcept;
+    [[nodiscard]] const juce::AudioBuffer<float>* sidechainBuffer(
+        const juce::String& deviceId) const noexcept;
     void clearSidechainBuffers() noexcept;
     void resetSidechainState() noexcept;
     [[nodiscard]] PluginRack* findDevice(const juce::String& deviceId) noexcept;
@@ -66,30 +85,20 @@ private:
         juce::String id;
         std::unique_ptr<PluginRack> rack;
         juce::AudioBuffer<float> sidechainBuffer;
-        int mainInputDelaySamples = 0;
-        int mainInputDelayPosition = 0;
-        juce::AudioBuffer<float> mainInputDelayBuffer;
+        bool sidechainCapable = false;
     };
 
     void prepareBuffers(int blockSize) noexcept;
     /// Sizes the device auxiliary input buffer; the rack folds it to its enabled layout.
     void prepareSidechainInput(Device& device, int blockSize) noexcept;
-    /// Enabled sidechain connection targets, sorted and deduplicated.
+    /// Enabled sidechain targets belonging to the supplied device chain.
     [[nodiscard]] static std::vector<juce::String> enabledSidechainTargets(
+        const std::vector<juce::String>& deviceIds,
         const std::vector<SidechainSendSpec>& sidechainSends);
-    /// Alignment entries with zero delays removed.
-    [[nodiscard]] static std::vector<std::pair<juce::String, int>> normalizedMainInputDelays(
-        const std::vector<std::pair<juce::String, int>>& delays);
-    /// Writes the device input through its alignment ring and returns the delayed channels.
-    [[nodiscard]] const float* const* delayDeviceInput(Device& device, const float* const* channels,
-                                                       int channelCount, int sampleCount) noexcept;
-
     std::vector<Device> devices;
     std::vector<juce::String> sidechainTargets;
-    std::vector<std::pair<juce::String, int>> mainInputDelays;
     juce::AudioBuffer<float> firstBuffer;
     juce::AudioBuffer<float> secondBuffer;
-    juce::AudioBuffer<float> delayedInputBuffer;
 };
 
 }  // namespace riffra

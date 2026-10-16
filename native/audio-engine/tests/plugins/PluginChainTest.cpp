@@ -24,8 +24,15 @@ public:
     }
 
     static void setSidechainTargets(PluginChain& chain,
-                                    const std::vector<SidechainSendSpec>& sidechainSends) {
-        chain.sidechainTargets = PluginChain::enabledSidechainTargets(sidechainSends);
+                                    const std::vector<SidechainSendSpec>& sidechainSends,
+                                    const std::vector<juce::String>& deviceIds) {
+        for (const auto& id : deviceIds) {
+            PluginChain::Device device;
+            device.id = id;
+            device.sidechainCapable = true;
+            chain.devices.push_back(std::move(device));
+        }
+        chain.sidechainTargets = PluginChain::enabledSidechainTargets(deviceIds, sidechainSends);
     }
 
     static juce::AudioBuffer<float>* sidechainBuffer(PluginChain& chain, const juce::String& id) {
@@ -109,7 +116,7 @@ TEST(PluginChainTest, AggregatesDeviceLatencyAndTail) {
     EXPECT_EQ(chain->tailSamples(), 2'880);
 }
 
-TEST(PluginChainTest, DelaysDeviceMainInputsByThePreparedAlignment) {
+TEST(PluginChainTest, DelaysDeviceMainInputsWithGraphOwnedAlignmentState) {
     std::vector<int> order;
     juce::String error;
     PluginChain chain;
@@ -118,12 +125,11 @@ TEST(PluginChainTest, DelaysDeviceMainInputsByThePreparedAlignment) {
         kBlockSize, error))
         << error;
 
-    const std::vector<std::pair<juce::String, int>> alignment{{"device-1", 4}};
-    ASSERT_TRUE(chain.prepareMainInputDelays(alignment, error)) << error;
-    EXPECT_TRUE(chain.usesSameMainInputDelays(alignment));
-    EXPECT_TRUE(chain.usesSameMainInputDelays({{"device-1", 4}, {"device-2", 0}}));
-    EXPECT_FALSE(chain.usesSameMainInputDelays({{"device-1", 3}}));
-    EXPECT_EQ(chain.latencySamples(), 4);
+    PluginChainAlignment alignment;
+    ASSERT_TRUE(alignment.prepare({"device-1"}, {{"device-1", 4}}, kBlockSize, error)) << error;
+    EXPECT_EQ(alignment.delaySamples("device-1"), 4);
+    EXPECT_EQ(alignment.latencySamples(), 4);
+    EXPECT_EQ(chain.latencySamples(), 0);
 
     std::array<float, 8> input{};
     std::array<float, 8> outputLeft{};
@@ -131,7 +137,7 @@ TEST(PluginChainTest, DelaysDeviceMainInputsByThePreparedAlignment) {
     input[0] = 1.0f;
     const std::array<const float*, 1> inputs{input.data()};
     const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
-    chain.process(inputs.data(), 1, outputs.data(), 2, 8);
+    chain.process(inputs.data(), 1, outputs.data(), 2, 8, nullptr, {}, 0, false, &alignment);
 
     for (int sample = 0; sample < 4; ++sample) {
         EXPECT_FLOAT_EQ(outputLeft[static_cast<std::size_t>(sample)], 0.0f) << sample;
@@ -140,15 +146,8 @@ TEST(PluginChainTest, DelaysDeviceMainInputsByThePreparedAlignment) {
     EXPECT_FLOAT_EQ(outputLeft[4], 1.0f);
     EXPECT_FLOAT_EQ(outputRight[4], 1.0f);
 
-    EXPECT_FALSE(chain.prepareMainInputDelays({{"device-1", 8}}, error));
-    EXPECT_EQ(error, "Plugin Chain main input delays differ from the prepared alignment.");
-
-    PluginChain unknown;
-    ASSERT_TRUE(PluginChainTestPeer::addDevice(
-        unknown, "device-1", std::make_unique<TestChainProcessor>(1, 1.0f, 0, order), kSampleRate,
-        kBlockSize, error))
-        << error;
-    EXPECT_FALSE(unknown.prepareMainInputDelays({{"device-2", 1}}, error));
+    PluginChainAlignment unknown;
+    EXPECT_FALSE(unknown.prepare({"device-1"}, {{"device-2", 1}}, kBlockSize, error));
     EXPECT_EQ(error, "Plugin Chain main input delay references an unknown device.");
 }
 
@@ -262,7 +261,7 @@ TEST(PluginChainTest, RepreparesWhenEnabledSidechainTargetsChange) {
     const SidechainSendSpec send{"send-1", "track-1", "device-a", -6.0, SendPositionSpec::postFader,
                                  true};
     PluginChain chain;
-    PluginChainTestPeer::setSidechainTargets(chain, {send});
+    PluginChainTestPeer::setSidechainTargets(chain, {send}, {"device-a", "device-b"});
     EXPECT_TRUE(chain.usesSameSidechainTargets({send}));
 
     auto leveled = send;
@@ -277,6 +276,10 @@ TEST(PluginChainTest, RepreparesWhenEnabledSidechainTargetsChange) {
     const SidechainSendSpec otherTarget{
         "send-2", "track-1", "device-b", 0.0, SendPositionSpec::preFader, true};
     EXPECT_FALSE(chain.usesSameSidechainTargets({send, otherTarget}));
+
+    const SidechainSendSpec unrelatedTarget{
+        "send-4", "track-1", "device-c", 0.0, SendPositionSpec::preFader, true};
+    EXPECT_TRUE(chain.usesSameSidechainTargets({send, unrelatedTarget}));
 
     const SidechainSendSpec secondSource{
         "send-3", "track-2", "device-a", 0.0, SendPositionSpec::postFader, true};

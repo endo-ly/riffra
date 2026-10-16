@@ -31,6 +31,7 @@ export function DeviceSidechainEditor({
 }: DeviceSidechainEditorProps) {
   if (!capabilities.available || isInstrument) return null;
   const sends = arrangement.mixer.sidechainSends.filter((send) => send.targetDeviceId === deviceId);
+  const canAddSource = capabilities.mono || capabilities.stereo;
   const candidates = arrangement.tracks.filter(
     (track) =>
       !sends.some((send) => send.sourceTrackId === track.id) &&
@@ -61,7 +62,7 @@ export function DeviceSidechainEditor({
         <select
           aria-label="Add Sidechain source"
           value=""
-          disabled={!candidates.length}
+          disabled={!canAddSource || !candidates.length}
           onChange={(event) => {
             if (event.currentTarget.value)
               commit(api.addSidechainSend(event.currentTarget.value, deviceId, -6, 'postFader'));

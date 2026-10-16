@@ -571,7 +571,7 @@ TEST(PluginRackTest, FeedsSilenceWhenNoSidechainAudioIsConnected) {
     EXPECT_FLOAT_EQ(outputRight[0], -0.25f);
 }
 
-TEST(PluginRackTest, RejectsSidechainRequestsWithoutAnAuxiliaryInputBus) {
+TEST(PluginRackTest, KeepsAnEffectUsableWithoutAnAuxiliaryInputBus) {
     // Arrange
     ProcessorTrace trace;
     juce::String error;
@@ -582,15 +582,16 @@ TEST(PluginRackTest, RejectsSidechainRequestsWithoutAnAuxiliaryInputBus) {
     ASSERT_NE(rack, nullptr) << error;
     const auto status = rack->status();
     EXPECT_FALSE(status.sidechain.available);
+    EXPECT_EQ(status.sidechain.channels, 0);
     ASSERT_TRUE(status.sidechain.reason.has_value());
     EXPECT_EQ(*status.sidechain.reason, "The VST3 does not expose an auxiliary input bus.");
-    const auto rejected = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace),
+    const auto prepared = PluginRackTestPeer::install(std::make_unique<TestProcessor>(trace),
                                                       kSampleRate, kBlockSize, error, false, true);
-    EXPECT_EQ(rejected, nullptr);
-    EXPECT_EQ(error, "The VST3 does not support a mono or stereo auxiliary input.");
+    ASSERT_NE(prepared, nullptr) << error;
+    EXPECT_FALSE(prepared->status().sidechain.available);
 }
 
-TEST(PluginRackTest, RejectsAuxiliaryInputBusesWithoutAMonoOrStereoLayout) {
+TEST(PluginRackTest, KeepsAnEffectUsableWhenItsSidechainLayoutIsUnsupported) {
     // Arrange
     SidechainTrace trace;
     juce::String error;
@@ -607,11 +608,11 @@ TEST(PluginRackTest, RejectsAuxiliaryInputBusesWithoutAMonoOrStereoLayout) {
     ASSERT_TRUE(status.sidechain.reason.has_value());
     EXPECT_EQ(*status.sidechain.reason,
               "The VST3 does not support a mono or stereo auxiliary input.");
-    const auto rejected =
+    const auto prepared =
         PluginRackTestPeer::install(std::make_unique<TestSidechainProcessor>(false, false, trace),
                                     kSampleRate, kBlockSize, error, false, true);
-    EXPECT_EQ(rejected, nullptr);
-    EXPECT_EQ(error, "The VST3 does not support a mono or stereo auxiliary input.");
+    ASSERT_NE(prepared, nullptr) << error;
+    EXPECT_EQ(prepared->status().sidechain.channels, 0);
 }
 
 }  // namespace riffra
