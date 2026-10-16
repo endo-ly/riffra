@@ -5,4 +5,4 @@ import type { TrackMixParameter } from "./TrackMixParameter";
 /**
  * Stable identity of a parameter controlled by a timeline lane.
  */
-export type AutomationTarget = { "kind": "trackMix", trackId: string, parameter: TrackMixParameter, } | { "kind": "busMix", busId: string, parameter: BusMixParameter, } | { "kind": "masterGain" } | { "kind": "sendLevel", sendId: string, } | { "kind": "deviceParameter", deviceId: string, parameterId: string, };
+export type AutomationTarget = { "kind": "trackMix", trackId: string, parameter: TrackMixParameter, } | { "kind": "busMix", busId: string, parameter: BusMixParameter, } | { "kind": "masterGain" } | { "kind": "sendLevel", sendId: string, } | { "kind": "sidechainSendLevel", sidechainSendId: string, } | { "kind": "deviceParameter", deviceId: string, parameterId: string, };

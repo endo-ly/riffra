@@ -154,7 +154,7 @@ impl AudioSupervisor {
     ) -> NativeAudioResult<()> {
         self.request_ack(
             SidecarCommand::PrepareTimelineSnapshot {
-                snapshot: snapshot.clone(),
+                snapshot: Box::new(snapshot.clone()),
             },
             timeout.min(TIMELINE_PREPARE_TIMEOUT),
         )

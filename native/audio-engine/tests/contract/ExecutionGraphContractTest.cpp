@@ -45,6 +45,16 @@ TEST(ExecutionGraphContractTest, DecodesRustGeneratedFixtures) {
     EXPECT_EQ(full.graph.mixer.buses.size(), 2u);
     EXPECT_EQ(full.graph.tracks[0].outputBusId, "bus:group");
     EXPECT_EQ(full.graph.mixer.sends[0].position, SendPositionSpec::preFader);
+    ASSERT_EQ(full.graph.mixer.sidechainSends.size(), 1u);
+    EXPECT_EQ(full.graph.mixer.sidechainSends[0].id, "sidechain:return");
+    EXPECT_EQ(full.graph.mixer.sidechainSends[0].sourceTrackId, "track-audio");
+    EXPECT_EQ(full.graph.mixer.sidechainSends[0].targetDeviceId, "device:return");
+    EXPECT_EQ(full.graph.mixer.sidechainSends[0].levelDb, -12.0);
+    EXPECT_EQ(full.graph.mixer.sidechainSends[0].position, SendPositionSpec::postFader);
+    EXPECT_TRUE(full.graph.mixer.sidechainSends[0].enabled);
+    ASSERT_EQ(full.graph.automation.size(), 3u);
+    EXPECT_EQ(full.graph.automation[2].kind, AutomationTargetKind::sidechainSendLevel);
+    EXPECT_EQ(full.graph.automation[2].id, "sidechain:return");
     EXPECT_EQ(full.graph.mixer.masterEffects[0].state.stateData, "master-state");
     EXPECT_EQ(full.graph.tracks[1].instrument->index(), 1u);
     EXPECT_EQ(full.graph.tracks[0].kind, TrackKindSpec::audio);
@@ -92,6 +102,7 @@ TEST(ExecutionGraphContractTest, RejectsMissingAndUnknownKeysAtEveryObjectDepth)
         {"graph", "mixer"},
         {"graph", "mixer", "buses", "#0"},
         {"graph", "mixer", "sends", "#0"},
+        {"graph", "mixer", "sidechainSends", "#0"},
         {"graph", "tracks", "#0"},
         {"graph", "tracks", "#0", "audioClips", "#0"},
         {"graph", "tracks", "#1"},
@@ -134,6 +145,7 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "note"}, 128},
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "velocity"}, 0},
         {JsonPath{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data1"}, 128},
+        {JsonPath{"graph", "mixer", "sidechainSends", "#0", "levelDb"}, 25.0},
     };
     for (const auto& [pathToValue, invalid] : invalidValues) {
         auto mutated = cloneJson(full);
@@ -155,6 +167,17 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
              {"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "tick"}, 960);
     expectTimelineSnapshotRejected(invalidMidiPosition);
 
+    auto missingSidechainTarget = cloneJson(full);
+    setValue(missingSidechainTarget, {"graph", "mixer", "sidechainSends", "#0", "targetDeviceId"},
+             juce::var("device:missing"));
+    expectTimelineSnapshotRejected(missingSidechainTarget);
+
+    auto instrumentSidechainTarget = cloneJson(full);
+    setValue(instrumentSidechainTarget,
+             {"graph", "mixer", "sidechainSends", "#0", "targetDeviceId"},
+             juce::var("instrument-vst"));
+    expectTimelineSnapshotRejected(instrumentSidechainTarget);
+
     const std::vector<std::pair<JsonPath, juce::var>> validBoundaries{
         {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 20.0},
         {{"graph", "timebase", "tempoChanges", "#0", "bpm"}, 400.0},
@@ -174,6 +197,8 @@ TEST(ExecutionGraphContractTest, RejectsValuesOutsideContractRanges) {
         {{"graph", "tracks", "#1", "midiClips", "#0", "notes", "#0", "channel"}, 16},
         {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data1"}, 127},
         {{"graph", "tracks", "#1", "midiClips", "#0", "events", "#0", "data2"}, 127},
+        {{"graph", "mixer", "sidechainSends", "#0", "levelDb"}, -90.0},
+        {{"graph", "mixer", "sidechainSends", "#0", "levelDb"}, 24.0},
     };
     for (const auto& [pathToValue, boundary] : validBoundaries) {
         auto mutated = cloneJson(full);

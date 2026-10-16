@@ -79,6 +79,7 @@ enum class AutomationTargetKind {
     busPan,
     masterGain,
     sendLevel,
+    sidechainSendLevel,
     deviceParameter
 };
 enum class AutomationInterpolationSpec { linear, step };
@@ -256,10 +257,21 @@ struct SendSpec final {
     bool operator==(const SendSpec&) const = default;
 };
 
+struct SidechainSendSpec final {
+    juce::String id;
+    juce::String sourceTrackId;
+    juce::String targetDeviceId;
+    double levelDb = 0.0;
+    SendPositionSpec position = SendPositionSpec::postFader;
+    bool enabled = true;
+    bool operator==(const SidechainSendSpec&) const = default;
+};
+
 struct MixerSpec final {
     std::vector<PluginDeviceSpec> masterEffects;
     std::vector<MixBusSpec> buses;
     std::vector<SendSpec> sends;
+    std::vector<SidechainSendSpec> sidechainSends;
     bool operator==(const MixerSpec&) const = default;
 };
 

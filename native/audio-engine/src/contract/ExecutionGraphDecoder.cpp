@@ -142,6 +142,12 @@ bool decodeAutomationLane(const juce::var& value, const juce::String& path,
         if (!t.string("kind", decodedKind) || !t.string("sendId", output.id) || !t.finish())
             return false;
         output.kind = AutomationTargetKind::sendLevel;
+    } else if (kind == "sidechainSendLevel") {
+        ContractReader t(target, targetPath, {"kind", "sidechainSendId"}, error);
+        if (!t.string("kind", decodedKind) || !t.string("sidechainSendId", output.id) ||
+            !t.finish())
+            return false;
+        output.kind = AutomationTargetKind::sidechainSendLevel;
     } else if (kind == "deviceParameter") {
         ContractReader t(target, targetPath, {"kind", "deviceId", "parameterId"}, error);
         if (!t.string("kind", decodedKind) || !t.string("deviceId", output.id) ||
@@ -525,10 +531,12 @@ bool decodeEffects(const juce::Array<juce::var>& values, const juce::String& pat
 
 bool decodeMixer(const juce::var& value, const juce::String& path, MixerSpec& output,
                  juce::String& error) {
-    ContractReader reader(value, path, {"masterEffects", "buses", "sends"}, error);
-    juce::Array<juce::var> effects, buses, sends;
+    ContractReader reader(value, path, {"masterEffects", "buses", "sends", "sidechainSends"},
+                          error);
+    juce::Array<juce::var> effects, buses, sends, sidechainSends;
     if (!reader.array("masterEffects", effects) || !reader.array("buses", buses) ||
-        !reader.array("sends", sends) || !reader.finish() ||
+        !reader.array("sends", sends) || !reader.array("sidechainSends", sidechainSends) ||
+        !reader.finish() ||
         !decodeEffects(effects, child(path, "masterEffects"), output.masterEffects, error))
         return false;
     for (int index = 0; index < buses.size(); ++index) {
@@ -574,6 +582,26 @@ bool decodeMixer(const juce::var& value, const juce::String& path, MixerSpec& ou
         if (spec.levelDb < -90.0 || spec.levelDb > 24.0)
             return fail(error, child(location, "levelDb"), "must be between -90 and 24");
         output.sends.push_back(std::move(spec));
+    }
+    for (int index = 0; index < sidechainSends.size(); ++index) {
+        const auto location = element(child(path, "sidechainSends"), index);
+        ContractReader send(
+            sidechainSends[index], location,
+            {"id", "sourceTrackId", "targetDeviceId", "levelDb", "position", "enabled"}, error);
+        SidechainSendSpec spec;
+        juce::String position;
+        int decodedPosition = 0;
+        if (!send.string("id", spec.id) || !send.string("sourceTrackId", spec.sourceTrackId) ||
+            !send.string("targetDeviceId", spec.targetDeviceId) ||
+            !send.number("levelDb", spec.levelDb) || !send.string("position", position) ||
+            !send.boolean("enabled", spec.enabled) || !send.finish() ||
+            !readEnum(position, child(location, "position"), {{"preFader", 0}, {"postFader", 1}},
+                      decodedPosition, error))
+            return false;
+        spec.position = static_cast<SendPositionSpec>(decodedPosition);
+        if (spec.levelDb < -90.0 || spec.levelDb > 24.0)
+            return fail(error, child(location, "levelDb"), "must be between -90 and 24");
+        output.sidechainSends.push_back(std::move(spec));
     }
     return true;
 }

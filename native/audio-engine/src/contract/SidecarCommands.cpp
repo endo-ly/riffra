@@ -346,6 +346,13 @@ bool decodeCommand(const juce::var& value, SidecarCommandSpec& output, juce::Str
                 !targetReader.string("sendId", command.id) || !targetReader.finish())
                 return false;
             command.kind = AutomationTargetKind::sendLevel;
+        } else if (kind == "sidechainSendLevel") {
+            ContractReader targetReader(target, "$.command.target", {"kind", "sidechainSendId"},
+                                        error);
+            if (!targetReader.string("kind", targetKind) ||
+                !targetReader.string("sidechainSendId", command.id) || !targetReader.finish())
+                return false;
+            command.kind = AutomationTargetKind::sidechainSendLevel;
         } else if (kind == "deviceParameter") {
             ContractReader targetReader(target, "$.command.target",
                                         {"kind", "deviceId", "parameterId"}, error);

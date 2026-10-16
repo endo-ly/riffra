@@ -2,8 +2,9 @@
 import type { EffectDevice } from "./EffectDevice";
 import type { MixBus } from "./MixBus";
 import type { Send } from "./Send";
+import type { SidechainSend } from "./SidechainSend";
 
 /**
  * Canonical production routing and effect chains outside timeline Tracks.
  */
-export type Mixer = { masterEffects: Array<EffectDevice>, buses: Array<MixBus>, sends: Array<Send>, };
+export type Mixer = { masterEffects: Array<EffectDevice>, buses: Array<MixBus>, sends: Array<Send>, sidechainSends: Array<SidechainSend>, };

@@ -217,6 +217,7 @@ pub(crate) fn project_graph(
             })
             .collect(),
         sends: arrangement.mixer.sends.clone(),
+        sidechain_sends: arrangement.mixer.sidechain_sends.clone(),
     };
     (
         ExecutionGraph {
@@ -444,6 +445,18 @@ mod tests {
             position: riffra_core::SendPosition::PostFader,
             enabled: true,
         });
+        session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .push(riffra_core::SidechainSend {
+                id: "sidechain:audio".into(),
+                source_track_id: "track:audio".into(),
+                target_device_id: "bus:return:fx".into(),
+                level_db: -12.0,
+                position: riffra_core::SendPosition::PreFader,
+                enabled: false,
+            });
 
         let audio_asset_id = riffra_core::mint_asset_id();
         let mut audio_clip = AudioClip::full_source(
@@ -567,6 +580,9 @@ mod tests {
             AutomationTarget::SendLevel {
                 send_id: "send:audio".into(),
             },
+            AutomationTarget::SidechainSendLevel {
+                sidechain_send_id: "sidechain:audio".into(),
+            },
             AutomationTarget::DeviceParameter {
                 device_id: "device:master".into(),
                 parameter_id: "stable-gain".into(),
@@ -619,6 +635,10 @@ mod tests {
         assert_eq!(graph.mixer.buses[1].effects[0].id, "bus:return:fx");
         assert_eq!(graph.mixer.master_effects[0].id, "device:master");
         assert_eq!(graph.mixer.sends, session.arrangement.mixer.sends);
+        assert_eq!(
+            graph.mixer.sidechain_sends,
+            session.arrangement.mixer.sidechain_sends
+        );
         assert_eq!(graph.tracks.len(), 3);
         assert_eq!(graph.tracks[0].kind, GraphTrackKind::Audio);
         assert_eq!(graph.tracks[0].gain_db, -3.0);
@@ -646,7 +666,7 @@ mod tests {
         );
         assert_eq!(graph.automation[0].points[0].value, -3.0);
         assert_eq!(graph.automation[1].points[0].value, 0.75);
-        assert_eq!(graph.automation.len(), 7);
+        assert_eq!(graph.automation.len(), 8);
         for (lane, target) in graph.automation[2..].iter().zip(targets) {
             assert_eq!(lane.target, target);
             assert_eq!(

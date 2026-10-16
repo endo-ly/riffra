@@ -298,6 +298,7 @@ export type { SessionInspection } from './SessionInspection';
 export type { SessionInspectionQuery } from './SessionInspectionQuery';
 export type { SessionSettings } from './SessionSettings';
 export type { SessionSettingsPatch } from './SessionSettingsPatch';
+export type { SidechainSend } from './SidechainSend';
 export type { TakeActivateParams } from './TakeActivateParams';
 export type { TakeAudioSource } from './TakeAudioSource';
 export type { TakeComparisonParams } from './TakeComparisonParams';

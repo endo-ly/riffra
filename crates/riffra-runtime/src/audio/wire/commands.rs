@@ -28,7 +28,7 @@ pub(crate) enum SidecarCommand {
         gain_db: f64,
     },
     PrepareTimelineSnapshot {
-        snapshot: TimelineSnapshot,
+        snapshot: Box<TimelineSnapshot>,
     },
     CommitTimelineSnapshot,
     DiscardTimelineSnapshot,
