@@ -10,7 +10,7 @@ Riffraのシステム構造と、すべての制作操作に共通する仕組�
 | data-model.md                 | 正準モデルのカタログと規則                       |
 | ipc.md                        | 境界の契約(命令、イベント、プロトコル)           |
 | test-strategy.md              | テスト戦略                                       |
-| ui-ux-design/                 | 画面の設計                                       |
+| ui-design.md                  | 画面の設計                                       |
 | native/audio-engine/README.md | 音声エンジンのコード構成とビルド                 |
 
 ---

@@ -166,7 +166,7 @@ flowchart TD
 
 ## 5. 画面構成
 
-共通の画面骨格は [共通画面構造](ui-ux-design/application-layout.md) で定義する。Arrange では Browser、Properties、Timeline、Detail Area、Play Surface が同じセッションを参照し、選択・編集・演奏の文脈を保ったまま連携する。
+共通の画面骨格は [UI設計](ui-design.md) で定義する。Arrange では Browser、Properties、Timeline、Lower Area、Play Surface が同じセッションを参照し、選択・編集・演奏の文脈を保ったまま連携する。
 
 Focused Instrument Track は Computer Keyboard と Play Surface から演奏できる。Computer Keyboard は MIDI Editor を表示したまま使えるため、MIDI の編集とライブ入力を切り替えずに確認できる。
 

@@ -111,13 +111,12 @@ cargo run -p riffra-cli -- --data-root ./riffra-data serve
 
 ## ドキュメント
 
-| ドキュメント                                                                       | 内容                                                                                        |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [docs/CONCEPT.md](docs/CONCEPT.md)                                                 | 製品構想（価値、二つの制作領域、利用の形）                                                  |
-| [docs/architecture.md](docs/architecture.md)                                       | システム構造と共通の仕組み（原則、プロセス、状態モデル、コミット、永続化）                  |
-| [docs/audio-engine.md](docs/audio-engine.md)                                       | 音声実行の設計（投影、経路、録音、音源とプラグイン、安全機構）                              |
-| [docs/data-model.md](docs/data-model.md)                                           | 正準モデルのカタログと規則                                                                  |
-| [docs/ipc.md](docs/ipc.md)                                                         | IPC 境界の契約（Tauri 命令 / イベント / サイドカープロトコル）                              |
-| [docs/ui-ux-design/application-layout.md](docs/ui-ux-design/application-layout.md) | 共通画面構造（Global Control Bar / Left Column / Main Canvas / Detail Area / Play Surface） |
-| [docs/ui-ux-design/arrange-screen.md](docs/ui-ux-design/arrange-screen.md)         | Arrange 画面の設計（レイアウト・操作・ショートカット）                                      |
-| [docs/test-strategy.md](docs/test-strategy.md)                                     | テスト戦略                                                                                  |
+| ドキュメント                                   | 内容                                                                       |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| [docs/CONCEPT.md](docs/CONCEPT.md)             | 製品構想（価値、二つの制作領域、利用の形）                                 |
+| [docs/architecture.md](docs/architecture.md)   | システム構造と共通の仕組み（原則、プロセス、状態モデル、コミット、永続化） |
+| [docs/audio-engine.md](docs/audio-engine.md)   | 音声実行の設計（投影、経路、録音、音源とプラグイン、安全機構）             |
+| [docs/data-model.md](docs/data-model.md)       | 正準モデルのカタログと規則                                                 |
+| [docs/ipc.md](docs/ipc.md)                     | IPC 境界の契約（Tauri 命令 / イベント / サイドカープロトコル）             |
+| [docs/ui-design.md](docs/ui-design.md)         | UI設計（画面の骨格、各領域の操作、ショートカット）                         |
+| [docs/test-strategy.md](docs/test-strategy.md) | テスト戦略                                                                 |
