@@ -664,6 +664,8 @@ bool TimelineEngine::previewAutomationValue(const AutomationTargetKind kind, con
                             return apply(route->levelPreview);
                 break;
             case AutomationTargetKind::sidechainSendLevel:
+                for (auto& route : graph->mixer.sidechainRoutes)
+                    if (route->sendId == id && id.isNotEmpty()) return apply(route->levelPreview);
                 break;
             case AutomationTargetKind::deviceParameter: {
                 PluginRack* rack = nullptr;

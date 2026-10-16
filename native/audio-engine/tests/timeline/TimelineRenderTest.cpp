@@ -1117,6 +1117,74 @@ TEST(MixerRoutingTest, AppliesSidechainSendLevelPositionMuteAndSolo) {
     }
 }
 
+TEST(MixerRoutingTest, SidechainSendLevelFollowsAutomationInRealtimeAndOffline) {
+    // Arrange
+    juce::ScopedJuceInitialiser_GUI initialiser;
+    test::TemporaryDirectory directory;
+    const auto source = directory.get().getChildFile("automated.wav");
+    ASSERT_TRUE(writePcmWave(source, 48'000, 1, 128, 8'192));
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const auto kContent = 0.25f / std::sqrt(2.0f);
+    auto snapshot = makeTestSnapshot();
+    auto audio = makeAudioTrack("track:source");
+    audio.panLaw = "unityCenterStereo";
+    AudioClipSpec clip;
+    clip.id = "clip:source";
+    clip.path = source.getFullPathName();
+    clip.startTick = 20;
+    clip.sourceSampleRate = 48'000;
+    clip.sourceEndFrame = 128;
+    clip.durationFrames = 128;
+    clip.durationSampleRate = 48'000;
+    audio.audioClips.push_back(clip);
+    auto target = makeAudioTrack("track:target");
+    target.panLaw = "unityCenterStereo";
+    target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+    snapshot.graph.tracks = {audio, target};
+    snapshot.graph.mixer.sidechainSends.push_back(
+        {"send:sidechain", "track:source", "fx:target", 0.0, SendPositionSpec::postFader, true});
+    snapshot.graph.automation = {{AutomationTargetKind::sidechainSendLevel,
+                                  "send:sidechain",
+                                  {},
+                                  AutomationInterpolationSpec::step,
+                                  {{0, 0.0}, {24, -6.020599913}}}};
+    TimelineEngine engine(true);
+    juce::String error;
+    ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000.0, 64, error)) << error;
+    ASSERT_TRUE(engine.play());
+    juce::AudioBuffer<float> output(2, 704);
+    output.clear();
+
+    // Act: the clip pulse spans tick 20 (sample 500) past the step boundary at
+    // tick 24 (sample 600), which halves the automated auxiliary gain.
+    engine.mix(output.getArrayOfWritePointers(), 2, 704);
+
+    // Assert
+    const auto unity = 2.0f * kContent;
+    const auto halved = 1.5f * kContent;
+    EXPECT_NEAR(output.getSample(0, 599), unity, 0.002f);
+    EXPECT_NEAR(output.getSample(0, 600), halved, 0.002f);
+    EXPECT_NEAR(output.getSample(1, 599), unity, 0.002f);
+    EXPECT_NEAR(output.getSample(1, 600), halved, 0.002f);
+
+    // Assert: the offline renderer evaluates the same lane on the same samples.
+    OfflineRenderer::Result result;
+    const auto destination = directory.get().getChildFile("automated-render.wav");
+    ASSERT_TRUE(renderTestSnapshot(snapshot.graph, formats, destination, 0, 48, 48'000, 64, false,
+                                   result, error))
+        << error;
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(destination));
+    ASSERT_NE(reader, nullptr);
+    ASSERT_GT(reader->lengthInSamples, 600);
+    juce::AudioBuffer<float> rendered(2, 601);
+    ASSERT_TRUE(reader->read(&rendered, 0, rendered.getNumSamples(), 0, true, true));
+    EXPECT_NEAR(rendered.getSample(0, 599), unity, 0.002f);
+    EXPECT_NEAR(rendered.getSample(0, 600), halved, 0.002f);
+    EXPECT_NEAR(rendered.getSample(0, 599), output.getSample(0, 599), 0.00001f);
+    EXPECT_NEAR(rendered.getSample(0, 600), output.getSample(0, 600), 0.00001f);
+}
+
 TEST(MixerRoutingTest, RejectsCyclicSidechainRoutes) {
     // Arrange
     juce::AudioFormatManager formats;

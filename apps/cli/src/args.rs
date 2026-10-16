@@ -1594,24 +1594,27 @@ pub enum AutomationCommand {
 #[derive(Debug, Args)]
 pub struct AutomationTargetArgs {
     /// Track fader owner.
-    #[arg(long, conflicts_with_all = ["bus_id", "master", "send_id", "device_id"])]
+    #[arg(long, conflicts_with_all = ["bus_id", "master", "send_id", "sidechain_send_id", "device_id"])]
     pub track_id: Option<String>,
     /// Group or Return fader owner.
-    #[arg(long, conflicts_with_all = ["master", "send_id", "device_id"])]
+    #[arg(long, conflicts_with_all = ["master", "send_id", "sidechain_send_id", "device_id"])]
     pub bus_id: Option<String>,
     /// Master gain.
-    #[arg(long, conflicts_with_all = ["send_id", "device_id"])]
+    #[arg(long, conflicts_with_all = ["send_id", "sidechain_send_id", "device_id"])]
     pub master: bool,
     /// Parallel route level.
-    #[arg(long, conflicts_with = "device_id")]
+    #[arg(long, conflicts_with_all = ["device_id", "sidechain_send_id"])]
     pub send_id: Option<String>,
+    /// Sidechain route level.
+    #[arg(long, conflicts_with_all = ["device_id", "send_id"])]
+    pub sidechain_send_id: Option<String>,
     /// VST3 instrument or effect ID.
     #[arg(long, requires = "parameter_id", conflicts_with = "parameter")]
     pub device_id: Option<String>,
     /// Stable VST3 parameter ID from device parameter list.
     #[arg(long, requires = "device_id", conflicts_with = "parameter")]
     pub parameter_id: Option<String>,
-    /// Mixer parameter: volume/pan for Track, gain/pan for Bus, gain for Master, level for Send.
+    /// Mixer parameter: volume/pan for Track, gain/pan for Bus, gain for Master, level for Send or Sidechain Send.
     #[arg(long, value_parser = ["volume", "pan", "gain", "level"])]
     pub parameter: Option<String>,
 }
@@ -1624,39 +1627,45 @@ impl AutomationTargetArgs {
             self.bus_id,
             self.master,
             self.send_id,
+            self.sidechain_send_id,
             self.device_id,
             self.parameter_id,
             self.parameter.as_deref(),
         ) {
-            (Some(track_id), None, false, None, None, None, Some("volume")) => {
+            (Some(track_id), None, false, None, None, None, None, Some("volume")) => {
                 Ok(AutomationTarget::TrackMix {
                     track_id,
                     parameter: TrackMixParameter::Volume,
                 })
             }
-            (Some(track_id), None, false, None, None, None, Some("pan")) => {
+            (Some(track_id), None, false, None, None, None, None, Some("pan")) => {
                 Ok(AutomationTarget::TrackMix {
                     track_id,
                     parameter: TrackMixParameter::Pan,
                 })
             }
-            (None, Some(bus_id), false, None, None, None, Some("gain")) => {
+            (None, Some(bus_id), false, None, None, None, None, Some("gain")) => {
                 Ok(AutomationTarget::BusMix {
                     bus_id,
                     parameter: BusMixParameter::Gain,
                 })
             }
-            (None, Some(bus_id), false, None, None, None, Some("pan")) => {
+            (None, Some(bus_id), false, None, None, None, None, Some("pan")) => {
                 Ok(AutomationTarget::BusMix {
                     bus_id,
                     parameter: BusMixParameter::Pan,
                 })
             }
-            (None, None, true, None, None, None, Some("gain")) => Ok(AutomationTarget::MasterGain),
-            (None, None, false, Some(send_id), None, None, Some("level")) => {
+            (None, None, true, None, None, None, None, Some("gain")) => {
+                Ok(AutomationTarget::MasterGain)
+            }
+            (None, None, false, Some(send_id), None, None, None, Some("level")) => {
                 Ok(AutomationTarget::SendLevel { send_id })
             }
-            (None, None, false, None, Some(device_id), Some(parameter_id), None) => {
+            (None, None, false, None, Some(sidechain_send_id), None, None, Some("level")) => {
+                Ok(AutomationTarget::SidechainSendLevel { sidechain_send_id })
+            }
+            (None, None, false, None, None, Some(device_id), Some(parameter_id), None) => {
                 Ok(AutomationTarget::DeviceParameter {
                     device_id,
                     parameter_id,
@@ -1669,7 +1678,7 @@ impl AutomationTargetArgs {
 
 #[derive(Debug, Args)]
 pub struct AutomationListArgs {
-    /// Filter lanes owned by this Track, including its devices and sends.
+    /// Filter lanes owned by this Track, including its devices, sends, and sidechain sends.
     #[arg(long, conflicts_with_all = ["bus_id", "master"])]
     pub track_id: Option<String>,
     /// Filter lanes owned by this Group or Return.
@@ -3879,6 +3888,22 @@ mod tests {
             .unwrap(),
         );
         let list = wire(Cli::try_parse_from(["riffra", "automation", "list"]).unwrap());
+        let sidechain = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "automation",
+                "set",
+                "--sidechain-send-id",
+                "sidechain:1",
+                "--parameter",
+                "level",
+                "--interpolation",
+                "linear",
+                "--points-json",
+                "[]",
+            ])
+            .unwrap(),
+        );
 
         // Assert
         assert_eq!(
@@ -3890,6 +3915,10 @@ mod tests {
         assert_eq!(
             device.params["target"],
             json!({"kind":"deviceParameter","deviceId":"fx","parameterId":"stable"})
+        );
+        assert_eq!(
+            sidechain.params["target"],
+            json!({"kind":"sidechainSendLevel","sidechainSendId":"sidechain:1"})
         );
         assert_eq!(list.name, "automation.list");
         assert!(
@@ -3910,6 +3939,7 @@ mod tests {
             bus_id: None,
             master: true,
             send_id: None,
+            sidechain_send_id: None,
             device_id: None,
             parameter_id: None,
             parameter: Some("pan".into()),

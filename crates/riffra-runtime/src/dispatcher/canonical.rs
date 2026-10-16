@@ -824,6 +824,14 @@ fn automation_lanes(
                     .iter()
                     .any(|send| send.id == *send_id && send.track_id == *id)
             }
+            (
+                Some(EffectOwner::Track { id }),
+                AutomationTarget::SidechainSendLevel { sidechain_send_id },
+            ) => arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .any(|send| send.id == *sidechain_send_id && send.source_track_id == *id),
             (Some(owner), AutomationTarget::DeviceParameter { device_id, .. }) => {
                 arrangement.device(owner, device_id).is_ok()
             }
@@ -838,7 +846,10 @@ fn automation_lanes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riffra_core::{AutomationPoint, EffectOwner, TimelineTick, Track, TrackMixParameter};
+    use riffra_core::{
+        AutomationPoint, EffectOwner, SendPosition, SidechainSend, TimelineTick, Track,
+        TrackMixParameter,
+    };
 
     #[test]
     fn automation_read_resolves_targets_and_lists_channel_ownership() {
@@ -848,6 +859,18 @@ mod tests {
             .arrangement
             .tracks
             .push(Track::audio("track:1".into(), "Audio".into()));
+        session
+            .arrangement
+            .mixer
+            .sidechain_sends
+            .push(SidechainSend {
+                id: "sidechain:1".into(),
+                source_track_id: "track:1".into(),
+                target_device_id: "fx:target".into(),
+                level_db: -6.0,
+                position: SendPosition::PostFader,
+                enabled: true,
+            });
         let pan = AutomationTarget::TrackMix {
             track_id: "track:1".into(),
             parameter: TrackMixParameter::Pan,
@@ -873,6 +896,18 @@ mod tests {
                     value: -6.0,
                 }],
             },
+            AutomationLane {
+                id: "sidechain".into(),
+                target: AutomationTarget::SidechainSendLevel {
+                    sidechain_send_id: "sidechain:1".into(),
+                },
+                interpolation: AutomationInterpolation::Linear,
+                points: vec![AutomationPoint {
+                    id: "sidechain-point".into(),
+                    tick: TimelineTick(0),
+                    value: 0.0,
+                }],
+            },
         ];
 
         // Act
@@ -889,11 +924,13 @@ mod tests {
         // Assert
         assert_eq!(
             all.iter().map(|lane| lane.id.as_str()).collect::<Vec<_>>(),
-            ["master", "pan"]
+            ["master", "pan", "sidechain"]
         );
-        assert_eq!(track, lane);
-        assert_eq!(track.len(), 1);
+        assert_eq!(lane.len(), 1);
+        assert_eq!(lane[0].id, "pan");
+        assert_eq!(track.len(), 2);
         assert_eq!(track[0].id, "pan");
+        assert_eq!(track[1].id, "sidechain");
         assert!(
             automation_lane(
                 &session,

@@ -128,9 +128,13 @@ bool alignedEffectsChain(std::shared_ptr<PluginChain>& chain, const bool shared,
     return chain->prepareMainInputDelays(delays, error);
 }
 
+AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
+                                    AutomationTargetKind kind, const juce::String& id);
+
 /// Creates the mixer routes feeding every prepared auxiliary input.
-bool appendSidechainRoutes(PreparedTimeline& prepared, PluginChain& chain,
-                           const std::vector<SidechainAlignment>& entries, juce::String& error) {
+bool appendSidechainRoutes(const ExecutionGraph& graph, PreparedTimeline& prepared,
+                           PluginChain& chain, const std::vector<SidechainAlignment>& entries,
+                           juce::String& error) {
     for (const auto& entry : entries) {
         auto* destination = chain.sidechainBuffer(entry.deviceId);
         for (const auto* send : entry.sends) {
@@ -144,6 +148,8 @@ bool appendSidechainRoutes(PreparedTimeline& prepared, PluginChain& chain,
             route->destination = destination;
             route->gain.store(juce::Decibels::decibelsToGain(static_cast<float>(send->levelDb)));
             route->audible = !source->muted;
+            route->levelAutomation = prepareAutomation(
+                graph, prepared, AutomationTargetKind::sidechainSendLevel, send->id);
             if (!prepareRouteDelay(route->delay, entry.alignedLatency - source->routeLatencySamples,
                                    error))
                 return false;
@@ -183,7 +189,7 @@ AutomationRuntime prepareLane(const AutomationLaneSpec& lane, const PreparedTime
 }
 
 AutomationRuntime prepareAutomation(const ExecutionGraph& graph, const PreparedTimeline& prepared,
-                                    const AutomationTargetKind kind, const juce::String& id = {}) {
+                                    const AutomationTargetKind kind, const juce::String& id) {
     for (const auto& lane : graph.automation)
         if (lane.kind == kind && lane.id == id) return prepareLane(lane, prepared);
     return {};
@@ -638,7 +644,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                                      alignmentDelays(entries), outputSampleRate, maximumBlockSize,
                                      processingMode, track->id + "/track-effect", error))
                 return false;
-            if (!appendSidechainRoutes(*prepared, runtime.effects(), entries, error)) return false;
+            if (!appendSidechainRoutes(graph, *prepared, runtime.effects(), entries, error))
+                return false;
             runtime.pluginDelaySamples = runtime.pluginLatencySamples();
             runtime.routeLatencySamples = sourceLatency + runtime.pluginDelaySamples;
             runtime.postEffectCompensationDelaySamples = runtime.routeLatencySamples;
@@ -713,7 +720,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                            juce::String& error) {
     auto& mixer = prepared.mixer;
     mixer.masterGainAutomation =
-        prepareAutomation(graph, prepared, AutomationTargetKind::masterGain);
+        prepareAutomation(graph, prepared, AutomationTargetKind::masterGain, {});
     const auto blockSize = prepared.preparedBlockSize;
     const auto sampleRate = prepared.outputSampleRate;
     mixer.masterInput.setSize(2, blockSize);
@@ -859,7 +866,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                  graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
                                  blockSize, mode, bus.id + "/bus-effect", error))
             return false;
-        if (!appendSidechainRoutes(prepared, *bus.effects, entries, error)) return false;
+        if (!appendSidechainRoutes(graph, prepared, *bus.effects, entries, error)) return false;
     }
     for (auto& bus : mixer.buses) {
         const auto* spec = busSpec(bus->id);
@@ -879,7 +886,8 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                                  graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
                                  blockSize, mode, "master-effect", error))
             return false;
-        if (!appendSidechainRoutes(prepared, *mixer.masterEffects, entries, error)) return false;
+        if (!appendSidechainRoutes(graph, prepared, *mixer.masterEffects, entries, error))
+            return false;
     }
     for (auto& route : mixer.trackRoutes) {
         const auto target =

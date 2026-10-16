@@ -97,6 +97,18 @@ export function automationDevices(session: CreativeSession, owner: EffectOwner) 
   return devices;
 }
 
+function sidechainTargetName(arrangement: Arrangement, deviceId: string): string | undefined {
+  for (const track of arrangement.tracks) {
+    const effect = track.effects.find((effect) => effect.id === deviceId);
+    if (effect) return effect.name;
+  }
+  for (const bus of arrangement.mixer.buses) {
+    const effect = bus.effects.find((effect) => effect.id === deviceId);
+    if (effect) return effect.name;
+  }
+  return arrangement.mixer.masterEffects.find((effect) => effect.id === deviceId)?.name;
+}
+
 export function automationOptions(
   session: CreativeSession,
   owner: EffectOwner,
@@ -128,6 +140,19 @@ export function automationOptions(
         options.push({
           target: { kind: 'sendLevel', sendId: send.id },
           name: `Send · ${destination?.name ?? send.returnBusId}`,
+          staticValue: send.levelDb,
+          min: -90,
+          max: 24,
+          unit: 'dB',
+        });
+      }
+      for (const send of arrangement.mixer.sidechainSends.filter(
+        (send) => send.sourceTrackId === track.id,
+      )) {
+        const deviceName = sidechainTargetName(arrangement, send.targetDeviceId);
+        options.push({
+          target: { kind: 'sidechainSendLevel', sidechainSendId: send.id },
+          name: `Sidechain · ${deviceName ?? send.targetDeviceId}`,
           staticValue: send.levelDb,
           min: -90,
           max: 24,
