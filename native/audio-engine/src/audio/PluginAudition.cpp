@@ -85,7 +85,7 @@ void PluginAudition::mix(const float* const input, float* const* outputChannels,
     std::array<float*, 2> render{buffer.getWritePointer(0), buffer.getWritePointer(1)};
     const std::array<const float*, 1> inputs{input};
     const auto inputCount = !current->instrument && input != nullptr ? 1 : 0;
-    current->rack->process(inputs.data(), inputCount, render.data(), 2, numSamples);
+    current->rack->process(inputs.data(), inputCount, nullptr, 0, render.data(), 2, numSamples);
     const auto stopping = current->stopping.load(std::memory_order_acquire);
     for (int channel = 0; channel < outputChannelCount; ++channel) {
         auto* output = outputChannels[channel];

@@ -158,6 +158,69 @@ private:
     InstrumentTrace& trace;
 };
 
+struct SidechainTrace final {
+    int bufferChannels = 0;
+    int auxBusChannels = 0;
+    float auxPeak = 0.0f;
+};
+
+class TestSidechainProcessor final : public juce::AudioProcessor {
+public:
+    TestSidechainProcessor(bool monoAuxSupported, bool stereoAuxSupported,
+                           SidechainTrace& processorTrace)
+        : AudioProcessor(BusesProperties()
+                             .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                             .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)
+                             .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+          trace(processorTrace),
+          acceptsMonoAux(monoAuxSupported),
+          acceptsStereoAux(stereoAuxSupported) {}
+
+    void prepareToPlay(double, int) override {}
+    void releaseResources() override {}
+    bool isBusesLayoutSupported(const BusesLayout& layout) const override {
+        if (layout.getMainInputChannelSet() != juce::AudioChannelSet::stereo() ||
+            layout.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+            return false;
+        const auto& aux = layout.inputBuses[1];
+        if (aux.isDisabled()) return true;
+        if (aux == juce::AudioChannelSet::mono()) return acceptsMonoAux;
+        if (aux == juce::AudioChannelSet::stereo()) return acceptsStereoAux;
+        return false;
+    }
+    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override {
+        trace.bufferChannels = buffer.getNumChannels();
+        trace.auxBusChannels = getChannelCountOfBus(true, 1);
+        trace.auxPeak = 0.0f;
+        if (trace.auxBusChannels <= 0) return;
+        auto auxBus = getBusBuffer(buffer, true, 1);
+        trace.auxPeak = auxBus.getMagnitude(0, 0, buffer.getNumSamples());
+        auto outputBus = getBusBuffer(buffer, false, 0);
+        for (int channel = 0; channel < outputBus.getNumChannels(); ++channel)
+            outputBus.addFrom(channel, 0, auxBus, juce::jmin(channel, trace.auxBusChannels - 1), 0,
+                              buffer.getNumSamples());
+    }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    const juce::String getName() const override { return "Riffra Sidechain Test Processor"; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+    void getStateInformation(juce::MemoryBlock&) override {}
+    void setStateInformation(const void*, int) override {}
+
+private:
+    SidechainTrace& trace;
+    bool acceptsMonoAux = false;
+    bool acceptsStereoAux = false;
+};
+
 struct ChainTrace final {
     int id = 0;
     float gain = 1.0f;
@@ -266,13 +329,16 @@ public:
 
     static std::unique_ptr<PluginRack> install(std::unique_ptr<juce::AudioProcessor> processor,
                                                double sampleRate, int blockSize,
-                                               juce::String& error, bool isInstrument = false) {
+                                               juce::String& error, bool isInstrument = false,
+                                               bool sidechain = false) {
         if (processor == nullptr) {
             error = "Test processor was null.";
             return {};
         }
-        if (const auto configurationError = PluginRack::configureProcessor(
-                *processor, sampleRate, blockSize, PluginProcessingMode::realtime)) {
+        PluginRack::ProcessorLayout layout;
+        if (const auto configurationError =
+                PluginRack::configureProcessor(*processor, sampleRate, blockSize,
+                                               PluginProcessingMode::realtime, sidechain, layout)) {
             error = configurationError->message;
             return {};
         }
@@ -294,7 +360,8 @@ public:
                                        std::memory_order_release);
         rack->cachedHasEditor.store(processor->hasEditor(), std::memory_order_release);
         rack->plugin = std::move(processor);
-        rack->controlBuffer.setSize(2, blockSize);
+        rack->adoptProcessorLayout(layout, blockSize);
+        rack->controlBuffer.setSize(rack->processChannelCount, blockSize);
         rack->preparedLatencySamples = std::max(0, rack->plugin->getLatencySamples());
         const auto tail = rack->plugin->getTailLengthSeconds();
         rack->preparedTailSamples =

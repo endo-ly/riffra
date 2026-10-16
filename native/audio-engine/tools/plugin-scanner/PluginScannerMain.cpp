@@ -24,7 +24,7 @@ juce::var makeLoadTestResult(const juce::String& path, const bool success,
 std::optional<juce::String> validateInstanceCreation(const juce::String& path) {
     riffra::PluginRack rack;
     if (const auto loadError =
-            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime))
+            rack.load(path, 44100.0, 512, riffra::PluginProcessingMode::realtime, false))
         return loadError->message;
     return std::nullopt;
 }

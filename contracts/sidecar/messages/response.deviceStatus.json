@@ -10,7 +10,14 @@
       "parameters": true,
       "state": true,
       "presets": true,
-      "editor": false
+      "editor": false,
+      "sidechain": {
+        "available": true,
+        "mono": false,
+        "stereo": true,
+        "channels": 2,
+        "reason": null
+      }
     }
   }
 }

@@ -450,6 +450,10 @@ PluginRackStatus PluginRack::status() const {
         pendingMidi.droppedEvents(),
         loadCount.load(std::memory_order_acquire),
         destroyCount.load(std::memory_order_acquire),
+        {pluginSidechainAvailable.load(std::memory_order_acquire),
+         pluginSidechainMono.load(std::memory_order_acquire),
+         pluginSidechainStereo.load(std::memory_order_acquire),
+         pluginAuxInputChannels.load(std::memory_order_acquire), sidechainUnavailableReason},
     };
 }
 

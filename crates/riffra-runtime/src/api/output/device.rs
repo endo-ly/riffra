@@ -18,13 +18,27 @@ pub struct DeviceInspection {
 }
 
 /// Host-visible capabilities of one Track Device.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, TS)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCapabilities {
     pub parameters: bool,
     pub state: bool,
     pub presets: bool,
     pub editor: bool,
+    pub sidechain: DeviceSidechainCapability,
+}
+
+/// Auxiliary input support of one Track Device.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSidechainCapability {
+    pub available: bool,
+    pub mono: bool,
+    pub stereo: bool,
+    pub channels: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
 }
 
 /// One normalized discrete value and its plugin-provided display text.

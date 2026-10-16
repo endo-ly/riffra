@@ -79,6 +79,7 @@ export type { DeviceParameterGetParams } from './DeviceParameterGetParams';
 export type { DeviceParameterInfo } from './DeviceParameterInfo';
 export type { DeviceParameterSetParams } from './DeviceParameterSetParams';
 export type { DeviceParams } from './DeviceParams';
+export type { DeviceSidechainCapability } from './DeviceSidechainCapability';
 export type { DropoutInformation } from './DropoutInformation';
 export type { EffectAddParams } from './EffectAddParams';
 export type { EffectDevice } from './EffectDevice';

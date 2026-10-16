@@ -11,7 +11,7 @@ std::unique_ptr<Vst3InstrumentRuntime> Vst3InstrumentRuntime::create(
     const juce::String& path, const double sampleRate, const int blockSize,
     const PluginProcessingMode mode, const PluginStateSpec& persistedState, juce::String& error) {
     auto rack = std::make_unique<PluginRack>();
-    if (const auto loadError = rack->load(path, sampleRate, blockSize, mode)) {
+    if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, false)) {
         error = loadError->scope + ": " + loadError->message;
         return nullptr;
     }
@@ -44,7 +44,7 @@ void Vst3InstrumentRuntime::process(float* const* outputChannels, const int outp
                     juce::FloatVectorOperations::clear(outputChannels[channel], numSamples);
         return;
     }
-    rack->process(nullptr, 0, outputChannels, outputChannelCount, numSamples, midi,
+    rack->process(nullptr, 0, nullptr, 0, outputChannels, outputChannelCount, numSamples, midi,
                   context.automation, context.timelineSample, context.playing);
 }
 

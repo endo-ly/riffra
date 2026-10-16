@@ -18,7 +18,7 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values, const double
             return false;
         }
         auto rack = std::make_unique<PluginRack>();
-        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode)) {
+        if (const auto loadError = rack->load(path, sampleRate, blockSize, mode, false)) {
             error = runtimeRole + " device " + id + " failed at " + loadError->scope + ": " +
                     loadError->message;
             return false;
@@ -89,9 +89,9 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
             ++lastBinding;
         const auto deviceAutomation = std::span<PluginParameterAutomation>(
             first, static_cast<std::size_t>(std::distance(first, lastBinding)));
-        devices[index].rack->process(currentInput, currentInputCount, targetChannels, targetCount,
-                                     sampleCount, index == 0 ? midi : nullptr, deviceAutomation,
-                                     timelineSample, playing);
+        devices[index].rack->process(currentInput, currentInputCount, nullptr, 0, targetChannels,
+                                     targetCount, sampleCount, index == 0 ? midi : nullptr,
+                                     deviceAutomation, timelineSample, playing);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }

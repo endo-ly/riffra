@@ -115,12 +115,17 @@ PluginDescriptionCache& pluginDescriptionCache() {
 
 juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& processor,
                                                       const juce::AudioChannelSet& input,
-                                                      const juce::AudioChannelSet& output) {
+                                                      const juce::AudioChannelSet& output,
+                                                      const int auxBusIndex,
+                                                      const int auxChannels) {
     auto layout = processor.getBusesLayout();
     for (auto& bus : layout.inputBuses) bus = juce::AudioChannelSet::disabled();
     for (auto& bus : layout.outputBuses) bus = juce::AudioChannelSet::disabled();
     if (!layout.inputBuses.isEmpty()) layout.inputBuses.set(0, input);
     if (!layout.outputBuses.isEmpty()) layout.outputBuses.set(0, output);
+    if (auxBusIndex >= 0 && auxChannels > 0 && auxBusIndex < layout.inputBuses.size())
+        layout.inputBuses.set(auxBusIndex, auxChannels == 1 ? juce::AudioChannelSet::mono()
+                                                            : juce::AudioChannelSet::stereo());
     return layout;
 }
 
@@ -128,7 +133,8 @@ juce::AudioProcessor::BusesLayout layoutWithMainBuses(juce::AudioProcessor& proc
 
 std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const double sampleRate,
                                                 const int blockSize,
-                                                const PluginProcessingMode mode) {
+                                                const PluginProcessingMode mode,
+                                                const bool sidechainInput) {
     const juce::File file(path);
     if (path.isEmpty() || !file.exists()) {
         return PluginLoadError{
@@ -171,7 +177,9 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
         };
     }
 
-    if (auto configurationError = configureProcessor(*candidate, sampleRate, blockSize, mode))
+    ProcessorLayout layout;
+    if (auto configurationError =
+            configureProcessor(*candidate, sampleRate, blockSize, mode, sidechainInput, layout))
         return configurationError;
 
     auto candidateProgramCount = 0;
@@ -205,7 +213,8 @@ std::optional<PluginLoadError> PluginRack::load(const juce::String& path, const 
     staticState.reset();
     staticStateDirty.store(true, std::memory_order_release);
     automationActive.store(false, std::memory_order_release);
-    controlBuffer.setSize(2, blockSize);
+    adoptProcessorLayout(layout, blockSize);
+    controlBuffer.setSize(processChannelCount, blockSize);
     preparedLatencySamples = std::max(0, plugin->getLatencySamples());
     const auto tailSeconds = plugin->getTailLengthSeconds();
     preparedTailSamples =
@@ -243,10 +252,9 @@ PluginRack::~PluginRack() {
     }
 }
 
-std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcessor& processor,
-                                                              const double sampleRate,
-                                                              const int blockSize,
-                                                              const PluginProcessingMode mode) {
+std::optional<PluginLoadError> PluginRack::configureProcessor(
+    juce::AudioProcessor& processor, const double sampleRate, const int blockSize,
+    const PluginProcessingMode mode, const bool sidechainInput, ProcessorLayout& layout) {
     if (!std::isfinite(sampleRate) || sampleRate <= 0.0 || blockSize <= 0) {
         return PluginLoadError{
             "pluginInitialization",
@@ -261,23 +269,65 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
     }
 
     const bool hasInputBus = processor.getBusCount(true) > 0;
-    std::vector<juce::AudioProcessor::BusesLayout> candidates;
-    if (hasInputBus) {
-        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::stereo(),
-                                                 juce::AudioChannelSet::stereo()));
-        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::mono(),
-                                                 juce::AudioChannelSet::stereo()));
-    } else {
-        candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::disabled(),
-                                                 juce::AudioChannelSet::stereo()));
+    // The auxiliary input is the first input bus published after the main input bus.
+    const auto auxBusIndex = processor.getBusCount(true) >= 2 ? 1 : -1;
+    const auto acceptsLayout = [&](const int mainChannels, const int auxChannels) {
+        return processor.checkBusesLayoutSupported(layoutWithMainBuses(
+            processor,
+            mainChannels == 1 ? juce::AudioChannelSet::mono() : juce::AudioChannelSet::stereo(),
+            juce::AudioChannelSet::stereo(), auxBusIndex, auxChannels));
+    };
+    layout.sidechain.available = auxBusIndex >= 0 && hasInputBus;
+    layout.sidechain.mono =
+        layout.sidechain.available && (acceptsLayout(2, 1) || acceptsLayout(1, 1));
+    layout.sidechain.stereo =
+        layout.sidechain.available && (acceptsLayout(2, 2) || acceptsLayout(1, 2));
+    if (!layout.sidechain.available) {
+        layout.sidechain.reason = "The VST3 does not expose an auxiliary input bus.";
+    } else if (!layout.sidechain.mono && !layout.sidechain.stereo) {
+        layout.sidechain.reason = "The VST3 does not support a mono or stereo auxiliary input.";
     }
-    const auto selected = std::find_if(
-        candidates.begin(), candidates.end(),
-        [&processor](const auto& layout) { return processor.checkBusesLayoutSupported(layout); });
-    if (selected == candidates.end() || !processor.setBusesLayout(*selected)) {
+
+    std::optional<juce::AudioProcessor::BusesLayout> selected;
+    if (sidechainInput) {
+        if (layout.sidechain.available) {
+            for (const auto mainChannels : {2, 1}) {
+                for (const auto auxChannels : {2, 1}) {
+                    auto candidate = layoutWithMainBuses(
+                        processor,
+                        mainChannels == 1 ? juce::AudioChannelSet::mono()
+                                          : juce::AudioChannelSet::stereo(),
+                        juce::AudioChannelSet::stereo(), auxBusIndex, auxChannels);
+                    if (processor.checkBusesLayoutSupported(candidate)) {
+                        selected = candidate;
+                        break;
+                    }
+                }
+                if (selected) break;
+            }
+        }
+    } else {
+        std::vector<juce::AudioProcessor::BusesLayout> candidates;
+        if (hasInputBus) {
+            candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::stereo(),
+                                                     juce::AudioChannelSet::stereo(), -1, 0));
+            candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::mono(),
+                                                     juce::AudioChannelSet::stereo(), -1, 0));
+        } else {
+            candidates.push_back(layoutWithMainBuses(processor, juce::AudioChannelSet::disabled(),
+                                                     juce::AudioChannelSet::stereo(), -1, 0));
+        }
+        const auto found =
+            std::find_if(candidates.begin(), candidates.end(), [&processor](const auto& candidate) {
+                return processor.checkBusesLayoutSupported(candidate);
+            });
+        if (found != candidates.end()) selected = *found;
+    }
+    if (!selected || !processor.setBusesLayout(*selected)) {
         return PluginLoadError{
             "pluginLayout",
-            hasInputBus
+            sidechainInput ? "The VST3 does not support a mono or stereo auxiliary input."
+            : hasInputBus
                 ? "The VST3 supports neither stereo-to-stereo nor mono-to-stereo processing."
                 : "The VST3 does not support stereo output.",
         };
@@ -303,7 +353,37 @@ std::optional<PluginLoadError> PluginRack::configureProcessor(juce::AudioProcess
             "VST3 initialization failed with an unknown exception.",
         };
     }
+
+    // Record where the enabled buses publish their channels in the process block buffer.
+    for (int channel = 0; channel < processor.getChannelCountOfBus(true, auxBusIndex); ++channel)
+        layout.auxInputOffsets.push_back(
+            processor.getChannelIndexInProcessBlockBuffer(true, auxBusIndex, channel));
+    layout.sidechain.channels = static_cast<int>(layout.auxInputOffsets.size());
+    auto inputChannels = 0;
+    for (int bus = 0; bus < processor.getBusCount(true); ++bus)
+        inputChannels += processor.getChannelCountOfBus(true, bus);
+    auto outputChannels = 0;
+    for (int bus = 0; bus < processor.getBusCount(false); ++bus)
+        outputChannels += processor.getChannelCountOfBus(false, bus);
+    layout.processChannels = juce::jmax(inputChannels, outputChannels);
     return std::nullopt;
+}
+
+void PluginRack::adoptProcessorLayout(const ProcessorLayout& layout, const int blockSize) noexcept {
+    auxInputOffsets = layout.auxInputOffsets;
+    // The engine presents stereo output to every rack; a narrower plugin layout
+    // keeps silent trailing channels in the process block buffer.
+    processChannelCount = juce::jmax(layout.processChannels, 2);
+    processPointers.assign(static_cast<std::size_t>(processChannelCount), nullptr);
+    auxInputBuffer.setSize(static_cast<int>(layout.auxInputOffsets.size()), blockSize, false, true,
+                           false);
+    pluginAuxInputChannels.store(static_cast<int>(layout.auxInputOffsets.size()),
+                                 std::memory_order_release);
+    pluginSidechainAvailable.store(layout.sidechain.available, std::memory_order_release);
+    pluginSidechainMono.store(layout.sidechain.mono, std::memory_order_release);
+    pluginSidechainStereo.store(layout.sidechain.stereo, std::memory_order_release);
+    const juce::ScopedLock guard(statusLock);
+    sidechainUnavailableReason = layout.sidechain.reason;
 }
 
 void PluginRack::release() noexcept {
@@ -372,6 +452,7 @@ bool PluginRack::processControlBlock() noexcept {
 }
 
 void PluginRack::process(const float* const* inputChannelData, const int numInputChannels,
+                         const float* const* auxInputChannelData, const int numAuxInputChannels,
                          float* const* outputChannelData, const int numOutputChannels,
                          const int numSamples, const juce::MidiBuffer* const timelineMidi,
                          std::span<PluginParameterAutomation> automation,
@@ -403,7 +484,58 @@ void PluginRack::process(const float* const* inputChannelData, const int numInpu
         if (outputChannelData[channel] != nullptr)
             juce::FloatVectorOperations::clear(outputChannelData[channel], numSamples);
 
-    juce::AudioBuffer<float> buffer(outputChannelData, numOutputChannels, numSamples);
+    jassert(numOutputChannels <= processChannelCount);
+    for (int channel = 0; channel < numOutputChannels; ++channel)
+        processPointers[channel] = outputChannelData[channel];
+    const auto auxChannels = static_cast<int>(auxInputOffsets.size());
+    if (auxChannels > 0) {
+        jassert(numSamples <= auxInputBuffer.getNumSamples());
+        const auto* firstSource = numAuxInputChannels > 0 && auxInputChannelData != nullptr
+                                      ? auxInputChannelData[0]
+                                      : nullptr;
+        const auto* secondSource = numAuxInputChannels > 1 && auxInputChannelData != nullptr
+                                       ? auxInputChannelData[1]
+                                       : nullptr;
+        if (auxChannels == 1) {
+            auto* target = auxInputBuffer.getWritePointer(0);
+            if (firstSource == nullptr && secondSource == nullptr) {
+                juce::FloatVectorOperations::clear(target, numSamples);
+            } else if (firstSource == nullptr) {
+                juce::FloatVectorOperations::copy(target, secondSource, numSamples);
+            } else if (secondSource == nullptr) {
+                juce::FloatVectorOperations::copy(target, firstSource, numSamples);
+            } else {
+                juce::FloatVectorOperations::add(target, firstSource, secondSource, numSamples);
+                juce::FloatVectorOperations::multiply(target, 0.5f, numSamples);
+            }
+        } else {
+            auto* firstTarget = auxInputBuffer.getWritePointer(0);
+            auto* secondTarget = auxInputBuffer.getWritePointer(1);
+            if (firstSource == nullptr && secondSource == nullptr) {
+                juce::FloatVectorOperations::clear(firstTarget, numSamples);
+                juce::FloatVectorOperations::clear(secondTarget, numSamples);
+            } else if (firstSource == nullptr) {
+                juce::FloatVectorOperations::copy(firstTarget, secondSource, numSamples);
+                juce::FloatVectorOperations::copy(secondTarget, secondSource, numSamples);
+            } else if (secondSource == nullptr) {
+                juce::FloatVectorOperations::copy(firstTarget, firstSource, numSamples);
+                juce::FloatVectorOperations::copy(secondTarget, firstSource, numSamples);
+            } else {
+                juce::FloatVectorOperations::copy(firstTarget, firstSource, numSamples);
+                juce::FloatVectorOperations::copy(secondTarget, secondSource, numSamples);
+            }
+        }
+        for (int channel = 0; channel < auxChannels; ++channel) {
+            const auto offset = auxInputOffsets[channel];
+            if (offset < numOutputChannels)
+                juce::FloatVectorOperations::copy(
+                    outputChannelData[offset], auxInputBuffer.getReadPointer(channel), numSamples);
+            else
+                processPointers[offset] = auxInputBuffer.getWritePointer(channel);
+        }
+    }
+
+    juce::AudioBuffer<float> buffer(processPointers.data(), processChannelCount, numSamples);
     processMidi.clear();
     if (panicPending.exchange(false, std::memory_order_acq_rel)) {
         for (int channel = 1; channel <= 16; ++channel) {

@@ -36,10 +36,10 @@ use riffra_runtime::{
     ArrangementProjectionOutcome, AudioDiagnostics, AudioDiagnosticsDevice, AudioDiagnosticsMute,
     AudioDiagnosticsOutput, AudioDiagnosticsRealtime, AudioDiagnosticsReport, AudioInstrumentFault,
     AudioMeterFrame, DeviceCapabilities, DeviceInspection, DeviceParameterChoice,
-    DeviceParameterInfo, PluginPresetInfo, PluginStateSnapshot, ProjectionDiagnostics,
-    RecordingFinalized, RecordingPhase, RuntimeProjectionState, RuntimeRestarted,
-    RuntimeStartupFinished, TrackAudioMeter, TrackEffectSummary, TrackSummary, TransportState,
-    TransportStatus,
+    DeviceParameterInfo, DeviceSidechainCapability, PluginPresetInfo, PluginStateSnapshot,
+    ProjectionDiagnostics, RecordingFinalized, RecordingPhase, RuntimeProjectionState,
+    RuntimeRestarted, RuntimeStartupFinished, TrackAudioMeter, TrackEffectSummary, TrackSummary,
+    TransportState, TransportStatus,
 };
 use riffra_runtime::{InstrumentCollection, InstrumentLibraryItem, InstrumentOrigin};
 use ts_rs::{Config, TS};
@@ -130,6 +130,7 @@ fn export_types() {
     DeviceInspection::export_all(&cfg).expect("DeviceInspection bindings");
     DeviceParameterChoice::export_all(&cfg).expect("DeviceParameterChoice bindings");
     DeviceParameterInfo::export_all(&cfg).expect("DeviceParameterInfo bindings");
+    DeviceSidechainCapability::export_all(&cfg).expect("DeviceSidechainCapability bindings");
     PluginPresetInfo::export_all(&cfg).expect("PluginPresetInfo bindings");
     PluginStateSnapshot::export_all(&cfg).expect("PluginStateSnapshot bindings");
     BootstrapState::export_all(&cfg).expect("BootstrapState bindings");

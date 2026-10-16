@@ -256,11 +256,17 @@ std::optional<DeviceStatusSpec> TimelineEngine::deviceStatus(const EffectOwnerSp
             if (rack == nullptr) return std::nullopt;
             const auto rackStatus = rack->status();
             const auto parameterCount = static_cast<std::uint32_t>(rack->parameterCount());
+            const auto& sidechain = rackStatus.sidechain;
             return DeviceStatusSpec{
                 rackStatus.name,
                 rackStatus.bypassed,
                 parameterCount,
-                {parameterCount > 0, true, rack->hasPrograms(), rack->hasEditor()},
+                {parameterCount > 0,
+                 true,
+                 rack->hasPrograms(),
+                 rack->hasEditor(),
+                 {sidechain.available, sidechain.mono, sidechain.stereo,
+                  static_cast<std::uint32_t>(sidechain.channels), sidechain.reason}},
             };
         });
 }
