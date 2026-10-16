@@ -185,6 +185,15 @@ juce::File RecordingSession::flushRaw() noexcept {
 }
 
 bool RecordingSession::finish(const bool processedSuccessfully, juce::String& error) {
+    return finishProducts(processedSuccessfully, true, error);
+}
+
+bool RecordingSession::finishRawOnly(juce::String& error) {
+    return finishProducts(true, false, error);
+}
+
+bool RecordingSession::finishProducts(const bool processedSuccessfully,
+                                      const bool processedRequired, juce::String& error) {
     if (finished) return true;
     finished = true;
     rawWriter.reset();
@@ -192,15 +201,16 @@ bool RecordingSession::finish(const bool processedSuccessfully, juce::String& er
     writerThread.stopThread(5000);
 
     const auto rawAvailable = getRawSamplesWritten() > 0 && rawPartial.existsAsFile();
-    const auto processedAvailable = processedSuccessfully && getProcessedSamplesWritten() > 0 &&
+    const auto processedAvailable = processedRequired && processedSuccessfully &&
+                                    getProcessedSamplesWritten() > 0 &&
                                     processedPartial.existsAsFile();
-    auto completed = rawAvailable && processedAvailable;
+    auto completed = rawAvailable && (!processedRequired || processedAvailable);
     if (!processedSuccessfully)
         error << "Processed recording generation failed; raw audio remains recoverable. ";
     if (!rawAvailable)
         error
             << "Raw recording contains no audio samples; its partial file was kept for diagnosis. ";
-    if (!processedAvailable)
+    if (processedRequired && !processedAvailable)
         error << "Processed recording contains no usable audio samples; its partial file was kept "
                  "for diagnosis. ";
     if (!rawPartial.existsAsFile()) {

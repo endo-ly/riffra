@@ -433,7 +433,7 @@ fn shared_render_conditions(
         ));
     }
 
-    let audible_tracks = audible_track_ids(session);
+    let audible_tracks = processing_track_ids(session);
     let source_sample_rate = session
         .arrangement
         .audio_clips
@@ -705,20 +705,23 @@ fn build_render_plan_with_conditions(
         {
             return Err(format!("Track is not registered: {track_id}"));
         }
-        let mut required_tracks = BTreeSet::from([track_id.to_owned()]);
-        let mut current = track_id;
-        while let Some(source) = render_session
-            .arrangement
-            .tracks
-            .iter()
-            .find(|track| track.id == current)
-            .and_then(|track| track.external_audio_source_track_id.as_deref())
-        {
-            if !required_tracks.insert(source.to_owned()) {
-                return Err("external audio route contains a cycle".into());
+        // Keep every Track's plugin graph so all independently rendered stems
+        // use the same project-wide PDC baseline. Soloing the selected Track
+        // silences the other Tracks' main outputs and their return Sends while
+        // their Sidechain routes stay audible.
+        for track in &mut render_session.arrangement.tracks {
+            track.solo = track.id == track_id;
+            if track.id == track_id {
+                track.muted = false;
             }
-            current = source;
         }
+        for bus in &mut render_session.arrangement.mixer.buses {
+            bus.solo = false;
+        }
+        let required_tracks = processing_track_ids(&render_session)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
         render_session
             .arrangement
             .audio_clips
@@ -727,17 +730,6 @@ fn build_render_plan_with_conditions(
             .arrangement
             .midi_clips
             .retain(|clip| required_tracks.contains(&clip.track_id));
-        // Keep every Track's plugin graph so all independently rendered stems
-        // use the same project-wide PDC baseline. Only the selected Track owns
-        // renderable content and reaches the final mix. Input dependencies retain
-        // their performance while remaining muted in the final mix.
-        for track in &mut render_session.arrangement.tracks {
-            track.muted = track.id != track_id;
-            track.solo = false;
-        }
-        for bus in &mut render_session.arrangement.mixer.buses {
-            bus.solo = false;
-        }
     }
 
     let (start_tick, end_tick) = shared_conditions.map_or_else(
@@ -773,18 +765,19 @@ fn build_render_plan_with_conditions(
         ));
     }
 
-    let audible_track_ids = audible_track_ids(&render_session);
+    let processing_tracks = processing_track_ids(&render_session);
+    let clip_audible = |track_id: &str, muted: bool| !muted && processing_tracks.contains(track_id);
     let audio_clips = render_session
         .arrangement
         .audio_clips
         .iter()
-        .filter(|clip| !clip.muted && audible_track_ids.contains(clip.track_id.as_str()))
+        .filter(|clip| clip_audible(&clip.track_id, clip.muted))
         .collect::<Vec<_>>();
     let midi_clips = render_session
         .arrangement
         .midi_clips
         .iter()
-        .filter(|clip| !clip.muted && audible_track_ids.contains(clip.track_id.as_str()))
+        .filter(|clip| clip_audible(&clip.track_id, clip.muted))
         .collect::<Vec<_>>();
     let clip_count = audio_clips.len() + midi_clips.len();
     if clip_count == 0 {
@@ -854,11 +847,11 @@ fn build_render_plan_with_conditions(
     })
 }
 
-fn audible_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
+fn processing_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
     let arrangement = &session.arrangement;
     let has_solo = arrangement.tracks.iter().any(|track| track.solo)
         || arrangement.mixer.buses.iter().any(|bus| bus.solo);
-    arrangement
+    let mut required = arrangement
         .tracks
         .iter()
         .filter(|track| {
@@ -872,16 +865,37 @@ fn audible_track_ids(session: &CreativeSession) -> BTreeSet<&str> {
             let selected =
                 !has_solo || track.solo || group.is_some_and(|bus| bus.solo && !bus.muted);
             let dry = selected && group.is_none_or(|bus| !bus.muted);
-            dry || arrangement.mixer.sends.iter().any(|send| {
-                send.track_id == track.id
-                    && send.enabled
-                    && arrangement.mixer.buses.iter().any(|bus| {
-                        bus.id == send.return_bus_id && !bus.muted && (selected || bus.solo)
-                    })
-            })
+            dry || arrangement
+                .mixer
+                .sidechain_sends
+                .iter()
+                .any(|send| send.enabled && send.source_track_id == track.id)
+                || arrangement.mixer.sends.iter().any(|send| {
+                    send.track_id == track.id
+                        && send.enabled
+                        && arrangement.mixer.buses.iter().any(|bus| {
+                            bus.id == send.return_bus_id && !bus.muted && (selected || bus.solo)
+                        })
+                })
         })
         .map(|track| track.id.as_str())
-        .collect()
+        .collect::<BTreeSet<_>>();
+    loop {
+        let sources = arrangement
+            .tracks
+            .iter()
+            .filter(|track| required.contains(track.id.as_str()))
+            .filter_map(|track| track.external_audio_source_track_id.as_deref())
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for source in sources {
+            changed |= required.insert(source);
+        }
+        if !changed {
+            break;
+        }
+    }
+    required
 }
 
 fn resolve_range(session: &CreativeSession, range: &RenderRange) -> Result<(u64, u64), String> {
@@ -957,7 +971,7 @@ fn validate_render_dependencies(
         ));
     }
 
-    let audible_tracks = audible_track_ids(session);
+    let audible_tracks = processing_track_ids(session);
     let midi_source_tracks = session
         .arrangement
         .midi_clips
@@ -1201,6 +1215,73 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn stem_keeps_sidechain_sources_and_their_external_inputs_without_unmuting_them() {
+        // Arrange
+        let root = std::env::temp_dir().join(format!(
+            "riffra-sidechain-stem-{}",
+            riffra_control::new_instance_id()
+        ));
+        let source = register_source(&root, "source", 48_000, 48_000);
+        let mut session = CreativeSession::new(1);
+        for id in ["target", "sidechain", "external", "muted", "unrelated"] {
+            session
+                .arrangement
+                .tracks
+                .push(Track::audio(id.into(), id.into()));
+            session.arrangement.audio_clips.push(AudioClip::full_source(
+                format!("clip:{id}"),
+                id.into(),
+                id.into(),
+                source.clone(),
+                TimelineTick(0),
+                48_000,
+                48_000,
+            ));
+        }
+        session.arrangement.tracks[1].external_audio_source_track_id = Some("external".into());
+        session.arrangement.tracks[3].muted = true;
+        session.arrangement.tracks[0].effects.push(
+            EffectDevice::new("fx:target".into(), "Target".into(), "missing.vst3".into()).unwrap(),
+        );
+        session.arrangement.mixer.sidechain_sends = ["sidechain", "muted"]
+            .into_iter()
+            .map(|id| riffra_core::SidechainSend {
+                id: format!("send:{id}"),
+                source_track_id: id.into(),
+                target_device_id: "fx:target".into(),
+                level_db: 0.0,
+                position: riffra_core::SendPosition::PostFader,
+                enabled: true,
+            })
+            .collect();
+
+        // Act
+        let plan = build_render_plan(
+            &root,
+            empty_catalog(),
+            &session,
+            1,
+            &RenderOptions {
+                track_id: Some("target".into()),
+                ..RenderOptions::default()
+            },
+        )
+        .unwrap();
+
+        // Assert: solo isolates the main output while sidechain dependencies keep content.
+        let target = &plan.graph.tracks[0];
+        assert!(target.solo && !target.muted);
+        assert_eq!(plan.graph.tracks[1].audio_clips.len(), 1);
+        assert!(!plan.graph.tracks[1].solo);
+        assert_eq!(plan.graph.tracks[2].audio_clips.len(), 1);
+        assert!(plan.graph.tracks[3].muted);
+        assert!(plan.graph.tracks[3].audio_clips.is_empty());
+        assert!(plan.graph.tracks[4].audio_clips.is_empty());
+        assert!(session.arrangement.tracks.iter().all(|track| !track.solo));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn register_source(root: &Path, name: &str, sample_rate: u32, frames: u32) -> AssetId {
         let path = root.join("sources").join(format!("{name}.wav"));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1322,7 +1403,7 @@ mod tests {
                     .graph
                     .tracks
                     .iter()
-                    .filter(|track| !track.muted)
+                    .filter(|track| track.solo && !track.muted)
                     .map(|track| track.id.as_str())
                     .collect::<Vec<_>>();
                 assert_eq!(audible_tracks.len(), 1);
@@ -1848,7 +1929,7 @@ mod tests {
                     .graph
                     .tracks
                     .iter()
-                    .any(|track| track.id == "second" && !track.muted)
+                    .any(|track| track.id == "second" && track.solo)
                 {
                     asset::discard_output_registration(
                         &root,
@@ -2063,8 +2144,10 @@ mod tests {
         assert_eq!(tracks.len(), 2);
         assert_eq!(tracks[0].id, "instrument");
         assert!(!tracks[0].muted);
+        assert!(tracks[0].solo);
         assert_eq!(tracks[1].id, "latency-reference");
-        assert!(tracks[1].muted);
+        assert!(!tracks[1].solo);
+        assert!(tracks[1].audio_clips.is_empty() && tracks[1].midi_clips.is_empty());
         assert_eq!(plan.graph.automation.len(), 1);
         assert_eq!(
             plan.graph.automation[0].target,

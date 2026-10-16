@@ -1183,6 +1183,23 @@ TEST(MixerRoutingTest, SidechainSendLevelFollowsAutomationInRealtimeAndOffline) 
     EXPECT_NEAR(rendered.getSample(0, 600), halved, 0.002f);
     EXPECT_NEAR(rendered.getSample(0, 599), output.getSample(0, 599), 0.00001f);
     EXPECT_NEAR(rendered.getSample(0, 600), output.getSample(0, 600), 0.00001f);
+
+    // A stem isolates the target's main output by solo while preserving the
+    // auxiliary source and its automation. The source's dry signal is absent.
+    snapshot.graph.tracks[1].solo = true;
+    const auto stemDestination = directory.get().getChildFile("automated-stem.wav");
+    ASSERT_TRUE(renderTestSnapshot(snapshot.graph, formats, stemDestination, 0, 48, 48'000, 64,
+                                   false, result, error))
+        << error;
+    auto stemReader =
+        std::unique_ptr<juce::AudioFormatReader>(formats.createReaderFor(stemDestination));
+    ASSERT_NE(stemReader, nullptr);
+    juce::AudioBuffer<float> stem(2, 601);
+    ASSERT_TRUE(stemReader->read(&stem, 0, stem.getNumSamples(), 0, true, true));
+    for (int channel = 0; channel < 2; ++channel) {
+        EXPECT_NEAR(stem.getSample(channel, 599), kContent, 0.002f);
+        EXPECT_NEAR(stem.getSample(channel, 600), 0.5f * kContent, 0.002f);
+    }
 }
 
 TEST(MixerRoutingTest, OverridesSidechainSendLevelControlOnThePreparedRoute) {

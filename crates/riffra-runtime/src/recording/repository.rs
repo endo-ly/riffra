@@ -50,6 +50,7 @@ struct RecordingTrackManifest {
     raw_file: Option<String>,
     processed_file: Option<String>,
     midi_file: Option<String>,
+    processed_unavailable_reason: Option<String>,
 }
 
 /// Returns the canonical product references held by a `RecordingCapture`.
@@ -113,11 +114,10 @@ fn validate_completed_capture_assets(
     }
     let raw_asset_id = raw_asset_id
         .ok_or_else(|| "Completed recording has no canonical raw audio Asset ID.".to_string())?;
-    let processed_asset_id = processed_asset_id.ok_or_else(|| {
-        "Completed recording has no canonical processed audio Asset ID.".to_string()
-    })?;
     let _ = canonical_asset_location(data_root, raw_asset_id, "raw audio")?;
-    let _ = canonical_asset_location(data_root, processed_asset_id, "processed audio")?;
+    if let Some(processed_asset_id) = processed_asset_id {
+        let _ = canonical_asset_location(data_root, processed_asset_id, "processed audio")?;
+    }
     if let Some(midi_asset_id) = midi_asset_id {
         let _ = canonical_asset_location(data_root, midi_asset_id, "MIDI")?;
     }
@@ -492,6 +492,14 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             .then(|| "midi.json".to_string());
         let dropout = current_dropout_information(&manifest);
         let sample_rate = current_sample_rate(&manifest);
+        let processed_unavailable_reason = manifest.tracks.as_ref().and_then(|tracks| {
+            let reasons = tracks
+                .iter()
+                .filter_map(|track| track.processed_unavailable_reason.as_deref())
+                .collect::<Vec<_>>()
+                .join("; ");
+            (!reasons.is_empty()).then_some(reasons)
+        });
         let recovery_status = if let Some(capture) = manifest.capture.as_ref() {
             match capture.status {
                 RecordingCaptureStatus::Completed
@@ -551,6 +559,7 @@ pub fn list(data_root: &Path, query: Option<&str>) -> Result<Vec<RecordingAsset>
             processed_dropout_start_sample: dropout.processed_dropout_start_sample,
             processed_dropout_end_sample: dropout.processed_dropout_end_sample,
             recovery_status,
+            processed_unavailable_reason,
         });
     }
     assets.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -980,33 +989,35 @@ mod tests {
 
     #[test]
     fn indexes_completed_and_recoverable_manifests() {
-        let root = temp_root();
-        let take = root.join("recordings/inbox/take-1");
-        fs::create_dir_all(&take).unwrap();
-        let raw = take.join("raw.wav");
-        let processed = take.join("processed.wav");
-        fs::write(&raw, b"raw audio").unwrap();
-        fs::write(&processed, b"processed audio").unwrap();
-        let raw_id = asset::register(
-            &root,
-            AssetKind::Audio,
-            "Raw recording",
-            &raw.to_string_lossy(),
-            Some(Provenance::recorded_root()),
-        )
-        .unwrap();
-        let processed_id = asset::register(
-            &root,
-            AssetKind::Audio,
-            "Processed recording",
-            &processed.to_string_lossy(),
-            Some(Provenance::recorded_root()),
-        )
-        .unwrap();
-        let manifest = serde_json::to_vec_pretty(&serde_json::json!({
+        for processed_available in [true, false] {
+            let root = temp_root();
+            let take = root.join("recordings/inbox/take-1");
+            fs::create_dir_all(&take).unwrap();
+            let raw = take.join("raw.wav");
+            let processed = take.join("processed.wav");
+            fs::write(&raw, b"raw audio").unwrap();
+            fs::write(&processed, b"processed audio").unwrap();
+            let raw_id = asset::register(
+                &root,
+                AssetKind::Audio,
+                "Raw recording",
+                &raw.to_string_lossy(),
+                Some(Provenance::recorded_root()),
+            )
+            .unwrap();
+            let processed_id = asset::register(
+                &root,
+                AssetKind::Audio,
+                "Processed recording",
+                &processed.to_string_lossy(),
+                Some(Provenance::recorded_root()),
+            )
+            .unwrap();
+            let manifest = serde_json::to_vec_pretty(&serde_json::json!({
             "state": "completed",
             "rawFile": "raw.wav",
-            "processedFile": "processed.wav",
+            "processedFile": processed_available.then_some("processed.wav"),
+            "tracks": [{"processedUnavailableReason": (!processed_available).then_some("sidechain input for device fx:target is incomplete")}],
             "sampleRate": 44100.0,
             "samplesWritten": 44100,
             "droppedBlocks": 0,
@@ -1022,20 +1033,26 @@ mod tests {
                 "inputChannelName": null,
                 "bufferSize": null,
                 "rawAudioAssetId": raw_id,
-                "processedAudioAssetId": processed_id,
+                "processedAudioAssetId": processed_available.then_some(processed_id),
                 "dropoutInformation": { "samplesWritten": 44_100, "droppedBlocks": 0 }
             }
         }))
         .unwrap();
-        fs::write(take.join("manifest.json"), manifest).unwrap();
+            fs::write(take.join("manifest.json"), manifest).unwrap();
 
-        let results = list(&root, Some("take-1")).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].state, "completed");
-        assert_eq!(results[0].error, None);
-        assert_eq!(results[0].samples_written, 44_100);
-        assert_eq!(results[0].sample_rate, Some(44_100));
-        let _ = fs::remove_dir_all(root);
+            let results = list(&root, Some("take-1")).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].state, "completed");
+            assert_eq!(results[0].error, None);
+            assert_eq!(results[0].samples_written, 44_100);
+            assert_eq!(results[0].sample_rate, Some(44_100));
+            assert_eq!(results[0].processed_asset_id.is_some(), processed_available);
+            assert_eq!(
+                results[0].processed_unavailable_reason.is_some(),
+                !processed_available
+            );
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]

@@ -313,6 +313,8 @@ private:
     struct OfflineRecordingTrack final {
         juce::String id;
         std::vector<PluginDeviceSpec> effects;
+        std::vector<SidechainSendSpec> sidechainInputs;
+        std::vector<std::pair<juce::String, int>> mainInputDelays;
     };
 
     // Realtime command path.

@@ -53,6 +53,23 @@ public:
         juce::ignoreUnused(trackId, processed, sampleCount, timeoutMs);
         return false;
     }
+
+    /// Captures the prepared auxiliary signal in the same sample order as the raw take.
+    virtual void writeSidechain(const juce::String& trackId, const juce::String& deviceId,
+                                const float* const* channels, int sampleCount) noexcept {
+        juce::ignoreUnused(trackId, deviceId, channels, sampleCount);
+    }
+    /// Flushes the captured auxiliary input for offline replay; empty means unavailable.
+    virtual juce::File prepareSidechainForReading(const juce::String& trackId,
+                                                  const juce::String& deviceId) noexcept {
+        juce::ignoreUnused(trackId, deviceId);
+        return {};
+    }
+    /// Retains a diagnostic when a processed variant cannot reproduce its inputs.
+    virtual void processedVariantUnavailable(const juce::String& trackId,
+                                             const juce::String& reason) noexcept {
+        juce::ignoreUnused(trackId, reason);
+    }
 };
 
 }  // namespace riffra

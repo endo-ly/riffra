@@ -521,6 +521,85 @@ TEST(TimelineEngineTest, CompletesAProductionThreadedWriterRecording) {
     EXPECT_EQ(beforeStop.processedMissingSamples, 0u);
 }
 
+TEST(TimelineEngineTest, ReplaysCapturedSidechainForProcessedTakesAndKeepsRawWhenUnavailable) {
+    for (const auto replayable : {true, false}) {
+        // Arrange: the auxiliary source is a live input, with a different signal on each pass.
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        TimelineEngine engine(true);
+        juce::String error;
+        auto snapshot = makeTestSnapshot();
+        snapshot.graph.loopRange = {true, 0, 48};
+        auto source = makeAudioTrack("source");
+        source.monitorInput = true;
+        source.audioInput = AudioInputSpec{1};
+        source.panLaw = "unityCenterStereo";
+        auto target = makeAudioTrack("target");
+        target.armed = true;
+        target.monitorInput = true;
+        target.audioInput = AudioInputSpec{0};
+        target.panLaw = "unityCenterStereo";
+        target.effects.push_back({"fx:target", RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH, {}});
+        snapshot.graph.tracks = {source, target};
+        snapshot.graph.mixer.sidechainSends = {
+            {"send:aux", "source", "fx:target", 0.0, SendPositionSpec::postFader, true}};
+        ASSERT_TRUE(loadTestSnapshot(engine, snapshot, formats, 48'000, 64, error)) << error;
+        test::TemporaryDirectory directory;
+        const auto destination = directory.get().getChildFile("capture");
+        AudioRenderPipeline pipeline(engine);
+        ASSERT_EQ(pipeline.recording().start(destination, 0, error), RealtimeRequest::accepted);
+        int offset = 0, count = 0;
+        ASSERT_TRUE(TimelineEngineTestPeer::recordingWindow(engine, 2537, offset, count));
+        std::array<float, 64> raw{}, auxiliary{}, left{}, right{};
+        raw.fill(0.05f);
+        const std::array<const float*, 2> inputs{raw.data(), auxiliary.data()};
+        const std::array<float*, 2> outputs{left.data(), right.data()};
+
+        // Act
+        for (int position = 0; position < 2537; position += 64) {
+            auxiliary.fill(position < 1200 ? 0.2f : 0.4f);
+            engine.mix(inputs.data(), 2, outputs.data(), 2, std::min(64, 2537 - position));
+        }
+        ASSERT_EQ(pipeline.recording().stop(error), RealtimeRequest::accepted) << error;
+        auto capture = pipeline.takeFinalizedRecording();
+        ASSERT_NE(capture, nullptr);
+        if (!replayable) {
+            const auto auxiliaryFile = capture->prepareSidechainForReading("target", "fx:target");
+            ASSERT_TRUE(auxiliaryFile.deleteFile());
+        }
+        ASSERT_TRUE(engine.processFinalizedRecording(capture.get(), error)) << error;
+        ASSERT_TRUE(capture->finish(true, error)) << error;
+
+        // Assert: raw capture is complete in both cases; missing auxiliary never yields a fake
+        // variant.
+        const auto folder = destination.getChildFile("tracks/0000");
+        auto rawReader = std::unique_ptr<juce::AudioFormatReader>(
+            formats.createReaderFor(folder.getChildFile("raw.wav")));
+        ASSERT_NE(rawReader, nullptr);
+        EXPECT_EQ(rawReader->lengthInSamples, 2537);
+        const auto manifest =
+            juce::JSON::parse(destination.getChildFile("manifest.json").loadFileAsString());
+        EXPECT_EQ(manifest.getProperty("state", {}).toString(), "completed");
+        const auto trackManifest = manifest.getProperty("tracks", {})[0];
+        if (replayable) {
+            auto reader = std::unique_ptr<juce::AudioFormatReader>(
+                formats.createReaderFor(folder.getChildFile("processed.wav")));
+            ASSERT_NE(reader, nullptr);
+            ASSERT_EQ(reader->lengthInSamples, 2537);
+            juce::AudioBuffer<float> processed(2, 2537);
+            ASSERT_TRUE(reader->read(&processed, 0, 2537, 0, true, true));
+            EXPECT_NEAR(processed.getSample(0, 600), 0.25f, 0.001f);
+            EXPECT_NEAR(processed.getSample(1, 1800), 0.45f, 0.001f);
+        } else {
+            EXPECT_FALSE(trackManifest.hasProperty("processedFile"));
+            EXPECT_TRUE(trackManifest.getProperty("processedUnavailableReason", {})
+                            .toString()
+                            .contains("fx:target"));
+            EXPECT_FALSE(folder.getChildFile("processed.wav").existsAsFile());
+        }
+    }
+}
+
 TEST(TimelineEngineTest, ProductionWriterKeepsPartialLoopSegmentsAlignedInManifest) {
     // Arrange
     juce::AudioFormatManager formats;

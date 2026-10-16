@@ -522,6 +522,24 @@ void TimelineEngine::mixProductionOutput(PreparedTimeline& prepared, float* cons
                                          const int channelCount, const std::int64_t rangeStart,
                                          const int destinationStart, const int sampleCount,
                                          const bool playing) noexcept {
+    const auto [captureStart, captureEnd] = ArrangementGraph::captureIntersection(
+        destinationStart, sampleCount, realtime.captureBlockOffset, realtime.captureBlockSamples);
+    if (captureEnd > captureStart) {
+        const auto offset = captureStart - destinationStart;
+        for (auto& track : prepared.tracks) {
+            if (track->runtime->instrumentTrack || !track->runtime->armed ||
+                track->runtime->audioInputChannel < 0)
+                continue;
+            for (const auto& effect : track->effects) {
+                const auto* auxiliary = track->runtime->effects().sidechainBuffer(effect.id);
+                if (auxiliary == nullptr) continue;
+                const std::array<const float*, 2> channels{auxiliary->getReadPointer(0) + offset,
+                                                           auxiliary->getReadPointer(1) + offset};
+                recordingCapture->writeSidechain(track->id, effect.id, channels.data(),
+                                                 captureEnd - captureStart);
+            }
+        }
+    }
     auto& mixer = prepared.mixer;
     mixer.masterInput.clear(0, sampleCount);
     for (auto& bus : mixer.buses) bus->input.clear(0, sampleCount);
