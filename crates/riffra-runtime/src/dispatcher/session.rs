@@ -1069,7 +1069,7 @@ mod tests {
     fn sidechain_send_commands_apply_in_batches_and_round_trip() {
         // Arrange
         let root = std::env::temp_dir().join(format!("riffra-dispatcher-sidechain-{}", now_ms()));
-        let dispatcher = Dispatcher::open(
+        let mut dispatcher = Dispatcher::open(
             root.clone(),
             crate::test_support::prepare_built_in_resource_root(&root),
         )
@@ -1110,6 +1110,67 @@ mod tests {
             .id
             .clone();
 
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability::default());
+        let add_params = json!({
+            "sourceTrackId":lead_id,
+            "targetDeviceId":device_id,
+            "levelDb":-6.0,
+            "position":"preFader"
+        });
+
+        let direct_rejection = dispatcher
+            .dispatch(command("mixer.sidechain.add", add_params.clone()), None)
+            .unwrap_err();
+        assert!(direct_rejection.to_string().contains("mono or stereo"));
+        assert!(
+            dispatcher
+                .core
+                .cell()
+                .read()
+                .canonical
+                .session
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .is_empty()
+        );
+
+        let batch_rejection = dispatcher
+            .dispatch(
+                command(
+                    "session.apply",
+                    json!({"operations":[{"command":"mixer.sidechain.add","params":add_params.clone()}]}),
+                ),
+                None,
+            )
+            .unwrap_err()
+            .protocol_error();
+        assert_eq!(
+            batch_rejection.details.as_ref().unwrap()["command"],
+            "mixer.sidechain.add"
+        );
+        assert!(
+            dispatcher
+                .core
+                .cell()
+                .read()
+                .canonical
+                .session
+                .arrangement
+                .mixer
+                .sidechain_sends
+                .is_empty()
+        );
+        dispatcher.test_sidechain_capability =
+            Some(crate::api::output::DeviceSidechainCapability {
+                available: true,
+                mono: false,
+                stereo: true,
+                channels: 0,
+                reason: None,
+            });
+
         // Act
         let added = dispatcher
             .dispatch(
@@ -1119,10 +1180,7 @@ mod tests {
                         "includeCreatedIds": true,
                         "operations": [{
                             "command":"mixer.sidechain.add",
-                            "params":{
-                                "sourceTrackId":lead_id,"targetDeviceId":device_id,
-                                "levelDb":-6.0,"position":"preFader"
-                            }
+                            "params":add_params
                         }]
                     }),
                 ),

@@ -14,15 +14,34 @@ use riffra_core::{
 };
 
 impl HostDispatcher<'_> {
+    fn sidechain_capability(
+        &self,
+        owner: &riffra_core::EffectOwner,
+        device_id: &str,
+        plugin_path: &str,
+    ) -> Result<crate::api::output::DeviceSidechainCapability, DispatchError> {
+        if let Some(audio) = self.audio
+            && let Ok(inspection) = audio.inspect_device(owner, device_id)
+        {
+            return Ok(inspection.capabilities.sidechain);
+        }
+        crate::plugins::validation::probe_sidechain_capability(
+            &self.plugin_scan,
+            std::path::Path::new(plugin_path),
+        )
+        .map_err(|error| {
+            DispatchError::invalid_request(format!(
+                "sidechain target '{device_id}' capability could not be verified: {error}"
+            ))
+        })
+    }
+
     fn validate_sidechain_activation(
         &self,
         command: &CanonicalCommand,
         canonical: &CanonicalState,
     ) -> Result<(), DispatchError> {
         let Some(target_device_id) = sidechain_target_to_activate(command, canonical) else {
-            return Ok(());
-        };
-        let Some(audio) = self.audio else {
             return Ok(());
         };
         let arrangement = &canonical.session.arrangement;
@@ -39,14 +58,15 @@ impl HostDispatcher<'_> {
                 "sidechain target '{target_device_id}' is not an available effect"
             )));
         }
-        let inspection = audio
-            .inspect_device(&owner, &target_device_id)
-            .map_err(|error| {
-                DispatchError::invalid_request(format!(
-                    "sidechain target '{target_device_id}' could not be inspected: {error}"
-                ))
-            })?;
-        if inspection.capabilities.sidechain.mono || inspection.capabilities.sidechain.stereo {
+        #[cfg(test)]
+        let capability = match self.test_sidechain_capability.clone() {
+            Some(capability) => capability,
+            None => self.sidechain_capability(&owner, &target_device_id, &effect.plugin.path)?,
+        };
+        #[cfg(not(test))]
+        let capability =
+            self.sidechain_capability(&owner, &target_device_id, &effect.plugin.path)?;
+        if capability.mono || capability.stereo {
             return Ok(());
         }
         Err(DispatchError::invalid_request(format!(

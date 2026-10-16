@@ -337,6 +337,7 @@ impl HostState {
             &self.project,
             &self.project_store,
             &self.data_root,
+            &self.binaries.plugin_scan,
             &self.binaries.sonalloy,
             &self.built_in_instruments,
         )
