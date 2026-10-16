@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  Arrangement,
+  ArrangementMutationResult,
   AutomationLane,
   CanonicalState,
   DeviceParameterInfo,
@@ -7,6 +9,7 @@ import type {
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '../arrange-api';
 import { useDeviceDetails } from './useDeviceDetails';
+import { DeviceSidechainEditor } from './DeviceSidechainEditor';
 import { automationValueAt } from '@/features/arrange/model/automation-value';
 import { useAutomationValueDisplay } from '@/features/arrange/model/useAutomationValueDisplay';
 import styles from './Devices.module.css';
@@ -22,6 +25,10 @@ interface DeviceParameterEditorProps {
   currentTick: number;
   onOpenAutomation: (parameter: DeviceParameterInfo) => void;
   applyCanonicalState: (state: CanonicalState) => boolean;
+  arrangement: Arrangement;
+  isInstrument: boolean;
+  commit: (operation: Promise<ArrangementMutationResult>) => void;
+  onOpenSidechainAutomation: (sidechainSendId: string) => void;
 }
 
 function ParameterControl({
@@ -226,6 +233,16 @@ export function DeviceParameterEditor(props: DeviceParameterEditorProps) {
               </button>
             )}
           </div>
+          <DeviceSidechainEditor
+            arrangement={props.arrangement}
+            owner={props.owner}
+            deviceId={props.deviceId}
+            capabilities={details.inspection.capabilities.sidechain}
+            isInstrument={props.isInstrument}
+            api={props.api}
+            commit={props.commit}
+            onOpenAutomation={props.onOpenSidechainAutomation}
+          />
           {details.parameters.map((parameter) =>
             (() => {
               const lane = props.automationLanes.find(

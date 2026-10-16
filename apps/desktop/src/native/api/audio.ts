@@ -199,3 +199,13 @@ export async function panicMidiTrack(trackId: string): Promise<AudioStatus | nul
 export async function previewSendLevel(sendId: string, levelDb: number): Promise<void> {
   await dispatchControl({ command: 'mixer.send.preview', params: { sendId, levelDb } });
 }
+
+export async function previewSidechainSendLevel(
+  sidechainSendId: string,
+  levelDb: number,
+): Promise<void> {
+  await dispatchControl({
+    command: 'mixer.sidechain.preview',
+    params: { sidechainSendId, levelDb },
+  });
+}

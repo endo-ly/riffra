@@ -3,7 +3,14 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Profiler, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CreativeSession, EffectOwner, DeviceParameterInfo, Track } from '@/model/domain';
+import type {
+  AutomationTarget,
+  CreativeSession,
+  DeviceSidechainCapability,
+  EffectOwner,
+  DeviceParameterInfo,
+  Track,
+} from '@/model/domain';
 import { canonicalState, defaultSession } from '@/native/browser-defaults';
 import { FakeNativeApi } from '@/native/native-api-fake';
 import { resolveDeviceTarget } from './device-target';
@@ -61,7 +68,14 @@ const parameters: DeviceParameterInfo[] = [
     ],
   },
 ];
-function runtimeApi() {
+function runtimeApi(
+  sidechain: DeviceSidechainCapability = {
+    available: false,
+    mono: false,
+    stereo: false,
+    channels: 0,
+  },
+) {
   return new FakeNativeApi({
     responses: {
       inspectDevice: {
@@ -74,7 +88,7 @@ function runtimeApi() {
           presets: true,
           editor: true,
           state: true,
-          sidechain: { available: false, mono: false, stereo: false, channels: 0 },
+          sidechain,
         },
         parameterCount: 2,
         statePersisted: false,
@@ -93,11 +107,13 @@ function Harness({
   initialTrack = track,
   initialSession,
   owner = { kind: 'track', id: track.id },
+  onOpenAutomation = () => undefined,
 }: {
   api: FakeNativeApi;
   initialTrack?: Track;
   initialSession?: CreativeSession;
   owner?: EffectOwner;
+  onOpenAutomation?: (target: AutomationTarget) => void;
 }) {
   const initial = initialSession ?? defaultSession();
   if (!initialSession) initial.arrangement.tracks = [structuredClone(initialTrack)];
@@ -106,9 +122,10 @@ function Harness({
     <DevicesPanel
       projectId={session.sessionId}
       automationLanes={session.arrangement.automationLanes}
+      arrangement={session.arrangement}
       playing={false}
       currentTick={0}
-      onOpenAutomation={() => undefined}
+      onOpenAutomation={onOpenAutomation}
       target={resolveDeviceTarget(session.arrangement, owner)}
       api={api}
       applyCanonicalState={(canonical) => {
@@ -273,6 +290,7 @@ describe('DevicesPanel', () => {
     const props = {
       projectId: 'project:1',
       automationLanes: [],
+      arrangement: defaultSession().arrangement,
       playing: false,
       currentTick: 0,
       onOpenAutomation: () => undefined,
@@ -333,5 +351,65 @@ describe('DevicesPanel', () => {
     expect(screen.getByText('DISABLED PLACEHOLDER')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
     expect(api.calls.filter((call) => call === 'inspectDevice')).toHaveLength(0);
+  });
+
+  it('edits sidechain routes for a capable device', async () => {
+    const api = runtimeApi({ available: true, mono: false, stereo: true, channels: 2 });
+    const currentSession = defaultSession();
+    currentSession.arrangement.tracks = [
+      structuredClone(track),
+      { ...structuredClone(track), id: 'track:2', name: 'Drums', effects: [] },
+    ];
+    currentSession.arrangement.mixer.sidechainSends = [
+      {
+        id: 'sidechain:1',
+        sourceTrackId: 'track:2',
+        targetDeviceId: effect.id,
+        levelDb: -6,
+        position: 'postFader',
+        enabled: true,
+      },
+    ];
+    const mutation = () => ({
+      canonical: canonicalState(structuredClone(currentSession)),
+      createdEntityIds: {},
+      projection: { state: 'notRequired' as const },
+    });
+    api.previewSidechainSendLevel = vi.fn().mockResolvedValue(undefined);
+    api.updateSidechainSend = vi.fn(async (_id, patch) => {
+      if (patch.levelDb !== undefined && patch.levelDb !== null)
+        currentSession.arrangement.mixer.sidechainSends[0].levelDb = patch.levelDb;
+      return mutation();
+    });
+    api.removeSidechainSend = vi.fn(async () => {
+      currentSession.arrangement.mixer.sidechainSends = [];
+      return mutation();
+    });
+    const opened: AutomationTarget[] = [];
+    render(
+      <Harness
+        api={api}
+        initialSession={structuredClone(currentSession)}
+        onOpenAutomation={(target) => opened.push(target)}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Test Effect' }));
+    expect(await screen.findByText('Sidechain input · Stereo · 2 channels')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add Sidechain source')).toBeDisabled();
+    expect(screen.getByText('All Tracks already feed this device.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Automation' }));
+    expect(opened).toEqual([{ kind: 'sidechainSendLevel', sidechainSendId: 'sidechain:1' }]);
+    const slider = screen.getByLabelText('Sidechain sidechain:1 level');
+    fireEvent.change(slider, { target: { value: '-12' } });
+    fireEvent.pointerUp(slider);
+    await waitFor(() =>
+      expect(api.updateSidechainSend).toHaveBeenCalledWith('sidechain:1', { levelDb: -12 }),
+    );
+    expect(api.previewSidechainSendLevel).toHaveBeenCalledWith('sidechain:1', -12);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sidechain' }));
+    await waitFor(() => expect(api.removeSidechainSend).toHaveBeenCalledWith('sidechain:1'));
+    await waitFor(() => expect(screen.getByLabelText('Add Sidechain source')).toBeEnabled());
+    expect(screen.getByRole('option', { name: 'Drums' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Audio' })).not.toBeInTheDocument();
   });
 });

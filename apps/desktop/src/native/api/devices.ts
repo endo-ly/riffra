@@ -5,6 +5,7 @@ import type {
   MixBusPatch,
   SendPatch,
   SendPosition,
+  SidechainSendPatch,
 } from '@/model/domain';
 import { dispatchControl } from '../invoke';
 
@@ -144,4 +145,27 @@ export function updateSend(sendId: string, patch: SendPatch) {
 }
 export function removeSend(sendId: string) {
   return dispatchControl({ command: 'mixer.send.remove', params: { sendId } });
+}
+export function addSidechainSend(
+  sourceTrackId: string,
+  targetDeviceId: string,
+  levelDb: number,
+  position: SendPosition,
+) {
+  return dispatchControl({
+    command: 'mixer.sidechain.add',
+    params: { sourceTrackId, targetDeviceId, levelDb, position },
+  });
+}
+export function updateSidechainSend(sidechainSendId: string, patch: SidechainSendPatch) {
+  return dispatchControl({
+    command: 'mixer.sidechain.update',
+    params: { sidechainSendId, patch },
+  });
+}
+export function removeSidechainSend(sidechainSendId: string) {
+  return dispatchControl({
+    command: 'mixer.sidechain.remove',
+    params: { sidechainSendId },
+  });
 }

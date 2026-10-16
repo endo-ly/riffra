@@ -227,6 +227,10 @@ impl HostState {
             | CanonicalCommand::SendAdd(_)
             | CanonicalCommand::SendUpdate(_)
             | CanonicalCommand::SendRemove(_)
+            | CanonicalCommand::SidechainSendList(_)
+            | CanonicalCommand::SidechainSendAdd(_)
+            | CanonicalCommand::SidechainSendUpdate(_)
+            | CanonicalCommand::SidechainSendRemove(_)
             | CanonicalCommand::SessionGet(_)
             | CanonicalCommand::SessionInspect(_)
             | CanonicalCommand::SessionApply(_)
@@ -497,6 +501,12 @@ impl HostState {
             RuntimeCommand::SendLevelPreview(params) => {
                 self.audio
                     .preview_send_level(&params.send_id, params.level_db)
+                    .map_err(audio_error)?;
+                ControlOutput::Ok(())
+            }
+            RuntimeCommand::SidechainSendLevelPreview(params) => {
+                self.audio
+                    .preview_send_level(&params.sidechain_send_id, params.level_db)
                     .map_err(audio_error)?;
                 ControlOutput::Ok(())
             }

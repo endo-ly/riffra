@@ -37,6 +37,7 @@ import type { RenderStartParams } from "./RenderStartParams";
 import type { RenderStemsParams } from "./RenderStemsParams";
 import type { SeekParams } from "./SeekParams";
 import type { SendLevelPreviewParams } from "./SendLevelPreviewParams";
+import type { SidechainSendLevelPreviewParams } from "./SidechainSendLevelPreviewParams";
 import type { TakeActivateParams } from "./TakeActivateParams";
 import type { TakeComparisonParams } from "./TakeComparisonParams";
 import type { TakeIdParams } from "./TakeIdParams";
@@ -60,6 +61,7 @@ export type RuntimeCommand =
   | { command: "transport.seek"; params: SeekParams }
   | { command: "audio.master-gain.preview"; params: MasterGainParams }
   | { command: "mixer.send.preview"; params: SendLevelPreviewParams }
+  | { command: "mixer.sidechain.preview"; params: SidechainSendLevelPreviewParams }
   | { command: "mixer.channel.preview"; params: ChannelMixParams }
   | { command: "automation.preview"; params: AutomationPreviewParams }
   | { command: "audio.status"; params: EmptyParams }

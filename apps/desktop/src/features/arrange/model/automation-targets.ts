@@ -97,7 +97,10 @@ export function automationDevices(session: CreativeSession, owner: EffectOwner) 
   return devices;
 }
 
-function sidechainTargetName(arrangement: Arrangement, deviceId: string): string | undefined {
+export function sidechainTargetName(
+  arrangement: Arrangement,
+  deviceId: string,
+): string | undefined {
   for (const track of arrangement.tracks) {
     const effect = track.effects.find((effect) => effect.id === deviceId);
     if (effect) return effect.name;

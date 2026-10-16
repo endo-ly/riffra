@@ -47,6 +47,7 @@ import type { RuntimeProjectionStatus } from "./RuntimeProjectionStatus";
 import type { ScanReport } from "./ScanReport";
 import type { Send } from "./Send";
 import type { SessionInspection } from "./SessionInspection";
+import type { SidechainSend } from "./SidechainSend";
 import type { TrackSummary } from "./TrackSummary";
 
 /**
@@ -59,6 +60,7 @@ export type ControlOutput =
   | { type: "mixer"; value: Mixer }
   | { type: "mixBuses"; value: Array<MixBus> }
   | { type: "sends"; value: Array<Send> }
+  | { type: "sidechainSends"; value: Array<SidechainSend> }
   | { type: "instrumentEvents"; value: Array<InstrumentControlEvent> }
   | { type: "sessionInspection"; value: SessionInspection }
   | { type: "history"; value: HistoryState }

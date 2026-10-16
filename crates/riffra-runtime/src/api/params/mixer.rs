@@ -1,6 +1,6 @@
 //! Parameters for canonical Mixer, Bus, Track output, and Send controls.
 
-use riffra_core::{MixBusKind, MixBusPatch, SendPatch, SendPosition};
+use riffra_core::{MixBusKind, MixBusPatch, SendPatch, SendPosition, SidechainSendPatch};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -59,4 +59,30 @@ pub struct SendIdParams {
 pub struct SendUpdateParams {
     pub send_id: String,
     pub patch: SendPatch,
+}
+
+/// Creates an enabled Track-to-device auxiliary route.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SidechainSendAddParams {
+    pub source_track_id: String,
+    pub target_device_id: String,
+    pub level_db: f64,
+    #[serde(default)]
+    pub position: SendPosition,
+}
+
+/// Identifies a sidechain route.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SidechainSendIdParams {
+    pub sidechain_send_id: String,
+}
+
+/// Changes a sidechain route's destination and controls.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SidechainSendUpdateParams {
+    pub sidechain_send_id: String,
+    pub patch: SidechainSendPatch,
 }

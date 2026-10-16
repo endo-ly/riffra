@@ -67,6 +67,26 @@ impl HostDispatcher<'_> {
             CanonicalCommand::SendRemove(params) => {
                 self.edited(application.remove_send(&params.send_id)?, application)
             }
+            CanonicalCommand::SidechainSendList(_) => Ok(ControlOutput::SidechainSends(
+                canonical.session.arrangement.mixer.sidechain_sends,
+            )),
+            CanonicalCommand::SidechainSendAdd(params) => self.created(
+                application.add_sidechain_send_with_created_ids(
+                    params.source_track_id,
+                    params.target_device_id,
+                    params.level_db,
+                    params.position,
+                )?,
+                application,
+            ),
+            CanonicalCommand::SidechainSendUpdate(params) => self.edited(
+                application.update_sidechain_send(&params.sidechain_send_id, params.patch)?,
+                application,
+            ),
+            CanonicalCommand::SidechainSendRemove(params) => self.edited(
+                application.remove_sidechain_send(&params.sidechain_send_id)?,
+                application,
+            ),
             CanonicalCommand::MixdownGet(_) => {
                 Ok(ControlOutput::Mixdown(canonical.session.settings.mixdown))
             }

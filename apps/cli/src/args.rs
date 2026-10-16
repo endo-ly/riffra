@@ -488,6 +488,11 @@ pub enum MixerCommand {
         #[command(subcommand)]
         command: SendCommand,
     },
+    /// Create, inspect, and edit Track-to-effect-device sidechain routes.
+    Sidechain {
+        #[command(subcommand)]
+        command: SidechainCommand,
+    },
     /// Set a Track's main output; omit --bus-id to route directly to Master.
     Output {
         /// Track ID whose output or Send is edited.
@@ -562,6 +567,42 @@ pub enum SendCommand {
         /// Send route ID.
         #[arg(long)]
         send_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SidechainCommand {
+    /// List Track-to-device sidechain routes.
+    List,
+    /// Create an enabled sidechain route; --pre-fader selects the signal before Track Gain and Pan.
+    Add {
+        /// Track ID whose signal feeds the target device.
+        #[arg(long)]
+        source_track_id: String,
+        /// Target effect device ID.
+        #[arg(long)]
+        target_device_id: String,
+        /// Sidechain level in dB, clamped to -90..=24.
+        #[arg(long, value_parser = finite_f64, allow_hyphen_values = true, default_value = "0")]
+        level_db: f64,
+        /// Take the signal after Track Effects and before Track Gain and Pan.
+        #[arg(long)]
+        pre_fader: bool,
+    },
+    /// Update targetDeviceId, levelDb, position, or enabled from JSON or @file.
+    Update {
+        /// Sidechain route ID.
+        #[arg(long)]
+        sidechain_send_id: String,
+        /// Partial controls as a JSON object or @file.
+        #[arg(long)]
+        patch_json: String,
+    },
+    /// Remove a sidechain route.
+    Remove {
+        /// Sidechain route ID.
+        #[arg(long)]
+        sidechain_send_id: String,
     },
 }
 
@@ -2805,6 +2846,37 @@ fn command_request(command: CliCommand) -> Result<ControlCommand, RequestError> 
                     Canonical::SendRemove(SendIdParams { send_id }).into()
                 }
             },
+            MixerCommand::Sidechain { command } => match command {
+                SidechainCommand::List => Canonical::SidechainSendList(empty).into(),
+                SidechainCommand::Add {
+                    source_track_id,
+                    target_device_id,
+                    level_db,
+                    pre_fader,
+                } => Canonical::SidechainSendAdd(SidechainSendAddParams {
+                    source_track_id,
+                    target_device_id,
+                    level_db,
+                    position: if pre_fader {
+                        riffra_core::SendPosition::PreFader
+                    } else {
+                        riffra_core::SendPosition::PostFader
+                    },
+                })
+                .into(),
+                SidechainCommand::Update {
+                    sidechain_send_id,
+                    patch_json,
+                } => Canonical::SidechainSendUpdate(SidechainSendUpdateParams {
+                    sidechain_send_id,
+                    patch: decode_params(json_argument("patch-json", &patch_json)?)?,
+                })
+                .into(),
+                SidechainCommand::Remove { sidechain_send_id } => {
+                    Canonical::SidechainSendRemove(SidechainSendIdParams { sidechain_send_id })
+                        .into()
+                }
+            },
         },
         CliCommand::Mixdown { command } => match command {
             MixdownCommand::Get => Canonical::MixdownGet(empty).into(),
@@ -3974,6 +4046,48 @@ mod tests {
         let master = wire(
             Cli::try_parse_from(["riffra", "mixer", "output", "--track-id", "track:1"]).unwrap(),
         );
+        let sidechain = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "mixer",
+                "sidechain",
+                "add",
+                "--source-track-id",
+                "track:1",
+                "--target-device-id",
+                "device:1",
+                "--level-db",
+                "-6",
+                "--pre-fader",
+            ])
+            .unwrap(),
+        );
+        let sidechain_update = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "mixer",
+                "sidechain",
+                "update",
+                "--sidechain-send-id",
+                "sidechain-send:1",
+                "--patch-json",
+                r#"{"enabled": false}"#,
+            ])
+            .unwrap(),
+        );
+        let sidechain_remove = wire(
+            Cli::try_parse_from([
+                "riffra",
+                "mixer",
+                "sidechain",
+                "remove",
+                "--sidechain-send-id",
+                "sidechain-send:1",
+            ])
+            .unwrap(),
+        );
+        let sidechain_list =
+            wire(Cli::try_parse_from(["riffra", "mixer", "sidechain", "list"]).unwrap());
 
         assert_eq!(bus.name, "mixer.bus.add");
         assert_eq!(bus.params, json!({ "name": "Reverb", "kind": "return" }));
@@ -3989,6 +4103,26 @@ mod tests {
             master.params,
             json!({ "trackId": "track:1", "busId": null })
         );
+        assert_eq!(sidechain.name, "mixer.sidechain.add");
+        assert_eq!(
+            sidechain.params,
+            json!({
+                "sourceTrackId": "track:1", "targetDeviceId": "device:1", "levelDb": -6.0,
+                "position": "preFader",
+            })
+        );
+        assert_eq!(sidechain_update.name, "mixer.sidechain.update");
+        assert_eq!(
+            sidechain_update.params["sidechainSendId"],
+            "sidechain-send:1"
+        );
+        assert_eq!(sidechain_update.params["patch"]["enabled"], false);
+        assert_eq!(sidechain_remove.name, "mixer.sidechain.remove");
+        assert_eq!(
+            sidechain_remove.params,
+            json!({ "sidechainSendId": "sidechain-send:1" })
+        );
+        assert_eq!(sidechain_list.name, "mixer.sidechain.list");
     }
 
     #[test]

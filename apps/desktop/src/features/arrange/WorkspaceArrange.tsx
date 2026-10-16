@@ -866,6 +866,7 @@ export function WorkspaceArrange(props: WorkspaceArrangeProps) {
         devices={
           <DevicesPanel
             automationLanes={arrangement.automationLanes}
+            arrangement={arrangement}
             playing={transport?.state === 'playing'}
             currentTick={displayTick}
             onOpenAutomation={openAutomation}

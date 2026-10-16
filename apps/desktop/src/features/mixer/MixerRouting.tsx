@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import type {
   Arrangement,
   ArrangementMutationResult,
@@ -7,6 +6,9 @@ import type {
   Track,
 } from '@/model/domain';
 import type { ArrangeWorkspaceApi } from '@/features/arrange/arrange-api';
+import { sidechainTargetName } from '@/features/arrange/model/automation-targets';
+import { LevelSlider } from './LevelSlider';
+import { SidechainSendControls } from './SidechainSendControls';
 import styles from './Mixer.module.css';
 
 interface Props {
@@ -27,99 +29,15 @@ function SendLevel({
   api: ArrangeWorkspaceApi;
   commit: Props['commit'];
 }) {
-  const [draft, setDraft] = useState(send.levelDb);
-  const timer = useRef<number | undefined>(undefined);
-  const chain = useRef(Promise.resolve());
-  const version = useRef(0);
-  const submitted = useRef(send.levelDb);
-  useEffect(() => {
-    setDraft(send.levelDb);
-    submitted.current = send.levelDb;
-  }, [send.levelDb]);
-  useEffect(
-    () => () => {
-      version.current++;
-      window.clearTimeout(timer.current);
-    },
-    [],
-  );
-  useEffect(() => {
-    if (send.enabled) return;
-    version.current++;
-    window.clearTimeout(timer.current);
-  }, [send.enabled]);
-  const preview = (value: number) => {
-    if (!send.enabled) return;
-    window.clearTimeout(timer.current);
-    const request = ++version.current;
-    timer.current = window.setTimeout(() => {
-      chain.current = chain.current
-        .catch(() => undefined)
-        .then(async () => {
-          if (request === version.current) await api.previewSendLevel(send.id, value);
-        })
-        .catch(() => undefined);
-    }, 40);
-  };
-  const finish = (value: number) => {
-    window.clearTimeout(timer.current);
-    if (submitted.current === value) return;
-    const request = ++version.current;
-    submitted.current = value;
-    void chain.current
-      .catch(() => undefined)
-      .then(async () => {
-        if (request !== version.current) return;
-        if (send.enabled) await api.previewSendLevel(send.id, value).catch(() => undefined);
-        if (request !== version.current) return;
-        commit(
-          api.updateSend(send.id, { levelDb: value }).catch((error) => {
-            if (request === version.current) {
-              setDraft(send.levelDb);
-              submitted.current = send.levelDb;
-              preview(send.levelDb);
-            }
-            throw error;
-          }),
-        );
-      });
-  };
   return (
-    <label>
-      Level{' '}
-      <input
-        type="range"
-        aria-label={`Send ${send.id} level`}
-        min={-90}
-        max={24}
-        step={0.1}
-        value={draft}
-        onChange={(e) => {
-          const value = Number(e.currentTarget.value);
-          setDraft(value);
-          preview(value);
-        }}
-        onPointerUp={(e) => finish(Number(e.currentTarget.value))}
-        onKeyUp={(e) => {
-          if (e.key !== 'Escape') finish(Number(e.currentTarget.value));
-        }}
-        onPointerCancel={() => {
-          submitted.current = send.levelDb;
-          setDraft(send.levelDb);
-          preview(send.levelDb);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            submitted.current = send.levelDb;
-            setDraft(send.levelDb);
-            preview(send.levelDb);
-          }
-        }}
-        onBlur={(e) => finish(Number(e.currentTarget.value))}
-      />
-      <output>{draft.toFixed(1)} dB</output>
-    </label>
+    <LevelSlider
+      ariaLabel={`Send ${send.id} level`}
+      initial={send.levelDb}
+      enabled={send.enabled}
+      preview={(value) => api.previewSendLevel(send.id, value)}
+      submit={(value) => api.updateSend(send.id, { levelDb: value })}
+      commit={commit}
+    />
   );
 }
 
@@ -133,6 +51,9 @@ export function MixerRouting({
 }: Props) {
   const returns = arrangement.mixer.buses.filter((bus) => bus.kind === 'return');
   const sends = arrangement.mixer.sends.filter((send) => send.trackId === track.id);
+  const sidechainSends = arrangement.mixer.sidechainSends.filter(
+    (send) => send.sourceTrackId === track.id,
+  );
   return (
     <div className={styles.routingOverlay} role="presentation" onMouseDown={onClose}>
       <section
@@ -253,6 +174,20 @@ export function MixerRouting({
           </select>
         </label>
         {!returns.length && <p>Add a Return channel to create Sends.</p>}
+        <h3>Sidechain</h3>
+        {sidechainSends.map((send) => (
+          <SidechainSendControls
+            key={send.id}
+            send={send}
+            title={sidechainTargetName(arrangement, send.targetDeviceId) ?? 'Unknown device'}
+            api={api}
+            commit={commit}
+            onOpenAutomation={() =>
+              onOpenAutomation({ kind: 'sidechainSendLevel', sidechainSendId: send.id })
+            }
+          />
+        ))}
+        {!sidechainSends.length && <p>Add sidechain sends from the target device in Devices.</p>}
       </section>
     </div>
   );

@@ -19,6 +19,7 @@ import type {
   MixBusPatch,
   SendPatch,
   SendPosition,
+  SidechainSendPatch,
   DeviceParameterInfo,
   PluginPresetInfo,
   LibraryAsset,
@@ -227,6 +228,7 @@ export interface AudioApi {
   /** Persists the master gain in canonical session settings. */
   setMasterGainDb(gainDb: number): Promise<ArrangementMutationResult>;
   previewSendLevel(sendId: string, levelDb: number): Promise<void>;
+  previewSidechainSendLevel(sidechainSendId: string, levelDb: number): Promise<void>;
   recoverAudioDevice(): Promise<AudioStatus>;
   /** Rebuilds the saved Session runtime without reopening the audio device. */
   retryStartupRuntime(): Promise<AudioStatus>;
@@ -378,6 +380,17 @@ export interface ArrangeApi {
   ): Promise<ArrangementMutationResult>;
   updateSend(sendId: string, patch: SendPatch): Promise<ArrangementMutationResult>;
   removeSend(sendId: string): Promise<ArrangementMutationResult>;
+  addSidechainSend(
+    sourceTrackId: string,
+    targetDeviceId: string,
+    levelDb: number,
+    position: SendPosition,
+  ): Promise<ArrangementMutationResult>;
+  updateSidechainSend(
+    sidechainSendId: string,
+    patch: SidechainSendPatch,
+  ): Promise<ArrangementMutationResult>;
+  removeSidechainSend(sidechainSendId: string): Promise<ArrangementMutationResult>;
   removeTrack(trackId: string): Promise<ArrangementMutationResult>;
   duplicateTrack(trackId: string): Promise<ArrangementMutationResult>;
   reorderTrack(trackId: string, targetIndex: number): Promise<ArrangementMutationResult>;

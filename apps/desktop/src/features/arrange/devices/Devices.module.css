@@ -107,6 +107,29 @@
   padding-top: var(--space-3);
 }
 
+.sidechain {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.sidechain h4 {
+  margin: 0;
+  font-weight: 600;
+}
+
+.sidechain fieldset {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border-default);
+}
+
+.sidechain label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .parameter {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr) minmax(100px, 1fr) auto;
