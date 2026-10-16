@@ -231,9 +231,13 @@ void TimelineEngine::processTracks(PreparedTimeline& prepared,
                                    const float transportGainStep) noexcept {
     processLiveAudioTracks(prepared, physicalInputChannels, physicalInputChannelCount, rangeStart,
                            destinationStart, sampleCount);
-    for (auto& stage : prepared.processingStages)
-        pool->run(stage, {TrackStageKind::playback, &prepared, rangeStart, destinationStart,
-                          sampleCount, transportGainStart, transportGainStep, true});
+    clearSidechainInputs(prepared);
+    for (std::size_t stageIndex = 0; stageIndex < prepared.processingStages.size(); ++stageIndex) {
+        pool->run(prepared.processingStages[stageIndex],
+                  {TrackStageKind::playback, &prepared, rangeStart, destinationStart, sampleCount,
+                   transportGainStart, transportGainStep, true});
+        mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, true);
+    }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, true);
     if (prepared.fadeOutSamples > 0) {
@@ -331,12 +335,29 @@ void TimelineEngine::mergeTimelineAndLiveInput(Track& track, const int sampleCou
                                          sampleCount);
 }
 
+void TimelineEngine::clearSidechainInputs(PreparedTimeline& timeline) noexcept {
+    for (auto& track : timeline.tracks) track->runtime->effects().clearSidechainBuffers();
+    for (auto& bus : timeline.mixer.buses) bus->effects->clearSidechainBuffers();
+    timeline.mixer.masterEffects->clearSidechainBuffers();
+}
+
+void TimelineEngine::mixSidechainStage(PreparedTimeline& timeline, const int stageIndex,
+                                       const std::int64_t rangeStart, const int sampleCount,
+                                       const bool playing) noexcept {
+    for (auto* route : timeline.mixer.sidechainRoutesByStage[static_cast<std::size_t>(stageIndex)])
+        route->mix(sampleCount, rangeStart, playing);
+}
+
 void TimelineEngine::processLiveInstrumentTracks(
     PreparedTimeline& prepared, float* const* outputChannels, const int channelCount,
     const std::int64_t rangeStart, const int destinationStart, const int sampleCount) noexcept {
-    for (auto& stage : prepared.processingStages)
-        pool->run(stage, {TrackStageKind::live, &prepared, rangeStart, destinationStart,
-                          sampleCount, 1.0f, 0.0f, false});
+    clearSidechainInputs(prepared);
+    for (std::size_t stageIndex = 0; stageIndex < prepared.processingStages.size(); ++stageIndex) {
+        pool->run(prepared.processingStages[stageIndex],
+                  {TrackStageKind::live, &prepared, rangeStart, destinationStart, sampleCount, 1.0f,
+                   0.0f, false});
+        mixSidechainStage(prepared, static_cast<int>(stageIndex), rangeStart, sampleCount, false);
+    }
     mixProductionOutput(prepared, outputChannels, channelCount, rangeStart, destinationStart,
                         sampleCount, false);
 }
@@ -402,6 +423,7 @@ void TimelineEngine::processLiveInstrumentTrack(const PreparedTimeline& prepared
 void TimelineEngine::warmUpPluginDevices(const int sampleCount) noexcept {
     auto* graph = realtime.graph;
     if (graph == nullptr) return;
+    clearSidechainInputs(*graph);
     for (auto& trackPtr : graph->tracks) {
         auto& runtime = *trackPtr->runtime;
         runtime.liveInputBuffer.clear(0, sampleCount);
@@ -540,6 +562,7 @@ void TimelineEngine::clearPlaybackTrackState(PreparedTimeline& prepared) noexcep
         runtime.postEffectDelayWritePosition = 0;
         runtime.postEffectLowLatencyBypassActive = false;
         runtime.resetTimelineInputDelay();
+        runtime.effects().resetSidechainState();
     }
 }
 

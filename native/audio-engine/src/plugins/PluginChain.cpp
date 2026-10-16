@@ -37,6 +37,7 @@ bool PluginChain::load(const std::vector<PluginDeviceSpec>& values,
     }
     devices = std::move(candidate);
     sidechainTargets = std::move(targets);
+    mainInputDelays.clear();
     prepareBuffers(blockSize);
     return true;
 }
@@ -58,14 +59,93 @@ bool PluginChain::usesSameSidechainTargets(
 }
 
 void PluginChain::prepareSidechainInput(Device& device, const int blockSize) noexcept {
-    const auto channels = device.rack->status().sidechain.channels;
-    device.sidechainBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
+    device.sidechainBuffer.setSize(2, std::max(1, blockSize), false, true, false);
 }
 
 void PluginChain::prepareBuffers(const int blockSize) noexcept {
     const auto channels = 2;
     firstBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
     secondBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
+    delayedInputBuffer.setSize(channels, std::max(1, blockSize), false, true, false);
+}
+
+std::vector<std::pair<juce::String, int>> PluginChain::normalizedMainInputDelays(
+    const std::vector<std::pair<juce::String, int>>& delays) {
+    std::vector<std::pair<juce::String, int>> normalized;
+    normalized.reserve(delays.size());
+    for (const auto& [id, samples] : delays)
+        if (samples > 0) normalized.emplace_back(id, samples);
+    return normalized;
+}
+
+bool PluginChain::usesSameMainInputDelays(
+    const std::vector<std::pair<juce::String, int>>& delays) const noexcept {
+    return normalizedMainInputDelays(delays) == mainInputDelays;
+}
+
+bool PluginChain::prepareMainInputDelays(const std::vector<std::pair<juce::String, int>>& delays,
+                                         juce::String& error) noexcept {
+    const auto normalized = normalizedMainInputDelays(delays);
+    if (normalized == mainInputDelays) return true;
+    if (!mainInputDelays.empty()) {
+        error = "Plugin Chain main input delays differ from the prepared alignment.";
+        return false;
+    }
+    for (const auto& [id, samples] : normalized) {
+        const auto found = std::find_if(devices.begin(), devices.end(),
+                                        [&](const Device& device) { return device.id == id; });
+        if (found == devices.end()) {
+            error = "Plugin Chain main input delay references an unknown device.";
+            return false;
+        }
+        found->mainInputDelaySamples = samples;
+        found->mainInputDelayBuffer.setSize(2, samples + 1, false, true, false);
+        found->mainInputDelayBuffer.clear();
+        found->mainInputDelayPosition = 0;
+    }
+    mainInputDelays = normalized;
+    return true;
+}
+
+juce::AudioBuffer<float>* PluginChain::sidechainBuffer(const juce::String& deviceId) noexcept {
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
+    return found != devices.end() ? &found->sidechainBuffer : nullptr;
+}
+
+int PluginChain::mainInputDelay(const juce::String& deviceId) const noexcept {
+    const auto found = std::find_if(devices.begin(), devices.end(),
+                                    [&](const Device& device) { return device.id == deviceId; });
+    return found != devices.end() ? found->mainInputDelaySamples : 0;
+}
+
+void PluginChain::clearSidechainBuffers() noexcept {
+    for (auto& device : devices) device.sidechainBuffer.clear();
+}
+
+void PluginChain::resetSidechainState() noexcept {
+    for (auto& device : devices) {
+        device.sidechainBuffer.clear();
+        device.mainInputDelayBuffer.clear();
+        device.mainInputDelayPosition = 0;
+    }
+}
+
+const float* const* PluginChain::delayDeviceInput(Device& device, const float* const* channels,
+                                                  const int channelCount,
+                                                  const int sampleCount) noexcept {
+    auto& ring = device.mainInputDelayBuffer;
+    const auto ringSize = ring.getNumSamples();
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        const auto read = (device.mainInputDelayPosition + 1) % ringSize;
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto source = channelCount > 1 ? channel : 0;
+            ring.setSample(channel, device.mainInputDelayPosition, channels[source][sample]);
+            delayedInputBuffer.setSample(channel, sample, ring.getSample(channel, read));
+        }
+        device.mainInputDelayPosition = read;
+    }
+    return delayedInputBuffer.getArrayOfReadPointers();
 }
 
 void PluginChain::reset() noexcept {
@@ -79,6 +159,7 @@ void PluginChain::release() noexcept {
 void PluginChain::clear() noexcept {
     devices.clear();
     sidechainTargets.clear();
+    mainInputDelays.clear();
 }
 
 void PluginChain::allNotesOff() noexcept {
@@ -107,26 +188,32 @@ void PluginChain::process(const float* const* inputChannels, const int inputChan
     auto currentInputCount = inputChannelCount;
     for (std::size_t index = 0; index < devices.size(); ++index) {
         const auto last = index + 1 == devices.size();
+        auto& device = devices[index];
         auto& target = index % 2 == 0 ? firstBuffer : secondBuffer;
         auto* const* targetChannels = last ? outputChannels : target.getArrayOfWritePointers();
         const auto targetCount = last ? outputChannelCount : target.getNumChannels();
         auto first =
-            std::lower_bound(automation.begin(), automation.end(), devices[index].rack.get(),
+            std::lower_bound(automation.begin(), automation.end(), device.rack.get(),
                              [](const PluginParameterAutomation& binding, const PluginRack* rack) {
                                  return std::less<const PluginRack*>{}(binding.rack, rack);
                              });
         auto lastBinding = first;
-        while (lastBinding != automation.end() && lastBinding->rack == devices[index].rack.get())
+        while (lastBinding != automation.end() && lastBinding->rack == device.rack.get())
             ++lastBinding;
         const auto deviceAutomation = std::span<PluginParameterAutomation>(
             first, static_cast<std::size_t>(std::distance(first, lastBinding)));
-        const auto auxChannelCount = devices[index].sidechainBuffer.getNumChannels();
+        const auto auxChannelCount = device.sidechainBuffer.getNumChannels();
         const auto* const* auxChannels =
-            auxChannelCount > 0 ? devices[index].sidechainBuffer.getArrayOfReadPointers() : nullptr;
-        devices[index].rack->process(currentInput, currentInputCount, auxChannels, auxChannelCount,
-                                     targetChannels, targetCount, sampleCount,
-                                     index == 0 ? midi : nullptr, deviceAutomation, timelineSample,
-                                     playing);
+            auxChannelCount > 0 ? device.sidechainBuffer.getArrayOfReadPointers() : nullptr;
+        const auto* const* deviceInput = currentInput;
+        auto deviceInputCount = currentInputCount;
+        if (device.mainInputDelaySamples > 0 && currentInputCount > 0) {
+            deviceInput = delayDeviceInput(device, currentInput, currentInputCount, sampleCount);
+            deviceInputCount = delayedInputBuffer.getNumChannels();
+        }
+        device.rack->process(deviceInput, deviceInputCount, auxChannels, auxChannelCount,
+                             targetChannels, targetCount, sampleCount, index == 0 ? midi : nullptr,
+                             deviceAutomation, timelineSample, playing);
         currentInput = last ? nullptr : target.getArrayOfReadPointers();
         currentInputCount = targetCount;
     }
@@ -176,7 +263,9 @@ std::optional<PluginStateSpec> PluginChain::persistedState(const juce::String& d
 
 int PluginChain::latencySamples() const noexcept {
     std::int64_t total = 0;
-    for (const auto& device : devices) total += std::max(0, device.rack->latencySamples());
+    for (const auto& device : devices)
+        total +=
+            std::max(0, device.rack->latencySamples()) + std::max(0, device.mainInputDelaySamples);
     return static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max()));
 }
 

@@ -400,6 +400,28 @@ if(BUILD_TESTING)
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+  juce_add_plugin(riffra-test-sidechain
+    COMPANY_NAME Riffra
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    FORMATS VST3
+    PLUGIN_MANUFACTURER_CODE Rifr
+    PLUGIN_CODE Tsts
+    PRODUCT_NAME "Riffra Test Sidechain"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+  target_sources(riffra-test-sidechain PRIVATE
+    tests/support/TestSidechainVstPlugin.cpp)
+  target_compile_definitions(riffra-test-sidechain PRIVATE
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0)
+  target_link_libraries(riffra-test-sidechain PRIVATE
+    juce::juce_audio_utils
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags)
   add_executable(riffra-real-vst-runtime-test
     tests/plugins/RealVstRuntimeTest.cpp)
   target_link_libraries(riffra-real-vst-runtime-test PRIVATE
@@ -416,6 +438,8 @@ if(BUILD_TESTING)
     riffra-test-effect_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
   get_target_property(RIFFRA_TEST_INSTRUMENT_BUNDLE
     riffra-test-instrument_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
+  get_target_property(RIFFRA_TEST_SIDECHAIN_BUNDLE
+    riffra-test-sidechain_VST3 JUCE_PLUGIN_ARTEFACT_FILE)
 
   add_test(
     NAME PluginScannerTest.RiffraTestEffect
@@ -423,6 +447,9 @@ if(BUILD_TESTING)
   add_test(
     NAME PluginScannerTest.RiffraTestInstrument
     COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_INSTRUMENT_BUNDLE}")
+  add_test(
+    NAME PluginScannerTest.RiffraTestSidechain
+    COMMAND riffra-plugin-scan --validate-load "${RIFFRA_TEST_SIDECHAIN_BUNDLE}")
 
   add_test(
     NAME RealVstRuntimeTest.LoadsMultipleRuntimeRoles
@@ -507,13 +534,15 @@ if(BUILD_TESTING)
   target_compile_definitions(riffra-audio-tests PRIVATE
     RIFFRA_TEST_EFFECT_BUNDLE_PATH="${RIFFRA_TEST_EFFECT_BUNDLE}"
     RIFFRA_TEST_INSTRUMENT_BUNDLE_PATH="${RIFFRA_TEST_INSTRUMENT_BUNDLE}"
+    RIFFRA_TEST_SIDECHAIN_BUNDLE_PATH="${RIFFRA_TEST_SIDECHAIN_BUNDLE}"
     RIFFRA_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/execution-graph"
     RIFFRA_SIDECAR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../contracts/sidecar"
     RIFFRA_SONALLOY_TEST_PRESET_ROOT="${RIFFRA_BUILTIN_RESOURCE_ROOT}"
     RIFFRA_SONALLOY_TEST_SOURCE_RELEASE="${RIFFRA_SONALLOY_RELEASE_TAG}")
   add_dependencies(riffra-audio-tests riffra-builtin-resource-stage)
   if(NOT RIFFRA_SANITIZER STREQUAL "thread")
-    add_dependencies(riffra-audio-tests riffra-test-effect_VST3 riffra-test-instrument_VST3)
+    add_dependencies(riffra-audio-tests riffra-test-effect_VST3 riffra-test-instrument_VST3
+      riffra-test-sidechain_VST3)
   endif()
   # Sanitizers own the allocator, so allocation tracking is only linked without them.
   if(UNIX AND NOT APPLE AND NOT RIFFRA_SANITIZER)

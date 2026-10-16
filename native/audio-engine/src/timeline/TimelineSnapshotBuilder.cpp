@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <memory>
+#include <utility>
 
 #include "ArrangementGraph.h"
 #include "MidiScheduler.h"
@@ -18,6 +21,20 @@ constexpr int kReadAheadSamples = 32768;
 // Device instances are prepared with headroom so later graphs with denser MIDI
 // can keep sharing them; a graph that needs more receives new instances.
 constexpr std::size_t kSharedDeviceMidiCapacity = 256;
+
+/// Enabled sidechain connections grouped by target device.
+using SidechainTargetMap = std::map<juce::String, std::vector<const SidechainSendSpec*>>;
+
+/// Per-device sidechain alignment inside one prepared effect chain.
+struct SidechainAlignment final {
+    juce::String deviceId;
+    /// Timeline latency the device main input carries, matching the latest
+    /// auxiliary source.
+    std::int64_t alignedLatency = 0;
+    /// Extra delay inserted in front of the device main input.
+    int mainInputDelay = 0;
+    std::vector<const SidechainSendSpec*> sends;
+};
 
 struct MixerAudibility final {
     bool hasSolo = false;
@@ -35,6 +52,119 @@ struct MixerAudibility final {
         return hasInput && !muted && (!hasSolo || busSolo || hasAudibleInput);
     }
 };
+
+SidechainTargetMap collectSidechainTargets(const std::vector<SidechainSendSpec>& sends) {
+    SidechainTargetMap targets;
+    for (const auto& send : sends)
+        if (send.enabled) targets[send.targetDeviceId].push_back(&send);
+    return targets;
+}
+
+bool prepareRouteDelay(MixRouteDelay& delay, const std::int64_t samples, juce::String& error) {
+    if (samples < 0 || samples >= std::numeric_limits<int>::max()) {
+        error = "mix route latency exceeds the supported buffer size";
+        return false;
+    }
+    delay.prepare(static_cast<int>(samples));
+    return true;
+}
+
+/// Computes the sidechain alignment of every device in `specs`: the timeline
+/// latency each main input must carry so its auxiliary inputs stay in sync,
+/// and the extra delay inserted in front of it.
+bool computeSidechainAlignment(const PluginChain& chain, const std::vector<PluginDeviceSpec>& specs,
+                               const SidechainTargetMap& sendsByTargetDevice,
+                               const PreparedTimeline& prepared, const std::int64_t baseLatency,
+                               std::vector<SidechainAlignment>& entries, juce::String& error) {
+    auto inputLatency = baseLatency;
+    for (const auto& spec : specs) {
+        SidechainAlignment entry;
+        entry.deviceId = spec.id;
+        const auto found = sendsByTargetDevice.find(spec.id);
+        if (found != sendsByTargetDevice.end()) entry.sends = found->second;
+        std::int64_t latestSource = 0;
+        for (const auto* send : entry.sends)
+            latestSource =
+                std::max(latestSource,
+                         prepared.findTrack(send->sourceTrackId)->runtime->routeLatencySamples);
+        entry.alignedLatency = std::max(inputLatency, latestSource);
+        const auto delay = entry.alignedLatency - inputLatency;
+        if (delay >= std::numeric_limits<int>::max()) {
+            error = "sidechain alignment delay exceeds the supported buffer size";
+            return false;
+        }
+        entry.mainInputDelay = static_cast<int>(delay);
+        inputLatency += chain.findDevice(spec.id)->latencySamples() + delay;
+        entries.push_back(std::move(entry));
+    }
+    return true;
+}
+
+std::vector<std::pair<juce::String, int>> alignmentDelays(
+    const std::vector<SidechainAlignment>& entries) {
+    std::vector<std::pair<juce::String, int>> delays;
+    delays.reserve(entries.size());
+    for (const auto& entry : entries) delays.emplace_back(entry.deviceId, entry.mainInputDelay);
+    return delays;
+}
+
+/// Loads the alignment into a prepared chain. A chain shared with a committed
+/// graph is replaced instead of mutated; the committed graph keeps processing
+/// its own instance.
+bool alignedEffectsChain(std::shared_ptr<PluginChain>& chain, const bool shared,
+                         const std::vector<PluginDeviceSpec>& specs,
+                         const std::vector<SidechainSendSpec>& sends,
+                         const std::vector<std::pair<juce::String, int>>& delays,
+                         const double sampleRate, const int blockSize,
+                         const PluginProcessingMode mode, const juce::String& role,
+                         juce::String& error) {
+    if (chain->usesSameMainInputDelays(delays)) return true;
+    if (shared) {
+        auto replacement = std::make_shared<PluginChain>();
+        if (!replacement->load(specs, sends, sampleRate, blockSize, mode, error, role))
+            return false;
+        chain = std::move(replacement);
+    }
+    return chain->prepareMainInputDelays(delays, error);
+}
+
+/// Creates the mixer routes feeding every prepared auxiliary input.
+bool appendSidechainRoutes(PreparedTimeline& prepared, PluginChain& chain,
+                           const std::vector<SidechainAlignment>& entries, juce::String& error) {
+    for (const auto& entry : entries) {
+        auto* destination = chain.sidechainBuffer(entry.deviceId);
+        for (const auto* send : entry.sends) {
+            auto* source = prepared.findTrack(send->sourceTrackId)->runtime.get();
+            auto route = std::make_unique<MixerRoute>();
+            route->sendId = send->id;
+            route->track = source;
+            route->source = send->position == SendPositionSpec::preFader
+                                ? &source->preFaderOutputBuffer
+                                : &source->trackOutputBuffer;
+            route->destination = destination;
+            route->gain.store(juce::Decibels::decibelsToGain(static_cast<float>(send->levelDb)));
+            route->audible = !source->muted;
+            if (!prepareRouteDelay(route->delay, entry.alignedLatency - source->routeLatencySamples,
+                                   error))
+                return false;
+            prepared.mixer.sidechainRoutes.push_back(std::move(route));
+        }
+    }
+    return true;
+}
+
+/// Groups the prepared sidechain routes by the stage whose output they carry.
+void organizeSidechainRoutes(PreparedTimeline& prepared, const std::vector<int>& levels) {
+    prepared.mixer.sidechainRoutesByStage.assign(prepared.processingStages.size(), {});
+    for (auto& route : prepared.mixer.sidechainRoutes) {
+        for (std::size_t index = 0; index < prepared.tracks.size(); ++index) {
+            if (prepared.tracks[index]->runtime.get() != route->track) continue;
+            prepared.mixer.sidechainRoutesByStage[static_cast<std::size_t>(levels[index])]
+                .push_back(route.get());
+            break;
+        }
+    }
+}
 
 juce::String instrumentId(const std::optional<InstrumentSpec>& instrument) {
     if (!instrument.has_value()) return {};
@@ -73,11 +203,12 @@ bool prepareDeviceAutomation(const ExecutionGraph& graph, PreparedTimeline& prep
             for (const auto& spec : specs) {
                 auto* effect = chain.findDevice(spec.id);
                 if (spec.id != lane.id) {
-                    if (effect != nullptr) latency += effect->latencySamples();
+                    if (effect != nullptr)
+                        latency += effect->latencySamples() + chain.mainInputDelay(spec.id);
                     continue;
                 }
-                inputLatency = latency;
-                rack = chain.findDevice(spec.id);
+                inputLatency = latency + chain.mainInputDelay(spec.id);
+                rack = effect;
                 state = &spec.state;
                 bindings = &target;
             }
@@ -152,6 +283,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
     const auto& graph = snapshot.graph;
     if (!validateMixerGraph(graph, error)) return false;
+    const auto sendsByTargetDevice = collectSidechainTargets(graph.mixer.sidechainSends);
     const auto processingMode =
         engine.offlineMode ? PluginProcessingMode::offline : PluginProcessingMode::realtime;
     prepared = std::make_unique<PreparedTimeline>();
@@ -298,29 +430,31 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 
         // Device instances already published are shared, never prepared again:
         // the audio thread may be processing them.
-        engine.graphRegistry.access([&track, &graph](ControlGraphRegistry::State& graphs) {
-            if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
-            const auto* existing = graphs.latestCommitted->findTrack(track->id);
-            if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
-                !sameInstrumentTopology(existing->instrument, track->instrument) ||
-                !existing->runtime->effects().usesSameSidechainTargets(
-                    graph.mixer.sidechainSends) ||
-                existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
-                existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
-                return;
-            track->runtime->pluginDelaySamples = existing->runtime->pluginDelaySamples;
-            track->runtime->pluginTailSamples = existing->runtime->pluginTailSamples;
-            track->reuseRuntimeDevices =
-                existing->effects == track->effects && existing->instrument == track->instrument &&
-                existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
-            if (track->reuseRuntimeDevices) track->runtime->shareDevicesWith(*existing->runtime);
-        });
-        if (!track->reuseRuntimeDevices &&
+        bool reuseInstrument = false;
+        engine.graphRegistry.access(
+            [&track, &graph, &reuseInstrument](ControlGraphRegistry::State& graphs) {
+                if (graphs.devicesNeedReprepare || graphs.latestCommitted == nullptr) return;
+                const auto* existing = graphs.latestCommitted->findTrack(track->id);
+                if (existing == nullptr || !sameEffectTopology(existing->effects, track->effects) ||
+                    !sameInstrumentTopology(existing->instrument, track->instrument) ||
+                    !existing->runtime->effects().usesSameSidechainTargets(
+                        graph.mixer.sidechainSends) ||
+                    existing->runtime->outputSampleRate != track->runtime->outputSampleRate ||
+                    existing->runtime->preparedBlockSize != track->runtime->preparedBlockSize)
+                    return;
+                track->reuseEffects = existing->effects == track->effects;
+                reuseInstrument =
+                    existing->instrument == track->instrument &&
+                    existing->runtime->timelineMidiCapacity() >= track->runtime->midiEventCapacity;
+                if (track->reuseEffects) track->runtime->shareEffectsWith(*existing->runtime);
+                if (reuseInstrument) track->runtime->shareInstrumentWith(*existing->runtime);
+            });
+        if (!track->reuseEffects &&
             !track->runtime->effects().load(track->effects, graph.mixer.sidechainSends,
                                             outputSampleRate, maximumBlockSize, processingMode,
                                             error, track->id + "/track-effect"))
             return false;
-        if (track->instrument.has_value() && !track->reuseRuntimeDevices) {
+        if (track->instrument.has_value() && !reuseInstrument) {
             const auto roleError = [&track, &error](const juce::String& role,
                                                     const juce::String& detail) {
                 error = track->id + " device " + track->instrumentDeviceId + " failed at " + role +
@@ -345,7 +479,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 track->runtime->instrument()->setBypassed(internal.bypassed);
             }
         }
-        if (!track->reuseRuntimeDevices &&
+        if (!reuseInstrument &&
             !track->runtime->prepareTimelineMidiCapacity(
                 std::max(track->runtime->midiEventCapacity, kSharedDeviceMidiCapacity), error))
             return false;
@@ -363,7 +497,6 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 }
             }
         }
-        track->runtime->pluginDelaySamples = track->runtime->pluginLatencySamples();
         track->runtime->pluginTailSamples = track->runtime->totalPluginTailSamples();
 
         for (const auto& clipSpec : trackSpec.audioClips) {
@@ -435,6 +568,7 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
     }
 
     std::vector<int> levels(prepared->tracks.size(), -1);
+    std::vector<std::vector<const TrackRuntime*>> trackDependencies(prepared->tracks.size());
     for (std::size_t index = 0; index < prepared->tracks.size(); ++index) {
         auto& runtime = *prepared->tracks[index]->runtime;
         auto* sonalloy = dynamic_cast<SonalloyInstrumentRuntime*>(runtime.instrument());
@@ -453,6 +587,16 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 return false;
             }
             runtime.externalAudioSource = source->runtime.get();
+            trackDependencies[index].push_back(runtime.externalAudioSource);
+        }
+        const auto& effects = prepared->tracks[index]->effects;
+        for (const auto& send : snapshot.graph.mixer.sidechainSends) {
+            if (!send.enabled) continue;
+            if (!std::any_of(effects.begin(), effects.end(),
+                             [&](const auto& spec) { return spec.id == send.targetDeviceId; }))
+                continue;
+            trackDependencies[index].push_back(
+                prepared->findTrack(send.sourceTrackId)->runtime.get());
         }
     }
     std::size_t remaining = levels.size();
@@ -460,20 +604,21 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
         std::vector<Track*> stage;
         for (std::size_t index = 0; index < levels.size(); ++index) {
             if (levels[index] >= 0) continue;
-            const auto* source = prepared->tracks[index]->runtime->externalAudioSource;
-            auto sourceReady = source == nullptr;
-            if (source != nullptr) {
-                for (std::size_t candidate = 0; candidate < levels.size(); ++candidate)
-                    if (prepared->tracks[candidate]->runtime.get() == source)
-                        sourceReady = levels[candidate] >= 0 && levels[candidate] < level;
-            }
-            if (!sourceReady) continue;
+            const auto ready = std::all_of(
+                trackDependencies[index].begin(), trackDependencies[index].end(),
+                [&](const TrackRuntime* dependency) {
+                    for (std::size_t candidate = 0; candidate < levels.size(); ++candidate)
+                        if (prepared->tracks[candidate]->runtime.get() == dependency)
+                            return levels[candidate] >= 0 && levels[candidate] < level;
+                    return false;
+                });
+            if (!ready) continue;
             stage.push_back(prepared->tracks[index].get());
             levels[index] = level;
             --remaining;
         }
         if (stage.empty()) {
-            error = "External audio routes contain a cycle.";
+            error = "Track routes contain a cycle.";
             return false;
         }
         for (auto* track : stage) {
@@ -481,6 +626,20 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
             const auto sourceLatency = runtime.externalAudioSource == nullptr
                                            ? 0
                                            : runtime.externalAudioSource->routeLatencySamples;
+            const auto instrumentLatency =
+                runtime.instrument() != nullptr ? runtime.instrument()->latencySamples() : 0;
+            std::vector<SidechainAlignment> entries;
+            if (!computeSidechainAlignment(runtime.effects(), track->effects, sendsByTargetDevice,
+                                           *prepared, sourceLatency + instrumentLatency, entries,
+                                           error))
+                return false;
+            if (!alignedEffectsChain(runtime.effectChainHandle(), track->reuseEffects,
+                                     track->effects, graph.mixer.sidechainSends,
+                                     alignmentDelays(entries), outputSampleRate, maximumBlockSize,
+                                     processingMode, track->id + "/track-effect", error))
+                return false;
+            if (!appendSidechainRoutes(*prepared, runtime.effects(), entries, error)) return false;
+            runtime.pluginDelaySamples = runtime.pluginLatencySamples();
             runtime.routeLatencySamples = sourceLatency + runtime.pluginDelaySamples;
             runtime.postEffectCompensationDelaySamples = runtime.routeLatencySamples;
             for (auto& clip : runtime.midiClips) clip.startSample += sourceLatency;
@@ -511,7 +670,8 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
                 prepared->timebaseChangeSamples.push_back(
                     change + track->runtime->externalAudioSource->routeLatencySamples);
     }
-    if (!prepareMixer(graph, *prepared, processingMode, error)) return false;
+    if (!prepareMixer(graph, *prepared, processingMode, sendsByTargetDevice, error)) return false;
+    organizeSidechainRoutes(*prepared, levels);
     if (!prepareDeviceAutomation(graph, *prepared, error)) return false;
     std::sort(prepared->timebaseChangeSamples.begin(), prepared->timebaseChangeSamples.end());
     prepared->timebaseChangeSamples.erase(
@@ -548,7 +708,9 @@ bool TimelineSnapshotBuilder::build(const TimelineSnapshotSpec& snapshot,
 }
 
 bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, PreparedTimeline& prepared,
-                                           const PluginProcessingMode mode, juce::String& error) {
+                                           const PluginProcessingMode mode,
+                                           const SidechainTargetMap& sendsByTargetDevice,
+                                           juce::String& error) {
     auto& mixer = prepared.mixer;
     mixer.masterGainAutomation =
         prepareAutomation(graph, prepared, AutomationTargetKind::masterGain);
@@ -561,6 +723,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                        std::any_of(graph.mixer.buses.begin(), graph.mixer.buses.end(),
                                    [](const auto& bus) { return bus.solo; });
     const MixerAudibility audibility{prepared.hasSolo};
+    std::vector<bool> busReused;
     for (const auto& spec : graph.mixer.buses) {
         auto bus = std::make_unique<MixerChannel>();
         bus->id = spec.id;
@@ -593,6 +756,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (!reused && !bus->effects->load(spec.effects, graph.mixer.sidechainSends, sampleRate,
                                            blockSize, mode, error, spec.id + "/bus-effect"))
             return false;
+        busReused.push_back(reused);
         prepared.summary.pluginCount += static_cast<std::uint64_t>(bus->effects->size());
         mixer.parallelChannels.push_back(bus.get());
         mixer.buses.push_back(std::move(bus));
@@ -660,11 +824,18 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
             std::any_of(prepared.tracks.begin(), prepared.tracks.end(), [&](const auto& candidate) {
                 return candidate->runtime->externalAudioSource == &track;
             });
+        const auto isSidechainSource = std::any_of(
+            graph.mixer.sidechainSends.begin(), graph.mixer.sidechainSends.end(),
+            [&](const auto& send) { return send.enabled && send.sourceTrackId == spec.id; });
+        const auto ownsSidechainTarget = std::any_of(
+            prepared.tracks[index]->effects.begin(), prepared.tracks[index]->effects.end(),
+            [&](const auto& effect) { return sendsByTargetDevice.contains(effect.id); });
         const auto mainSelected = audibility.mainRoute(spec.solo, group != nullptr && group->solo);
         track.mainOutputAudible =
             mainSelected && !spec.muted && (group == nullptr || !group->muted);
         const auto lowLatencyPdcCandidate =
             (track.instrumentTrack || track.monitorInput) && !hasEnabledSend &&
+            !isSidechainSource && !ownsSidechainTarget &&
             !spec.externalAudioSourceTrackId.has_value() && !hasExternalAudioDependents &&
             track.volumeAutomation.empty() && track.panAutomation.empty();
         addTrackRoute(track, spec.outputBusId ? mixer.findBus(*spec.outputBusId) : nullptr, false,
@@ -678,6 +849,18 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
                 !spec.muted && audibility.sendRoute(spec.solo, target->solo), false, send.id);
         }
     }
+    for (std::size_t busIndex = 0; busIndex < mixer.buses.size(); ++busIndex) {
+        auto& bus = *mixer.buses[busIndex];
+        std::vector<SidechainAlignment> entries;
+        if (!computeSidechainAlignment(*bus.effects, bus.effectSpecs, sendsByTargetDevice, prepared,
+                                       bus.inputLatency, entries, error))
+            return false;
+        if (!alignedEffectsChain(bus.effects, busReused[busIndex], bus.effectSpecs,
+                                 graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
+                                 blockSize, mode, bus.id + "/bus-effect", error))
+            return false;
+        if (!appendSidechainRoutes(prepared, *bus.effects, entries, error)) return false;
+    }
     for (auto& bus : mixer.buses) {
         const auto* spec = busSpec(bus->id);
         bus->audible =
@@ -686,21 +869,26 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         if (bus->hasInput)
             mixer.masterInputLatency = std::max(mixer.masterInputLatency, bus->outputLatency);
     }
-    const auto prepareDelay = [&](MixRouteDelay& delay, const std::int64_t samples) {
-        if (samples < 0 || samples >= std::numeric_limits<int>::max()) {
-            error = "mix route latency exceeds the supported buffer size";
+    {
+        std::vector<SidechainAlignment> entries;
+        if (!computeSidechainAlignment(*mixer.masterEffects, mixer.masterEffectSpecs,
+                                       sendsByTargetDevice, prepared, mixer.masterInputLatency,
+                                       entries, error))
             return false;
-        }
-        delay.prepare(static_cast<int>(samples));
-        return true;
-    };
+        if (!alignedEffectsChain(mixer.masterEffects, masterReused, mixer.masterEffectSpecs,
+                                 graph.mixer.sidechainSends, alignmentDelays(entries), sampleRate,
+                                 blockSize, mode, "master-effect", error))
+            return false;
+        if (!appendSidechainRoutes(prepared, *mixer.masterEffects, entries, error)) return false;
+    }
     for (auto& route : mixer.trackRoutes) {
         const auto target =
             std::find_if(mixer.buses.begin(), mixer.buses.end(),
                          [&](const auto& bus) { return route->destination == &bus->input; });
         const auto targetLatency =
             target != mixer.buses.end() ? (*target)->inputLatency : mixer.masterInputLatency;
-        if (!prepareDelay(route->delay, targetLatency - route->track->routeLatencySamples))
+        if (!prepareRouteDelay(route->delay, targetLatency - route->track->routeLatencySamples,
+                               error))
             return false;
         if (route->allowLowLatencyBypass) {
             const auto downstreamEffectLatency =
@@ -718,7 +906,7 @@ bool TimelineSnapshotBuilder::prepareMixer(const ExecutionGraph& graph, Prepared
         route->destination = &mixer.masterInput;
         route->audible = bus->hasInput;
         const auto delaySamples = bus->hasInput ? mixer.masterInputLatency - bus->outputLatency : 0;
-        if (!prepareDelay(route->delay, delaySamples)) return false;
+        if (!prepareRouteDelay(route->delay, delaySamples, error)) return false;
         mixer.busRoutes.push_back(std::move(route));
     }
     for (auto& track : prepared.tracks) {

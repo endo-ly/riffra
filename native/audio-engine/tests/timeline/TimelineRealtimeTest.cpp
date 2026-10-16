@@ -264,7 +264,7 @@ TEST(TimelineRealtimeTest, ReusedTracksShareTheirDeviceInstances) {
     // Assert
     const auto* second = TimelineEngineTestPeer::committedGraph(engine);
     ASSERT_NE(second, first);
-    EXPECT_TRUE(second->tracks.front()->reuseRuntimeDevices);
+    EXPECT_TRUE(second->tracks.front()->reuseEffects);
     EXPECT_EQ(&second->tracks.front()->runtime->effects(), firstEffects);
 }
 

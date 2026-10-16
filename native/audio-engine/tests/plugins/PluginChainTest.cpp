@@ -109,6 +109,49 @@ TEST(PluginChainTest, AggregatesDeviceLatencyAndTail) {
     EXPECT_EQ(chain->tailSamples(), 2'880);
 }
 
+TEST(PluginChainTest, DelaysDeviceMainInputsByThePreparedAlignment) {
+    std::vector<int> order;
+    juce::String error;
+    PluginChain chain;
+    ASSERT_TRUE(PluginChainTestPeer::addDevice(
+        chain, "device-1", std::make_unique<TestChainProcessor>(1, 1.0f, 0, order), kSampleRate,
+        kBlockSize, error))
+        << error;
+
+    const std::vector<std::pair<juce::String, int>> alignment{{"device-1", 4}};
+    ASSERT_TRUE(chain.prepareMainInputDelays(alignment, error)) << error;
+    EXPECT_TRUE(chain.usesSameMainInputDelays(alignment));
+    EXPECT_TRUE(chain.usesSameMainInputDelays({{"device-1", 4}, {"device-2", 0}}));
+    EXPECT_FALSE(chain.usesSameMainInputDelays({{"device-1", 3}}));
+    EXPECT_EQ(chain.latencySamples(), 4);
+
+    std::array<float, 8> input{};
+    std::array<float, 8> outputLeft{};
+    std::array<float, 8> outputRight{};
+    input[0] = 1.0f;
+    const std::array<const float*, 1> inputs{input.data()};
+    const std::array<float*, 2> outputs{outputLeft.data(), outputRight.data()};
+    chain.process(inputs.data(), 1, outputs.data(), 2, 8);
+
+    for (int sample = 0; sample < 4; ++sample) {
+        EXPECT_FLOAT_EQ(outputLeft[static_cast<std::size_t>(sample)], 0.0f) << sample;
+        EXPECT_FLOAT_EQ(outputRight[static_cast<std::size_t>(sample)], 0.0f) << sample;
+    }
+    EXPECT_FLOAT_EQ(outputLeft[4], 1.0f);
+    EXPECT_FLOAT_EQ(outputRight[4], 1.0f);
+
+    EXPECT_FALSE(chain.prepareMainInputDelays({{"device-1", 8}}, error));
+    EXPECT_EQ(error, "Plugin Chain main input delays differ from the prepared alignment.");
+
+    PluginChain unknown;
+    ASSERT_TRUE(PluginChainTestPeer::addDevice(
+        unknown, "device-1", std::make_unique<TestChainProcessor>(1, 1.0f, 0, order), kSampleRate,
+        kBlockSize, error))
+        << error;
+    EXPECT_FALSE(unknown.prepareMainInputDelays({{"device-2", 1}}, error));
+    EXPECT_EQ(error, "Plugin Chain main input delay references an unknown device.");
+}
+
 TEST(PluginChainTest, MirrorsPersistedStateAndQueuedParameters) {
     PluginChain playbackState;
     PluginChain liveState;
@@ -193,8 +236,9 @@ TEST(PluginChainTest, PassesSidechainAudioOnlyToTheTargetedDevice) {
 
     auto* aux = PluginChainTestPeer::sidechainBuffer(chain, "device-target");
     ASSERT_NE(aux, nullptr);
-    ASSERT_EQ(aux->getNumChannels(), 1);
+    ASSERT_EQ(aux->getNumChannels(), 2);
     juce::FloatVectorOperations::fill(aux->getWritePointer(0), 0.25f, kBlockSize);
+    juce::FloatVectorOperations::fill(aux->getWritePointer(1), 0.25f, kBlockSize);
 
     std::array<float, kBlockSize> inputLeft{};
     std::array<float, kBlockSize> inputRight{};

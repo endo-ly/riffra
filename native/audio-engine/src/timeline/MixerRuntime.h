@@ -172,6 +172,9 @@ struct MixerRuntime final {
     std::vector<MixerChannel*> parallelChannels;
     std::vector<std::unique_ptr<MixerRoute>> trackRoutes;
     std::vector<std::unique_ptr<MixerRoute>> busRoutes;
+    std::vector<std::unique_ptr<MixerRoute>> sidechainRoutes;
+    /// Sidechain routes grouped by the stage whose output they carry.
+    std::vector<std::vector<MixerRoute*>> sidechainRoutesByStage;
     std::vector<PluginDeviceSpec> masterEffectSpecs;
     std::vector<PluginParameterAutomation> masterDeviceAutomation;
     std::shared_ptr<PluginChain> masterEffects = std::make_shared<PluginChain>();
@@ -191,13 +194,16 @@ struct MixerRuntime final {
         masterInput.clear();
         masterOutput.clear();
         masterEffects->allNotesOff();
+        masterEffects->resetSidechainState();
         for (auto& bus : buses) {
             bus->input.clear();
             bus->output.clear();
             bus->effects->allNotesOff();
+            bus->effects->resetSidechainState();
         }
         for (auto& route : trackRoutes) route->delay.reset();
         for (auto& route : busRoutes) route->delay.reset();
+        for (auto& route : sidechainRoutes) route->delay.reset();
     }
 };
 

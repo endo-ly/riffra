@@ -826,16 +826,16 @@ public:
         double preparedSampleRate = 0.0;
         int preparedBlockSize = 0;
         double trackSampleRate = 0.0;
-        bool reusesRuntimeDevices = true;
+        bool reusesEffects = true;
         {
             auto* const pending = pendingGraph(engine);
             if (pending == nullptr || pending->tracks.empty()) return false;
             preparedSampleRate = pending->outputSampleRate;
             preparedBlockSize = pending->preparedBlockSize;
             trackSampleRate = pending->tracks.front()->runtime->outputSampleRate;
-            reusesRuntimeDevices = pending->tracks.front()->reuseRuntimeDevices;
+            reusesEffects = pending->tracks.front()->reuseEffects;
         }
-        if (reusesRuntimeDevices || std::abs(preparedSampleRate - 44'100.0) > 0.1 ||
+        if (reusesEffects || std::abs(preparedSampleRate - 44'100.0) > 0.1 ||
             preparedBlockSize != 1024 || std::abs(trackSampleRate - 44'100.0) > 0.1)
             return false;
 

@@ -151,7 +151,9 @@ bool TimelineEngine::preparedOwnerReusesRuntimeDevices(const EffectOwnerSpec& de
                    candidate->effects == current->effects;
         }
         const auto* track = graphs.pending->findTrack(deviceOwner.id);
-        return track != nullptr && track->reuseRuntimeDevices;
+        const auto* current = graphs.latestCommitted->findTrack(deviceOwner.id);
+        return track != nullptr && current != nullptr &&
+               &track->runtime->effects() == &current->runtime->effects();
     });
 }
 
