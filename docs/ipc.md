@@ -222,7 +222,9 @@ Parameter変更は既存Realtimeキューで適用する。変更ACKは対象Rac
 
 Desktop の Devices は既存 Control Command の `device.inspect`、`device.parameter.list/get/set`、`plugin.preset.list/get/set` を使用する。Preset と Parameter の編集結果は正準状態へ適用し、詳細を再取得する。Plugin Editor のイベントによる正準値更新も同じ詳細へ反映する。
 
-`setChannelMix`はTrack・BusのGain/Pan、`setSendLevel`はSend Levelを現役Graphへ一時適用し、`mixAck`を返す。正準値のコミットは意味しない。Hostの入口は`mixer.channel.preview`と`mixer.send.preview`で、Master Gainは`audio.master-gain.preview`を使う。
+`setChannelMix`はTrack・BusのGain/Pan、`setSendLevel`は通常SendまたはSidechainSendのLevelを一意なSend IDで現役Graphへ一時適用し、`mixAck`を返す。正準値のコミットは意味しない。Hostの入口は`mixer.channel.preview`、`mixer.send.preview`、`mixer.sidechain.preview`で、Master Gainは`audio.master-gain.preview`を使う。
+
+`device.inspect`の`capabilities.sidechain`は補助入力の利用可否、Mono・Stereoの対応、現在のチャンネル数、利用できない理由を返す。Nativeの`deviceStatus.capabilities.sidechain`を投影し、InstrumentをSidechain接続先として扱わない。
 
 Effect・Device・Plugin State・Preset・Editor操作は`owner`で所有者を指定する。Trackは`{"kind":"track","id":"..."}`、Group・Returnは`{"kind":"bus","id":"..."}`、Masterは`{"kind":"master"}`とする。Instrument割り当てと演奏はTrack専用である。Editorイベントの`pluginStateChanged`・`pluginParameterChanged`にもProject IDと同じOwner参照を含め、Hostが正準状態へ保存する。
 
@@ -231,6 +233,8 @@ Effect・Device・Plugin State・Preset・Editor操作は`owner`で所有者を�
 `prepareTimelineSnapshot` は `TimelineSnapshot` を受け取り、C++ の厳格デコーダが契約違反を `kind: timelineContract` として返し、グラフの準備処理へ進めない。投影の置換には prepare / commit / discard を使う。
 
 Execution Graphの`automation`は全対象共通の配列で、各Laneは`target`、`interpolation`、`points`を持つ。`target`は[正準モデル](data-model.md)と同じ識別子を使用し、Pointは`tick`と数値`value`だけを送る。Lane・Pointの編集用IDは音声処理へ送らない。未設定時も空配列を送る。実行できないDevice Laneは`AudioStatus.diagnostics.automationWarnings`へ返す。
+
+`ExecutionGraph.mixer.sidechainSends`は正準の接続と同じSource Track ID・Target Device ID・Level・Position・Enabledを持ち、未設定時も空配列を送る。Sidechain LevelのLaneは`target.kind: sidechainSendLevel`と`sidechainSendId`で接続を参照する。RealtimeとOfflineで同じ契約を使い、形状は`contracts/execution-graph/`の共有フィクスチャで検証する。
 
 正準 Master Gain は `ExecutionGraph.masterGainDb` に含まれ、現役グラフの commit 時に出力へ適用される。`previewMasterGainDb` は一時プレビューのみを更新し、確定値は Host の `setMasterGainDb` が正準設定を更新して投影する。
 
@@ -282,6 +286,7 @@ stopArrangeRecording → 停止を realtime 命令として受理し、受理時
 - カウントイン中の停止は録音を取り消す。応答は `recording.cancelled: true` を持ち、確定処理は行わない
 - 失敗時は Raw あり → `recoverable`、Raw なし → `failed` へ必ず確定してから失敗を通知する
 - `processing` 中の新規録音と Project 切替は排他する
+- Sidechainを使うTrackはDevice別の補助入力をRawと同じキャプチャ窓で保存してProcessed生成に使用する。入力が欠損・不完全な場合、そのTrackのマニフェストは`processedFile`を持たず`processedUnavailableReason`を返す。Rawのみのテイクも正常にAsset登録し、`record.list`の`processedUnavailableReason`で理由を確認できる
 - 進捗停滞（ブロック・VST 処理境界が一定時間停止）の場合のみ Native を終了して Rust の復旧経路へ移す
 
 ### 5.8 再生の非同期
@@ -468,6 +473,8 @@ Mixerの一時プレビューはHostの現行sequenceを応答へ含めるが、
 CLI は入力形式だけを解釈し、制作規則と正準化は `riffra-core::Application` に委譲する。
 
 Mixerの正準状態は`mixer.get`、Bus一覧は`mixer.bus.list`、Send一覧は`mixer.send.list`で取得する。結果のタグはそれぞれ`mixer`、`mixBuses`、`sends`。Bus・Sendの追加、更新、削除とTrack主出力先の設定は通常の正準Mutationとして扱い、`arrangementMutation`を返す。`session.apply`にも含められ、作成したBusとSendのIDは`createdEntityIds`の`buses`・`sends`へ記録する。パラメーターの正本は`api/params/mixer.rs`、CLIの操作形式は`agents/skills/riffra-headless/references/commands.md`を参照する。
+
+Sidechain接続は`mixer.sidechain.list`が`sidechainSends`を返す。`mixer.sidechain.add/update/remove`は同じ正準Mutation・Batch契約を使い、新しいIDは`createdEntityIds.sidechainSends`へ記録する。PreviewはRuntime操作であり、Batchには含めない。
 
 | 分類                   | コマンド                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

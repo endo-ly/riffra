@@ -12,6 +12,8 @@ Trackには名前、種類、FX件数、主出力先とSend件数、Pan、左右
 
 主出力先とSend件数のボタンからRoutingを開く。Main outputはMasterまたはGroupを選び、SendはReturn、Level、Pre/Post、Enabledを編集する。追加できるReturnだけをAdd Sendに表示し、同じTrackから同じReturnへのSendを重複させない。
 
+RoutingのSidechain欄には、そのTrackから送信しているEffect名と接続ごとの操作を表示する。Level、Pre/Post、Enabled、解除、Automationを操作できる。接続の追加は送信先Effectの[Devices設定](arrange-screen.md#54-devices)から行い、両画面は同じ正準状態へ追従する。Sidechain Levelも通常Sendと同じ連続操作・プレビュー方式を使う。
+
 Group・Returnには名前と種類、FX件数とMissing状態、Pan、左右Meter、Gain、Mute・Soloを表示する。ヘッダーで種類と名前を指定して追加し、選択したBusの名前と削除を操作する。参照中のBusを削除すると、参照を解除する必要がある旨と対象IDをエラーで表示する。
 
 Mute・Soloによる可聴経路は[音声アーキテクチャ](../architecture.md)を参照する。GroupのMuteと、Trackから直接分岐するSendは別の操作である。

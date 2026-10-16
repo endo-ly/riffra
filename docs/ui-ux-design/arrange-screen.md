@@ -567,6 +567,8 @@ VST3 Device を選択すると、同じ汎用 Editor で Parameter と公開さ�
 
 Plugin Editor と Preset は Device が公開している場合に表示する。Plugin Editor 側の変更は正準状態へ反映され、選択中 Device の詳細も更新される。Missing と Disabled Placeholder では Parameter を問い合わせず、読み込み失敗時は Device を残して詳細欄にエラーを表示する。
 
+補助入力を使えるEffectにはSidechain inputを表示し、Mono・Stereoとチャンネル数、送信元TrackごとのLevel、Pre/Post、Enabled、解除、Automationを操作する。Add Sourceは自身の所有Trackと接続済みTrackを除いた候補から選ぶ。非対応DeviceとInstrumentにはSidechain編集を表示しない。対応能力の取得に失敗した場合は既存のDevice詳細エラーとして表示する。送信元側からの確認・編集は[MixerのRouting](mixer.md#2-チャンネルとルーティング)を使う。
+
 Devicesを開いたままComputer KeyboardでFocused Instrument Trackを演奏できる。Bus・Masterの選択はこの演奏先を変えない。Browserは探索とProject外のPlugin Audition、Devices内のPickerは選択チャンネルへのDevice追加・変更を担当する。
 
 ---
